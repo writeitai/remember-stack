@@ -12,8 +12,14 @@ infrastructure's job and the app is open (the self-host default). The surface
 itself never touches adapters.
 """
 
+from collections.abc import Callable
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from datetime import timedelta
+import functools
+import inspect
 import json
 import logging
 from typing import Annotated
@@ -34,13 +40,29 @@ from fastapi import Query
 from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from fastapi.security import HTTPBearer
+from pydantic import AfterValidator
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
+from sqlalchemy.exc import InternalError
+from sqlalchemy.exc import OperationalError
+from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import Headers
+from starlette.types import ASGIApp
+from starlette.types import Receive
+from starlette.types import Scope
+from starlette.types import Send
 
+from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import INGEST_TOOL_NAME
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import OPERATION_TOOL_NAMES
+from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import tool
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
 from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
@@ -51,11 +73,14 @@ from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import DocumentDeletion
+from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentPage
 from rememberstack.model import DocumentStatusFilter
 from rememberstack.model import DocumentUpload
 from rememberstack.model import Envelope
 from rememberstack.model import ForgetInProgressError
+from rememberstack.model import ForgottenSourceError
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import IngestPrincipalKind
@@ -63,13 +88,19 @@ from rememberstack.model import ManagedTextClassificationError
 from rememberstack.model import PerimeterCredential
 from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
+from rememberstack.model import ReadEmbeddingCost
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
+from rememberstack.model import track_read_embedding_cost
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.ports.auth import AuthPerimeterPort
+from rememberstack.surfaces.direct_admission import admission_key
+from rememberstack.surfaces.direct_admission import AdmissionRefused
+from rememberstack.surfaces.direct_admission import DirectPathAdmission
+from rememberstack.surfaces.direct_admission import RequestHold
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -89,6 +120,25 @@ PIPELINE_READINESS_VERSION_LIMIT: Final = 1_000
 """Maximum document versions in one read-only readiness inspection."""
 
 GraphPredicate = Annotated[str, Field(min_length=1, max_length=200)]
+
+SavedQueryStatus = Literal[
+    "draft", "pending_revalidation", "active", "deprecated", "disabled", "broken"
+]
+"""The saved-query version states `GET /query/saved?status=` may filter on."""
+
+LOOKUP_K_MAX: Final = 400
+"""Largest `k` a fact lookup returns in one call; more is reported as truncated."""
+
+
+def _require_utc(value: datetime) -> datetime:
+    """Refuse naive and non-UTC instants at the boundary (422, never 500)."""
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError("must be timezone-aware UTC (end it with Z)")
+    return value
+
+
+UTCInstant = Annotated[datetime, AfterValidator(_require_utc)]
+"""A request instant: ISO 8601 with a zero UTC offset."""
 
 
 class IngestPort(Protocol):
@@ -130,7 +180,15 @@ class SpendLeasePort(Protocol):
         operation_name: str | None = None,
     ) -> UUID: ...
 
-    def commit(self, *, authorization: str, reservation_id: UUID) -> None: ...
+    def commit(
+        self,
+        *,
+        authorization: str,
+        reservation_id: UUID,
+        read_cost: ReadEmbeddingCost | None,
+    ) -> None:
+        """Commit the hold; a read reports its embedding cost, ingest ``None``."""
+        ...
 
     def release(self, *, authorization: str, reservation_id: UUID) -> None: ...
 
@@ -194,6 +252,14 @@ class DocumentInventoryPort(Protocol):
     ) -> DocumentPage: ...
 
 
+class DocumentDeletionPort(Protocol):
+    """Remove one document's contribution to the live memory (D135)."""
+
+    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
+        """Delete the lineage, or raise ``DocumentNotFoundError`` when absent."""
+        ...
+
+
 class BuildInfoPort(Protocol):
     """Report the code and model bindings currently serving."""
 
@@ -253,8 +319,8 @@ class GraphNeighborhoodRequest(BaseModel):
     entity_id: UUID
     hops: int = Field(default=2, ge=1, le=4)
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
-    valid_at: datetime | None = None
-    believed_at: datetime | None = None
+    valid_at: UTCInstant | None = None
+    believed_at: UTCInstant | None = None
     limit: int = Field(default=500, ge=1, le=500)
     continuation: str | None = Field(default=None, max_length=200)
     include_paths: bool = False
@@ -276,8 +342,8 @@ class GraphPathRequest(BaseModel):
     to_entity_id: UUID
     max_hops: int = Field(default=4, ge=1, le=6)
     predicates: tuple[GraphPredicate, ...] = Field(default=(), max_length=100)
-    valid_at: datetime | None = None
-    believed_at: datetime | None = None
+    valid_at: UTCInstant | None = None
+    believed_at: UTCInstant | None = None
 
     @model_validator(mode="after")
     def require_complete_bitemporal_coordinate(self) -> Self:
@@ -338,11 +404,13 @@ def build_api(
     surface: OperationSurface | None = None,
     open_query: OpenQueryFacade | None = None,
     auth: AuthPerimeterPort | None = None,
+    direct_admission: DirectPathAdmission | None = None,
     spend_lease: SpendLeasePort | None = None,
     ingest: IngestPort | None = None,
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
+    deletion: DocumentDeletionPort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
     ingest_body_max_bytes: int | None = None,
@@ -353,8 +421,12 @@ def build_api(
 
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
-    deployment-side connector configuration; `auth` gates every endpoint
-    on one perimeter credential; and `spend_lease` holds estimate on the
+    deployment-side connector configuration; `deletion` adds
+    `DELETE /documents/{doc_id}` (D135); `auth` gates every request
+    on one perimeter credential; `direct_admission` enforces the per-credential
+    and per-deployment rate and in-flight limits after authentication and
+    before the spend lease and routing (D136 §7.6); and `spend_lease` holds
+    estimate on the
     control plane for ingest/search/operations POST (D46). Each capability
     is explicitly composed; absent services do not pretend to exist.
 
@@ -387,7 +459,7 @@ def build_api(
     # One perimeter dependency instance so app-level gating and open-query
     # principal injection share the same authenticate call per request.
     perimeter_dep = (
-        _perimeter(auth=auth, deployment_id=deployment_id) if auth is not None else None
+        _perimeter(deployment_id=deployment_id) if auth is not None else None
     )
     dependencies = [
         *([Depends(perimeter_dep)] if perimeter_dep is not None else []),
@@ -406,6 +478,18 @@ def build_api(
         openapi_url=None,  # a machine API; the schema endpoint is not gated, so off
         dependencies=dependencies,
     )
+    if direct_admission is not None:
+        # Before any route is declared, so every one is built held.
+        app.router.route_class = _HeldRoute
+
+    @app.exception_handler(ProviderCallError)
+    def model_provider_unavailable(
+        _request: Request, _error: Exception
+    ) -> JSONResponse:
+        """Any route whose embedding call fails answers 503, never 500."""
+        return JSONResponse(
+            status_code=503, content={"detail": "model provider unavailable"}
+        )
 
     @app.get("/resolve", response_model=Envelope)
     def resolve(
@@ -426,7 +510,8 @@ def build_api(
         subject_entity_id: UUID | None = None,
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
-        valid_at: datetime | None = None,
+        valid_at: UTCInstant | None = None,
+        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 50,
     ) -> Envelope:
         """Relations matching an (s, p, o) pattern — current, or as-of (S9)."""
         return engine.lookup_relations(
@@ -435,6 +520,7 @@ def build_api(
             predicate=predicate,
             object_entity_id=object_entity_id,
             valid_at=valid_at,
+            k=k,
         )
 
     @app.get("/transcript/relation/{relation_id}", response_model=Envelope)
@@ -446,7 +532,9 @@ def build_api(
 
     @app.get("/lookup/observations", response_model=Envelope)
     def lookup_observations(
-        entity_id: UUID, property_query: str | None = None, k: int = 10
+        entity_id: UUID,
+        property_query: str | None = None,
+        k: Annotated[int, Query(ge=1, le=LOOKUP_K_MAX)] = 10,
     ) -> Envelope:
         """Live observations on one entity, semantic over statements (S2)."""
         return engine.lookup_observations(
@@ -556,13 +644,38 @@ def build_api(
         _mount_document_inventory(
             app=app, documents=documents, deployment_id=deployment_id
         )
+    if deletion is not None:
+        _mount_document_deletion(
+            app=app, deletion=deletion, deployment_id=deployment_id
+        )
     if graph is not None:
         _mount_graph(app=app, graph=graph)
     if build_info is not None:
-        _mount_build_info(app=app, build_info=build_info, deployment_id=deployment_id)
+        _mount_build_info(
+            app=app,
+            build_info=build_info,
+            deployment_id=deployment_id,
+            tools=_served_tools(
+                operations=surface is not None,
+                open_query=open_query is not None,
+                ingest=ingest is not None,
+                pipeline_readiness=pipeline_readiness is not None,
+                deletion=deletion is not None,
+            ),
+        )
 
     if spend_lease is not None:
         _install_spend_lease(app=app, spend_lease=spend_lease)
+    if auth is not None or direct_admission is not None:
+        # Added after the spend lease, so it runs before it: a request is
+        # authenticated and admitted before any hold is placed, and before
+        # routing, so an unknown path is counted like any other.
+        app.add_middleware(
+            _PerimeterGate,
+            auth=auth,
+            deployment_id=deployment_id,
+            admission=direct_admission,
+        )
 
     # Last, so it is outermost. Starlette runs middleware in reverse order of
     # addition, and a CORS layer installed early sits *inside* everything
@@ -674,7 +787,10 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
         # named origin ride a session cookie it should never see.
         # OPTIONS is absent deliberately: the middleware answers preflight
         # itself, so listing it would only advertise a method no route serves.
-        allow_methods=["GET", "POST"],
+        # DELETE is listed because `DELETE /documents/{doc_id}` exists; it
+        # grants nothing by itself, since the route still demands a
+        # credential with full write scope.
+        allow_methods=["GET", "POST", "DELETE"],
         # Exactly the two headers a browser client sends. `Idempotency-Key`
         # was here for a contract nothing implements — advertising a header no
         # route reads invites a client to rely on it.
@@ -686,8 +802,40 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     )
 
 
+def _served_tools(
+    *,
+    operations: bool,
+    open_query: bool,
+    ingest: bool,
+    pipeline_readiness: bool,
+    deletion: bool,
+) -> dict[str, int]:
+    """Catalogue tool name → ``tool_version`` for every tool this API serves.
+
+    A tool is listed exactly when the route it calls is composed, so a host
+    renders only tools this deployment can answer, at the version it answers
+    them (D136 §3.4).
+    """
+    names: list[str] = []
+    if ingest:
+        names.append(INGEST_TOOL_NAME)
+    if pipeline_readiness:
+        names.append(PIPELINE_READINESS_TOOL_NAME)
+    if deletion:
+        names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if operations:
+        names.extend(OPERATION_TOOL_NAMES)
+    if open_query:
+        names.extend(OPEN_QUERY_TOOL_NAMES)
+    return {name: tool(name).tool_version for name in names}
+
+
 def _mount_build_info(
-    *, app: FastAPI, build_info: BuildInfoPort, deployment_id: UUID
+    *,
+    app: FastAPI,
+    build_info: BuildInfoPort,
+    deployment_id: UUID,
+    tools: dict[str, int],
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -701,12 +849,43 @@ def _mount_build_info(
     is the container's liveness probe rather than part of the query API, and it
     is marked `include_in_schema=False` so the published document does not
     offer it as one. Every *documented* route is composed here.
+
+    `tools` is decided by composition, not by the build-info port: which
+    catalogue tools this API serves is a fact about the routes mounted here.
     """
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
-        """Report which code and model bindings are serving, before any work."""
-        return build_info.build_info(deployment_id=deployment_id)
+        """Report which code, model bindings and tools are serving, before any work."""
+        return build_info.build_info(deployment_id=deployment_id).model_copy(
+            update={"tools": dict(tools)}
+        )
+
+
+@contextmanager
+def _graph_errors() -> Iterator[None]:
+    """Map the live graph's bounded failures to 503, never 500."""
+    try:
+        yield
+    except GraphBusyError as error:
+        raise HTTPException(status_code=503, detail="live graph is busy") from error
+    except GraphHydrationError as error:
+        raise HTTPException(
+            status_code=503, detail="live graph result unavailable"
+        ) from error
+    except (TimeoutError, OperationalError) as error:
+        # A statement or lock timeout (or a lost connection) inside the
+        # bounded traversal: the graph could not answer in time.
+        raise HTTPException(status_code=503, detail="live graph timed out") from error
+    except InternalError as error:
+        # PostgreSQL reports transaction_timeout (SQLSTATE 25P04) as an
+        # internal error class; anything else in that class stays a 500.
+        if getattr(error.orig, "sqlstate", None) != _TRANSACTION_TIMEOUT:
+            raise
+        raise HTTPException(status_code=503, detail="live graph timed out") from error
+
+
+_TRANSACTION_TIMEOUT: Final = "25P04"
 
 
 def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
@@ -715,7 +894,7 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
-        try:
+        with _graph_errors():
             return graph.neighborhood(
                 entity_id=body.entity_id,
                 hops=body.hops,
@@ -726,18 +905,11 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 continuation=body.continuation,
                 include_paths=body.include_paths,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
-        try:
+        with _graph_errors():
             return graph.path(
                 from_entity_id=body.from_entity_id,
                 to_entity_id=body.to_entity_id,
@@ -746,30 +918,16 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
     @app.post("/graph/citation-path", response_model=Envelope)
     def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:
         """Return bounded directed citation paths between two documents."""
-        try:
+        with _graph_errors():
             return graph.citation_path(
                 from_doc_id=body.from_doc_id,
                 to_doc_id=body.to_doc_id,
                 max_hops=body.max_hops,
             )
-        except (GraphBusyError, GraphHydrationError) as error:
-            detail = (
-                "live graph is busy"
-                if isinstance(error, GraphBusyError)
-                else "live graph result unavailable"
-            )
-            raise HTTPException(status_code=503, detail=detail) from error
 
 
 def _mount_open_query(
@@ -850,7 +1008,7 @@ def _mount_open_query(
 
     @app.get("/query/saved")
     def list_saved_queries(
-        namespace: str | None = None, status: str | None = None
+        namespace: str | None = None, status: SavedQueryStatus | None = None
     ) -> list[dict[str, object]]:
         """Registry metadata for discoverable saved queries."""
         rows = _open_call(
@@ -1044,6 +1202,42 @@ def _mount_document_inventory(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+def _mount_document_deletion(
+    *, app: FastAPI, deletion: DocumentDeletionPort, deployment_id: UUID
+) -> None:
+    """Expose the lineage-grain delete (D135). Requires write scope."""
+
+    @app.delete(
+        "/documents/{doc_id}",
+        response_model=DocumentDeletion,
+        responses={404: {"description": "document_not_found"}},
+    )
+    def delete_document(doc_id: UUID) -> DocumentDeletion:
+        """Remove one document from the live memory.
+
+        Its claims stop counting as current testimony, facts that no other
+        document supports are closed with a recorded retraction, and it
+        leaves the inventory and every read. The claims and the stored
+        original are kept as history: this is not an erasure.
+
+        The deletion is all or nothing. An unknown id and an already deleted
+        document are both 404: from the caller's side each is absent. A
+        document hidden by another path whose evidence was never updated is
+        finished and answers 200 instead.
+        """
+        try:
+            return deletion.delete_document(deployment_id=deployment_id, doc_id=doc_id)
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ForgetInProgressError as error:
+            # Admission was open when the request arrived, but a hard forget
+            # was already preparing when the delete took the D74 fence. The
+            # delete ran no statement; answer exactly as admission would.
+            raise HTTPException(
+                status_code=503, detail={"code": "forget_in_progress"}
+            ) from error
+
+
 def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
@@ -1074,7 +1268,7 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
             required = operation_scope(
                 mutates=descriptor.mutates if descriptor is not None else None
             )
-            if not context.scope.covers(required=required):
+            if not context.may(required=required):
                 raise HTTPException(
                     status_code=403, detail="credential may not perform this operation"
                 )
@@ -1086,10 +1280,6 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
             raise HTTPException(
                 status_code=422,
                 detail={"code": "invalid_parameter", "message": str(error)},
-            ) from error
-        except ProviderCallError as error:
-            raise HTTPException(
-                status_code=503, detail="model provider unavailable"
             ) from error
 
 
@@ -1196,6 +1386,11 @@ def _managed_text_http_error(*, error: ManagedTextClassificationError) -> HTTPEx
     return HTTPException(status_code=status, detail=error.code)
 
 
+def _forgotten_source_http_error() -> HTTPException:
+    """A hard forget covers these bytes or this source identity; it is permanent."""
+    return HTTPException(status_code=409, detail="source_forgotten")
+
+
 def _mount_ingest(
     *,
     app: FastAPI,
@@ -1281,7 +1476,7 @@ def _mount_ingest(
         # full WRITE authority may make the immutable attribution assertion.
         context = getattr(request.state, "perimeter_context", None)
         may_assert_principal = not attribution_requires_write or (
-            context is not None and context.scope.covers(required=PerimeterScope.WRITE)
+            context is not None and context.may(required=PerimeterScope.WRITE)
         )
         if not trusted_principal_source or not may_assert_principal:
             principal_kind, principal_ref = None, None
@@ -1318,6 +1513,8 @@ def _mount_ingest(
                 )
             except ManagedTextClassificationError as error:
                 raise _managed_text_http_error(error=error) from error
+            except ForgottenSourceError as error:
+                raise _forgotten_source_http_error() from error
         try:
             return ingest.ingest_observed(
                 deployment_id=deployment_id,
@@ -1332,6 +1529,8 @@ def _mount_ingest(
             )
         except ManagedTextClassificationError as error:
             raise _managed_text_http_error(error=error) from error
+        except ForgottenSourceError as error:
+            raise _forgotten_source_http_error() from error
 
 
 def _mount_connectors(
@@ -1366,42 +1565,64 @@ def _mount_connectors(
             raise HTTPException(status_code=404, detail=str(error)) from error
 
 
-def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
-    """A FastAPI dependency that authenticates the perimeter credential.
+def _authenticate(
+    *, auth: AuthPerimeterPort, deployment_id: UUID, authorization: str | None
+) -> AuthenticatedContext:
+    """Authenticate the perimeter credential, or raise a 401/403.
 
     The `Authorization: <scheme> <value>` header is handed to the configured
     port; a failure, a missing header, or a credential for another deployment
-    is a 401/403 before any read runs. ``GET /healthz`` is the Compose
-    liveness probe and is the only path exempt from the Bearer check. This
-    is the single enforcement point (retrieval §9) — inside, it is one trust
-    domain.
+    is refused before routing. This is the single enforcement point
+    (retrieval §9) — inside, it is one trust domain.
+    """
+    if not authorization:
+        raise HTTPException(
+            status_code=401, detail="a perimeter credential is required"
+        )
+    scheme, _, value = authorization.partition(" ")
+    try:
+        context = auth.authenticate(
+            credential=PerimeterCredential(
+                scheme=scheme, value=SecretBytes(value.encode("utf-8"))
+            )
+        )
+    except Exception as error:  # any auth failure is an opaque 401
+        raise HTTPException(
+            status_code=401, detail="perimeter authentication failed"
+        ) from error
+    if context.deployment_id != deployment_id:
+        raise HTTPException(
+            status_code=403, detail="credential is for another deployment"
+        )
+    return context
+
+
+def _is_healthz(*, method: str, path: str) -> bool:
+    """``GET /healthz``, the Compose liveness probe: exempt from the perimeter."""
+    return method == "GET" and path.rstrip("/") == "/healthz"
+
+
+def _perimeter(*, deployment_id: UUID):  # noqa: ANN202
+    """A FastAPI dependency that checks the authenticated credential's scope.
+
+    :class:`_PerimeterGate` has already authenticated the request before
+    routing and published its context; this runs per matched route because
+    the scope a route needs is a property of the route.
     """
 
-    def dependency(
-        request: Request, authorization: str | None = Header(default=None)
-    ) -> AuthenticatedContext:
-        if request.method == "GET" and request.url.path.rstrip("/") == "/healthz":
-            return AuthenticatedContext(
-                deployment_id=deployment_id, principal="healthz"
-            )
-        if not authorization:
+    def dependency(request: Request) -> AuthenticatedContext:
+        context: AuthenticatedContext | None = getattr(
+            request.state, "perimeter_context", None
+        )
+        if context is None:
+            if _is_healthz(method=request.method, path=request.url.path):
+                return AuthenticatedContext(
+                    deployment_id=deployment_id, principal="healthz"
+                )
+            # The gate is composed whenever `auth` is; reaching here without a
+            # context is a wiring fault, refused rather than let through.
             raise HTTPException(
                 status_code=401, detail="a perimeter credential is required"
-            )
-        scheme, _, value = authorization.partition(" ")
-        try:
-            context = auth.authenticate(
-                credential=PerimeterCredential(
-                    scheme=scheme, value=SecretBytes(value.encode("utf-8"))
-                )
-            )
-        except Exception as error:  # any auth failure is an opaque 401
-            raise HTTPException(
-                status_code=401, detail="perimeter authentication failed"
-            ) from error
-        if context.deployment_id != deployment_id:
-            raise HTTPException(
-                status_code=403, detail="credential is for another deployment"
             )
 
         # Authentication answered "who"; this answers "may they". It lives here
@@ -1413,13 +1634,10 @@ def _perimeter(*, auth: AuthPerimeterPort, deployment_id: UUID):  # noqa: ANN202
         # ``None`` means the route decides for itself, because its authority is
         # a property of registry data rather than of the path. Today that is
         # only ``POST /operations/{name}``, whose handler asks the descriptor.
-        if required is not None and not context.scope.covers(required=required):
+        if required is not None and not context.may(required=required):
             raise HTTPException(
                 status_code=403, detail="credential may not perform this operation"
             )
-        # Published for the one route the table cannot classify statically:
-        # ``POST /operations/{name}`` asks the descriptor instead.
-        request.state.perimeter_context = context
         return context
 
     return dependency
@@ -1440,42 +1658,208 @@ def _admission(*, admission: AdmissionPort, deployment_id: UUID):  # noqa: ANN20
     return dependency
 
 
+_ADMISSION_MESSAGES: Final = {
+    "rate_limited": "request rate limit reached; retry after Retry-After seconds",
+    "concurrency_limited": "too many requests in flight; retry after Retry-After seconds",
+}
+
+#: The admission hold of the request being served. Context variables are
+#: copied into the worker thread that runs a synchronous handler, so the
+#: handler wrapper finds the hold of the request that started it.
+_CURRENT_HOLD: ContextVar[RequestHold | None] = ContextVar(
+    "rememberstack_admission_hold", default=None
+)
+
+
+class _PerimeterGate:
+    """Authenticate and admit every request before routing (D136 §7.6).
+
+    Pure ASGI and installed outside the spend lease, so the order is
+    authentication, then admission, then the spend hold, then routing. Running
+    before routing means an unknown path is authenticated and counted like any
+    other. ``GET /healthz`` passes untouched. Without ``auth`` (no perimeter)
+    only admission runs, against the deployment limits; the shared secret
+    likewise has no credential id and meets the deployment limits only.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        auth: AuthPerimeterPort | None,
+        deployment_id: UUID,
+        admission: DirectPathAdmission | None,
+    ) -> None:
+        """Wrap the inner ASGI app."""
+        self._app = app
+        self._auth = auth
+        self._deployment_id = deployment_id
+        self._admission = admission
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Refuse, or run the request holding its admission slot."""
+        if scope["type"] != "http" or _is_healthz(
+            method=scope["method"], path=scope["path"]
+        ):
+            await self._app(scope, receive, send)
+            return
+        context: AuthenticatedContext | None = None
+        try:
+            if self._auth is not None:
+                authorization = Headers(scope=scope).get("authorization")
+                # The port may do I/O (a key or revocation lookup); keep it off
+                # the event loop, as the dependency it replaces was.
+                context = await run_in_threadpool(
+                    _authenticate,
+                    auth=self._auth,
+                    deployment_id=self._deployment_id,
+                    authorization=authorization,
+                )
+                # `request.state` reads this dict; the scope dependency and
+                # the ingest attribution check find the context there.
+                scope.setdefault("state", {})["perimeter_context"] = context
+            if self._admission is None:
+                await self._app(scope, receive, send)
+                return
+            slot = self._admission.admit(key=admission_key(context))
+        except HTTPException as error:
+            refusal = JSONResponse(
+                status_code=error.status_code,
+                content={"detail": error.detail},
+                headers=error.headers,
+            )
+            await refusal(scope, receive, send)
+            return
+        except AdmissionRefused as error:
+            refusal = JSONResponse(
+                status_code=429,
+                content={
+                    "detail": {
+                        "code": error.code,
+                        "message": _ADMISSION_MESSAGES[error.code],
+                    }
+                },
+                headers={"Retry-After": str(error.retry_after)},
+            )
+            await refusal(scope, receive, send)
+            return
+        hold = RequestHold(admission=self._admission, slot=slot)
+        token = _CURRENT_HOLD.set(hold)
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            _CURRENT_HOLD.reset(token)
+            hold.request_finished()
+
+
+class _HeldRoute(APIRoute):
+    """A route whose synchronous work keeps its request's admission slot.
+
+    FastAPI runs every ``def`` handler and ``def`` dependency (the D74
+    barrier's database check among them) on a worker thread. A disconnect
+    cancels the request's coroutine but not the thread, which goes on
+    working; each such callable is wrapped so the request's
+    :class:`RequestHold` sees the thread start and end, and the slot is
+    released only when the work really stops. Coroutines are cancelled with
+    their request, and generator dependencies are left as they are, so both
+    need nothing.
+    """
+
+    def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
+        """Build the route, then hold every synchronous callable it runs."""
+        super().__init__(path, endpoint, **kwargs)
+        # One wrapper per callable, so a dependency used twice keeps one
+        # identity and FastAPI's per-request dependency cache still applies.
+        wrappers: dict[int, Callable[..., Any]] = {}
+        pending = [self.dependant]
+        while pending:
+            dependant = pending.pop()
+            pending.extend(dependant.dependencies)
+            call = dependant.call
+            if (
+                call is None
+                or inspect.isclass(call)
+                or dependant.is_coroutine_callable
+                or dependant.is_gen_callable
+                or dependant.is_async_gen_callable
+            ):
+                continue
+            wrapper = wrappers.get(id(call))
+            if wrapper is None:
+                wrapper = wrappers[id(call)] = _held_handler(call)
+            # The wrapper is sync like the original (and FastAPI inspects the
+            # unwrapped callable), so it is still run on a worker thread.
+            dependant.call = wrapper
+
+
+def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a synchronous handler or dependency so its request's hold sees it run."""
+
+    @functools.wraps(call)
+    def held(*args: Any, **kwargs: Any) -> Any:
+        hold = _CURRENT_HOLD.get()
+        if hold is None:
+            return call(*args, **kwargs)
+        hold.handler_started()
+        try:
+            return call(*args, **kwargs)
+        finally:
+            hold.handler_finished()
+
+    return held
+
+
+# D46/D109 reads. Every route that reads memory takes a lease, so a parked or
+# unfunded deployment answers none of them; each commit reports the embedding
+# cost the read incurred (0 for pure SQL or inventory reads). Service status
+# (`/readiness`, `/deployment`, `/healthz`), the tool catalogue, connector
+# management and deletion are not memory reads and stay outside the lease.
+_READ_ROUTES: Final = frozenset(
+    {
+        ("GET", "/search/claims"),
+        ("GET", "/search/chunks"),
+        ("POST", "/search/claims"),
+        ("POST", "/search/chunks"),
+        ("POST", "/chunks/adjacent"),
+        ("GET", "/resolve"),
+        ("GET", "/lookup/relations"),
+        ("GET", "/lookup/observations"),
+        ("POST", "/graph/neighborhood"),
+        ("POST", "/graph/path"),
+        ("POST", "/graph/citation-path"),
+        ("POST", "/query/sql"),
+        ("POST", "/query/sql/explain"),
+        ("GET", "/query/space"),
+        ("GET", "/query/space/search"),
+        ("GET", "/query/saved"),
+        ("GET", "/documents"),
+    }
+)
+
+
 def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | None:
     """Return ``(path_id, operation_name)`` for D46 spend-gated engine routes."""
     normalized = path.rstrip("/") or "/"
     if method == "POST" and normalized == "/ingest":
         return ("ingest", None)
-    # Both methods. A POST search costs exactly what the GET does, and a new
-    # route missing from this map would be a search nobody is charged for and
-    # no ceiling can stop.
-    if method in {"GET", "POST"} and normalized in {"/search/claims", "/search/chunks"}:
+    if (method, normalized) in _READ_ROUTES:
         return ("search", None)
-    if method == "POST" and normalized == "/chunks/adjacent":
-        return ("search", None)
-    if method == "GET":
-        parts = normalized.split("/")
-        if (
-            len(parts) == 4
-            and parts[1] == "chunks"
-            and parts[3] == "adjacent"
-            and parts[2]
-        ):
+    parts = normalized.split("/")[1:]
+    if method == "POST" and len(parts) == 2 and parts[0] == "operations" and parts[1]:
+        return ("recipe", parts[1])
+    if not all(parts):
+        return None
+    if method == "GET" and len(parts) == 3:
+        # /chunks/{id}/adjacent, /hydrate/relation/{id}, /transcript/relation/{id}
+        if parts[0] == "chunks" and parts[2] == "adjacent":
             return ("search", None)
-    if method == "POST" and normalized.startswith("/operations/"):
-        name = normalized.removeprefix("/operations/")
-        if name and "/" not in name:
-            return ("recipe", name)
-    # D109: Open-query space spend gating. SQL execution, plan inspection,
-    # and query-space schema discovery are gated under path_id="search".
-    if method == "POST" and normalized in {"/query/sql", "/query/sql/explain"}:
+        if parts[0] in {"hydrate", "transcript"} and parts[1] == "relation":
+            return ("search", None)
+    # /query/saved/{namespace}/{name} and its /run
+    saved = parts[:2] == ["query", "saved"]
+    if method == "GET" and len(parts) == 4 and saved:
         return ("search", None)
-    if method == "GET" and normalized in {"/query/space", "/query/space/search"}:
-        return ("search", None)
-    if (
-        method == "POST"
-        and normalized.startswith("/query/saved/")
-        and normalized.endswith("/run")
-    ):
+    if method == "POST" and len(parts) == 5 and saved and parts[4] == "run":
         return ("search", None)
     return None
 
@@ -1520,7 +1904,8 @@ def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
                 status_code=503, content={"detail": "spend_lease_unavailable"}
             )
         try:
-            response = await call_next(request)
+            with track_read_embedding_cost() as read_cost:
+                response = await call_next(request)
         except Exception:
             spend_lease.release(
                 authorization=authorization, reservation_id=reservation_id
@@ -1529,7 +1914,9 @@ def _install_spend_lease(*, app: FastAPI, spend_lease: SpendLeasePort) -> None:
         if 200 <= response.status_code < 300:
             try:
                 spend_lease.commit(
-                    authorization=authorization, reservation_id=reservation_id
+                    authorization=authorization,
+                    reservation_id=reservation_id,
+                    read_cost=None if path_id == "ingest" else read_cost,
                 )
             except (SpendLeaseRefused, SpendLeaseUnavailable):
                 pass

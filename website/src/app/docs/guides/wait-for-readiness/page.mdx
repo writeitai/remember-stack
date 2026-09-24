@@ -1,0 +1,189 @@
+export const metadata = {
+  title: "Wait until a document is queryable",
+  description: "Poll readiness for the versions you ingested, with a timeout that fits real processing times, and stop on failures instead of waiting forever.",
+};
+
+# Wait until a document is queryable
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Ingest returns in a second; processing takes minutes. Until it finishes, a
+question about the new document gets an answer that does not include it,
+and nothing in that answer tells you so. This page shows how to wait for
+exactly the versions you sent, how long to wait, and what to do when a
+version fails.
+
+Setup is in the [Quickstart](/docs/start/quickstart). What each stage does
+is in [The pipeline and readiness](/docs/concepts/pipeline).
+
+## Wait with the Python client
+
+```python
+import remember
+
+client = remember.Client.from_env()
+
+version = client.ingest(
+    "notes/2026-09-17-standup.md",
+    source_kind="file",
+    source_ref="notes/2026-09-17-standup.md",
+)
+
+report = client.wait_for_readiness([version.version_id])
+print(report.ready)
+```
+
+`wait_for_readiness(version_ids, *, timeout=1800.0, poll_interval=15.0,
+require_p3=False)` checks the deployment at once, then every
+`poll_interval` seconds, until every listed version is ready, and returns
+the last report. The defaults, 30 minutes and 15 seconds, are starting
+points sized for single documents, where processing takes minutes. Raise
+`timeout` for bulk loads. If `timeout` seconds pass first, it raises
+`TimeoutError`, whose message includes the last report.
+
+It checks three capabilities for you: the pipeline stages for your
+versions, the search index (`p1`) and the live graph (`live_graph`). Pass
+`require_p3=True` only if you also read the published corpus snapshot
+(filesystem views on a self-hosted deployment).
+
+`wait_for_readiness` accepts version IDs as strings or UUIDs. A readiness
+check covers at most 1,000 versions; split larger lists.
+
+A version with `created=False` needs no new processing, but wait on it
+anyway: the earlier run of the same bytes may still be going, and a
+finished one returns ready on the first check.
+
+## Stop on failure
+
+A stage that is `failed` has a retry scheduled and can still succeed, so
+`wait_for_readiness` keeps waiting through it. A stage that is
+`dead_letter` has used all its attempts and will never become ready, so
+`wait_for_readiness` stops at the first check that shows one and raises
+`remember.PipelineDeadLettered`:
+
+```python
+import remember
+
+try:
+    client.wait_for_readiness([version.version_id])
+except remember.PipelineDeadLettered as error:
+    for version_id, stage, status in error.dead_lettered:
+        print(f"{version_id}: {stage} is {status}")
+    # error.report is the full readiness report that showed the dead letter.
+```
+
+`dead_lettered` lists every `(version_id, stage, status)` that is
+dead-lettered, and the message names them too. What to do next is under
+[When a version fails](#when-a-version-fails).
+
+## Read the report
+
+`pipeline_readiness` and `wait_for_readiness` return a
+`PipelineReadinessReport`:
+
+| Field | Meaning |
+|---|---|
+| `ready` | `True` when every required capability is ready. |
+| `versions[]` | One entry per version: `version_id`, `ready`, and `stages[]`. |
+| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`. |
+| `capabilities` | `pipeline`, `p1`, `live_graph`, `p3`, each with `required`, `ready`, `checked_at` and a `reason`. |
+| `model_bindings`, `build_revision`, `document_binding_generation` | Which code and models are serving, for your records. |
+
+A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
+`failed`, `dead_letter`, `skipped`. A version is ready when every expected
+stage has `succeeded` or been `skipped` and has a `finished_at`.
+
+Capability reasons when not ready:
+
+| Capability | Reason | Meaning |
+|---|---|---|
+| `pipeline` | `stage_incomplete` | At least one stage of one version has not finished. |
+| `p1` | `search_channel_incomplete` | The search index is not ready. |
+| `live_graph` | a `graph_…` reason, such as `graph_catalog_mismatch` | The live graph failed its catalog or health check. This is a deployment problem, not a problem with your document. |
+| `p3` | `corpus_snapshot_incomplete` | No published corpus snapshot newer than your versions. |
+
+The check reads state; it never starts or speeds up work.
+
+## When a version fails
+
+- **`failed`** means the last attempt failed and a retry is scheduled; it
+  can still succeed. **`dead_letter`** means the stage ran out of attempts.
+  It does not heal by waiting.
+- **Stuck at `pending` on the first stage** on a self-hosted deployment
+  usually means the file's MIME type has no converter: the version is
+  parked until one is configured. See [File formats and
+  converters](/docs/self-hosting/converters).
+- On a self-hosted deployment, the operator can inspect and replay
+  dead-lettered work. See [Operating the pipeline](/docs/self-hosting/operating).
+
+<Cloud>
+
+On remember.dev, report the `version_id` and the last `stages` list to
+[support](/docs/cloud/support).
+
+</Cloud>
+
+Re-sending the same bytes does not restart a failed version: identical
+bytes are a no-op.
+
+## Over HTTP
+
+`POST /readiness` takes the version IDs and an explicit requirement for
+each of the four capabilities:
+
+```bash
+curl -sS "$REMEMBER_API_URL/readiness" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "version_ids": ["6f1c2d0e-8a3b-4d5e-9f10-2a3b4c5d6e7f"],
+    "require": {"pipeline": true, "p1": true, "live_graph": true, "p3": false}
+  }'
+```
+
+The body is at most 1,000 version IDs. It is a read: a read-only token may
+call it. See [Ingest, readiness, documents](/docs/reference/http-api/ingest).
+
+## Over MCP
+
+An agent uses the `pipeline_readiness` tool with the arguments the
+`ingest` tool returned in `pipeline.poll_with`:
+
+```json
+{
+  "name": "pipeline_readiness",
+  "arguments": {
+    "version_ids": ["6f1c2d0e-8a3b-4d5e-9f10-2a3b4c5d6e7f"],
+    "require": {"pipeline": true, "p1": true, "live_graph": true, "p3": false}
+  }
+}
+```
+
+Both the tool's description and the `ingest` result spell out the poll
+algorithm. Your agent's instructions should say the same:
+
+1. Wait about 30 seconds after ingest before the first check.
+2. Then check every 30 to 60 seconds, backing off gently. Never check more
+   often than every 15 seconds.
+3. A `failed` stage is retrying: keep polling, and describe it as retrying
+   if you report progress.
+4. Stop at once if any `stages[].status` is `dead_letter`, and report the
+   `version_id` and that stage.
+5. After 20 to 30 minutes without `ready: true` and without a dead letter,
+   stop and escalate to the operator with the `version_id` and the last
+   `stages[]`.
+
+Require `pipeline`, `p1` and `live_graph`, and set `p3` to `false` unless
+the agent also reads a published corpus snapshot. `ready: true` means the
+assured operations can see the content; whether a given question finds it
+still depends on relevance.
+
+An ingest that returned `created: false` started no new processing, but an
+earlier run of the same bytes may still be going. Check readiness:
+`ready: true` means the content is already queryable. Otherwise poll it
+exactly as above, stopping only on `dead_letter` or the time limit.
+
+## Next
+
+- [Give an agent context](/docs/guides/agent-context)
+- [Ingest files](/docs/guides/ingest-files)

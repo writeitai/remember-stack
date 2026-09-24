@@ -156,6 +156,7 @@ EXPECTED_TABLES: Final = (
     "observation_adjudications",
     "observation_evidence",
     "observations",
+    "perimeter_state",
     "pipeline_component_versions",
     "predicates",
     "processing_state",
@@ -343,7 +344,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 93, "f": 133, "n": 576, "p": 74, "u": 39}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 94, "f": 134, "n": 580, "p": 75, "u": 39}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -384,6 +385,7 @@ DECISION_OBJECTS: Final = {
     "D102": ("document_entity_bindings",),
     "D122": ("selection_results",),
     "D123": ("application_context_bindings",),
+    "D136": ("perimeter_state",),
 }
 
 

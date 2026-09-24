@@ -1,0 +1,109 @@
+export const metadata = {
+  title: "What lives where",
+  description: "The pieces of a RememberStack deployment, where each kind of data is kept, which copy is the authority, and why a stale search index can cost recall but never serve a withdrawn fact.",
+};
+
+# What lives where
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+A RememberStack deployment is a small number of processes around one
+PostgreSQL database and one object store. Knowing which piece holds what
+tells you what to back up, what can be rebuilt, and why a search can miss
+something new but never return something withdrawn. This page describes a
+deployment as the shipped `compose.yaml` runs it.
+
+## The pieces
+
+| Piece | What it does |
+|---|---|
+| **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs MinIO. |
+| **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
+| **The workers** | One process per [pipeline stage](/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
+| **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |
+| **Model provider** | Outside the deployment. Workers call it to read documents and compute vectors; the API calls it only to embed the text of a search. |
+| **The `remember` package** | On your machine: the CLI, the Python client and the MCP server. It talks to the API over HTTP and holds no memory of its own. |
+
+![The client talks to the API over HTTP; the API and the workers use PostgreSQL, object storage and the model provider.](/docs/diagrams/architecture.svg)
+
+## Where each kind of data lives
+
+An **authority** is the copy every answer is checked against. A **derived**
+copy is built from an authority to make something faster or easier, and it
+can fall behind.
+
+| What | Where | Authority or derived |
+|---|---|---|
+| Documents, versions, source identity | PostgreSQL | Authority |
+| Claims, and the passages they came from | PostgreSQL | Authority |
+| Entities, aliases, merges | PostgreSQL | Authority |
+| Facts (relations and observations), their time windows and evidence links | PostgreSQL | Authority |
+| Decisions that changed a fact or an identity | PostgreSQL | Authority |
+| Pipeline work: what ran, what failed, what waits | PostgreSQL | Authority |
+| Model spend (the cost ledger) | PostgreSQL | Authority |
+| Search indexes: vectors (`pgvector`) and keyword ranking (BM25, `pg_textsearch`) | PostgreSQL | Derived. Written by the embedding and labelling stages after the rows they index. |
+| The live graph | PostgreSQL property-graph definitions over the current tables | Neither: a view. It reads the tables themselves, so it cannot fall behind them. |
+| The query space `memory_v1` for [SQL queries](/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
+| Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
+| Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |
+| Filesystem-view snapshots | Object storage, bucket `remember-corpusfs` | Derived. Rebuilt on demand. |
+
+The bucket names are the defaults of a Compose deployment. Everything in
+PostgreSQL and the first two buckets belongs together: back them up at the
+same moment ([Upgrades and migrations](/docs/self-hosting/upgrades#back-up)).
+
+## Why everything is in one database
+
+Claims, facts, their evidence, the search indexes and the graph share one
+PostgreSQL database, so there is no second store to keep in step, and a
+read can confirm its results against all of them in one consistent
+snapshot. The graph reads the current
+fact tables directly, so it never shows a relation those tables have
+already withdrawn.
+
+Inside the database, the one thing that lags is the search index: vectors are computed after the
+rows they describe, by later pipeline stages. Readiness reports this lag as
+the `p1` capability ([The pipeline and readiness](/docs/concepts/pipeline#readiness)).
+
+## How a read uses the pieces
+
+![A question goes to meaning, keyword and graph search, which nominate candidates; PostgreSQL confirms each against the live state and drops anything withdrawn or superseded; the result says how many were dropped.](/docs/diagrams/read-path.svg)
+
+Every read that searches works in three steps:
+
+1. **The search indexes nominate candidates.** Vector and keyword search
+   each propose the chunks, claims or facts that look relevant. This is
+   fast, and it may be out of date.
+2. **PostgreSQL confirms them.** Every candidate is read again from the
+   authority tables, all in one consistent snapshot. A candidate that no
+   longer holds (a fact that was withdrawn or replaced, a claim that is no
+   longer current, an entity merged into another, or one outside the time
+   you asked about) is dropped.
+3. **The result accounts for what was dropped.** The count is in
+   `dropped_by_hydration`, so you can tell a short answer from a complete
+   one.
+
+The consequence: a stale index can cost recall, because something it has
+not indexed yet cannot be nominated. It cannot serve a withdrawn fact,
+because nothing reaches the answer without passing the check against the
+authority. No language model takes part in any of this; see
+[Retrieval](/docs/concepts/retrieval#how-hybrid-retrieval-works).
+
+<Cloud>
+
+## On remember.dev
+
+Each remember.dev project gets its own copy of all of this: its own
+deployment with its own database, its own storage buckets, its own
+endpoint, credentials and model key. Two projects never share a database
+or a bucket. See [What remember.dev runs for you](/docs/cloud/overview).
+
+</Cloud>
+
+## Where to go next
+
+- [The pipeline and readiness](/docs/concepts/pipeline): what each worker produces.
+- [Retrieval](/docs/concepts/retrieval): the operations, search, graph and SQL queries.
+- [Install with Docker Compose](/docs/self-hosting/install): the services
+  and volumes of a self-hosted deployment.

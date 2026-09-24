@@ -1,0 +1,246 @@
+export const metadata = {
+  title: "Documents, versions and sources",
+  description: "How RememberStack identifies a file, keeps every version of it, and knows where it came from and when it was written.",
+};
+
+# Documents, versions and sources
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+An agent's memory is only as trustworthy as its knowledge of where each piece of
+knowledge came from. If the spec for the billing migration changes three
+times, you need to know which text said what, and when. If the same meeting
+notes are sent twice, you do not want them counted twice. If a file is
+renamed, it is still the same file.
+
+RememberStack handles this at the very first step, before any model reads
+your text. Every file you send becomes a **version** of a **document**, and
+every document is tied to the place it came from, its **source**.
+
+## Document and version
+
+A **document** (`doc_id`) is one logical file over its whole life: the
+billing migration spec, one meeting transcript, one chat thread. It has a
+stable identity that does not change when the content changes.
+
+A **version** (`version_id`) is one snapshot of that document's bytes, as you
+sent it at one moment. Versions are append-only: a new upload with different
+bytes adds a new version and never edits an old one. Each version records:
+
+- the SHA-256 hash of its bytes (`content_hash`),
+- the time the source says it was last modified (`source_modified_at`),
+- an optional revision marker from the source system (`source_version_ref`),
+- who ingested it (`ingested_by`, see [below](#who-ingested-a-version)).
+
+Everything RememberStack later derives from the file (its converted text,
+sections, chunks, claims) hangs off one specific version. That is what lets
+an answer point back to the exact text that produced it, even after the
+document has moved on.
+
+The bytes themselves are stored once per content hash, as a **content
+object**. If two documents contain identical bytes, or a document is changed
+and later changed back, the bytes are not stored or converted a second time.
+
+## Source: `source_kind` and `source_ref`
+
+A **source** tells RememberStack which real-world thing a document stands
+for. You give it as a pair:
+
+- `source_kind`: the class of source, a short name you choose, for example
+  `notes`, `drive`, `slack`, `agent`.
+- `source_ref`: the stable identifier of this item inside that class, for
+  example a file path, a Drive file ID, or a thread ID.
+
+The pair is the document's identity. Send the same `source_kind` and
+`source_ref` again with different bytes and you get a new version of the same
+document. Send a new `source_ref` and you get a new document.
+
+The two values are always given together. A `source_ref` alone is ambiguous
+(`42` could be a ticket, a message or a file), so the engine refuses one
+without the other: the HTTP API returns `422` and the Python client raises
+`ValueError` with `source_kind and source_ref must be supplied together`.
+
+```python
+from datetime import datetime, UTC
+
+import remember
+
+with remember.Client() as memory:
+    version = memory.ingest(
+        "specs/billing-migration.md",
+        source_kind="notes",
+        source_ref="specs/billing-migration.md",
+        source_modified_at=datetime(2026, 3, 4, 15, 0, tzinfo=UTC),
+    )
+    print(version.doc_id, version.version_id, version.created)
+```
+
+<Callout type="note">
+
+Choose a `source_ref` that stays the same for the life of the item. A
+path is fine if files do not move; a Drive file ID or a database key is
+better if they do. Renaming is metadata; a new `source_ref` is a new
+document.
+
+</Callout>
+
+### Ingesting without a source
+
+You can leave out both values. RememberStack then treats the upload as a
+one-shot file: `source_kind` becomes `upload` and `source_ref` becomes the
+content hash, so the document's identity *is* its bytes. Sending the same
+bytes again is a no-op; sending edited bytes creates an unrelated document.
+
+Use this only for files that will never change. For anything an agent will
+write to again (notes, a running log, a spec), give a source so that later
+writes become versions of one document. Without a source you also cannot set
+`source_modified_at`, `source_version_ref` or `living` mode; the engine
+rejects them with `source timestamps, revisions, and living mode require
+source_kind/source_ref`.
+
+## `source_modified_at` becomes the said-on time
+
+`source_modified_at` is when the source says the content was written or last
+changed: the timestamp of the meeting, the send time of a message, the
+last-modified time of a file. It must be timezone-aware UTC.
+
+RememberStack copies it onto every claim extracted from that version as
+`asserted_at`, the time the source said it. This is one of the three clocks
+described in [Time](/docs/concepts/time). It also anchors relative dates: when a
+transcript from 2026-03-04 says "last Friday", the extractor resolves that
+against the document's date.
+
+If you leave it out, `asserted_at` is empty and relative dates can be
+resolved only against a date written inside the document itself.
+
+`source_modified_at` is fixed once the version exists. Re-sending identical
+bytes with a different timestamp does not change it, because the claims were
+already extracted against the original value.
+
+## Re-ingesting the same bytes: `created=false`
+
+Every ingest returns an `IngestedVersion`:
+
+| Field | Meaning |
+|---|---|
+| `deployment_id` | The deployment that stored it. |
+| `doc_id` | The document (stable across versions). |
+| `version_id` | The version this call produced or matched. |
+| `content_hash` | SHA-256 of the bytes. |
+| `created` | `true` if this call created a new version; `false` if the bytes match the document's latest version. |
+| `mime` | The MIME type conversion uses for these bytes. |
+| `title` | The document's title, set by its first ingest. |
+| `versioning_mode` | `snapshot` or `living`, set by its first ingest. |
+
+When the bytes match the document's **latest** version, nothing new is
+created and no processing is scheduled. You get the existing `version_id`
+back with `created=false`. This makes ingest safe to retry and safe to run
+from a loop that re-sends everything: unchanged files cost nothing.
+
+If you pass a new `source_version_ref` with unchanged bytes, the version's
+revision marker advances so a sync process does not fetch the same revision
+forever. Nothing else about the version changes.
+
+Bytes that match an **older** version (the file was changed and then changed
+back) create a new version. The document moves forward; it never silently
+jumps back to an old snapshot.
+
+Bytes sent again after the document was [deleted](#deleting-a-document)
+also create a new version (`created=true`), and it is processed from the
+start.
+
+## Deleting a document
+
+Deleting a document removes it from the memory: every version of it, in one
+call (`DELETE /documents/{doc_id}`, `MemoryClient.delete_document`,
+`remember documents delete`, or the `delete_document` MCP tool).
+
+Say Dana uploaded a draft of the billing migration plan that says "the
+migration finishes in March", and Ravi's status note says the same. Dana
+deletes the draft. From then on:
+
+- the draft is gone from `GET /documents`, search, facts, the graph and SQL
+  queries;
+- its claims stop counting as evidence (their currency ends with reason
+  `version_deleted`);
+- "the migration finishes in March" stays believed, because Ravi's note still
+  supports it; it now has one supporter instead of two;
+- a fact that only the draft supported is closed, and the closure is recorded
+  as a retraction (`retracted_source_removal`), exactly as when a living
+  document drops a passage.
+
+Deleting is not erasing. The claims, the stored original and the record of
+what changed stay in the deployment as history, which is why a deletion can
+be audited. Erasing a document's bytes and every trace of it is a separate,
+heavier operator operation that is not offered through the API.
+
+If you send the same file again later, it is added back as a new version and
+processed like a new document. The facts that were closed stay closed; its
+new claims support facts in the usual way.
+
+A deletion is all or nothing. A document that was still being processed
+when you deleted it publishes no further claims, and anything it had already
+produced is never visible and is retired when its version reaches the
+`reconcile` stage. Details and errors:
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+## Document statuses
+
+Each version carries a processing status for its early stages:
+
+| Status | Meaning |
+|---|---|
+| `ingesting` | Accepted; bytes are being recorded. |
+| `converting` | Waiting for or running conversion to text. |
+| `structuring` | Converted; sections are being detected. |
+| `ready` | Converted and structured. |
+| `failed` | Conversion or structuring failed; the version's `error` says why. |
+| `deleted` | Removed. |
+
+<Callout type="warning">
+
+`ready` here means the version has been converted and structured. It
+does **not** mean its claims and facts are queryable yet. Extraction and
+fact building run after this. To know when a version can be recalled,
+check [readiness](/docs/concepts/pipeline#readiness), not the document status.
+
+</Callout>
+
+`GET /documents` lists documents newest first, reports the newest version's
+status, and adds a `serving` flag that is `true` when any version of the
+document has reached `ready`. A document whose newest upload failed can still
+be serving an older version. See
+[Ingest, readiness, documents](/docs/reference/http-api/ingest).
+
+## Who ingested a version
+
+A version can record the actor that created it (`ingested_by`), as one of
+three kinds:
+
+- `user`: a person,
+- `api_credential`: a machine credential that a person created,
+- `service`: the deployment's own automation.
+
+The three are never collapsed: activity by a token is not attributed to the
+person who minted it. The actor's identifier is opaque to the engine and
+treated as personal data that can be erased.
+
+Attribution is sent in the `X-Ingest-Principal-Kind` and
+`X-Ingest-Principal-Ref` headers of `POST /ingest`. The engine honours them
+only when the deployment declares its network perimeter trusted and the
+caller holds full write authority; otherwise it ignores them without failing
+the upload. Attribution is set once, when a version is created. Re-sending
+the same bytes as someone else changes nothing.
+
+The Python client does not send these headers, and no read route returns the
+recorded actor yet.
+
+## Where to go next
+
+- [Claims](/docs/concepts/claims): what RememberStack extracts from each version.
+- [Updating a source](/docs/concepts/updating-sources): what a new version means, in
+  `snapshot` and `living` mode.
+- [Ingest files](/docs/guides/ingest-files) and
+  [Keep a source up to date](/docs/guides/keep-sources-current).
+- [Ingest, readiness, documents](/docs/reference/http-api/ingest) for every
+  parameter and error.

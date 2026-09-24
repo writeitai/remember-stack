@@ -1,0 +1,486 @@
+export const metadata = {
+  title: "Ingest, readiness and documents",
+  description: "The routes that add a document, report how far its processing has got, list what the deployment holds, and delete a document.",
+};
+
+# Ingest, readiness and documents
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Four routes cover the write side of memory. `POST /ingest` adds one file.
+`POST /readiness` tells you whether the versions you added are processed far
+enough to query. `GET /documents` lists what the deployment holds, newest
+document first. `DELETE /documents/{doc_id}` removes a document from the
+memory.
+
+Base URL, authentication and error shapes are described in
+[HTTP API conventions](/docs/reference/http-api).
+
+## POST /ingest
+
+Add one file as a new document, or as a new version of an existing one.
+
+**Scope:** `ingest` or `write`.<Cloud> **Spend hold (remember.dev):** `ingest`.</Cloud>
+
+The body is the raw file. Everything else travels in the query string, except
+attribution, which travels in headers so that it never lands in access logs.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `filename` | query | string | yes | | At least 1 character. Its suffix is kept on the stored original; its stem is the title when `title` is absent. |
+| `mime` | query | string | yes | | At least 1 character. Chooses the converter. |
+| `title` | query | string | no | stem of `filename` | |
+| `source_kind` | query | string | no | | At least 1 character. Must be sent together with `source_ref`. |
+| `source_ref` | query | string | no | | At least 1 character. Must be sent together with `source_kind`. |
+| `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
+| `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
+| `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
+| `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
+| `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
+| `Content-Type` | header | | yes | | `application/octet-stream`. |
+| `Content-Length` | header | integer | when the deployment caps bodies | | |
+
+**Body:** the file's bytes, `application/octet-stream`.
+
+### What identifies a document
+
+Without `source_kind` and `source_ref`, the file's content is its identity:
+the document id is derived from the SHA-256 of the bytes. Sending the same
+bytes again is a no-op, and different bytes are a different document. After
+you [delete](#delete-documentsdoc_id) a document, sending its bytes again adds
+it back as a new version (`"created": true`), processed from the start.
+
+With `source_kind` and `source_ref`, the pair is the identity. Use it for
+anything that changes over time — a spec that gets edited, a page in another
+system — so that each change becomes a new version of the same document:
+
+- bytes identical to the document's latest version: no-op, `"created": false`;
+- changed bytes: a new version, `"created": true`;
+- bytes that match only an older version (a revert): a new version.
+
+`versioning_mode` says what a new version means for the old one. `snapshot`
+(the default) keeps what earlier versions said as testimony. `living` treats
+the newest version as the source's current state: claims the new version no
+longer makes stop being current testimony. See
+[Updating a source](/docs/concepts/updating-sources).
+
+A MIME type the deployment has no converter for is still accepted. Its
+conversion waits until a converter route for that type exists, and the
+response says so with `"parked": "no_route"`. See
+[File formats and converters](/docs/self-hosting/converters).
+
+### What the first ingest fixes
+
+Some settings are taken from the first ingest and kept:
+
+- **`title` and `versioning_mode`** belong to the document and are set when
+  it is first ingested. Later ingests of the same document do not change
+  them.
+- **The MIME type** belongs to the bytes: identical bytes are stored once,
+  with the type they were first sent with, and conversion uses that type.
+  One exception: if that type has no converter route, so conversion is
+  parked, sending the same bytes with a type that has a route replaces it
+  and releases every parked conversion of those bytes. A file first sent as
+  `application/octet-stream` is fixed by sending it again as `text/markdown`.
+
+The response reports the values in force (`mime`, `title`,
+`versioning_mode`). Compare them with what you sent to see whether yours
+were taken.
+
+### Attribution
+
+`X-Ingest-Principal-Kind` and `X-Ingest-Principal-Ref` record who added the
+version. The engine believes them only when both hold:
+
+- the deployment declares its network trusted
+  (`REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE=true`, off by default), and
+- when authentication is on, the credential has `write` scope.
+
+Otherwise the headers are ignored, not rejected: the upload succeeds and no
+attribution is recorded. A browser `ingest` credential can never set
+attribution. Attribution belongs to the new version only; a no-op re-ingest
+does not change it.
+
+### Response
+
+`200` with an [`IngestedVersion`](/docs/reference/result-types#ingestedversion):
+
+```json
+{
+  "deployment_id": "5d0c7a52-3b1e-4f55-9a8e-0e6c1f2b7a10",
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+  "content_hash": "3b7c0e2d9f1a…",
+  "created": true,
+  "mime": "text/markdown",
+  "title": "Q3 plan",
+  "versioning_mode": "snapshot",
+  "parked": null
+}
+```
+
+`200` means the version is stored. `"parked": null` means only
+that it is not parked for `no_route`; poll [`POST /readiness`](#post-readiness)
+with the `version_id` for its processing state. `"parked": "no_route"` means
+its conversion is parked waiting for a conversion route for the `mime`: the
+bytes are kept, but nothing reads them until an operator adds a route if
+needed and runs `remember ops resume-no-route`. Do not wait on readiness
+for it; it will not become ready on its own.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
+| `413` | `body_too_large` | The body is over the deployment's cap. |
+| `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
+| `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
+| `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | `source_modified_at`, `source_version_ref` or `versioning_mode=living` without a source identity. |
+| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
+| `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
+| `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
+| `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
+
+<Cloud>
+
+Text metering on remember.dev adds these:
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `413` | `source_bytes_limit_exceeded` | Text metering is on and the file is over 10,000,000 bytes. |
+| `409` | `rate_class_unavailable` | Text metering is on and the bytes are a binary format (PDF, PNG, JPEG, GIF, ZIP, gzip, RIFF, Ogg, MP3, MP4). |
+| `422` | `rate_class_ambiguous` | Text metering is on and the file is not plain UTF-8 text or Markdown: the MIME type is not `text/plain`, `text/markdown`, `text/x-markdown`, `application/octet-stream` or empty; or the text starts with HTML, XML, SVG or RTF markup; or it is not valid UTF-8; or it contains control characters other than tab, newline and carriage return. |
+| `422` | `empty_text` | Text metering is on and the file is empty or only whitespace. |
+
+</Cloud>
+
+<Cloud>
+
+remember.dev caps bodies at 100,000,000 bytes and requires `Content-Length`.
+On remember.dev the spend hold is placed before the body cap is checked, and
+the control plane refuses an over-cap hold itself. The engine then answers an
+over-cap body with `503` `spend_lease_unavailable` rather than `413`. Treat
+both as "too large" when the body is over 100,000,000 bytes.
+
+Text metering applies on deployments that measure processed text for billing,
+which is remember.dev. There, today, `POST /ingest` accepts plain text and
+Markdown only.
+
+</Cloud>
+
+A self-hosted deployment has no body cap unless you set
+`REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`, and accepts any file its
+converters handle.
+
+<Cloud>
+
+Spend refusals (`401`, `403`, `423`, `503`) are listed in
+[HTTP API conventions](/docs/reference/http-api#spend-refusals-rememberdev).
+
+</Cloud>
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/ingest?filename=billing-migration.md&mime=text/markdown&source_kind=notes&source_ref=specs/billing-migration.md&versioning_mode=living" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/octet-stream" \
+  --data-binary @billing-migration.md
+```
+
+```python
+from remember import Client
+
+memory = Client()
+version = memory.ingest(
+    "billing-migration.md",
+    source_kind="notes",
+    source_ref="specs/billing-migration.md",
+    versioning_mode="living",
+)
+print(version.version_id, version.created)
+```
+
+`Client.ingest` accepts a path (string or `Path`) or bytes; with bytes, pass
+`filename`. It takes `mime` from the extension of the file's name (for
+bytes, of `filename`): `.md` is `text/markdown` on every Python
+installation; see [the full table](/docs/guides/ingest-files#the-mime-type).
+An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. `Client.ingest_file(path, ...)` is the same call.
+
+## POST /readiness
+
+Report, for up to 1,000 versions, which pipeline stages have finished and
+whether the capabilities you need are ready. It only reads; it never waits.
+
+**Scope:** `read`.
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `version_ids` | array of UUID | yes | 1 to 1,000 items. Duplicates are collapsed. |
+| `require` | object | yes | All four fields below are required. |
+| `require.pipeline` | boolean | yes | Every expected stage has finished for every version. |
+| `require.p1` | boolean | yes | The search index (claims, chunks, facts) is published. |
+| `require.live_graph` | boolean | yes | The live graph passes its health checks. |
+| `require.p3` | boolean | yes | A filesystem snapshot built after the versions finished has been published. |
+
+Unknown fields are rejected (`422`).
+
+### Response
+
+`200` with a [`PipelineReadinessReport`](/docs/reference/result-types#pipelinereadinessreport).
+`ready` is `true` when every capability you marked as required is ready. Each
+version lists one entry per expected stage with its `status`. A version is
+ready when every stage is `succeeded` or `skipped` and has a `finished_at`.
+
+The stages a self-hosted deployment reports, in order: `convert`, `structure`,
+`chunk`, `embed_chunk`, `extract_claims`, `ground_claims`,
+`normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`,
+`embed_claim`, `reconcile`, `label_relation`.
+
+A `failed` stage has a retry scheduled and can still succeed; keep polling.
+If a stage is `dead_letter`, stop polling: it used all its attempts, and
+that version will not become ready without intervention.
+
+Capability `reason` values:
+
+| Capability | `reason` when ready | `reason` when not ready |
+|---|---|---|
+| `pipeline` | `ready` | `stage_incomplete` |
+| `p1` | `ready` | `search_channel_incomplete` |
+| `p3` | `ready` | `corpus_snapshot_incomplete` |
+| `live_graph` | `ready` | `graph_server_version_mismatch`, `graph_extension_version_mismatch`, `graph_role_contract_mismatch`, `graph_helper_contract_mismatch`, `graph_catalog_mismatch`, `graph_role_runtime_limits_mismatch`, `graph_smoke_identifier_collision`, `graph_pgq_guard_smoke_failed`, `graph_pgq_smoke_failed`, `graph_neighborhood_smoke_failed`, `graph_path_smoke_failed`, `graph_citation_smoke_failed`, `graph_database_or_permission_failed`, `graph_smoke_contract_failed` |
+
+A version id the deployment does not know is not an error: every stage reads
+`missing` and the version is not ready.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | Empty or oversized `version_ids`, a malformed UUID, a missing `require` field, or an unknown field. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/readiness" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"version_ids": ["0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f"],
+       "require": {"pipeline": true, "p1": true, "live_graph": true, "p3": false}}'
+```
+
+```python
+from remember import Client, ReadinessRequirements
+
+memory = Client()
+report = memory.pipeline_readiness(
+    version_ids=(version.version_id,),
+    require=ReadinessRequirements(pipeline=True, p1=True, live_graph=True, p3=False),
+)
+
+# Or poll until ready (pipeline, p1 and live_graph required; p3 optional):
+report = memory.wait_for_readiness([version.version_id])
+```
+
+`wait_for_readiness` polls every `poll_interval` seconds (default 15) and
+raises `TimeoutError` after `timeout` seconds (default 1800). It keeps
+polling through a `failed` stage and raises `PipelineDeadLettered` at once
+on a `dead_letter` stage. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+
+## GET /documents
+
+List the documents the deployment holds, one page at a time, newest document
+first.
+
+**Scope:** `read`.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `limit` | query | integer | no | `50` | 1 to 200. |
+| `cursor` | query | string | no | | The `cursor` from the previous page. Opaque. |
+| `status` | query | `ingesting` \| `converting` \| `structuring` \| `ready` \| `failed` | no | | Filters on the newest version's status. |
+
+Documents are ordered by when each was first seen, then by id. Re-ingesting a
+document does not move it: it is the same document, first seen when it was
+first seen. Deleted documents and deleted versions are not listed.
+
+The order is fixed on purpose. "Most recently changed first" would move a
+document every time a new version arrived, and a client paging through the
+list would skip it or see it twice. `first_seen_at` never changes, so the
+cursor stays exact while documents are being added. A new document still
+appears at the top of the first page.
+
+Each row reports the newest surviving version (`latest`) and, separately,
+whether any version is being served (`serving`). A document whose newest
+upload failed can still be served from an older, working version.
+
+A document status of `ready` means conversion and structuring finished. It
+does not mean the document is searchable yet; use
+[`POST /readiness`](#post-readiness) for that.
+
+### Response
+
+`200` with a [`DocumentPage`](/docs/reference/result-types#documentpage):
+
+```json
+{
+  "documents": [
+    {
+      "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "title": "billing-migration",
+      "source_kind": "notes",
+      "source_uri": "specs/billing-migration.md",
+      "first_seen_at": "2026-09-21T09:14:03.201Z",
+      "latest": {
+        "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+        "version_no": 3,
+        "status": "ready",
+        "ingested_at": "2026-09-23T08:02:11.540Z",
+        "error": null
+      },
+      "serving": true
+    }
+  ],
+  "cursor": null
+}
+```
+
+`cursor` is `null` on the last page.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | `cursor is malformed` | The cursor does not parse. |
+| `422` | validation list | `limit` out of range or an unknown `status`. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/documents?status=failed&limit=20" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+page = memory.list_documents(status="failed", limit=20)
+for document in page.documents:
+    print(document.doc_id, document.title, document.latest.error)
+# page.cursor is None on the last page; pass it back to read the next one.
+```
+
+`remember documents list` prints the same page as JSON.
+
+## DELETE /documents/\{doc_id\}
+
+Remove one document from the memory: every version of it, all at once.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | The `doc_id` that `POST /ingest` returned, or that a claim, chunk or `GET /documents` names. |
+
+There is no body.
+
+### What deleting does
+
+When the call returns, the document is out of the memory:
+
+- it no longer appears in `GET /documents`, search, facts, the graph or SQL
+  queries;
+- its claims stop counting as evidence (their reason becomes
+  `version_deleted`);
+- a fact that only this document supported is closed, with a recorded
+  retraction (`retracted_source_removal`); a fact other documents also
+  support stays, with one supporter fewer.
+
+Deleting is not erasing. The claims and the stored original stay in the
+deployment as history, and the retraction is recorded. Erasing a document's
+bytes and every trace of it is a separate operator operation that is not
+offered through the API.
+
+Processing that was still running for the document stops publishing new
+claims. Anything it already produced is never visible and is retired when
+that version reaches the `reconcile` stage.
+
+A pending review of whether the document's claims were extracted correctly is
+closed as moot, because the document is gone.
+
+If you ingest the same file again later, it is added back as a new version
+and processed from the start, like any new document. The facts that closed
+stay closed; the new claims support facts as usual.
+
+The route starts no pipeline work<Cloud>, so it has no spend hold</Cloud>. Its one possible
+model call re-embeds the profile text of entities whose facts changed; that
+call is recorded with the deployment's other request-time model calls. If
+the model provider is down, the deletion still succeeds and those profiles
+catch up the next time the entity's evidence changes.
+
+### Response
+
+`200` with a [`DocumentDeletion`](/docs/reference/result-types#documentdeletion):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "deleted_at": "2026-09-23T10:41:07.318Z",
+  "claims_retired": 12,
+  "relations_closed": 2,
+  "observations_closed": 1
+}
+```
+
+The counts describe what this call changed.
+
+### Deleting twice
+
+A deletion is all or nothing: the document is hidden and its evidence
+updated in one step, or nothing changes. A second `DELETE` of the same
+document answers `404` `document_not_found`, the same as an id the deployment
+never held, so retrying after a timeout is safe. The one exception is a
+document that was hidden some other way but whose evidence was never updated;
+deleting it finishes the job and answers `200` with what it finished.
+
+If you ingest the document again while a `DELETE` of it is running, the
+ingest waits for the delete to finish and then adds the document back as a
+new version.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is already deleted. Do not retry. |
+| `403` | `credential may not perform this operation` | The credential has `read` or `ingest` scope. |
+| `422` | validation list | `doc_id` is not a UUID. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running, or started preparing just before the delete. Nothing was deleted; retry later. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client, MemoryApiError
+
+memory = Client()
+try:
+    deletion = memory.delete_document(doc_id="a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b")
+    print(deletion.claims_retired, deletion.relations_closed)
+except MemoryApiError as error:
+    if error.status_code != 404:
+        raise
+```

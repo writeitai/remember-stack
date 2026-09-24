@@ -1,0 +1,399 @@
+export const metadata = {
+  title: "HTTP API conventions",
+  description: "Base URL, authentication, scopes, errors, limits and the other rules every RememberStack HTTP route follows.",
+};
+
+# HTTP API conventions
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Every way into RememberStack — the `remember` Python package, the `remember`
+CLI, the MCP server — ends in the same HTTP API. This page covers the rules
+that hold for all of its routes: where to send requests, how to authenticate,
+which credential may call what, how errors look, and which limits apply. The
+group pages then describe each route.
+
+The API has 28 documented operations:
+
+| Group | Page | Routes |
+|---|---|---|
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
+| Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
+| Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
+| Search | [Search](/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
+| Graph | [Graph](/docs/reference/http-api/graph) | `POST /graph/neighborhood`, `POST /graph/path`, `POST /graph/citation-path` |
+| SQL queries | [SQL queries](/docs/reference/http-api/query) | `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` |
+| Deployment | [Deployment](/docs/reference/http-api/deployment) | `GET /deployment` |
+
+Every deployment serves all of them<Cloud>, on remember.dev and self-hosted
+alike</Cloud>, including the SQL query routes (`/query/*`). SQL queries run over the query
+space, `memory_v1`: a fixed set of prepared, read-only views and functions.
+Every statement is parsed and validated against it before it runs, and
+anything outside it is rejected.
+
+The machine-readable schema is attached to every GitHub release:
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.1/openapi.json).
+
+## Base URL
+
+Each deployment answers on its own address. There is no shared gateway in
+front of the memory routes: requests go straight to the deployment.
+
+<Tabs>
+
+<Tab cloud label="remember.dev">
+
+```bash
+export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
+```
+
+One project has one deployment, and the console shows its hostname.
+
+</Tab>
+
+<Tab label="Self-hosted">
+
+```bash
+export REMEMBER_API_URL=http://localhost:8000
+```
+
+The engine listens on port 8000 inside its container
+(`REMEMBERSTACK_SELFHOST_API_PORT`, default `8000`). The Compose file
+publishes it on the host.
+
+</Tab>
+</Tabs>
+
+Paths in this reference are relative to that base URL. The `remember` client
+reads the same variable (`REMEMBER_API_URL`; `REMEMBER_DATA_PLANE_URL` and
+`REMEMBERSTACK_API_URL` are also accepted) and falls back to
+`http://127.0.0.1:8000`.
+
+## Authentication
+
+Send the credential in the `Authorization` header with the `Bearer` scheme:
+
+```bash
+curl -s "$REMEMBER_API_URL/operations" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+The `remember` client adds the `Bearer ` prefix for you when you pass a bare
+secret (`Client(api_key=...)` or `REMEMBER_API_KEY`).
+
+<Cloud>
+
+remember.dev always requires the header.
+
+</Cloud>
+
+A self-hosted deployment requires it only when you configure a credential
+(`REMEMBERSTACK_SELFHOST_API_BEARER_BIND`,
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` or
+`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER`). With none of them set, the API is
+open and ignores the header; protecting it is then the job of your network.
+See [Authentication and scopes](/docs/self-hosting/authentication).
+
+When authentication is on, a request without the header is refused with
+`401` and `{"detail": "a perimeter credential is required"}`. A credential the
+deployment does not accept is `401` with `{"detail": "perimeter authentication failed"}`.
+A valid credential issued for a different deployment is `403` with
+`{"detail": "credential is for another deployment"}`.
+
+`GET /healthz` is the only route that never asks for a credential.
+
+### Credential kinds
+
+| Credential | Where it comes from | Scope it carries |
+|---|---|---|
+| Shared secret (self-hosted) | You choose it; the engine keeps only its SHA-256 digest (`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` is `{deployment-uuid}:{sha256-hex}`). | `write` (unrestricted) |
+| Signed key, `kind: key` | A long-lived key a person created at a key issuer. It can cover several projects. | From its permissions |
+| Signed key, `kind: session` | A short-lived key an issuer derives for this one deployment, for example for a browser. | From its permissions |
+| Signed key, `kind: service` | A short-lived machine credential for this one deployment. | From its permissions |
+
+A deployment verifies signed keys when it is given a key issuer
+(`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` and the settings beside it). It
+fetches the issuer's public keys and a signed revocation document, and
+refuses every signed key while it has no fresh revocation document. A
+signed key's `memory:read`, `memory:write` or `memory:ingest` permission
+becomes the `read`, `write` or `ingest` scope. The claims each kind must
+carry are in [Signed keys](/docs/self-hosting/authentication#signed-keys).
+
+<Cloud>
+
+remember.dev issues three more:
+
+| Credential | Where it comes from | Scope it carries |
+|---|---|---|
+| Deployment API token, `umc_dp_…` (remember.dev) | Console, Settings → API Tokens, or `remember login`. A signed credential the deployment verifies with published public keys. | `write` |
+| Browser read credential (remember.dev console) | Issued to the console for a signed-in member; lives 10 minutes. | `read` |
+| Browser ingest credential (remember.dev console) | Issued to the console for one upload; lives 3 minutes. | `ingest` |
+
+</Cloud>
+
+## Scopes
+
+A credential carries exactly one of three scopes:
+
+| Scope | May call |
+|---|---|
+| `read` | Every route marked `read` below. Nothing that changes memory. |
+| `ingest` | `POST /ingest` only. It cannot read. |
+| `write` | Everything. |
+
+A signed key with no `memory:` permission carries none of them and gets `403`
+on every route.
+
+`read` and `ingest` do not overlap. A credential with too narrow a scope gets
+`403` with `{"detail": "credential may not perform this operation"}`. Scopes
+apply only when authentication is on; an open self-hosted deployment serves
+every route to every caller.
+
+The HTTP method does not tell you the scope. Several reads use `POST` because
+their arguments do not fit in a query string.
+
+| Method | Path | Scope |
+|---|---|---|
+| `GET` | `/healthz` | none (no credential needed) |
+| `GET` | `/resolve` | `read` |
+| `GET` | `/lookup/relations` | `read` |
+| `GET` | `/lookup/observations` | `read` |
+| `GET` | `/transcript/relation/{relation_id}` | `read` |
+| `GET` | `/hydrate/relation/{relation_id}` | `read` |
+| `GET` | `/search/claims` | `read` |
+| `POST` | `/search/claims` | `read` |
+| `GET` | `/search/chunks` | `read` |
+| `POST` | `/search/chunks` | `read` |
+| `GET` | `/chunks/{chunk_id}/adjacent` | `read` |
+| `POST` | `/chunks/adjacent` | `read` |
+| `POST` | `/graph/neighborhood` | `read` |
+| `POST` | `/graph/path` | `read` |
+| `POST` | `/graph/citation-path` | `read` |
+| `POST` | `/query/sql` | `read` |
+| `POST` | `/query/sql/explain` | `read` |
+| `GET` | `/query/space` | `read` |
+| `GET` | `/query/space/search` | `read` |
+| `GET` | `/query/saved` | `read` |
+| `GET` | `/query/saved/{namespace}/{name}` | `read` |
+| `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
+| `POST` | `/readiness` | `read` |
+| `GET` | `/documents` | `read` |
+| `DELETE` | `/documents/{doc_id}` | `write` |
+| `GET` | `/operations` | `read` |
+| `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
+| `POST` | `/ingest` | `ingest` (or `write`) |
+| `GET` | `/deployment` | `read` |
+| any other | any other | `write` |
+
+One entry needs a note: **`POST /operations/{name}` decides per
+operation.** The route asks the operation's descriptor whether it changes
+memory (`mutates`). All four shipped operations only read and declare
+`mutates: false`, so a `read` credential can run them. An operation that
+did not declare itself read-only would need `write`.
+
+Any route added later without a classification also requires `write`.
+
+## Content types
+
+Requests with a body send JSON (`Content-Type: application/json`), except
+`POST /ingest`, which sends the raw file bytes
+(`Content-Type: application/octet-stream`). Every response body is JSON.
+
+Timestamps are ISO 8601 strings. Wherever a timestamp is part of a result, it
+is UTC. Identifiers are UUID strings.
+
+## Errors
+
+A failed request returns a non-2xx status and a JSON body with a single
+`detail` key. `detail` takes one of four forms:
+
+| Form | Example | Where |
+|---|---|---|
+| Short string | `{"detail": "body_too_large"}` | Most refusals: authentication, scope, limits, ingest checks, graph<Cloud>, spend</Cloud>. |
+| Object with `code` | `{"detail": {"code": "forget_in_progress"}}` | `503` while a deletion (hard forget) runs. |
+| Object with `code` and `message` | `{"detail": {"code": "saved_query_not_found", "message": "no saved query named examples.nope"}}` | SQL query routes (`/query/*`), argument errors on `POST /operations/{name}`, and `429` admission refusals. |
+| List of validation errors | `{"detail": [{"type": "missing", "loc": ["query", "name"], "msg": "Field required", "input": null}]}` | `422` when a parameter or body fails its declared type or bounds. |
+
+Branch on the status and on `code` (or the short string), never on `message`.
+Messages are written for people and can change.
+
+The `remember` client raises `remember.MemoryApiError` for every failure, with
+`status_code`, `detail` and, on the `/query/*` routes and on a `429`, `code`
+(plus `retry_after` on a `429`). A network failure has `status_code` `0`.
+
+[Errors and status codes](/docs/reference/errors) lists every status, code and what to
+do about it.
+
+## Status codes that can come from any route
+
+| Status | Body | When |
+|---|---|---|
+| `401` | `a perimeter credential is required` / `perimeter authentication failed` | Missing or unaccepted credential (authentication on). |
+| `403` | `credential is for another deployment` / `credential may not perform this operation` | Wrong deployment, or scope too narrow. |
+| `404` | `Not Found` | Unknown path. The credential is checked first, so an unauthenticated request gets `401`. |
+| `405` | `Method Not Allowed` | Known path, wrong method. |
+| `422` | validation list | A parameter or body is missing, has the wrong type, or is out of bounds. |
+| `429` | `{"code": "rate_limited", …}` / `{"code": "concurrency_limited", …}` | An [admission limit](#admission-limits) was reached. Wait the `Retry-After` seconds, then retry. |
+| `500` | `Internal Server Error` | An unhandled failure: a defect. Report it. |
+| `503` | `{"code": "forget_in_progress"}` | A hard forget is running. Every route except the credential check is closed until it finishes. Retry later. |
+
+<Cloud>
+
+### Spend refusals (remember.dev)
+
+On remember.dev, ingest and every route that reads memory place a spend hold
+with the control plane before the work runs, and release or commit it
+afterwards. The hold is metadata only: it never carries your content. A read's
+commit also reports what the read cost in embeddings (the provider's reported
+cost and token count, 0 for a read that embeds nothing, such as SQL). The
+gated routes are:
+
+| Routes | Hold |
+|---|---|
+| `POST /ingest` | `ingest` |
+| `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` | `search` |
+| `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` | `search` |
+| `POST /graph/neighborhood`, `POST /graph/path`, `POST /graph/citation-path` | `search` |
+| `POST /query/sql`, `POST /query/sql/explain`, `GET /query/space`, `GET /query/space/search`, `GET /query/saved`, `GET /query/saved/{namespace}/{name}`, `POST /query/saved/{namespace}/{name}/run` | `search` |
+| `GET /documents` | `search` |
+| `POST /operations/{name}` | operation, named |
+
+`GET /healthz`, `GET /deployment`, `POST /readiness`, `GET /operations`,
+connector management and document deletion take no hold.
+
+When the hold is refused, the route returns before doing any work:
+
+| Status | `detail` | Meaning |
+|---|---|---|
+| `401` | `missing_bearer`, `invalid_token`, `unknown_token`, `token_expired` | The control plane does not accept the token. |
+| `403` | `token_revoked`, `token_retired`, `project_membership_revoked` | The token or its owner's membership is no longer valid. |
+| `403` | `dispatch_refused:<reason>` | Spending is refused. `<reason>` is one of `fleet_dispatch_halted`, `missing_spend_policy`, `missing_org_provider_key`, `missing_provider_limit_backstop`, `org_usd_ceiling_exhausted`, `org_token_ceiling_exhausted`, `org_call_ceiling_exhausted`, `measurement_failed`. |
+| `423` | `dispatch_parked:<reason>` | The project's work is parked. `<reason>` is the park reason recorded on the project. Work resumes after the cause is fixed, for example after buying credits. |
+| `503` | `spend_lease_unavailable` | The control plane could not be reached or answered with another error. Retry later. |
+
+A self-hosted deployment has no spend hold unless you configure one
+(`REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL`). See
+[Spend caps and auto top-up](/docs/cloud/spend-controls).
+
+</Cloud>
+
+## Admission limits
+
+After the credential check, and before<Cloud> any spend hold or</Cloud> routing, every
+request except `GET /healthz` is counted against two sets of limits: one for
+its credential and one for the whole deployment. A request to an unknown path
+counts too.
+
+| Limit | Default | Setting |
+|---|---|---|
+| Requests per credential | 120 per minute, bursts of 30 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
+| Requests running at once, per credential | 8 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
+| Requests per deployment | 600 per minute, bursts of 150 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
+| Requests running at once, per deployment | 32 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
+
+The request rate works as a bucket of tokens that refills continuously at the
+per-minute rate, up to a burst of a quarter of it; each request takes one. A
+signed credential is counted by its id (`jti`). The shared secret, and every
+caller when authentication is off, is counted against the deployment limits
+only. A refused request counts against nothing.
+
+Over a limit the deployment answers `429` with a `Retry-After` header in whole
+seconds:
+
+| `code` | Meaning | `Retry-After` |
+|---|---|---|
+| `rate_limited` | No request token is left for this credential or the deployment. | Seconds until the next token. |
+| `concurrency_limited` | Too many requests of this credential, or of the deployment, are still running. | `1` |
+
+```json
+{"detail": {"code": "rate_limited", "message": "request rate limit reached; retry after Retry-After seconds"}}
+```
+
+The counters live in the memory of each API process: they start empty when
+the process starts, and with several API processes each has its own, so the
+effective limits are that many times larger. A request whose client
+disconnects stays counted as running until its handler has actually stopped.
+
+## Idempotency
+
+There is no `Idempotency-Key` header. Ingest is idempotent by content: the
+engine hashes the bytes (SHA-256). Sending the same bytes again returns the
+existing version with `"created": false` and starts no new work. For a
+document with a stable source identity (`source_kind` and `source_ref`), bytes
+identical to its latest version are the same no-op; changed bytes become a new
+version of the same document, and so do bytes that match only an older
+version (a revert). See [Ingest](/docs/reference/http-api/ingest#post-ingest).
+
+Every other route only reads, so repeating it is safe.
+
+## Pagination and truncation
+
+Results are bounded everywhere, and a bound is never silent.
+
+- **`GET /documents`** pages with an opaque `cursor`. Pass the `cursor` from
+  one page to get the next; `null` means there is no next page.
+- **Envelope results** carry a `truncation` block when a cap applied:
+  `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
+  `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
+  accepts a `continuation` back today.
+- **SQL query results** (`QueryResult/v1`) carry `truncated`,
+  `truncation_reason` (`row_cap`, `byte_cap`, or a graph budget) and the
+  `limits` the statement ran under.
+
+See [Result types](/docs/reference/result-types).
+
+## Size limits
+
+`POST /ingest` bodies can be capped per deployment. A self-hosted deployment
+has no cap by default; set `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` to
+add one. With a cap set, a body over it gets `413` `body_too_large` and a
+request without `Content-Length` gets `411` `length_required`.
+
+<Cloud>
+
+remember.dev caps bodies at 100,000,000 bytes and always requires
+`Content-Length`. There an over-cap body can instead be answered `503`
+`spend_lease_unavailable`, because the spend hold is checked first; see
+[Ingest](/docs/reference/http-api/ingest#errors).
+
+A deployment that meters processed text (remember.dev) also refuses a text
+document over 10,000,000 bytes with `413` `source_bytes_limit_exceeded`; see
+[Ingest](/docs/reference/http-api/ingest#errors).
+
+</Cloud>
+
+Other bounds are per route: search and lookup `k` up to 400, search query up to 4,096
+characters in the `POST` form, operation queries up to 8,192 characters, SQL
+text up to 65,536 bytes, and so on. Each group page lists them.
+
+## CORS
+
+A deployment sends no CORS headers unless it is told which browser origins may
+call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
+exact `https` origins; empty by default). For those origins it allows:
+
+- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
+- request headers `Authorization` and `Content-Type`,
+- no credentialed (cookie) mode,
+- preflight caching for 600 seconds.
+
+Wildcards are refused at startup, and so is an origin with a path, a user,
+port `443` written out, or upper-case letters.<Cloud> remember.dev deployments allow
+the remember.dev console's origin.</Cloud>
+
+## Routes outside the documented API
+
+The published OpenAPI document (`openapi.json` in the repository) describes
+the 27 operations above. A few routes exist in the code but are not part of
+it:
+
+| Route | Status |
+|---|---|
+| `GET /healthz` | Served by the self-hosted profile as the container's liveness probe. Returns `{"status": "ok"}` after a `SELECT 1` against PostgreSQL. No credential needed. Not in the OpenAPI document. See [Deployment](/docs/reference/http-api/deployment#get-healthz). |
+| `GET /connectors`, `POST /connectors`, `GET /connectors/{connector_id}`, `POST /connectors/{connector_id}/pause` | Defined in the engine, but the shipped profile does not mount them, so they answer `404`. The `remember` client's `connectors()`, `add_connector()`, `pause_connector()` and `connector_status()` methods therefore fail against a stock deployment. |
+| `GET /ops/cost-export/v1` | Served on a separate listener, only when `REMEMBERSTACK_COST_EXPORT_BIND` is set. Self-hosted operators only. See [Deployment](/docs/reference/http-api/deployment#get-opscost-exportv1). |
+
+The running server does not serve its own schema: `/openapi.json`, `/docs`
+and `/redoc` answer `404`. Those pages would answer without a credential, and
+the API is for programs, not browsers, so they are switched off. Use the
+`openapi.json` file checked into the repository for the release you run.

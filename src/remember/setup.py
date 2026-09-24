@@ -18,6 +18,8 @@ from typing import Any
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
+
 
 class _DesktopSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
@@ -517,7 +519,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                 or "localhost" in effective_url
                 or "127.0.0.1" in effective_url
             )
-            token_host = effective_url if is_local else "https://api.remember.dev"
+            token_host = effective_url if is_local else DEFAULT_CONTROL_PLANE_URL
             if stored is not None:
                 updated_projects = (
                     dict(stored.projects) if stored.projects is not None else {}
@@ -559,7 +561,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
                     and target_token
                     and old_token != target_token
                     and not is_local
-                    and ("api.remember.dev" in old_host or "remember.dev" in old_host)
+                    and "remember.dev" in old_host
                 ):
                     from remember.credentials import append_pending_revocation
                     from remember.credentials import PendingRevocation

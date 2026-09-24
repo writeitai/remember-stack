@@ -55,9 +55,9 @@ def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> No
     routes = build_conversion_routes(route_names=settings.conversion_routes)
     assert routes["text/plain"].name == "passthrough"
     assert routes["text/markdown"] is routes["text/plain"]
+    assert routes["text/html"].name == "markitdown"
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "build_conversion_routes" in source
-    assert "stock_passthrough_routes()" not in source
 
 
 def test_selfhost_composes_every_implemented_continuous_route() -> None:
@@ -112,6 +112,11 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
         "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
         "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
+        "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER",
+        "REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID",
+        "REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID",
+        "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL",
+        "REMEMBERSTACK_SELFHOST_API_REVOCATION_URL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     for name, default in (
@@ -122,6 +127,12 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE", "120"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT", "8"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE", "600"),
+        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT", "32"),
+        ("REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S", "60"),
+        ("REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S", "3600"),
     ):
         assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (

@@ -1,0 +1,182 @@
+export const metadata = {
+  title: "Quickstart",
+  description: "Send a document to RememberStack and ask your first question.",
+};
+
+# Quickstart
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+By the end of this page you will have sent a document to RememberStack,
+waited for it to be processed, and asked a question that it answers with a
+fact and the passage behind it.
+
+*RememberStack is the open-source memory engine. `remember` is its Python
+client and CLI.<Cloud> remember.dev runs RememberStack for you.</Cloud>*<Cloud> This page works
+with either.</Cloud>
+
+## 1. Get an endpoint
+
+<Tabs>
+
+<Tab cloud label="remember.dev">
+
+1. Sign in at [remember.dev/app](https://remember.dev/app).
+2. Open **Settings → API Tokens** and create a token.
+3. Copy the token (it starts with `umc_dp_` and is shown once) and the
+   endpoint, `https://<deployment-id>.dp.remember.dev`.
+
+Only organisation owners can create tokens. See
+[Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+
+</Tab>
+
+<Tab label="Self-hosted">
+
+You need Docker with Compose and an
+[OpenRouter](https://openrouter.ai) API key.
+
+```bash
+git clone https://github.com/writeitai/remember-stack.git
+cd remember-stack
+cp .env.example .env
+# edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
+docker compose up -d
+```
+
+The first start builds the PostgreSQL image and runs migrations. When
+`docker compose ps` shows `api` as healthy, the endpoint is
+`http://localhost:8000`. No token is needed by default.
+
+<Callout type="warning">
+
+Compose publishes port 8000 on every network interface of the
+machine, and the API is open by default. On a shared network, read
+[Before you expose it](/docs/self-hosting/install#before-you-expose-it)
+first.
+
+</Callout>
+
+</Tab>
+</Tabs>
+
+## 2. Install the client
+
+```bash
+pip install remember
+```
+
+This installs the Python client and the `remember` command. It needs
+Python 3.12 or later.
+The current release is
+[v0.17.1](https://github.com/writeitai/remember-stack/releases/tag/v0.17.1)
+([on PyPI](https://pypi.org/project/remember/0.17.1/)).
+
+## 3. Point the client at your endpoint
+
+<Tabs>
+
+<Tab cloud label="remember.dev">
+
+```bash
+export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
+export REMEMBER_API_KEY=umc_dp_...
+```
+
+The Python client and the `remember` CLI both read these. Instead of
+exporting a token you can sign the CLI in with `remember login`, which
+opens a browser and stores the token in `~/.config/remember/credentials.json`.
+
+</Tab>
+
+<Tab label="Self-hosted">
+
+```bash
+export REMEMBER_API_URL=http://localhost:8000
+```
+
+</Tab>
+</Tabs>
+
+## 4. Send a document
+
+Save this as `standup.md`:
+
+```markdown
+# Stand-up, 17 September 2026
+
+Ravi said the billing migration moves from June to October, because the
+invoice exporter needs a rewrite. Dana agreed and will tell finance.
+Ravi owns the invoice exporter.
+```
+
+Then send it:
+
+```python
+from datetime import UTC, datetime
+
+import remember
+
+client = remember.Client.from_env()
+version = client.ingest(
+    "standup.md",
+    source_kind="file",
+    source_ref="notes/standup.md",
+    source_modified_at=datetime(2026, 9, 17, 9, 30, tzinfo=UTC),
+)
+print(version.version_id, version.created)
+```
+
+The client sends `.md` files as `text/markdown`, whatever Python you run.
+
+`created` is `True` the first time. Send the same bytes again and it is
+`False`: nothing new is stored<Cloud> and nothing is charged</Cloud>.
+
+## 5. Wait until it is processed
+
+```python
+client.wait_for_readiness([version.version_id])
+```
+
+Processing reads, structures and connects the document. It takes minutes.
+`wait_for_readiness` checks every 15 seconds for up to 30 minutes by
+default, and stops with an error at once if a stage fails for good.
+
+## 6. Ask
+
+```python
+result = client.facts_context("Who owns the invoice exporter?")
+print(result.model_dump_json(indent=2))
+```
+
+The result is an envelope. Look for:
+
+- `facts`: each fact, such as Ravi owns the invoice exporter, with its
+  `validity` (when it held) and `evidence_count`;
+- `evidence`: the claims behind each fact, with the document, the passage
+  and its character positions;
+- `negative`: set instead of facts when the memory knows nothing about what
+  you asked.
+
+[Reading a result](/docs/concepts/reading-results) explains every field.
+
+## The same with the CLI
+
+```bash
+remember ingest standup.md \
+  --source-kind file --source-ref notes/standup.md \
+  --source-modified-at 2026-09-17T09:30:00+00:00
+
+remember query "Who owns the invoice exporter?"
+```
+
+`remember query "<text>"` runs `facts_context`. Add `--combined` to
+`remember query text` to get facts together with claims and source passages.
+
+## Next
+
+- [Connect your coding agent](/docs/start/connect-your-agent) so it can use this
+  memory directly.
+- [Give an agent context](/docs/guides/agent-context): which operation to
+  call for which kind of question.
+- [Ingest files](/docs/guides/ingest-files): PDFs, HTML, bulk loads.

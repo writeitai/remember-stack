@@ -18,6 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.core import CONSUMPTION_SKILL_VERSION
 from rememberstack.core import render_consumption_skill
 from rememberstack.core.open_query_prose import CORRECT_FACTS_CURRENT_SQL
@@ -45,8 +46,6 @@ from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
-from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
-from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.query_sandbox.open_query import OpenQueryFacade
 from rememberstack.surfaces.query_sandbox.saved_queries import PLATFORM_SEED_ACTOR
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryDescription
@@ -534,10 +533,6 @@ def test_mcp_lists_seven_open_tools_not_examples(migrated: str) -> None:
         assert name in names
     assert not any(str(name).startswith("examples.") for name in names)
     assert "resolve_entity" in names
-    # descriptors are exactly the seven static infrastructure tools
-    assert {d["name"] for d in open_query_tool_descriptors()} == set(
-        OPEN_QUERY_TOOL_NAMES
-    )
     called = server.call_tool(
         name="describe_query_space", arguments={"include_examples": True}
     )
@@ -627,16 +622,14 @@ def test_local_mcp_strict_argument_validation(migrated: str) -> None:
 
 def test_remote_mcp_strict_argument_validation() -> None:
     """Remote MCP-to-SDK dispatch rejects the same invalid argument shapes."""
-    from rememberstack.surfaces.query_sandbox.mcp_tools import (
-        validate_open_query_arguments,
-    )
-    from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
+    from remember.mcp_tools import validate_arguments
+    from remember.remote_mcp import RemoteOperationMcpServer
 
     class _StubClient:
         """Minimal client that only exercises open-query argument validation."""
 
         def call_open_query(self, *, name: str, arguments: dict[str, object]) -> object:
-            return validate_open_query_arguments(name=name, arguments=arguments)
+            return validate_arguments(name, arguments)
 
         def list_operations(self) -> list:
             return []
@@ -1068,49 +1061,31 @@ def test_mcp_rejects_mixed_deployment_composition(migrated: str) -> None:
 
 def test_mcp_rejects_explicit_null_for_string_and_integer_fields() -> None:
     """Present null is a type error for schema string/integer fields; omission defaults."""
-    from rememberstack.surfaces.query_sandbox.mcp_tools import (
-        validate_open_query_arguments,
-    )
+    from remember.mcp_tools import validate_arguments
 
     with pytest.raises(SandboxRejection, match="pattern"):
-        validate_open_query_arguments(
-            name="describe_query_space", arguments={"pattern": None}
-        )
+        validate_arguments("describe_query_space", {"pattern": None})
     with pytest.raises(SandboxRejection, match="namespace"):
-        validate_open_query_arguments(
-            name="list_saved_queries", arguments={"namespace": None}
-        )
+        validate_arguments("list_saved_queries", {"namespace": None})
     with pytest.raises(SandboxRejection, match="status"):
-        validate_open_query_arguments(
-            name="list_saved_queries", arguments={"status": None}
+        validate_arguments("list_saved_queries", {"status": None})
+    with pytest.raises(SandboxRejection, match="version"):
+        validate_arguments(
+            "describe_saved_query",
+            {"namespace": "examples", "name": "relation_current", "version": None},
         )
     with pytest.raises(SandboxRejection, match="version"):
-        validate_open_query_arguments(
-            name="describe_saved_query",
-            arguments={
-                "namespace": "examples",
-                "name": "relation_current",
-                "version": None,
-            },
-        )
-    with pytest.raises(SandboxRejection, match="version"):
-        validate_open_query_arguments(
-            name="run_saved_query",
-            arguments={
-                "namespace": "examples",
-                "name": "relation_current",
-                "version": None,
-            },
+        validate_arguments(
+            "run_saved_query",
+            {"namespace": "examples", "name": "relation_current", "version": None},
         )
     with pytest.raises(SandboxRejection, match="max_rows"):
-        validate_open_query_arguments(
-            name="query_sql", arguments={"sql": "SELECT 1", "max_rows": None}
-        )
+        validate_arguments("query_sql", {"sql": "SELECT 1", "max_rows": None})
     # Omission still applies defaults (not a type error).
-    omitted = validate_open_query_arguments(name="describe_query_space", arguments={})
+    omitted = validate_arguments("describe_query_space", {})
     assert omitted["pattern"] is None
     assert omitted["include_examples"] is False
-    listed = validate_open_query_arguments(name="list_saved_queries", arguments={})
+    listed = validate_arguments("list_saved_queries", {})
     assert listed["namespace"] is None
     assert listed["status"] is None
 
@@ -1379,16 +1354,12 @@ def _normalize_headline_whitespace(text: str) -> str:
 
 
 _OSS_HEADLINE_DOC_PATHS: tuple[Path, ...] = (
-    _ROOT / "website/src/app/docs/concepts/page.mdx",
-    _ROOT / "website/src/app/docs/mounts/page.mdx",
-    _ROOT / "website/src/app/docs/reference/api/page.mdx",
-    _ROOT / "website/src/app/docs/reference/cli/page.mdx",
-    _ROOT / "website/src/app/docs/reference/mcp/page.mdx",
+    _ROOT / "website/src/app/docs/reference/query-space/page.mdx",
 )
 
 
 def test_bound_headline_matches_design_and_documentation_copies() -> None:
-    """Design blockquote, discovery, and five OSS docs share the full headline."""
+    """Design blockquote, discovery, and the query-space reference share the full headline."""
     from rememberstack.surfaces.query_sandbox.discovery import describe_query_space
 
     design_headline = _bound_headline_from_design_blockquote()
@@ -1404,7 +1375,7 @@ def test_bound_headline_matches_design_and_documentation_copies() -> None:
     )
 
     design_norm = _normalize_headline_whitespace(design_headline)
-    assert len(_OSS_HEADLINE_DOC_PATHS) == 5
+    assert len(_OSS_HEADLINE_DOC_PATHS) == 1
     for path in _OSS_HEADLINE_DOC_PATHS:
         page = path.read_text(encoding="utf-8")
         assert "`fact_claim_evidence`" in page

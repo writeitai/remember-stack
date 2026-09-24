@@ -71,8 +71,9 @@ be **composable, self-describing, and honest**:
 
 - **Composable** — a small set of typed, orthogonal primitives (§3) that agents chain; assured
   operations (§4) are frozen compositions, not new capabilities.
-- **Self-describing** — the system teaches its consumers: MCP tool descriptions render from
-  the assured-operation registry; a shipped **consumption skill** (§8) teaches the memory model itself.
+- **Self-describing** — the system teaches its consumers: MCP tool descriptions are defined
+  once in the public `remember.mcp_tools` catalogue, from which the assured-operation registry
+  takes its agent-facing fields (D136); a shipped **consumption skill** (§8) teaches the memory model itself.
 - **Honest** — every response carries a machine-readable account of its own limitations:
   grain, freshness, contradictions, truncation, and a typed taxonomy of "no" (§5, §6).
 
@@ -279,9 +280,13 @@ the control-plane tables in
    enforcement mechanism.
 2. **The eval harness measures per operation.** Recall@k per operation per scenario class
    (D22's retrieval half); operation versions make regressions attributable.
-3. **MCP tools render from the closed registry** — the assured tool list is the four
-   platform-owned rows (name/description/parameters), exactly as extraction prompts render
-   from the ontology registry. Customer-authored behavior belongs in the saved-query registry
+3. **The four assured operations are the only intent tools.** They are four entries of the
+   shared MCP catalogue `remember.mcp_tools` (D136,
+   [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)),
+   which defines their name, description and parameters once; the registry rows take those
+   fields from it. The catalogue's other entries are infrastructure, not intent tools:
+   `ingest`, `pipeline_readiness`, `delete_document`, `source_open` and the seven open-query
+   tools. Customer-authored behavior belongs in the saved-query registry
    and never becomes a top-level intent tool merely by inserting a row.
 
 Assured operations never add base capability — anything they do is composed from §3 and the
@@ -483,12 +488,14 @@ authored pages, `_index.md`/`llms.txt` orientation). Markdown is what navigation
 originals are reachable deliberately (S56, S59).
 
 **API / CLI / MCP:** the primitives of §3, the four closed assured operations of §4, and the
-open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders only the four
-platform-owned assured descriptors as intent tools, plus `source_open`, `data_query` and
-`search_documents` — the three §3 primitives MCP exposes directly, because each answers an intent
-an agent must be able to *find and choose* (D115: "let me look at it"; D133: "compute over this
-file"; D134: "find the file"), and a primitive an agent cannot discover cannot be the answer to
-any of them; reusable patterns remain discoverable `examples.*` saved
+open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders the full
+shared catalogue (`remember.mcp_tools`, D136): the four platform-owned assured descriptors as
+the only *intent* tools, and as infrastructure the write and readiness tools, the seven
+open-query tools, and `source_open`, `data_query` and `search_documents` — the three §3
+primitives MCP exposes directly, because each answers an intent an agent must be able to *find
+and choose* (D115: "let me look at it"; D133: "compute over this file"; D134: "find the file"),
+and a primitive an agent cannot discover cannot be the answer to any of them; reusable patterns
+remain discoverable `examples.*` saved
 queries rather than becoming tools. CLI mirrors the API 1:1 (agents shell out);
 the API is the one place authorization is enforced for query-engine reads (§9). The clean target
 uses `GET /operations`, `POST /operations/{name}`, SDK

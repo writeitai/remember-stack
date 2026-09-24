@@ -260,7 +260,7 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
 
     This composition is operation-only (no ingest/readiness ports), so Layer 1
     write tools are correctly absent. When those ports are composed, static
-    write tools lead the list — covered in test_mcp_memory_tools.
+    write tools lead the list — covered in test_mcp_write_tools.
     """
     registry_names = {
         operation.name.value

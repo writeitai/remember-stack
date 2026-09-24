@@ -1,0 +1,152 @@
+export const metadata = {
+  title: "Data handling and security",
+  description: "Where remember.dev keeps your data, who and what can reach it, which outside services see it, what is recorded, and what remember.dev does not promise.",
+};
+
+# Data handling and security
+
+<AppliesTo products={["remember.dev"]} />
+
+This page says where your memory lives, how it is kept apart from other
+customers', what passes through remember.dev's own services, and what is
+not promised. Read the last section before you send anything you cannot
+replace.
+
+## Isolation
+
+Each project has its own deployment. A deployment has:
+
+- its own PostgreSQL database;
+- its own storage buckets for source files and derived artifacts;
+- its own credentials and signing key;
+- its own model provider key;
+- its own hostname, `https://<deployment-id>.dp.remember.dev`.
+
+Deployments share physical hosts, but not databases, buckets or
+credentials. There are no tenant rows inside one shared engine, and
+projects inside the same organisation are isolated from each other as
+strictly as projects of different customers.
+
+A deployment API token names exactly one deployment. Another deployment
+refuses it.
+
+## How requests reach your deployment
+
+Your client connects straight to your deployment's hostname. The
+`*.dp.remember.dev` addresses point at a remember.dev gateway that routes
+the connection by hostname without decrypting it; TLS ends inside your
+deployment. The gateway holds no certificate or key for your hostname.
+
+The console and the account API (`https://remember.dev/app/api`) handle
+sign-in, tokens, projects and billing. They do not relay your memory
+requests. When the console shows your memory, your browser fetches it from
+the deployment directly with a 10-minute, read-only credential.
+
+**Hosted MCP is the exception.** When an agent uses
+[hosted MCP](/docs/cloud/hosted-mcp), the tool call and its result pass through
+Cloudflare and the account API on their way to and from your deployment.
+remember.dev does not store them.
+
+## What remember.dev's control plane holds
+
+The control plane keeps account and billing data: your email address, name
+and password hash (or Google link), organisations, members, projects,
+token metadata, the credit ledger, statements and support records.
+
+For billing it receives measurements from each deployment: character
+counts, byte counts, timestamps, outcomes and opaque identifiers. These
+measurements carry no document text, file names or content hashes.
+
+Tokens are stored only as hashes. A token's secret is shown once and
+cannot be recovered.
+
+## Where data lives
+
+| What | Where |
+|---|---|
+| Deployments: databases, pipeline workers | Hetzner, Falkenstein, Germany |
+| Source files and artifacts | A remember.dev storage cell at Hetzner, Falkenstein, Germany |
+| Deployment gateway | Hetzner, Falkenstein, Germany |
+| Secrets, the billing meter service and fleet automation | Google Cloud, `europe-west1` (Belgium) |
+| Website, DNS and the console's front door | Cloudflare |
+
+remember.dev runs in this one location. There is no second region and no
+replication.
+
+## Outside services
+
+| Service | What it receives | Why |
+|---|---|---|
+| OpenRouter, and the model providers it routes to | Document text and questions, as model input, while the pipeline processes documents and answers retrieval that uses models | Language models and embeddings |
+| Stripe | Your billing email, payment details and the amounts you buy | Payments and tax |
+| Google | Your sign-in, if you use Google sign-in | Authentication |
+| Brevo | Your email address and the transactional message | Verification, reset and invitation emails |
+| Cloudflare | Traffic to the website, the console and the account API, including hosted MCP calls. Not traffic to your deployment's hostname | DNS, the website and the console's front door |
+
+Each project has its own OpenRouter key with its own spending limit.
+
+## Diagnostics
+
+Diagnostics are on by default. When a deployment reports problems for
+remember.dev to investigate, those diagnostics can include the text of
+model inputs and outputs. Error reports and logs are kept without content.
+
+You can opt out for your organisation under
+**Settings → Privacy & diagnostics**. Opting out is an owner setting.
+
+Diagnostics are held on an observability host that remember.dev runs.
+Diagnostics with content are deleted after 30 days; logs and error reports
+after 90 days.
+
+## Records of what happened
+
+remember.dev writes an append-only record of account actions: tokens
+minted, presented and revoked, device logins approved, projects created and
+archived, members added, invitations, billing decisions and offboarding
+steps. The record names who acted, or which token.
+
+The credit ledger is append-only too; see [Pricing and credits](/docs/cloud/pricing).
+
+You cannot read or download these records yet. If you need to know what
+happened on your account, ask [support](/docs/cloud/support).
+
+## Support access
+
+remember.dev does not yet have a way for you to grant support staff
+time-limited access to your deployment, and the console has no support
+access to approve. Support works from what you tell them in a support
+record, from the account records above, and from diagnostics.
+
+## Token hygiene
+
+- Give each machine or job its own deployment token, with a label that
+  names it.
+- Keep tokens in environment variables or a secret manager. Never commit
+  one, and never paste one into an agent's chat; connect agents with
+  [hosted MCP](/docs/cloud/hosted-mcp).
+- Rotate tokens before they expire; the console and the CLI warn you.
+- If a token leaks, revoke it first under **Settings → API Tokens**, then
+  mint a replacement.
+- `remember logout` revokes the tokens on a machine you are giving up.
+
+Details are in [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+
+## What remember.dev does not promise
+
+- **No backups.** remember.dev does not promise that your data is backed up
+  or can be restored. A failed host or disk can lose it.
+- **No export.** There is no export or download of your memory, now or
+  later. Keep your own copies of your source files. They are also how you
+  move to a self-hosted deployment: re-ingest them there.
+- **No availability or latency figures.** There is no service level
+  agreement.
+- **No certifications** and no single sign-on.
+- **No erasure of a single document.** Deleting a document removes it from
+  the memory, but its stored original and its claims stay in the project's
+  storage as history until the project is closed.
+- **No per-document permissions.** Anyone who can read a project's memory
+  can read all of it. Put material that needs a different audience in a
+  different project.
+
+For personal-data requests under the GDPR, write to privacy@remember.dev.
+To report a security problem, write to security@remember.dev.

@@ -1,0 +1,189 @@
+export const metadata = {
+  title: "Models and providers",
+  description: "Which model each pipeline step uses, how to change it, how RememberStack routes calls through OpenRouter, and what changing the embedding model does.",
+};
+
+# Models and providers
+
+<AppliesTo products={["self-hosted"]} />
+
+RememberStack calls language models to read your documents and an
+embedding model to make them searchable. A self-hosted deployment sends
+every one of those calls through [OpenRouter](https://openrouter.ai) with
+the key in `REMEMBERSTACK_OPENROUTER_API_KEY`, and pays for them on that
+account. This page lists each place a model is used (a *seat*), what it
+does, and the settings that shape the calls.
+
+Retrieval itself calls no language model. A search embeds your query text
+once; the operations, graph and SQL queries then read the database.
+
+## Model seats
+
+Each seat is one environment variable holding an OpenRouter model id. The
+defaults are the values `compose.yaml` passes when `.env` leaves them
+unset.
+
+| Seat | Variable | Default | What it does |
+|---|---|---|---|
+| Structure fallback | `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | Proposes section anchors when a document's own headings do not give a usable outline. A document whose headings pass the structure checks never reaches this seat. |
+| Skeleton check | `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | Checks a proposed section outline, independently of the model that proposed it. |
+| Section role | `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | Classifies what each section is for, from its title. |
+| Section summary | `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | Writes the short summary of each section. |
+| Claim extraction | `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | Selects the sentences that state something and turns them into claims. Used by both the `extract_claims` and `ground_claims` workers. |
+| Relation normalisation | `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | Turns claims into relations between entities. |
+| Entity resolution | `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | Decides between candidate entities when the deterministic name matching cannot. |
+| Fact adjudication | `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | Decides whether a new statement confirms, contradicts or replaces a fact the memory holds. |
+| Embeddings | `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Every vector: chunks, claims, facts, entity profiles, and the query text of each search. |
+
+`GET /deployment` reports the models the running deployment is bound to
+under `model_bindings`, so you can check what is serving:
+
+```bash
+curl http://localhost:8000/deployment
+```
+
+### Variables that exist but are not used
+
+`compose.yaml` also passes these, with defaults. The shipped pipeline does
+not use them to choose a model; changing them changes nothing, except where
+noted:
+
+| Variable | Default | Status |
+|---|---|---|
+| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Ignored for embedding: chunks are embedded with `REMEMBERSTACK_P1_EMBEDDING_MODEL`. `GET /deployment` still reports this value as `chunk_embedding`, so keep the two equal. |
+| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | Reported as `context_prefix`; chunk context is now built without a model. |
+| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | Reported as `fact_label`; relation labels are built without a model. |
+| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Not read by the shipped pipeline. |
+| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | Not read by the shipped pipeline. |
+| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
+
+The same holds for the observation thresholds
+`REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` (0.75), `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN`
+(0.8), `REMEMBERSTACK_OBS_NOVELTY_FLOOR` (0.3), `REMEMBERSTACK_OBS_HUB_TOP_K`
+(5) and `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` (0.75).
+
+## Fact adjudication
+
+Fact adjudication decides what the memory holds true, so it has two extra
+settings:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` asks `REMEMBERSTACK_FACT_MODEL` through OpenRouter. `jev` asks a TypeSafe AI System One model instead. |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | Below this confidence the adjudicator does not replace or contradict anything: the new statement and the existing fact are both kept. |
+
+The `jev` engine needs its own key and settings:
+
+| Variable | Default |
+|---|---|
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | none (required with `jev`; the fact workers refuse to start without it) |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false`. When `true`, a failed TypeSafe call falls back to the `prompt` engine instead of failing the work item. |
+
+## Change a model
+
+Put the new model id in `.env` and apply it:
+
+```bash
+# .env
+REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-sol
+```
+
+```bash
+docker compose up -d
+```
+
+Use exact model ids. A rotating router id such as `openrouter/free` makes
+results impossible to reproduce and to attribute. A chat seat needs a model
+that supports structured (JSON schema) output, because every seat asks for
+a typed answer and rejects one that does not match.
+
+A new model applies to work done from then on. Documents already processed
+keep what the old model produced; RememberStack does not re-run them on
+its own.
+
+## Changing the embedding model
+
+Every vector in RememberStack has **1,536 dimensions**. The column types,
+the search channels and every request are fixed at that size: the engine
+asks the provider for 1,536 dimensions and rejects a response of any other
+length. An embedding model can replace `qwen/qwen3-embedding-8b` only if it
+can return 1,536-dimension vectors on request.
+
+Each stored vector is stamped with the model that produced it, and search
+compares a query only with vectors of the current model. If you change
+`REMEMBERSTACK_P1_EMBEDDING_MODEL` on a deployment that already holds
+documents:
+
+- `setup` points the search channels at the new model and re-embeds entity
+  profiles.
+- Chunks, claims and facts embedded with the old model stay as they are
+  and drop out of semantic search. Keyword (BM25) search still finds them.
+- Nothing re-embeds them automatically.
+
+Treat the embedding model as fixed for the life of a deployment. To use a
+different one, start a new deployment and send the documents again.
+
+## OpenRouter routing and limits
+
+These settings apply to every call through OpenRouter.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | Comma-separated provider slugs to try first for chat calls. Other providers remain a fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. A call they cannot serve fails. Cannot be combined with the order. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. Not passed by `compose.yaml`; set it through `engine.env` ([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)). |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
+| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. Not passed by `compose.yaml`. |
+
+When you set a provider list or ZDR, each chat call also tells OpenRouter
+not to route to providers that collect data (`data_collection: deny`). With
+none of them set, OpenRouter applies your account's own routing settings.
+
+Lowering reasoning effort makes extraction faster and cheaper; the comment
+in `.env.example` notes that `none` can reduce adjudication quality and
+that some models reject it. A map lets you turn it off for the small models
+only:
+
+```bash
+REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP={"z-ai/glm-4.7-flash":"none","openai/gpt-5.6-luna":"high"}
+```
+
+For debugging, `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR`
+(an absolute path, for example
+`/var/lib/rememberstack/openrouter-invalid-completions`) keeps every model
+answer that failed schema validation, one file each, readable only by the
+engine user. Those files can repeat text from your documents; treat the
+directory as customer data and leave the setting off otherwise.
+
+## Cost
+
+Every document costs model calls: section work during structuring, claim
+extraction for every chunk, relation normalisation, entity resolution and
+fact adjudication for what it says, and embeddings for its chunks, claims
+and facts. Each search costs one query embedding. The size of the bill
+depends on your documents and the models you choose; RememberStack has
+published no per-document cost figures.
+
+Every billed call is written to the cost ledger with its model, tokens,
+cost in US dollars and the pipeline stage that made it. Read it with the
+[cost export](/docs/self-hosting/observability#cost-export), and cap it per stage with
+[spend budgets](/docs/self-hosting/operating#spend-budgets). The provider account's own
+limit is the final monetary boundary.
+
+<Cloud>
+
+remember.dev chooses the models and supplies the model key for each
+project's deployment; see [What remember.dev serves](/docs/cloud/compatibility).
+
+</Cloud>

@@ -1,0 +1,346 @@
+export const metadata = {
+  title: "Glossary",
+  description: "Every term the RememberStack documentation uses, in one or two plain sentences, with a link to where it is explained.",
+};
+
+# Glossary
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+The documentation uses each of these terms in one sense only. Where a term
+has a field or value in the API, it is shown in code.
+
+## Products
+
+**RememberStack**
+: The open-source memory engine for AI agents. It turns documents into
+  claims, facts and entities, and serves them to agents without a language
+  model on the read path.
+
+**`remember` package**
+: The Python client, CLI and MCP server for RememberStack (`pip install
+  remember`).<Cloud> The same code talks to remember.dev and to a self-hosted
+  engine.</Cloud>
+
+<Cloud>
+
+**remember.dev**
+: The managed service that runs RememberStack for you. See
+  [What remember.dev runs for you](/docs/cloud/overview).
+
+</Cloud>
+
+**Self-hosted**
+: Running the RememberStack engine yourself, with Docker Compose. See
+  [Install](/docs/self-hosting/install).
+
+## Deployments
+
+**Deployment**
+: One running RememberStack memory: its own database, storage and
+  credentials. Everything you ingest and query lives in exactly one
+  deployment.
+
+<Cloud>
+
+**Organisation** (remember.dev only)
+: The remember.dev account that holds billing and the team. See
+  [Organisations, projects and members](/docs/cloud/organisations-and-projects).
+
+**Project** (remember.dev only)
+: A unit of work inside an organisation. Each project gets one isolated
+  deployment. See
+  [Organisations, projects and members](/docs/cloud/organisations-and-projects).
+
+</Cloud>
+
+## Sources and documents
+
+**Document** (`doc_id`)
+: One logical file over its whole life, such as a spec or a meeting
+  transcript. Its identity stays the same when its content changes. See
+  [Documents, versions and sources](/docs/concepts/documents-and-sources).
+
+**Version** (`version_id`)
+: One snapshot of a document's bytes. Versions are append-only and never
+  edited. See [Documents, versions and sources](/docs/concepts/documents-and-sources).
+
+**Source** (`source_kind` + `source_ref`)
+: Where a document comes from, given as a pair: the class of source and the
+  item's stable ID within it. The pair is the document's identity. See
+  [Documents, versions and sources](/docs/concepts/documents-and-sources#source-source_kind-and-source_ref).
+
+**Content object**
+: The stored bytes of a file, kept once per content hash however many
+  versions or documents share them.
+
+**Representation** (`representation_id`)
+: One conversion of a version into text (`document.md`). Evidence positions
+  point into a representation.
+
+**Section**
+: A part of a document found from its structure, such as its headings, with
+  a role. Chunks and claims know which section they belong to.
+
+**Chunk** (`chunk_id`)
+: A passage of a document's converted text: a run of whole blocks, not
+  overlapping any other chunk. Chunks are what claims are extracted from and
+  what passage search returns.
+
+**Versioning mode** (`snapshot`, `living`)
+: What a new version of a document means. In `snapshot` mode (the default)
+  every version stays standing testimony; in `living` mode the newest
+  version replaces what older ones said. See
+  [Updating a source](/docs/concepts/updating-sources).
+
+**`source_modified_at`**
+: When the source says the content was written or last changed. It becomes
+  the said-on time of every claim from that version.
+
+**`source_version_ref`**
+: An optional revision marker from the source system, such as an ETag or
+  commit SHA, stored on the version.
+
+**Ingested by** (`ingested_by`)
+: The actor that created a version: a `user`, an `api_credential` or a
+  `service`. See
+  [Documents, versions and sources](/docs/concepts/documents-and-sources#who-ingested-a-version).
+
+## Claims and facts
+
+**Claim** (`claim_id`)
+: One standalone statement a source made, tied to the exact text that
+  supports it. Claims never change. See [Claims](/docs/concepts/claims).
+
+**Selection**
+: The first extraction step: decides which statements in a chunk become
+  claims and records a reason for each one it drops. See
+  [Claims](/docs/concepts/claims#1-selection-what-is-worth-keeping).
+
+**Claimify**
+: The second extraction step: rewrites kept statements into standalone
+  claims and cites their supporting passages. See
+  [Claims](/docs/concepts/claims#2-claimify-make-each-statement-stand-alone).
+
+**Grounding gate**
+: The deterministic check that refuses any claim whose cited passages or
+  added words are not in the source. See
+  [Claims](/docs/concepts/claims#3-the-grounding-gate-no-text-without-a-source).
+
+**Attributed claim** (`is_attributed`)
+: A claim that records someone's statement or stance ("Dana believes…")
+  rather than asserting something directly.
+
+**Current testimony** (`is_current_testimony`)
+: Whether a claim still counts as what its source currently says. Claims
+  stop being current when re-extracted, superseded in a living document, or
+  deleted. See [Claims](/docs/concepts/claims#current-and-superseded-testimony).
+
+**Fact** (`fact_id`)
+: A piece of knowledge the memory holds true, built from claims: either a
+  relation or an observation. Facts change as evidence arrives. See
+  [Facts](/docs/concepts/facts).
+
+**Relation**
+: A fact that connects two entities with a predicate ("Ravi works_on billing
+  migration"). Relations are the edges of the graph.
+
+**Observation**
+: A fact about one entity: a value, property, state or stance. Observations
+  are searchable but are not graph edges.
+
+**Predicate**
+: The name of a relation's connection, from a governed vocabulary of 16
+  core predicates, an `other:` escape value, or an extension pack. See
+  [Facts](/docs/concepts/facts#predicates).
+
+**Extension pack**
+: A named set of extra predicates for a domain, such as `work`.
+
+**Adjudication**
+: The step that decides how a new assertion changes the facts: add, confirm,
+  adjust, supersede or contradict. See
+  [Facts](/docs/concepts/facts#how-a-claim-changes-the-facts).
+
+**Evidence count** (`evidence_count`)
+: The number of distinct documents whose current testimony supports a fact.
+
+**Support withdrawn** (`support: "withdrawn"`)
+: A fact whose only support disappeared because of a processing change
+  rather than a source change. It is still returned, flagged. See
+  [Facts](/docs/concepts/facts#support-withdrawn).
+
+**Retraction**
+: A fact losing belief because a living source removed, or a deletion took
+  away, its only support. Recorded as `retracted_source_removal`. See
+  [Updating a source](/docs/concepts/updating-sources).
+
+**Label**
+: A fact's readable sentence, without dates.
+
+## Entities
+
+**Entity** (`entity_id`)
+: One real-world referent (a person, team, project, event) however it is
+  spelled. Entities have no type. See [Entities](/docs/concepts/entities).
+
+**Alias**
+: A spelling a source used for an entity.
+
+**Profile**
+: A short prose summary of an entity built from its important facts, used
+  to decide identity.
+
+**Resolution**
+: Matching a name to an entity. At write time a cascade of steps decides; at
+  query time `resolve_entity` returns candidates and never guesses. See
+  [Entities](/docs/concepts/entities).
+
+**Tier** (`T0`–`T3`)
+: The resolution step that found an entity candidate: exact alias, similar
+  spelling, similar sound, profile embedding.
+
+**Merge**
+: Redirecting one entity into another when both are the same referent.
+  Merges keep a snapshot and can be undone.
+
+## Evidence and disagreement
+
+**Evidence**
+: The claims that support or dispute a fact, and the source text that
+  supports a claim. See [Evidence](/docs/concepts/evidence).
+
+**Evidence span** (`evidence_spans`)
+: A character range in a version's converted text that supports a claim. A
+  claim has one or more.
+
+**Stance** (`supports`, `contradicts`)
+: Whether a claim backs a fact or disputes it.
+
+**Contradiction**
+: Two or more facts that cannot all be true, returned together as a
+  contradiction group. See [Contradictions](/docs/concepts/contradictions).
+
+**Co-member**
+: Another fact in the same contradiction group.
+
+**Corroboration**
+: Independent documents stating the same thing, counted by distinct
+  documents, never by versions or repetitions.
+
+**Supersession**
+: A later fact replacing an earlier one because the world changed; the
+  earlier fact's window is closed at the later one's start.
+
+**Transcript**
+: A fact's decision history: every adjudication, with outcome, method and
+  confidence. See [Evidence](/docs/concepts/evidence#why-do-we-believe-this).
+
+## Time
+
+**World time** (valid time)
+: When something was true or happened: `valid_from`, `valid_until` and
+  `valid_precision` on facts; the `claim_valid_*` fields on claims. See
+  [Time](/docs/concepts/time).
+
+**Said-on time** (`asserted_at`)
+: When a source made a statement.
+
+**Belief time** (`ingested_at`, `invalidated_at`)
+: When the memory learned a fact and when it stopped believing it.
+
+**Precision** (`valid_precision`)
+: How exact a window is: `instant`, `day`, `month`, `quarter`, `year`,
+  `open` (known start, ongoing) or `unknown`.
+
+**Claim valid kind** (`claim_valid_kind`)
+: What a claim's stated time describes: `event_time`, `effective_period`,
+  `measurement_period` or `proposition_validity`.
+
+**Time mode** (`current`, `at`, `overlap`, `history`)
+: Which facts a query selects by world time. See
+  [Time](/docs/concepts/time#asking-about-time).
+
+**Temporal match** (`confirmed`, `possible`)
+: Whether a fact's window establishes that it matches the query's time, or
+  only fails to rule it out.
+
+**Temporal scope** (`temporal_scope`)
+: The part of every result that states which time it describes and when it
+  was evaluated.
+
+## Processing
+
+**Pipeline**
+: The stages that turn an ingested version into claims, facts and search
+  indexes, in the background. See [The pipeline](/docs/concepts/pipeline).
+
+**Stage**
+: One step of the pipeline, such as `convert` or `extract_claims`, with a
+  status per version.
+
+**Dead letter** (`dead_letter`)
+: Work that failed and will not be retried automatically.
+
+**Readiness**
+: Whether given versions have finished processing and the capabilities you
+  need (`pipeline`, `p1`, `live_graph`, `p3`) are ready, so the content can
+  be recalled. See [The pipeline](/docs/concepts/pipeline#readiness).
+
+## Reading
+
+**Assured operation**
+: One of four fixed, registered reads: `resolve_entity`, `facts_context`,
+  `claims_and_sources_context`, `combined_context`. See
+  [Retrieval](/docs/concepts/retrieval) and
+  [Assured operations](/docs/reference/assured-operations).
+
+**Primitive**
+: A lower-level read such as search, lookup, graph traversal or hydration.
+  See [Retrieval](/docs/concepts/retrieval#retrieval-primitives).
+
+**Envelope**
+: The object every read returns: the results plus an account of their
+  grain, time, completeness and emptiness. See
+  [Reading a result](/docs/concepts/reading-results).
+
+**ContextBundle/v2**
+: The result of `combined_context`: a claims-and-sources envelope and a
+  facts envelope side by side.
+
+**Grain** (`fact`, `evidence`, `composite`, `compiled`)
+: What kind of truth an envelope holds.
+
+**Negative** (`unknown_entity`, `known_empty`, `boundary`)
+: The typed reason an answer is empty.
+
+**Hydration**
+: Re-reading search candidates from live data before returning them, and
+  dropping those that no longer hold (`dropped_by_hydration`).
+
+**Semantic search**
+: Search by meaning over embeddings (vectors), with pgvector.
+
+**BM25**
+: Keyword search that ranks by term matches, with PostgreSQL's
+  `pg_textsearch`.
+
+**RRF** (reciprocal rank fusion)
+: Merging several ranked lists by summing `1 / (60 + rank)` for each item.
+
+**Query space** (`memory_v1`)
+: The prepared, read-only views and functions that SQL queries run over. See
+  [Query space](/docs/reference/query-space).
+
+**SQL queries**
+: Reading memory with SQL over the query space. Every statement is parsed
+  and validated against the query space before it runs. See
+  [Explore memory with SQL](/docs/guides/sql).
+
+**Saved query**
+: A reviewed SQL query stored under a name and run with parameters. See
+  [Saved queries](/docs/guides/saved-queries).
+
+**MCP**
+: The Model Context Protocol, which lets coding agents call memory as
+  tools. See [Connect your coding agent](/docs/start/connect-your-agent).

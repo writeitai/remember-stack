@@ -277,6 +277,21 @@ class DocumentPage(BaseModel):
     cursor: str | None = None
 
 
+class DocumentDeletion(BaseModel):
+    """What deleting one document changed in the live memory.
+
+    The counts describe this call. A call that finishes a deletion another
+    path started reports only the work it finished.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    deleted_at: datetime
+    claims_retired: int = Field(ge=0)
+    relations_closed: int = Field(ge=0)
+    observations_closed: int = Field(ge=0)
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=4096)
@@ -332,6 +347,9 @@ class DeploymentBuildInfo(BaseModel):
     build_revision: str = Field(default="")
     model_bindings: dict[str, str] = Field(default_factory=dict)
     document_binding_generation: str | None = Field(default=None)
+    # Catalogue tool name -> tool_version for every memory tool this deployment
+    # serves (D136). A host renders a tool only at an equal version.
+    tools: dict[str, int] = Field(default_factory=dict)
 
 
 class ConnectorCreate(BaseModel):
@@ -370,6 +388,22 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    # The engine always sets these three. They default to None only so this
+    # client still parses receipts from released engines that predate them
+    # (the client-vs-engine compatibility matrix).
+    mime: str | None = None
+    """The MIME type recorded for these bytes, which conversion uses."""
+    title: str | None = None
+    """The document's title. Set by the first ingest of the lineage."""
+    versioning_mode: Literal["snapshot", "living"] | None = None
+    """The lineage's versioning mode. Set by the first ingest of the lineage."""
+    parked: Literal["no_route"] | None = None
+    """``no_route`` when conversion is parked waiting for a route for this MIME type.
+
+    The original is stored, but it is not converted, searched or extracted
+    until an operator adds a conversion route and releases the parked work.
+    ``None`` means only that it is not parked for ``no_route``; processing
+    state comes from readiness."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )

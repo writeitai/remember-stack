@@ -16,6 +16,8 @@ from fastapi.testclient import TestClient
 import httpx
 import pytest
 
+from remember.remote_mcp import RemoteOperationMcpServer
+from remember.remote_mcp import serve_mcp_stdio
 from rememberstack.client import CapabilityReadiness
 from rememberstack.client import ConnectorCreate
 from rememberstack.client import ConnectorDescriptor
@@ -35,8 +37,6 @@ from rememberstack.surfaces import build_api
 from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
-from rememberstack.surfaces.remote_mcp import RemoteOperationMcpServer
-from rememberstack.surfaces.remote_mcp import serve_mcp_stdio
 
 _DEPLOYMENT_ID = UUID("57000000-0000-0000-0000-000000000001")
 _VERSION_ID = UUID("57000000-0000-0000-0000-000000000003")
@@ -602,7 +602,24 @@ def test_remote_mcp_proxies_the_deployment_registry() -> None:
     assert len(responses) == 3
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
     tool_names = [tool["name"] for tool in responses[1]["result"]["tools"]]
-    assert tool_names == ["ingest", "pipeline_readiness", "resolve_entity"]
+    assert tool_names == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+        "resolve_entity",
+    ]
+    # Every tool carries the catalogue's annotations, operations included.
+    annotations = {
+        tool["name"]: tool["annotations"] for tool in responses[1]["result"]["tools"]
+    }
+    assert annotations["resolve_entity"] == {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+    }
+    assert annotations["delete_document"] == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+    }
     assert responses[2]["result"]["isError"] is False
 
 
@@ -618,7 +635,7 @@ def test_remote_mcp_lists_write_tools_when_operations_is_404() -> None:
     )
     server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == ["ingest", "pipeline_readiness"]
+    assert names == ["ingest", "pipeline_readiness", "delete_document"]
 
 
 def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
@@ -640,7 +657,10 @@ def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
         client=MemoryClient(client=transport), read_only=True
     )
 
-    assert server.list_tools() == {"tools": []}
+    # Inspecting readiness changes nothing, so a read-only server keeps it.
+    assert [tool["name"] for tool in server.list_tools()["tools"]] == [  # type: ignore[index]
+        "pipeline_readiness"
+    ]
     rejected = server.call_tool(
         name="ingest", arguments={"text": "forbidden", "filename": "x.md"}
     )
@@ -685,7 +705,9 @@ def test_remote_mcp_read_only_mode_omits_and_refuses_write_tools() -> None:
     )
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
-    assert responses[1]["result"] == {"tools": []}
+    assert [tool["name"] for tool in responses[1]["result"]["tools"]] == [
+        "pipeline_readiness"
+    ]
     assert responses[2]["result"]["isError"] is True
     assert "disabled" in responses[2]["result"]["content"][0]["text"]
     assert requested_paths == [
@@ -736,7 +758,7 @@ def test_remote_mcp_tools_list_still_fails_on_operations_transport_error() -> No
 
 def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     """Remote tools/list advertises the seven open-query tools only when composed."""
-    from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
+    from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 
     # Synthetic valid identity: schema/major match catalog; hash shape only
     # (not pinned to the checked-in surface_manifest_hash).
@@ -759,12 +781,17 @@ def test_remote_mcp_lists_open_query_tools_when_discovery_is_composed() -> None:
     server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
     listed = server.list_tools()
     names = [tool["name"] for tool in listed["tools"]]  # type: ignore[index]
-    assert names == ["ingest", "pipeline_readiness", *OPEN_QUERY_TOOL_NAMES]
+    assert names == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+        *OPEN_QUERY_TOOL_NAMES,
+    ]
 
 
 def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> None:
     """Empty, wrong-schema, wrong-major, and malformed-hash discovery fail closed."""
-    from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
+    from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 
     operation = {
         "name": "resolve_entity",
@@ -813,9 +840,12 @@ def test_remote_mcp_fails_closed_without_authoritative_discovery_identity() -> N
         )
         server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
         names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-        assert names == ["ingest", "pipeline_readiness", "resolve_entity"], (
-            f"unexpected tools for payload {payload!r}"
-        )
+        assert names == [
+            "ingest",
+            "pipeline_readiness",
+            "delete_document",
+            "resolve_entity",
+        ], f"unexpected tools for payload {payload!r}"
         assert not any(name in OPEN_QUERY_TOOL_NAMES for name in names)
 
 
@@ -854,7 +884,11 @@ def test_remote_mcp_survives_an_invalid_deployment_response() -> None:
     responses = [json.loads(line) for line in output.getvalue().splitlines()]
     assert responses[0]["result"]["isError"] is True
     tools = responses[1]["result"]["tools"]
-    assert [tool["name"] for tool in tools] == ["ingest", "pipeline_readiness"]
+    assert [tool["name"] for tool in tools] == [
+        "ingest",
+        "pipeline_readiness",
+        "delete_document",
+    ]
 
 
 def test_cli_ingest_and_connector_commands_use_the_remote_client(
@@ -948,6 +982,9 @@ def _ingested(*, deployment_id: UUID) -> IngestedVersion:
         version_id=uuid4(),
         content_hash="a" * 64,
         created=True,
+        mime="text/markdown",
+        title=None,
+        versioning_mode="snapshot",
     )
 
 

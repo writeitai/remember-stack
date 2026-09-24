@@ -12,6 +12,12 @@ caller re-derive it from a status number.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from remember.models import PipelineReadinessReport
+
 
 class CloudError(Exception):
     """Base for every control-plane failure.
@@ -87,6 +93,7 @@ class MemoryApiError(RuntimeError):
         detail: str | None = None,
         code: str | None = None,
         response: object | None = None,
+        retry_after: float | None = None,
     ) -> None:
         eff_detail = detail if detail is not None else (message or "")
         msg = (
@@ -99,7 +106,40 @@ class MemoryApiError(RuntimeError):
         self.detail = eff_detail
         self.code = code
         self.response = response
+        #: Seconds from ``Retry-After`` on a ``429`` admission refusal
+        #: (``rate_limited`` / ``concurrency_limited``), when the server sent it.
+        self.retry_after = retry_after
 
 
 class ConnectorNotFoundError(Exception):
     """A connector id is not present in this deployment."""
+
+
+class PipelineDeadLettered(RuntimeError):
+    """A required pipeline stage of a waited-on version is ``dead_letter``.
+
+    ``dead_letter`` means the stage used up its retry attempts; unlike
+    ``failed`` (a retry is scheduled), it never heals by waiting, so a wait
+    stops here instead of running out its timeout. ``dead_lettered`` lists
+    every ``(version_id, stage, status)`` found, and ``report`` is the
+    readiness report that showed them. A deployment operator can inspect and
+    replay dead-lettered work once the cause is fixed.
+    """
+
+    def __init__(
+        self,
+        *,
+        dead_lettered: tuple[tuple[UUID, str, str], ...],
+        report: PipelineReadinessReport,
+    ) -> None:
+        """Bind the dead-lettered stages and the report that showed them."""
+        listed = "; ".join(
+            f"version {version_id} stage {stage} is {status}"
+            for version_id, stage, status in dead_lettered
+        )
+        super().__init__(
+            f"pipeline processing stopped: {listed}. A dead-lettered stage has"
+            " used all its retries and will not become ready by waiting"
+        )
+        self.dead_lettered = dead_lettered
+        self.report = report

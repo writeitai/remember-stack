@@ -584,9 +584,56 @@
             },
             "title": "Model Bindings",
             "type": "object"
+          },
+          "tools": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tools",
+            "type": "object"
           }
         },
         "title": "DeploymentBuildInfo",
+        "type": "object"
+      },
+      "DocumentDeletion": {
+        "additionalProperties": false,
+        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+        "properties": {
+          "claims_retired": {
+            "minimum": 0.0,
+            "title": "Claims Retired",
+            "type": "integer"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "observations_closed": {
+            "minimum": 0.0,
+            "title": "Observations Closed",
+            "type": "integer"
+          },
+          "relations_closed": {
+            "minimum": 0.0,
+            "title": "Relations Closed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "deleted_at",
+          "claims_retired",
+          "relations_closed",
+          "observations_closed"
+        ],
+        "title": "DocumentDeletion",
         "type": "object"
       },
       "DocumentPage": {
@@ -1907,10 +1954,59 @@
             "title": "Doc Id",
             "type": "string"
           },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
+          "parked": {
+            "anyOf": [
+              {
+                "const": "no_route",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "version_id": {
             "format": "uuid",
             "title": "Version Id",
             "type": "string"
+          },
+          "versioning_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "snapshot",
+                  "living"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Versioning Mode"
           }
         },
         "required": [
@@ -3346,7 +3442,7 @@
   },
   "info": {
     "title": "RememberStack query API",
-    "version": "0.17.0"
+    "version": "0.17.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3354,24 +3450,6 @@
       "post": {
         "description": "Fetch surrounding source chunks within a window around a target chunk in document order.",
         "operationId": "post_adjacent_chunks_chunks_adjacent_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3438,22 +3516,6 @@
               "title": "Window",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -3488,26 +3550,8 @@
     },
     "/deployment": {
       "get": {
-        "description": "Report which code and model bindings are serving, before any work.",
+        "description": "Report which code, model bindings and tools are serving, before any work.",
         "operationId": "deployment_build_info_deployment_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -3518,16 +3562,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
@@ -3593,22 +3627,6 @@
               ],
               "title": "Status"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -3641,28 +3659,59 @@
         "summary": "List Documents"
       }
     },
+    "/documents/{doc_id}": {
+      "delete": {
+        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nThe deletion is all or nothing. An unknown id and an already deleted\ndocument are both 404: from the caller's side each is absent. A\ndocument hidden by another path whose evidence was never updated is\nfinished and answers 200 instead.",
+        "operationId": "delete_document_documents__doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDeletion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Document"
+      }
+    },
     "/graph/citation-path": {
       "post": {
         "description": "Return bounded directed citation paths between two documents.",
         "operationId": "graph_citation_path_graph_citation_path_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3707,24 +3756,6 @@
       "post": {
         "description": "Return a current or bitemporal bounded entity neighborhood.",
         "operationId": "graph_neighborhood_graph_neighborhood_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3769,24 +3800,6 @@
       "post": {
         "description": "Return bounded equal-length shortest paths between two entities.",
         "operationId": "graph_path_graph_path_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3840,22 +3853,6 @@
               "format": "uuid",
               "title": "Relation Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4046,22 +4043,6 @@
               "description": "Opaque caller-stable actor id, 1..255 printable ASCII characters. Sent with X-Ingest-Principal-Kind.",
               "title": "X-Ingest-Principal-Ref"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "requestBody": {
@@ -4143,24 +4124,10 @@
             "required": false,
             "schema": {
               "default": 10,
+              "maximum": 400,
+              "minimum": 1,
               "title": "K",
               "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4267,19 +4234,15 @@
             }
           },
           {
-            "in": "header",
-            "name": "authorization",
+            "in": "query",
+            "name": "k",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
+              "default": 50,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
             }
           }
         ],
@@ -4317,24 +4280,6 @@
       "get": {
         "description": "The four assured operations for this deployment.",
         "operationId": "list_operations_operations_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -4349,16 +4294,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
@@ -4381,22 +4316,6 @@
             "schema": {
               "title": "Name",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4477,6 +4396,14 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "draft",
+                    "pending_revalidation",
+                    "active",
+                    "deprecated",
+                    "disabled",
+                    "broken"
+                  ],
                   "type": "string"
                 },
                 {
@@ -4484,22 +4411,6 @@
                 }
               ],
               "title": "Status"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4576,22 +4487,6 @@
               ],
               "title": "Version"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4647,22 +4542,6 @@
             "schema": {
               "title": "Name",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4736,22 +4615,6 @@
               "title": "Include Examples",
               "type": "boolean"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4812,22 +4675,6 @@
               "title": "K",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4869,24 +4716,6 @@
       "post": {
         "description": "One sandboxed SQL statement; QueryResult/v1.",
         "operationId": "query_sql_query_sql_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4931,24 +4760,6 @@
       "post": {
         "description": "EXPLAIN one SQL statement without executing it.",
         "operationId": "explain_sql_query_sql_explain_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4993,24 +4804,6 @@
       "post": {
         "description": "Inspect exact pipeline and explicitly requested capabilities.",
         "operationId": "pipeline_readiness_readiness_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5085,22 +4878,6 @@
               ],
               "title": "Context Entity Ids"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5172,22 +4949,6 @@
               "title": "Channel",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5222,24 +4983,6 @@
       "post": {
         "description": "Search live source chunks as separately typed evidence.",
         "operationId": "post_search_chunks_search_chunks_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5319,22 +5062,6 @@
               "title": "Channel",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5369,24 +5096,6 @@
       "post": {
         "description": "Claim search \u2014 evidence grain, never current-fact truth.",
         "operationId": "post_search_claims_search_claims_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5440,22 +5149,6 @@
               "format": "uuid",
               "title": "Relation Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],

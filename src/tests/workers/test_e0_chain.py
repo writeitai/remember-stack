@@ -74,6 +74,8 @@ from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("60000000-0000-0000-0000-000000000001")
+_FIXTURES = _ROOT / "src" / "tests" / "core" / "fixtures"
+_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _MARKDOWN_SOURCE = "# Quarterly report\n\nRevenue grew nine percent.\n\n- steady\n"
 
@@ -274,10 +276,12 @@ class _E0Rig:
         # One table feeds both the D117 scheduling table and the router, the
         # way a real deployment's `conversion_routes` does. Duplicating it
         # would let the harness prove a divergence production cannot have.
+        markitdown = MarkitdownConverter()
         routes: dict[str, Converter] = {
             "text/markdown": MarkdownPassthroughConverter(),
             "text/plain": MarkdownPassthroughConverter(),
-            "text/html": MarkitdownConverter(),
+            "text/html": markitdown,
+            _DOCX: markitdown,
             "application/x-fake-scan": _FakeScanConverter(),
             "application/x-unlabeled": _UnlabeledConverter(),
             "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
@@ -459,6 +463,7 @@ def test_html_document_converts_through_markitdown(rig: _E0Rig) -> None:
             content=b"<html><body><h1>Atlas kickoff</h1><p>Notes body.</p></body></html>",
         ),
     )
+    assert ingested.parked is None
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
     assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
 
@@ -602,6 +607,34 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
     assert "convert terminated" in str(version["error"])
 
 
+def test_docx_document_converts_through_markitdown(rig: _E0Rig) -> None:
+    """A Word file converts locally: the image ships markitdown's docx extra."""
+    ingested = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="plan.docx",
+            mime=_DOCX,
+            content=(_FIXTURES / "tiny.docx").read_bytes(),
+        ),
+    )
+    assert ingested.parked is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    assert rig.run(stage=PipelineStage.STRUCTURE) is RunResultOutcome.SUCCEEDED
+    version = rig.row(
+        sql="SELECT * FROM document_versions WHERE version_id = :version_id",
+        params={"version_id": ingested.version_id},
+    )
+    representation = rig.row(
+        sql="SELECT * FROM document_representations WHERE representation_id = :rid",
+        params={"rid": version["current_representation_id"]},
+    )
+    assert representation["route"] == "markitdown"
+    markdown = rig.artifact_store.read_bytes(
+        key=ObjectKey(str(representation["markdown_uri"]))
+    ).decode("utf-8")
+    assert "Quarterly plan" in markdown
+
+
 def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -> None:
     """D117: the document lands, its convert work parks, the DLQ stays empty."""
     ingested = rig.ingestor.ingest(
@@ -610,6 +643,8 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
             filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
         ),
     )
+    # the ingest response says so at once, so a client can tell its user
+    assert ingested.parked == "no_route"
     work = rig.row(
         sql="""
         SELECT status, defer_reason, attempts, last_error FROM processing_state
@@ -645,6 +680,45 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     )
     assert work_count["count"] == 1
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.NO_WORK
+
+
+def _ingestor_with_routes(rig: _E0Rig, routable: frozenset[str]) -> UploadIngestor:
+    """An ingestor for the same spine whose route table differs from the rig's."""
+    return UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=routable,
+    )
+
+
+def test_parked_reports_the_work_row_after_a_route_is_added(rig: _E0Rig) -> None:
+    """A route added but not yet resumed: an identical re-ingest is still parked."""
+    upload = DocumentUpload(filename="late.txt", mime="text/plain", content=b"late")
+    first = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert first.parked == "no_route"
+    again = _ingestor_with_routes(rig, frozenset({"text/plain"})).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked == "no_route"
+
+
+def test_parked_is_null_for_converted_work_after_a_route_is_removed(
+    rig: _E0Rig,
+) -> None:
+    """Already-converted bytes stay unparked even if their route is gone now."""
+    upload = DocumentUpload(filename="done.txt", mime="text/plain", content=b"done")
+    first = rig.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
+    assert first.parked is None
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+    again = _ingestor_with_routes(rig, frozenset()).ingest(
+        deployment_id=_DEPLOYMENT_ID, upload=upload
+    )
+    assert again.created is False
+    assert again.parked is None
 
 
 def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
@@ -697,21 +771,16 @@ def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
     )
 
 
-@pytest.mark.parametrize(
-    "first_mime, second_mime, expected",
-    [
-        ("application/x-unknown", "text/plain", "no_route"),
-        ("text/plain", "application/x-unknown", None),
-    ],
-)
-def test_parking_uses_first_write_content_mime(
-    rig: _E0Rig, first_mime: str, second_mime: str, expected: str | None
-) -> None:
-    """A second lineage with identical bytes schedules against stored MIME."""
+def test_routable_content_mime_is_first_write_wins(rig: _E0Rig) -> None:
+    """A second lineage with identical bytes schedules against stored MIME.
+
+    The receipt reports the MIME that applies, so the caller can see its own
+    declaration was not taken.
+    """
     rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="first.bin", mime=first_mime, content=b"same bytes"
+            filename="first.txt", mime="text/plain", content=b"same bytes"
         ),
     )
     observed = rig.ingestor.ingest_observed(
@@ -719,7 +788,7 @@ def test_parking_uses_first_write_content_mime(
         source_kind="drive",
         source_ref="second",
         upload=DocumentUpload(
-            filename="second.bin", mime=second_mime, content=b"same bytes"
+            filename="second.bin", mime="application/x-unknown", content=b"same bytes"
         ),
         versioning_mode="living",
         source_modified_at=None,
@@ -730,9 +799,101 @@ def test_parking_uses_first_write_content_mime(
         sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
         params={"id": observed.version_id},
     )
-    assert work["defer_reason"] == expected
+    assert work["defer_reason"] is None
     assert work["attempts"] == 0
-    assert rig.catalog.convert_source(version_id=observed.version_id).mime == first_mime
+    assert observed.mime == "text/plain"
+    assert rig.catalog.convert_source(version_id=observed.version_id).mime == (
+        "text/plain"
+    )
+
+
+def test_resending_parked_bytes_with_a_routable_mime_releases_them(rig: _E0Rig) -> None:
+    """G31: a file first sent as an unrouted type is fixed by re-sending it.
+
+    Identical bytes keep one content row, so without this the first
+    declaration would park them forever. Every parked conversion of those
+    bytes is released, and the new MIME is the one conversion uses.
+    """
+    parked = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+    other_lineage = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="notes",
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert parked.mime == "application/x-unknown"
+
+    resent = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes.md", mime="text/markdown", content=b"# Notes\n"
+        ),
+    )
+    assert resent.created is False
+    assert resent.version_id == parked.version_id
+    assert resent.mime == "text/markdown"
+    for version_id in (parked.version_id, other_lineage.version_id):
+        work = rig.row(
+            sql="SELECT defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+            params={"id": version_id},
+        )
+        assert work["defer_reason"] is None
+        assert work["attempts"] == 0
+        assert rig.catalog.convert_source(version_id=version_id).mime == (
+            "text/markdown"
+        )
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
+
+    # A later unrouted declaration never takes the MIME back.
+    again = rig.ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+    assert again.mime == "text/markdown"
+
+
+def test_receipt_reports_the_lineage_settings_in_force(rig: _E0Rig) -> None:
+    """G31: title and versioning mode are set by the first ingest, and said so."""
+    first = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="plan",
+        upload=DocumentUpload(
+            filename="plan.md", mime="text/markdown", content=b"v1", title="Plan"
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert (first.title, first.versioning_mode) == ("Plan", "snapshot")
+    second = rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="drive",
+        source_ref="plan",
+        upload=DocumentUpload(
+            filename="plan.md", mime="text/markdown", content=b"v2", title="New"
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert second.created is True
+    assert (second.title, second.versioning_mode) == ("Plan", "snapshot")
 
 
 @pytest.mark.parametrize("prior_attempts", [0, 2])
@@ -783,6 +944,81 @@ def test_a_released_row_whose_route_is_still_missing_reparks(
     )
     assert version["status"] == "converting"
     assert version["error"] is None
+
+
+class _MimeSwapRouter(ConversionRouter):
+    """A router that lets an ingest land after the worker read the MIME."""
+
+    def __init__(self, *, routes: dict[str, Converter], swap: object) -> None:
+        """Run `swap` once, between the MIME read and the route decision."""
+        super().__init__(routes=routes)
+        self._swap = swap
+
+    def converter_for(self, *, mime: str) -> Converter:
+        """Let the concurrent ingest commit, then decide on the stale MIME."""
+        swap, self._swap = self._swap, None
+        if callable(swap):
+            swap()
+        return super().converter_for(mime=mime)
+
+
+def test_mime_replaced_mid_claim_is_not_stranded_as_no_route(rig: _E0Rig) -> None:
+    """G31 review: a running claim that read the old unrouted MIME must not
+    park after an ingest replaced it with a routable one — that ingest only
+    releases *pending* parked rows, so the park would never be released.
+    """
+    admitting_gate = UploadIngestor(
+        catalog=rig.catalog,
+        raw_store=rig.raw_store,
+        admission=ForgetCatalog(engine=rig.engine),
+        routable_mimes=frozenset({"application/x-unknown"}),
+    )
+    first = admitting_gate.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="notes", mime="application/x-unknown", content=b"# Notes\n"
+        ),
+    )
+
+    def resend_as_markdown() -> None:
+        resent = rig.ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(
+                filename="notes.md", mime="text/markdown", content=b"# Notes\n"
+            ),
+        )
+        assert resent.mime == "text/markdown"
+
+    routes: dict[str, Converter] = {"text/markdown": MarkdownPassthroughConverter()}
+    registry = HandlerRegistry()
+    registry.register(
+        stage=PipelineStage.CONVERT,
+        handler=ConvertHandler(
+            catalog=rig.catalog,
+            raw_store=rig.raw_store,
+            artifact_store=rig.artifact_store,
+            router=_MimeSwapRouter(routes=routes, swap=resend_as_markdown),
+        ),
+    )
+    # The first claim reads the stale MIME and finds no route after the ingest
+    # replaced it. It must return to the queue unparked, not strand.
+    stale = Worker(ledger=rig.ledger, registry=registry)
+    assert (
+        stale.run_one(
+            deployment_id=_DEPLOYMENT_ID,
+            stage=PipelineStage.CONVERT,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+        is RunResultOutcome.NO_ROUTE_PARKED
+    )
+    work = rig.row(
+        sql="SELECT status, defer_reason, attempts FROM processing_state WHERE target_id = :id AND stage = 'convert'",
+        params={"id": first.version_id},
+    )
+    assert work["status"] == "pending"
+    assert work["defer_reason"] is None
+    assert work["attempts"] == 0
+    assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
 
 
 def test_retried_convert_replays_the_stored_representation(rig: _E0Rig) -> None:

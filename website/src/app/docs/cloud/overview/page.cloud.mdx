@@ -1,0 +1,98 @@
+export const metadata = {
+  title: "What remember.dev runs for you",
+  description: "remember.dev runs a RememberStack deployment for each of your projects, so you send documents and ask questions without operating a database, a pipeline, model keys or TLS.",
+};
+
+# What remember.dev runs for you
+
+<AppliesTo products={["remember.dev"]} />
+
+RememberStack is the open-source memory engine. `remember` is its Python
+client and CLI. remember.dev runs RememberStack for you.
+
+The memory is the same engine either way. What changes is who does the
+operational work. On remember.dev you create a project, get an endpoint and
+a token, and start sending documents. Everything between the HTTP request
+and the answer is remember.dev's job.
+
+<Callout type="note">
+
+remember.dev is in development. Sign-up is not open to the public yet.
+
+</Callout>
+
+## What you no longer do
+
+Running RememberStack yourself means operating all of the following. On
+remember.dev you do none of it.
+
+| Work | Self-hosted | remember.dev |
+|---|---|---|
+| Database | Run PostgreSQL 19 with the `pgvector`, `pg_partman` and `pg_textsearch` extensions, size it, keep it healthy | One PostgreSQL instance per project, provisioned and run for you |
+| Pipeline | Run the API plus a worker for every pipeline stage (conversion, structuring, chunking, embedding, claim extraction, relation labelling, adjudication and the rest) and the projection process, and restart them when they fail | The API, the workers and projections run on remember.dev hosts |
+| Object storage | Run MinIO or another S3 store for source files and derived artifacts | Per-project buckets on remember.dev storage |
+| Model access | Hold model provider keys, pick models, watch provider spend | remember.dev supplies model access through OpenRouter, with a separate provider key for each project |
+| Endpoint and TLS | Put the API behind a hostname, get certificates, renew them | Each project gets `https://<deployment-id>.dp.remember.dev` with certificates issued and renewed for you |
+| Authentication | Configure bearer tokens or signing keys on the engine | Mint and revoke tokens in the console; the deployment verifies them |
+| Upgrades | Pull new images, run migrations, restart in order | remember.dev chooses the engine version and rolls it out |
+| Billing your own usage | Nothing to bill, but nothing to cap either | Prepaid credits, a monthly cap and per-project caps stop spending before it happens |
+
+## What you get
+
+- **A project is one memory.** Each project gets its own deployment: its
+  own database, its own storage buckets, its own credentials, its own model
+  key and its own hostname. Two projects never share a memory, even inside
+  one organisation. See
+  [Organisations, projects and members](/docs/cloud/organisations-and-projects).
+- **A direct endpoint.** Your code talks straight to your project's
+  deployment at `https://<deployment-id>.dp.remember.dev`. Memory requests
+  do not pass through the remember.dev console or account API.
+- **The same client code.** After you set the endpoint and token, the
+  `remember` client, CLI and MCP server work the way the rest of these docs
+  describe. The differences, including which file types remember.dev
+  accepts (UTF-8 Markdown and plain text), are listed in
+  [What remember.dev serves](/docs/cloud/compatibility).
+- **A way in without copying secrets.** `remember login` approves a
+  terminal in the browser, and hosted MCP connects a coding agent with a
+  browser sign-in. See [Tokens and sign-in](/docs/cloud/tokens-and-sign-in) and
+  [Hosted MCP](/docs/cloud/hosted-mcp).
+- **Prepaid, capped spending.** You buy credits, remember.dev holds an
+  estimate before work runs, and work stops at the cap you set. Reading
+  the memory is not charged. See [Pricing and credits](/docs/cloud/pricing) and
+  [Spend caps and auto top-up](/docs/cloud/spend-controls).
+
+## What remember.dev does not do
+
+Be clear about these before you put anything in.
+
+- **No export.** remember.dev does not offer an export or download of your
+  memory, now or later. Keep your own copies of the source files you send.
+  If you want the memory elsewhere, you re-ingest those sources into a
+  self-hosted deployment.
+- **No backup promise.** remember.dev does not promise backups or
+  restores of your data. A hardware or disk failure can lose it. Your
+  source files are the copy that matters.
+- **No uptime figure.** There is no service level agreement and no
+  published availability or latency target.
+- **One region.** Deployments and their storage run in one Hetzner location
+  in Germany. There is no replication to a second region.
+- **No single sign-on.** Sign-in is email and password, or Google. There
+  is no SAML, SCIM or enterprise directory integration.
+
+Details are in [Data handling and security](/docs/cloud/data-and-security) and
+[Closing a project, deleting your account](/docs/cloud/leaving).
+
+## remember.dev or self-hosted
+
+Choose remember.dev when you want the memory without the operations. Choose
+self-hosted when you need the data on your own machines, want to pick the
+models, or need something remember.dev does not offer. The comparison is in
+[remember.dev or self-hosted?](/docs/start/choose).
+
+## Next steps
+
+1. Sign in at `https://remember.dev/app` and buy credits. Your first
+   purchase activates your Default project.
+2. Get a token: run `remember login`, or mint one under
+   **Settings → API Tokens**.
+3. Follow the [Quickstart](/docs/start/quickstart).

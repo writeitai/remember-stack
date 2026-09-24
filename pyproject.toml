@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remember"
-version = "0.17.0"
+version = "0.17.1"
 description = "Open memory infrastructure for AI agents."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -75,7 +75,7 @@ server = [
     "boto3>=1.42",
     "fastapi>=0.139.2",
     "markdown-it-py>=4.2.0",
-    "markitdown>=0.1.6",
+    "markitdown[docx,pptx,xlsx]>=0.1.6",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     "pglast>=8.4,<9",
     "pillow>=10.4",

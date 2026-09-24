@@ -1255,8 +1255,12 @@ class QueryEngine:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
+        k: int = 50,
     ) -> Envelope:
         """Relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
+
+        At most `k` relations return, strongest evidence first; when more
+        match, the envelope's `truncation` says so (no silent top-k, S18).
 
         Without `valid_at`, current means both clocks: still believed AND the
         valid-time window covers now. With `valid_at`, the window test moves
@@ -1277,11 +1281,14 @@ class QueryEngine:
                         "predicate": predicate,
                         "object_entity_id": object_entity_id,
                         "as_of": as_of,
+                        "limit": k + 1,
                     },
                 )
                 .mappings()
                 .all()
             )
+        truncated = len(rows) > k
+        rows = rows[:k]
         # Every candidate carries its own temporal_match; an undated fact is a
         # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
@@ -1300,6 +1307,7 @@ class QueryEngine:
             ),
             facts=facts,
             freshness=_freshness(),
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -1328,6 +1336,7 @@ class QueryEngine:
         is read directly.
         """
         dropped = 0
+        truncated = False
         evaluated_at = datetime.now(tz=UTC)
         as_of = valid_at or evaluated_at
         if property_query is None:
@@ -1339,11 +1348,14 @@ class QueryEngine:
                             "deployment_id": deployment_id,
                             "entity_id": entity_id,
                             "as_of": as_of,
+                            "limit": k + 1,
                         },
                     )
                     .mappings()
                     .all()
                 )
+            truncated = len(rows) > k
+            rows = rows[:k]
         else:
             nominated = self._search_index.search_facts(
                 deployment_id=str(deployment_id),
@@ -1380,6 +1392,7 @@ class QueryEngine:
             facts=facts,
             freshness=_freshness(),
             dropped_by_hydration=dropped,
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -3906,6 +3919,19 @@ def _unknown_entity(*, name: str) -> Envelope:
     )
 
 
+def _lookup_truncation(*, returned: int, truncated: bool) -> Truncation | None:
+    """Disclose that a fact lookup's `k` cap left matching rows out."""
+    if not truncated:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=returned + 1,
+        total_is_exact=False,
+        reason="lookup_k_limit",
+    )
+
+
 def _resolve_truncation(*, returned: int, truncated: bool) -> Truncation | None:
     """Disclose a blocking cap without inventing an exact remainder."""
     if not truncated:
@@ -4110,7 +4136,8 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, relation_id
+    LIMIT :limit
     """
 )
 
@@ -4125,7 +4152,8 @@ _LOOKUP_OBSERVATIONS = text(
       AND invalidated_at IS NULL
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, observation_id
+    LIMIT :limit
     """
 )
 

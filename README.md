@@ -103,7 +103,7 @@ Ask both honestly:
 - Document versions and watched sources — reprocess cost proportional to the *edit*  
 - Support that cannot be gamed by re-extracting the same file  
 
-Deep dive: [Ingestion](https://remember.dev/docs/ingestion)
+Deep dive: [Ingestion](https://remember.dev/docs/guides/ingest-files)
 
 ---
 
@@ -128,7 +128,7 @@ Plus open SQL, typed live-graph helpers, saved examples, and schema discovery.
 
 Every assured answer self-accounts: grain, freshness, contradictions, truncation, typed “no”s.
 
-Deep dive: [Retrieval](https://remember.dev/docs/retrieval)
+Deep dive: [Retrieval](https://remember.dev/docs/concepts/retrieval)
 
 ---
 
@@ -162,8 +162,8 @@ curl --fail http://localhost:8000/operations
 
 Ingest Markdown, wait for readiness, then call the assured ops — full walkthrough:
 
-**→ [Getting started](https://remember.dev/docs/getting-started)**
-**→ [Self-host deployment](https://remember.dev/docs/deployment)**
+**→ [Getting started](https://remember.dev/docs/start/quickstart)**
+**→ [Self-host deployment](https://remember.dev/docs/self-hosting/install)**
 
 Client package:
 
@@ -187,7 +187,7 @@ The managed cloud runs **this same engine**. Cloud adds operations and product c
 | --- | --- |
 | Docs | [remember.dev/docs](https://remember.dev/docs) |
 | Managed product | [remember.dev](https://remember.dev) |
-| Release | [v0.17.0](https://github.com/writeitai/remember-stack/releases/tag/v0.17.0) |
+| Release | [v0.17.1](https://github.com/writeitai/remember-stack/releases/tag/v0.17.1) |
 
 ---
 
@@ -201,4 +201,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). Pull requests need 
 ---
 
 <p align="center"><b>Stop retrieving passages. Start knowing what is true.</b><br/>
-<a href="https://remember.dev/docs">Read the docs</a> · <a href="https://remember.dev/docs/getting-started">Run it</a></p>
+<a href="https://remember.dev/docs">Read the docs</a> · <a href="https://remember.dev/docs/start/quickstart">Run it</a></p>

@@ -1,0 +1,211 @@
+export const metadata = {
+  title: "Observability",
+  description: "What a self-hosted RememberStack logs, how to send its errors to Sentry or a compatible service, and how to export what it spent on models.",
+};
+
+# Observability
+
+<AppliesTo products={["self-hosted"]} />
+
+A self-hosted deployment tells you what it is doing in four ways: container
+logs, an optional error tracker, the pipeline report from
+`remember ops inspect`, and a cost export of every billed model call. None
+of them sends anything off the machine unless you configure it to.
+
+## Logs
+
+Every container writes to standard output, which Docker keeps:
+
+```bash
+docker compose logs -f api
+docker compose logs -f worker-extract-claims
+docker compose logs --since 1h
+```
+
+- The **API** writes an access log line per request.
+- Each **worker** writes one JSON line per item it runs: an event named
+  `worker.run` with an `occurred_at` time and an `attributes` list holding
+  `deployment_id`, `processing_id`, `stage`, `lane`, `attempt`, `outcome`
+  and `duration_ms`. The outcome is one of
+  `succeeded`, `retry_scheduled`, `dead_lettered`, `budget_parked`,
+  `no_route_parked` or `no_work`. A failure adds an `exception` object with
+  the error type, message and full traceback.
+
+An error message can quote the input that caused it, so treat worker logs
+as containing document text. Log retention and rotation are Docker's; set
+them with a Docker logging driver.
+
+For the state of the pipeline as a whole (what is pending, what has failed
+for good), use `remember ops inspect`; see
+[Operating the pipeline](/docs/self-hosting/operating#inspect-the-pipeline).
+
+## Error tracking
+
+The engine can send errors to any service that speaks the Sentry protocol:
+Sentry, GlitchTip or Bugsink. It is off unless you set a DSN.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `REMEMBERSTACK_SENTRY_DSN` | unset | The project DSN. Unset or empty keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | the deployment slug | The environment name on each event. |
+| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | Share of error events sent, from 0.0 to 1.0. |
+
+`compose.yaml` passes all three. Set them in `.env` and run
+`docker compose up -d`. The `setup`, `api` and worker<Cloud> and `meter-receipts`</Cloud>
+processes report errors; the projection and mount commands do not.
+
+Events are stripped to metadata before they leave the process: the
+exception type and stack trace stay; the exception message is replaced by
+`[redacted]`; request bodies, breadcrumbs, local variables, user data and
+extras are removed. A worker failure carries the tags `stage`, `lane` and
+`processing_id`, which you can look up with `remember ops inspect`.
+Performance tracing is off.
+
+## Model-call tracing
+
+RememberStack does not trace model calls from a self-hosted deployment yet.
+`compose.yaml` passes `LANGFUSE_*` and `REMEMBERSTACK_LANGFUSE_*` variables,
+but only the project's benchmark harness reads them; the API and workers
+ignore them. Setting them changes nothing.
+
+What you can see of each model call is its cost receipt, below.
+
+## Cost export
+
+Every billed provider call, by a worker or by the API (for example the
+embedding of a search query), is written to a cost ledger with its model,
+tokens, cost in US dollars and where it came from. The cost export reads
+that ledger. It contains no document text and no prompts.
+
+### From the command line
+
+```bash
+DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
+
+docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+  remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
+```
+
+Pass the page's `next_cursor` as `--cursor` to read the next page. The
+command exits with status 2 if `--deployment` is not this deployment's id or
+the cursor is malformed.
+
+### Over HTTP
+
+The API process can serve the same export on a second address, separate
+from the memory API. It is off unless you give it an address and a token:
+
+| Variable | Meaning |
+|---|---|
+| `REMEMBERSTACK_COST_EXPORT_BIND` | Where to listen: `host:port`, `[ipv6]:port` or `unix:/path/to/socket`. Unset means no HTTP export. |
+| `REMEMBERSTACK_COST_EXPORT_TOKEN` | The bearer token callers must send. At least 32 bytes; the API refuses to start with a shorter one once the bind is set. |
+
+`compose.yaml` does not pass either variable, although `.env.example`
+mentions them. Set them for the `api` service in `engine.env`
+([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)) and publish
+the port in `compose.override.yaml`:
+
+```bash
+# engine.env
+REMEMBERSTACK_COST_EXPORT_BIND=0.0.0.0:8001
+REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
+```
+
+```yaml
+# compose.override.yaml
+services:
+  api:
+    env_file: [engine.env]
+    ports:
+      - "127.0.0.1:8001:8001"
+```
+
+If your override already has the line `api: *engine-env`, replace that line
+with the `api:` block above. The extra port is added to the API's existing
+one.
+
+The bind is an address inside the container, so it must be `0.0.0.0` for
+the published port to reach it.
+
+```bash
+curl -H "Authorization: Bearer $COST_EXPORT_TOKEN" \
+  "http://127.0.0.1:8001/ops/cost-export/v1?limit=100"
+```
+
+| Parameter | Default | Range |
+|---|---|---|
+| `limit` | `100` | 1–500 |
+| `cursor` | none (start from the beginning) | a `next_cursor` from an earlier page |
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or wrong token |
+| `422` | Malformed cursor |
+| `429` | More than one request per second |
+
+### The page
+
+```json
+{
+  "contract": "rememberstack.cost_export.v1",
+  "deployment_id": "…",
+  "server_time": "2026-09-23T10:15:00Z",
+  "horizon": "2026-09-23T10:14:00Z",
+  "cursor": "…",
+  "next_cursor": "…",
+  "persist_failures": 0,
+  "scope_missing": 0,
+  "receipts": [
+    {
+      "cost_id": "…",
+      "deployment_id": "…",
+      "source": "worker",
+      "work_id": "…",
+      "stage": "extract_claims",
+      "lane": "steady",
+      "attempt": 1,
+      "surface": null,
+      "call_key": "…",
+      "outcome": "…",
+      "model_name": "openai/gpt-5.6-luna",
+      "tokens_in": 5120,
+      "tokens_out": 830,
+      "cost_usd": "0.0041",
+      "latency_ms": 2300,
+      "occurred_at": "2026-09-23T10:02:11Z"
+    }
+  ]
+}
+```
+
+- `source` is `worker` for pipeline calls, which carry `stage`, `lane` and
+  `attempt`, or `surface` for calls made while answering a request, which
+  carry `surface` instead.
+- `cost_usd` is a decimal string, or `null` when the provider reported no
+  cost.
+- A page includes only receipts older than `horizon`, which is 60 seconds
+  before `server_time`, so a receipt still being written never appears
+  and then changes.
+- Keep the last `next_cursor` and poll with it later to read only new
+  receipts.
+- `persist_failures` and `scope_missing` count request-time costs that could
+  not be written to the ledger. Non-zero means the export under-reports.
+
+## Health and provenance
+
+`GET /healthz` answers `{"status":"ok"}` when the API reaches PostgreSQL.
+It needs no token, and Compose uses it as the API's health check.
+
+`GET /deployment` reports `build_revision` (the source commit the image
+was built from, empty for a local build), `model_bindings` (the model on
+each pipeline seat and the OpenRouter routing settings) and
+`document_binding_generation`, and the MCP memory tools it serves
+(`tools`). It needs a `read` or `write` credential when authentication is
+on.
+
+<Cloud>
+
+remember.dev collects diagnostic traces by default, with an opt-out in
+Settings; see [Data handling and security](/docs/cloud/data-and-security).
+
+</Cloud>

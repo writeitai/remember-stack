@@ -1,8 +1,7 @@
 """The ``remember`` CLI: a dependency-light client plus optional local admin commands.
 
 Query, ingest, connector management, and MCP all talk to the deployment HTTP
-API. ``remember review``, ``remember budget``, and ``remember ops`` import the server extra
-and connect to the spine.
+API. ``remember ops`` imports the server extra and connects to the spine.
 """
 
 from __future__ import annotations
@@ -28,15 +27,13 @@ from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.credentials import CredentialError
+from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from remember.models import ConnectorCreate
 from remember.remote_mcp import RemoteOperationMcpServer
 from remember.remote_mcp import serve_mcp_stdio
 
 if TYPE_CHECKING:
     from remember.credentials import CredentialFile
-
-_MERGE_VERDICTS = ("merge", "not_merge")
-_TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -60,22 +57,6 @@ def main(argv: list[str] | None = None) -> int:
                         file=sys.stderr,
                     )
                     return 1
-            if subcmd in ("review", "budget"):
-                env = CliClientEnv.model_validate({})
-                if not env.internal_ops:
-                    if subcmd == "review":
-                        print(
-                            "error: 'remember review' is retired. The engine uses autonomous "
-                            "bitemporal adjudication (D3/D43/D107). See https://remember.dev/docs",
-                            file=sys.stderr,
-                        )
-                    else:
-                        print(
-                            "error: 'remember budget' is retired from the client CLI. "
-                            "Use 'remember balance' to check account credits. See https://remember.dev/docs",
-                            file=sys.stderr,
-                        )
-                    return 1
             if subcmd == "query":
                 known_query_subcmds = {
                     "text",
@@ -96,20 +77,9 @@ def main(argv: list[str] | None = None) -> int:
                     effective_argv.insert(1, "text")
 
         env = CliClientEnv.model_validate({})
-        has_server_subcmd = bool(effective_argv) and effective_argv[0] in (
-            "review",
-            "budget",
-            "ops",
-        )
-        parser = _build_parser(
-            include_internal_ops=env.internal_ops or has_server_subcmd
-        )
+        parser = _build_parser(include_internal_ops=env.internal_ops)
         args = parser.parse_args(effective_argv)
 
-        if args.command == "review":
-            return _run_review(args)
-        if args.command == "budget":
-            return _run_budget(args)
         if args.command == "setup":
             return _run_setup(args)
         if args.command == "doctor":
@@ -132,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
             return _run_query(args)
         if args.command == "ingest":
             return _run_ingest(args)
+        if args.command == "documents":
+            return _run_documents(args)
         if args.command == "connectors":
             return _run_connectors(args)
         if args.command == "mcp":
@@ -552,9 +524,7 @@ def _run_whoami(args: argparse.Namespace) -> int:
         str(stored.deployment_id) if stored.deployment_id else "default"
     )
     print(f"Active Project: {active_proj}")
-    endpoint = (
-        stored.active_data_plane_url or stored.api_url or "https://api.remember.dev"
-    )
+    endpoint = stored.active_data_plane_url or stored.api_url
     print(f"Data Plane: {endpoint}")
     return 0
 
@@ -583,7 +553,7 @@ def _run_balance(args: argparse.Namespace) -> int:
         )
         return 1
 
-    control_plane_url = stored.control_plane.url or "https://api.remember.dev"
+    control_plane_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
     token = stored.control_plane.access_token.get_secret_value()
     org_id = (
         stored.control_plane.org_id
@@ -657,7 +627,7 @@ def _run_projects(args: argparse.Namespace) -> int:
         # D108 / D56: If control plane credentials exist, query live deployments from control plane
         if stored.control_plane and stored.control_plane.access_token:
             cp_attempted = True
-            cp_url = stored.control_plane.url or "https://api.remember.dev"
+            cp_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
             token = stored.control_plane.access_token.get_secret_value()
             org_id = stored.control_plane.org_id or stored.org_id
             endpoint = f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments"
@@ -829,146 +799,6 @@ def _run_members(args: argparse.Namespace) -> int:
         return 1
 
     return 0
-
-
-_MERGE_VERDICTS = ("merge", "not_merge")
-_TRIAGE_VERDICTS = ("restore_support", "invalidate_fact", "uncertain")
-
-
-def _list_reviews(*, queue: Any, deployment_id: UUID) -> int:
-    """Print one JSON record per open item in impact-ranked order."""
-    for item in queue.pending(deployment_id=deployment_id):
-        print(
-            json.dumps(
-                {
-                    "review_id": str(item.review_id),
-                    "kind": item.item_kind,
-                    "expected_impact": item.expected_impact,
-                    "blast_radius": item.blast_radius,
-                    "status": item.status,
-                    "candidate": item.candidate,
-                },
-                default=str,
-            )
-        )
-    return 0
-
-
-def _decide_review(
-    *,
-    queue: Any,
-    deployment_id: UUID,
-    review_id: UUID,
-    verdict: str,
-    reviewer: str,
-    note: str | None,
-) -> int:
-    """Apply one verdict; the verdict picks the decision path by its name."""
-    try:
-        if verdict in _MERGE_VERDICTS:
-            events = queue.decide_merge(
-                deployment_id=deployment_id,
-                review_id=review_id,
-                verdict=verdict,
-                reviewer=reviewer,
-                note=note,
-            )
-            print(
-                json.dumps(
-                    {"verdict": verdict, "merge_events": [str(e) for e in events]}
-                )
-            )
-        else:
-            queue.decide_support_withdrawn(
-                deployment_id=deployment_id,
-                review_id=review_id,
-                verdict=verdict,
-                reviewer=reviewer,
-                note=note,
-            )
-            print(json.dumps({"verdict": verdict}))
-    except Exception as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    return 0
-
-
-def _run_review(args: argparse.Namespace) -> int:
-    """Compose the optional local ReviewQueue over the spine or show retirement notice."""
-    try:
-        from sqlalchemy import create_engine
-
-        from rememberstack.spine.settings import load_database_settings
-        from rememberstack.spine.surface_cost import open_surface_scope
-        from rememberstack.spine.surface_cost import SurfaceCostKind
-
-        db_settings = load_database_settings()
-        review_queue_builder = import_module(
-            "rememberstack.profiles.selfhost"
-        ).build_selfhost_review_queue
-    except Exception:
-        print(
-            "error: 'remember review' is retired. The engine adjudicates contradictions "
-            "autonomously without human review queues. See https://remember.dev/docs/architecture",
-            file=sys.stderr,
-        )
-        return 1
-
-    engine = create_engine(db_settings.sqlalchemy_url())
-    try:
-        project_profiles = args.review_command == "decide" and args.verdict in (
-            "merge",
-            "restore_support",
-            "invalidate_fact",
-        )
-        try:
-            queue = review_queue_builder(
-                engine=engine,
-                deployment_id=args.deployment,
-                project_profiles=project_profiles,
-            )
-        except Exception as error:
-            print(f"error: {error}", file=sys.stderr)
-            return 1
-        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
-            if args.review_command == "list":
-                return _list_reviews(queue=queue, deployment_id=args.deployment)
-            return _decide_review(
-                queue=queue,
-                deployment_id=args.deployment,
-                review_id=args.review_id,
-                verdict=args.verdict,
-                reviewer=args.reviewer,
-                note=args.note,
-            )
-    finally:
-        engine.dispose()
-
-
-def _run_budget(args: argparse.Namespace) -> int:
-    """Compose the local WorkLedger and print configured budget state or show retirement notice."""
-    try:
-        from sqlalchemy import create_engine
-
-        from rememberstack.spine.settings import load_database_settings
-        from rememberstack.spine.work_ledger import WorkLedger
-        from rememberstack.spine.work_ledger import WorkLedgerSettings
-
-        db_settings = load_database_settings()
-    except Exception:
-        print(
-            "error: 'remember budget' is retired from the client CLI. "
-            "Use 'remember balance' to check account credits. See https://remember.dev/docs",
-            file=sys.stderr,
-        )
-        return 1
-
-    engine = create_engine(db_settings.sqlalchemy_url())
-    try:
-        ledger = WorkLedger(engine=engine, settings=WorkLedgerSettings())
-        return _inspect_budgets(ledger=ledger, deployment_id=args.deployment)
-    finally:
-        engine.dispose()
 
 
 def _run_ops(args: argparse.Namespace) -> int:
@@ -1264,6 +1094,27 @@ def _run_ingest(args: argparse.Namespace) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 2
     print(result.model_dump_json())
+    if result.parked == "no_route":
+        print(
+            f"warning: {args.file} was stored but is parked waiting for a"
+            " conversion route for its file type (parked: no_route). An operator"
+            " adds a route if needed, then runs `remember ops resume-no-route`.",
+            file=sys.stderr,
+        )
+    return 0
+
+
+def _run_documents(args: argparse.Namespace) -> int:
+    """List the deployment's documents, or delete one from the live memory."""
+    with _cli_memory_client(args) as client:
+        if args.documents_command == "list":
+            page = client.list_documents(
+                limit=args.limit, cursor=args.cursor, status=args.status
+            )
+            print(page.model_dump_json())
+            return 0
+        deletion = client.delete_document(doc_id=args.doc_id)
+    print(deletion.model_dump_json())
     return 0
 
 
@@ -1469,12 +1320,15 @@ def _warn_if_revocation_outstanding() -> None:
 def _resolved_token_host(
     *, explicit: str | None, stored_host: str | None = None
 ) -> str:
-    """Require an explicit token host; never derive one from the query API URL."""
+    """Resolve flag, env, stored host, then the remember.dev control plane.
+
+    The token host is never derived from the query API URL.
+    """
     from remember.credentials import TokenHostSettings
     from remember.device_login import normalize_token_host
 
     settings = TokenHostSettings.model_validate({})
-    host = explicit or settings.token_host or stored_host or "https://api.remember.dev"
+    host = explicit or settings.token_host or stored_host or DEFAULT_CONTROL_PLANE_URL
     return normalize_token_host(token_host=host)
 
 
@@ -2117,71 +1971,6 @@ def _split_operation_arg(pair: str) -> tuple[str, object]:
         return key, raw
 
 
-def _list(*, queue: Any, deployment_id: UUID) -> int:
-    """Print open items ranked by expected impact, one JSON line each."""
-    for item in queue.pending(deployment_id=deployment_id):
-        print(
-            json.dumps(
-                {
-                    "review_id": str(item.review_id),
-                    "kind": item.item_kind,
-                    "expected_impact": item.expected_impact,
-                    "blast_radius": item.blast_radius,
-                    "status": item.status,
-                    "candidate": item.candidate,
-                },
-                default=str,
-            )
-        )
-    return 0
-
-
-def _inspect_budgets(*, ledger: Any, deployment_id: UUID) -> int:
-    """Print one current-window JSON record per configured deployment budget."""
-    for status in ledger.budget_status(deployment_id=deployment_id):
-        print(status.model_dump_json())
-    return 0
-
-
-def _decide(
-    *,
-    queue: Any,
-    deployment_id: UUID,
-    review_id: UUID,
-    verdict: str,
-    reviewer: str,
-    note: str | None,
-) -> int:
-    """Apply one verdict; the verdict picks the decision path by its name."""
-    try:
-        if verdict in _MERGE_VERDICTS:
-            events = queue.decide_merge(
-                deployment_id=deployment_id,
-                review_id=review_id,
-                verdict=verdict,
-                reviewer=reviewer,
-                note=note,
-            )
-            print(
-                json.dumps(
-                    {"verdict": verdict, "merge_events": [str(e) for e in events]}
-                )
-            )
-        else:
-            queue.decide_support_withdrawn(
-                deployment_id=deployment_id,
-                review_id=review_id,
-                verdict=verdict,
-                reviewer=reviewer,
-                note=note,
-            )
-            print(json.dumps({"verdict": verdict}))
-    except Exception as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    return 0
-
-
 def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentParser:
     """Build the client-first command grammar."""
     parser = argparse.ArgumentParser(
@@ -2214,26 +2003,6 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     if include_internal_ops:
-        review = commands.add_parser("review", help="the D24 local review queue")
-        review_commands = review.add_subparsers(dest="review_command", required=True)
-        listing = review_commands.add_parser("list", help="open items, impact-ranked")
-        listing.add_argument("--deployment", type=UUID, required=True)
-        decide = review_commands.add_parser("decide", help="apply one verdict")
-        decide.add_argument("review_id", type=UUID)
-        decide.add_argument("--deployment", type=UUID, required=True)
-        decide.add_argument(
-            "--verdict", required=True, choices=(*_MERGE_VERDICTS, *_TRIAGE_VERDICTS)
-        )
-        decide.add_argument("--reviewer", required=True)
-        decide.add_argument("--note", default=None)
-
-        budget = commands.add_parser("budget", help="inspect configured spend ceilings")
-        budget_commands = budget.add_subparsers(dest="budget_command", required=True)
-        inspect = budget_commands.add_parser(
-            "inspect", help="current spend, tier attribution, and parked work"
-        )
-        inspect.add_argument("--deployment", type=UUID, required=True)
-
         ops = commands.add_parser("ops", help=argparse.SUPPRESS)
         ops_commands = ops.add_subparsers(dest="ops_command", required=True)
         ops_inspect = ops_commands.add_parser(
@@ -2388,6 +2157,38 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     ingest.add_argument("--source-version-ref")
 
+    documents = commands.add_parser(
+        "documents", help="list documents or delete one from memory"
+    )
+    documents_commands = documents.add_subparsers(
+        dest="documents_command", required=True
+    )
+    list_documents = documents_commands.add_parser(
+        "list",
+        parents=[client_flags],
+        help="one page of documents, newest first, as JSON",
+    )
+    list_documents.add_argument(
+        "--limit", type=int, default=50, help="documents per page (1-200, default 50)"
+    )
+    list_documents.add_argument(
+        "--cursor", help="the cursor a previous page returned, to read the next"
+    )
+    list_documents.add_argument(
+        "--status",
+        choices=("ingesting", "converting", "structuring", "ready", "failed"),
+        help="only documents whose newest version has this status",
+    )
+    delete_document = documents_commands.add_parser(
+        "delete",
+        parents=[client_flags],
+        help=(
+            "remove a document from memory: its claims stop counting and facts"
+            " only it supported are closed"
+        ),
+    )
+    delete_document.add_argument("doc_id", type=UUID)
+
     connectors = commands.add_parser(
         "connectors", help="manage deployment-side connectors"
     )
@@ -2421,10 +2222,14 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse ingest and pipeline-readiness tools",
+        help="omit and refuse the ingest, pipeline-readiness and delete tools",
     )
     login = commands.add_parser("login", help="device-grant login to a token host")
-    login.add_argument("--token-host", default=None)
+    login.add_argument(
+        "--token-host",
+        default=None,
+        help=f"control-plane base URL (default {DEFAULT_CONTROL_PLANE_URL})",
+    )
     login.add_argument("--api-url", default=None)
     login.add_argument(
         "--audience",
@@ -2441,7 +2246,14 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="shorthand for --audience control",
     )
     logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
-    logout.add_argument("--token-host", default=None)
+    logout.add_argument(
+        "--token-host",
+        default=None,
+        help=(
+            "control-plane base URL (default: the stored host, else"
+            f" {DEFAULT_CONTROL_PLANE_URL})"
+        ),
+    )
 
     setup = commands.add_parser(
         "setup", help="bootstrap AI coding harnesses for Remember"

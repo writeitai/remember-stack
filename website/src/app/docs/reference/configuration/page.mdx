@@ -1,0 +1,291 @@
+export const metadata = {
+  title: "Configuration variables",
+  description: "Every environment variable read by the RememberStack engine and by the remember client and CLI, with its default, type and purpose.",
+};
+
+# Configuration variables
+
+<AppliesTo products={["self-hosted"]} />
+
+This page lists every environment variable that RememberStack's engine and
+the `remember` package read. [Configuration](/docs/self-hosting/configuration)
+explains how they reach the containers.
+
+The variables in **Client** are read by the `remember` CLI, Python client and
+MCP server on your own machine<Cloud>, and apply to both remember.dev and
+self-hosted</Cloud>. Every other section applies to a self-hosted engine.
+
+The **Compose** column says how the shipped `compose.yaml` treats each
+engine variable:
+
+- **passed**: listed in the app services' `environment:`; set it in `.env`.
+- **set**: `compose.yaml` sets a fixed value itself.
+- **—**: not passed. Setting it in `.env` has no effect; use `engine.env`
+  and `compose.override.yaml` as described in
+  [Configuration](/docs/self-hosting/configuration#what-compose-passes-through).
+
+Booleans accept `true`/`false` (also `1`/`0`). An empty value counts as
+unset for optional settings.
+
+## Client
+
+<Cloud>
+
+Applies to remember.dev and self-hosted.
+
+</Cloud>
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBER_API_URL` | `http://127.0.0.1:8000` | URL | The deployment endpoint. Also read as `REMEMBER_DATA_PLANE_URL` (checked first) and `REMEMBERSTACK_API_URL` (checked last). |
+| `REMEMBER_API_KEY` | unset | secret | The deployment token, raw or as `Bearer …`. Also read as `REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION` and `REMEMBERSTACK_API_AUTHORIZATION`, in that order. The CLI prefers `REMEMBER_TOKEN`. |
+| `REMEMBERSTACK_API_TIMEOUT_SECONDS` | `30.0` | float > 0 | HTTP timeout of the client, in seconds. |
+| `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where the CLI keeps `credentials.json`. Also read as `REMEMBERSTACK_CONFIG_DIR`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
+| `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
+| `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
+| `APPDATA` | unset | path | Windows base for agent configuration that `remember setup` writes. |
+
+<Cloud>
+
+These are read only by the commands that talk to remember.dev:
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBER_TOKEN_HOST` | unset | URL | Token host for `remember login`. Also read as `REMEMBER_CONTROL_PLANE_URL` (checked first) and `REMEMBERSTACK_TOKEN_HOST`. |
+| `REMEMBER_CLOUD_TOKEN` | unset | secret | remember.dev only: account token for `remember-status` and the account client. |
+| `REMEMBER_CLOUD_ORG` | unset | UUID | remember.dev only: organisation for those commands. |
+| `REMEMBER_CLOUD_URL` | `https://remember.dev/app/api` | URL | remember.dev only: account API address. |
+
+</Cloud>
+
+## Compose file only
+
+Read by `compose.yaml` from `.env`, not by the engine.
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. |
+| `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
+| `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
+
+## Deployment and API
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | required | SQLAlchemy URL | set | PostgreSQL connection, `postgresql+psycopg://user:password@host:5432/db`. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | required | UUID | passed | The deployment's identity. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | `local` | string | passed | Short name. Fixed after the first start. Default Sentry environment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | `Local memory` | string | passed | Display name. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | — | Default language of the deployment. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | — | Address the API listens on inside the container. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
+| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
+| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | passed | Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | passed | Requests running at once for the whole deployment. |
+
+## Storage
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://minio:9000`) | S3-compatible endpoint. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also MinIO's root user. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also MinIO's root password. |
+| `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
+| `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | — | Bucket for filesystem-view snapshots. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | — | Default `--raw-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | — | Default `--artifacts-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | — | Working directory created by `setup`. |
+| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | — | Where hard-forget manifests are read. |
+| `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | — | Alembic configuration used by `setup`. |
+
+## Authentication
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
+| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | passed | Where the issuer's JWKS of Ed25519 public keys is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | passed | Where the issuer's signed revocation document for this deployment is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | passed | Seconds between fetches of the key set and the revocation document. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | passed | Maximum age of the accepted revocation document; past it every signed key is refused. |
+
+See [Authentication and scopes](/docs/self-hosting/authentication).
+
+<Cloud>
+
+## Spend and metering
+
+Used by remember.dev; leave unset. Setting some of the metering values
+without the rest stops the API at start.
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Leave unset. Refuses to start without a bind or a key issuer and a spend lease URL. |
+| `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` | unset | URL | passed | Billing service asked before paid work. |
+| `REMEMBERSTACK_SELFHOST_METER_INGEST_URL` | unset | URL | passed | Metering receipt endpoint. |
+| `REMEMBERSTACK_SELFHOST_METER_INGEST_TOKEN` | unset | secret (`umc_mi_…`) | passed | Metering token. |
+| `REMEMBERSTACK_SELFHOST_METER_IDENTITY_KEY` | unset | secret (`umc_mik_…`, ≥ 40 chars) | passed | Deployment-local metering key. |
+| `REMEMBERSTACK_SELFHOST_METER_ORG_ID` | unset | UUID | passed | Organisation for metering. |
+| `REMEMBERSTACK_SELFHOST_METER_PROJECT_ID` | unset | UUID | passed | Project for metering. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_METERING` | `false` | bool | passed | Refuse to start without complete metering settings. |
+| `REMEMBERSTACK_SELFHOST_METER_RECEIPT_TIMEOUT_S` | `10.0` | float, max 60 | — | Receipt request timeout. |
+| `REMEMBERSTACK_SELFHOST_METER_RECEIPT_POLL_S` | `2.0` | float, max 300 | — | Receipt worker poll interval. |
+
+</Cloud>
+
+## Pools and workers
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S` | `20.0` | float > 0 | — | Claims per second per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | — | Claim burst per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | — | Poll interval when no notification arrives. |
+| `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | — | Length of one worker session. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | passed | Connections for retrieval in the API. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a retrieval connection. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | passed | Retrievals at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | `4` | int 1–32 | passed | Connections for graph queries in the API. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a graph slot. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | passed | Graph queries at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | passed | PostgreSQL `work_mem` per graph query. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | — | First retry delay; doubles per attempt. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | — | Longest retry delay. |
+| `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | — | Spend ceilings per deployment, stage and lane ([Operating](/docs/self-hosting/operating#spend-budgets)). |
+| `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | — | Chunks per embedding request. |
+| `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | — | Claims or facts per embedding request. |
+
+## Model provider
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | passed | OpenRouter key for every model call. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | OpenRouter API address. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | — | Per-request timeout. |
+| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | passed | Output allowance per chat call, reasoning included. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred chat providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | passed | Only these chat providers, no fallback. Exclusive with the order. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred embedding providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | passed | The one embedding provider, no fallback. The order wins if both are set. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | — | Only zero-data-retention endpoints for chat. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | passed | Reasoning effort for every chat call. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | passed | Reasoning effort per model id; wins over the global value. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | — | Retries of a chat call after HTTP 429, outside the work attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | — | Longest wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | passed | Debug only: keep schema-invalid model answers as files. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | passed | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | passed | TypeSafe model. |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | passed | TypeSafe API address. |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | passed | TypeSafe request timeout. |
+
+## Model seats
+
+See [Models and providers](/docs/self-hosting/models).
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Structure fallback: section anchors when headings are unusable. |
+| `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | — | Largest prompt sent to the structure fallback. |
+| `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | — | Structure check: minimum headings per 10,000 characters. |
+| `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | — | Structure check: largest share of oversized sections. |
+| `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | — | Accepted for compatibility; not used. |
+| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Checks a proposed section outline. |
+| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Classifies section roles. |
+| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Section summaries. |
+| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Claim selection and extraction. |
+| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Relation normalisation. |
+| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Entity resolution. |
+| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Fact adjudication with the `prompt` engine. |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | passed | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | passed | Below this, both the new statement and the existing fact are kept. |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | passed | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
+| `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | passed | Every embedding, including search queries. |
+| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Reported by `GET /deployment` as `chunk_embedding`; chunks actually use the P1 model. Keep equal to it. |
+| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
+| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
+| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN` | `0.8` | float 0–1 | — | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_NOVELTY_FLOOR` | `0.3` | float −1–1 | — | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_OBS_HUB_TOP_K` | `5` | int ≥ 1 | — | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
+| `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
+
+## Converters
+
+See [File formats and converters](/docs/self-hosting/converters).
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](/docs/self-hosting/converters#the-default-table)) | JSON object | passed | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | passed | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
+| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | passed | Mistral API address. |
+| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | passed | OCR model. |
+| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | float > 0 | passed | OCR request timeout. |
+| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | int > 0 | passed | Largest file sent to OCR. |
+| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | bool | passed | Keep embedded images. |
+| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` | passed | Table format. |
+| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | bool | passed | Extract headers and footers separately. |
+| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` | passed | Confidence score detail. |
+| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | bool | passed | Keep the provider response as an artifact. |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | passed | Price used to record OCR cost. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | — | OpenRouter key for image descriptions; required by `image_ocr_description`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | API address. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | — | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | — | Request timeout. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | — | Largest image. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | — | Largest width × height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | int > 0 | — | Largest width. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | int > 0 | — | Largest height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | int > 0 | — | Longest description. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | int ≥ 1 | — | Output allowance of the description call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | int 1–2 | — | OCR and description in parallel (2) or in turn (1). |
+
+## Operations
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | — | Cap on lists in `remember ops inspect`. |
+| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | — | Object prefix of filesystem-view snapshots. |
+| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | — | Top-level view directories of the corpus tree. |
+| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | — | Entries above which a directory is split. |
+| `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | — | Address of the HTTP cost export. Unset: off. |
+| `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | — | Bearer token for the cost export. |
+
+## Observability
+
+| Variable | Default | Type | Compose | Purpose |
+|---|---|---|---|---|
+| `REMEMBERSTACK_SENTRY_DSN` | unset | secret | passed | Sentry-protocol DSN; unset keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | deployment slug | string | passed | Environment name on events. |
+| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | float 0–1 | passed | Share of error events sent. |
+| `REMEMBERSTACK_LANGFUSE_ENABLED`, `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, `_CA_FILE`, `_RUN_TAG` | `false` / empty | | passed | Read only by the benchmark harness; no effect on the engine. |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | empty | | passed | Read only by the benchmark harness; no effect on the engine. |
+
+## Knowledge plane and other unused settings
+
+These are read by code in the engine that no shipped command runs. Setting
+them has no effect on a Compose deployment.
+
+| Variables | Read by |
+|---|---|
+| `REMEMBERSTACK_K_PLANNER_PLANNER_MODEL`, `_PLANNER_MODEL_FAMILY`, `_REFLECTION_MODEL`, `_REFLECTION_MODEL_FAMILY`, `_TIMEOUT_SECONDS`, `_AUTO_APPLY_MAX_EXPECTED_IMPACT`, `_TRANSCRIPT_PREFIX` | Knowledge-page planner |
+| `REMEMBERSTACK_K_WRITER_MODEL`, `_TIMEOUT_SECONDS`, `_RESIDUE_CLAIM_LIMIT`, `_EVIDENCE_CLAIMS_PER_FACT`, `_TRANSCRIPT_PREFIX` | Knowledge-page writer |
+| `REMEMBERSTACK_K_DRIVER_MAX_PARALLEL_PAGES` | Knowledge-page driver |
+| `REMEMBERSTACK_K_CODEX_EXECUTABLE`, `REMEMBERSTACK_K_WRITER_CODEX_EXECUTABLE` (default `codex`) | Knowledge-page agent adapter |
+| `REMEMBERSTACK_SYNC_DEBOUNCE_QUIET_SECONDS` (default `120`), `REMEMBERSTACK_SYNC_LANE` (default `steady`) | Watched-directory sync loop |
+| `REMEMBERSTACK_BACKFILL_BATCH_SIZE` (default `500`) | Backfill seeder |
+| `REMEMBERSTACK_VERTEX_PROJECT_ID`, `_LOCATION` (default `global`), `_TIMEOUT_S`, `_MAX_COMPLETION_TOKENS` (default `128000`), `_PRICE_TABLE_USD_PER_MILLION`, `_THROTTLE_RETRY_DELAYS_S` | Google Vertex model adapter, used by the benchmark harness |
