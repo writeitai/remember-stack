@@ -1507,6 +1507,7 @@ class QueryEngine:
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
             chunk_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -3058,10 +3059,25 @@ class QueryEngine:
         deployment_id: UUID,
         chunk_ids: tuple[UUID, ...],
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm chunk content and any entity scope, then hydrate P1 bodies."""
+        """Confirm chunk content and any entity scope, then hydrate P1 bodies.
+
+        With ``documents`` (D134) the document filter is re-checked at
+        confirmation, so metadata that changed after nomination drops the
+        chunk (counted in ``dropped_by_hydration``) instead of returning it.
+        """
         if not chunk_ids:
             return (), 0, {}
+        if documents is not None and entity_ids:
+            raise ValueError("document-filtered chunk hydration is unscoped only")
+        statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            version_sql, extra = live_version_matches(
+                filters=documents, version="ch.version_id", prefix="documents_"
+            )
+            statement = text(f"{_CONFIRM_CHUNKS.text}  AND {version_sql}\n")
         rows: list[RowMapping] = []
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
@@ -3069,11 +3085,12 @@ class QueryEngine:
             for batch in batched(chunk_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS,
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "chunk_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -4407,6 +4424,9 @@ _CONFIRM_CLAIMS_CURRENT = text(
 
 # D134: confirm a current claim through its newest live occurrence in a
 # matching document version; that occurrence's chunk and spans are returned.
+# The filter is re-checked here, not only at nomination. The ORDER BY ends in
+# a unique key per claim ((chunk_id, created_at) is the occurrence key), so
+# the chosen occurrence is deterministic.
 # `{matches}` is the shared document-filter predicate over the occurrence's
 # version (rememberstack.core.document_filters).
 _CONFIRM_CLAIMS_IN_DOCUMENTS = """
@@ -4436,7 +4456,7 @@ _CONFIRM_CLAIMS_IN_DOCUMENTS = """
           AND occurrence.claim_id = c.claim_id
           AND {matches}
         ORDER BY occurrence_version.version_no DESC, occurrence.created_at,
-                 occurrence.derivation_kind NULLS FIRST
+                 occurrence.derivation_kind NULLS FIRST, occurrence.chunk_id
         LIMIT 1
     ) AS occ ON true
     WHERE c.deployment_id = :deployment_id

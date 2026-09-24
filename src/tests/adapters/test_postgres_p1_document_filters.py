@@ -548,11 +548,11 @@ def test_facts_are_kept_by_a_supporting_claim_from_a_matching_document(
                 valid_until=None,
                 ingested_at=_NOW,
                 invalidated_at=None,
-                vector=_NEAR,
+                vector=vector,
             )
-            for fact_id, label in (
-                (alice_fact, "Aster coordinates Beacon"),
-                (bob_fact, "Aster coordinates Cedar"),
+            for fact_id, label, vector in (
+                (alice_fact, "Aster coordinates Beacon", _FAR),
+                (bob_fact, "Aster coordinates Cedar", _NEAR),
             )
         )
     )
@@ -566,6 +566,21 @@ def test_facts_are_kept_by_a_supporting_claim_from_a_matching_document(
         deployment_id=deployment, vector=_NEAR, k=5, kind="relation", documents=_ALICE
     )
     assert _ids(filtered) == [str(alice_fact)]
+    # Alice's fact ranks below the unfiltered top-1, and is still returned
+    assert _ids(
+        index.search_facts_scored(
+            deployment_id=deployment, vector=_NEAR, k=1, kind="relation"
+        )
+    ) == [str(bob_fact)]
+    assert _ids(
+        index.search_facts_scored(
+            deployment_id=deployment,
+            vector=_NEAR,
+            k=1,
+            kind="relation",
+            documents=_ALICE,
+        )
+    ) == [str(alice_fact)]
 
 
 def test_deleted_versions_and_lineages_never_match(
@@ -689,3 +704,165 @@ def test_project_x_from_emails_from_alice(
         deployment_id=_DEPLOYMENT_ID, query="project x", k=10, channel="bm25"
     )
     assert len(unfiltered.evidence) == 3
+
+
+def test_an_occurrence_in_a_superseded_reading_does_not_match(
+    database_engine: Engine, index: PostgresP1Index
+) -> None:
+    """Only occurrences in the version's current representation are live."""
+    with database_engine.begin() as connection:
+        lineage = seed_live_document_lineage(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            label="reconverted",
+            at=_NOW,
+        )
+        _metadata(
+            connection=connection,
+            lineage=lineage,
+            family="markdown",
+            authors=(("Alice Novak", "alice@acme.com"),),
+        )
+        # a newer reading of the same version becomes current
+        representation_id, current_chunk = uuid4(), uuid4()
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, markdown_uri, status) VALUES"
+                " (:r, :d, :v, 'digital', 'mem://artifacts/reconverted-2.md',"
+                " 'ready')"
+            ),
+            {"r": representation_id, "d": _DEPLOYMENT_ID, "v": lineage.version_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                " representation_id, ordinal, block_start, block_end,"
+                " chunk_content_hash, extraction_input_hash, char_start, char_end,"
+                " context_prefix, created_at) VALUES (:c, :d, :doc, :v, :r, 0, 0,"
+                " 0, 'reconverted-2', 'reconverted-2', 0, 10, '', :at)"
+            ),
+            {
+                "c": current_chunk,
+                "d": _DEPLOYMENT_ID,
+                "doc": lineage.doc_id,
+                "v": lineage.version_id,
+                "r": representation_id,
+                "at": _NOW,
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id = :r"
+                " WHERE version_id = :v"
+            ),
+            {"r": representation_id, "v": lineage.version_id},
+        )
+        current = LiveDocumentLineage(
+            doc_id=lineage.doc_id,
+            version_id=lineage.version_id,
+            representation_id=representation_id,
+            section_id=lineage.section_id,
+            generation_id=lineage.generation_id,
+            chunk_ids=(current_chunk,),
+        )
+        # the claim's only occurrence is in the superseded reading's chunk
+        claim_id = _claim(
+            connection=connection,
+            lineage=current,
+            text_body="the orchid migration finished",
+            occurrences=(lineage.chunk_id,),
+        )
+    _index_rows(
+        index=index,
+        lineage=current,
+        claim_id=claim_id,
+        body="the orchid migration finished",
+        vector=_NEAR,
+    )
+    deployment = str(_DEPLOYMENT_ID)
+
+    def filtered() -> list[str]:
+        return _ids(
+            index.search_claims_lexical_scored(
+                deployment_id=deployment,
+                query="orchid migration",
+                k=5,
+                current_only=True,
+                documents=_ALICE,
+            )
+        )
+
+    assert _ids(
+        index.search_claims_lexical_scored(
+            deployment_id=deployment, query="orchid migration", k=5, current_only=True
+        )
+    ) == [str(claim_id)]
+    assert filtered() == []
+
+    with database_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                " evidence_spans, created_at) VALUES (:d, :c, :claim,"
+                ' CAST(\'[{"char_start": 0, "char_end": 5}]\' AS jsonb), :at)'
+            ),
+            {"d": _DEPLOYMENT_ID, "c": current_chunk, "claim": claim_id, "at": _NOW},
+        )
+    assert filtered() == [str(claim_id)]
+
+
+class _MetadataChangingIndex(PostgresP1Index):
+    """Nominate, then change the nominated document's author before hydration."""
+
+    def __init__(self, *, engine: Engine, version_id: UUID) -> None:
+        super().__init__(engine=engine, embedding_model=_MODEL)
+        self._database = engine
+        self._version_id = version_id
+
+    def search_chunks_lexical(self, **kwargs: object) -> tuple[str, ...]:
+        nominated = super().search_chunks_lexical(**kwargs)  # type: ignore[arg-type]
+        with self._database.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE document_people SET display_name = 'Bob Stone',"
+                    " normalized_name = 'bob stone', address = 'bob@acme.com',"
+                    " normalized_address = 'bob@acme.com' WHERE version_id = :v"
+                ),
+                {"v": self._version_id},
+            )
+        return nominated
+
+
+def test_metadata_changed_after_nomination_drops_the_chunk_at_hydration(
+    database_engine: Engine, index: PostgresP1Index
+) -> None:
+    """Hydration re-checks the document filter; it does not trust nomination."""
+    alice, _claim_id = _document(
+        engine=database_engine,
+        index=index,
+        label="alice-changing",
+        family="markdown",
+        author=("Alice Novak", "alice@acme.com"),
+        body="the heron budget memo",
+        vector=_NEAR,
+    )
+    engine = QueryEngine(
+        engine=database_engine,
+        search_index=_MetadataChangingIndex(
+            engine=database_engine, version_id=alice.version_id
+        ),
+        model_provider=MagicMock(),
+        embedding_model=_MODEL,
+    )
+
+    envelope = engine.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="heron budget",
+        k=5,
+        channel="bm25",
+        documents=_ALICE,
+    )
+
+    assert envelope.chunks == ()
+    assert envelope.dropped_by_hydration == 1
