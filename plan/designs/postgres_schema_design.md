@@ -1318,6 +1318,7 @@ CREATE TABLE document_names (
   file_name       text,
   title           text,
   source_path     text,
+  origin          text NOT NULL CHECK (origin IN ('ingest','observation','converter','backfill')), -- where this name came from; 'backfill' marks a legacy lineage title, not an observed declared one
   name_text       text NOT NULL,              -- file_name + title + source_path, space-joined; the indexed search text
   PRIMARY KEY (deployment_id, version_id, observed_at),
   FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
