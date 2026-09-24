@@ -272,8 +272,9 @@ class SearchRequest(BaseModel):
     k: int = Field(default=10, ge=1, le=400)
     channel: Literal["semantic", "bm25"] = "semantic"
     documents: DocumentSearchFilters | None = None
-    """D134: only evidence from documents matching these general-metadata
-    filters (the ``search_documents`` filters), applied before the top-k."""
+    """D134: only results found in a document version matching these
+    general-metadata filters (the ``search_documents`` filters), applied before
+    the top-k; returned claims still cite their origin."""
 
 
 ADJACENT_CHUNKS_MIN_WINDOW: Final = 1

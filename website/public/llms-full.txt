@@ -2467,7 +2467,7 @@ tools.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to matching documents. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions. |
 | Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None)` | Source passages, likewise. |
 | Search documents | `search_documents(query=, filters=, versions="current", k=20)` | Documents (files) by name, metadata and text. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
@@ -2487,8 +2487,9 @@ because a path with a gap is a false statement about a connection.
 
 To ask about something *in* certain files, such as "Project X, from Alice's
 emails", pass the same filters `search_documents` takes as `documents`: the
-search then considers only evidence from matching documents, before choosing
-its best `k` results. See
+search then considers only results found in matching document versions,
+before choosing its best `k` results. A returned claim still cites the passage
+it was first extracted from, which can be another version of the same document. See
 [Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
 
 See [Search](https://remember.dev/docs/reference/http-api/search),
@@ -9920,8 +9921,8 @@ A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 The `POST` forms accept a `documents` filter with the same fields as
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch):
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
-`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. Only
-evidence from matching documents is returned:
+`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
+filter decides which results are included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -9941,6 +9942,9 @@ For "everything about Project X from emails from Alice": find the right
 Alice with `POST /documents/search` and `filters.authors`; if several people
 match, narrow to an address. Then search with
 `{"query": "Project X", "documents": {"authors": ["alice@acme.com"]}}`.
+Each returned claim was found in a version Alice wrote; its cited evidence is
+where the claim was first extracted, which can be another version of the same
+document.
 Every result cites the document it came from.
 
 ## GET /search/claims
@@ -9999,7 +10003,7 @@ Search claims, with the query in the body.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
-| `documents` | [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters) | no | | Only evidence from matching documents; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
+| `documents` | [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
 
 Unknown fields are rejected.
 
@@ -12222,7 +12226,7 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
-| `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only evidence from matching documents. |
+| `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only results found in matching document versions; returned claims still cite their origin. |
 
 ### AdjacentChunksRequest
 
@@ -14268,7 +14272,8 @@ MemoryClient.search_claims(
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
-`documents` keeps only claims from matching documents, with the same fields
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
 as [`search_documents`](#search_documents); a filtered search is sent as
 `POST /search/claims`. See
 [Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).

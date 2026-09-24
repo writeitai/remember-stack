@@ -798,7 +798,8 @@ MemoryClient.search_claims(
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
-`documents` keeps only claims from matching documents, with the same fields
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
 as [`search_documents`](#search_documents); a filtered search is sent as
 `POST /search/claims`. See
 [Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents).

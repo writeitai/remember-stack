@@ -39,8 +39,8 @@ A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 The `POST` forms accept a `documents` filter with the same fields as
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch):
 `family`, `authors`, `recipients`, `created_from`/`created_to`,
-`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. Only
-evidence from matching documents is returned:
+`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
+filter decides which results are included:
 
 - **chunks** match when the chunk's document version matches;
 - **claims** match when at least one place the claim occurs is in a matching
@@ -60,6 +60,9 @@ For "everything about Project X from emails from Alice": find the right
 Alice with `POST /documents/search` and `filters.authors`; if several people
 match, narrow to an address. Then search with
 `{"query": "Project X", "documents": {"authors": ["alice@acme.com"]}}`.
+Each returned claim was found in a version Alice wrote; its cited evidence is
+where the claim was first extracted, which can be another version of the same
+document.
 Every result cites the document it came from.
 
 ## GET /search/claims
@@ -118,7 +121,7 @@ Search claims, with the query in the body.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
-| `documents` | [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters) | no | | Only evidence from matching documents; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
+| `documents` | [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
 
 Unknown fields are rejected.
 
