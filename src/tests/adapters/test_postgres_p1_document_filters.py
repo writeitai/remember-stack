@@ -39,6 +39,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import LiveDocumentLineage
+from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -372,6 +373,11 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
             label="spec-v1",
             at=_NOW,
         )
+        # the seeder numbers every version 1; make room for the second
+        connection.execute(
+            text("UPDATE document_versions SET version_no = 2 WHERE version_id = :v"),
+            {"v": older.version_id},
+        )
         newer = seed_live_document_lineage(
             connection=connection,
             deployment_id=_DEPLOYMENT_ID,
@@ -380,10 +386,13 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
             at=_NOW,
             create_document=False,
         )
-        connection.execute(
-            text("UPDATE document_versions SET version_no = 2 WHERE version_id = :v"),
-            {"v": newer.version_id},
-        )
+        for version_id, number in ((older.version_id, 1), (newer.version_id, 3)):
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
+                ),
+                {"n": number, "v": version_id},
+            )
         _metadata(
             connection=connection,
             lineage=older,
@@ -510,6 +519,23 @@ def test_facts_are_kept_by_a_supporting_claim_from_a_matching_document(
                     "doc": doc_id,
                 },
             )
+        # facts are visible through the resolved mentions of their evidence
+        for lineage, claim_id, entities in (
+            (alice, alice_claim, (subject, beacon)),
+            (bob, bob_claim, (subject, cedar)),
+        ):
+            for entity_id in entities:
+                seed_entity_mention(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_id=entity_id,
+                    doc_id=lineage.doc_id,
+                    chunk_id=lineage.chunk_id,
+                    claim_id=claim_id,
+                    surface_form=f"anchor-{entity_id}",
+                    at=_NOW,
+                    resolver_version="d134-test",
+                )
     index.upsert_facts(
         rows=tuple(
             P1FactRow(
