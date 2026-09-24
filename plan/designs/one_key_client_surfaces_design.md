@@ -141,9 +141,15 @@ The module also exports, as the single implementation every host uses:
 - `validate_arguments(name, arguments)` — the parsers now in
   `mcp_memory_tools.py` and `query_sandbox/mcp_tools.py` (including the
   path-ingest root allowlist and resource guard, and base64 decoding).
-- `map_error(...)` and `error_result(...)` — the structured tool error
-  envelope (`{"error": {"status_code", "code", "detail"}}`) for HTTP and
-  transport failures, so every host reports failures identically.
+- `map_error(...)` and `error_result(...)` — the one structured tool error
+  envelope, used by every tool family (writes, assured operations, SQL query
+  tools) on every host, so all failures read the same:
+  `{"error": {"code", "status_code", "detail", "retryable", "agent_action"}}`,
+  plus `reason_code`, `request_id` and `retry_after` when known. `code` is
+  the engine's own code when it sent one (`relation_not_allowed`,
+  `rate_limited`, …); `status_code` is the engine's HTTP status, `0` when no
+  answer arrived, and `null` when there was no HTTP exchange (the host refused
+  the call itself, or an in-process engine answered).
 - MCP tool annotations on every rendered tool: `readOnlyHint: true` for
   `memory:read` tools and `false` for `memory:write` tools, and
   `destructiveHint: true` for `delete_document`. Hosts must not alter them;
@@ -296,6 +302,8 @@ start-up error.
   - Per-request `tools/list` is not filtered by the caller's permissions (the
     listener does not know them); a call the engine refuses returns
     `insufficient_permission`.
+  - `ingest` never offers the local `path` body over HTTP: the caller may be
+    on another machine, and a path would name a file on the listener's.
 - `--read-only` keeps its meaning in both transports: write-permission tools
   are omitted and refused locally.
 
@@ -764,7 +772,7 @@ The account API's operations and their permissions are defined by the issuer
 | HTTP transport: non-loopback bind in front of an unauthenticated engine | Refuses to start |
 | HTTP transport: bad `Origin` | `403` |
 | Engine: wrong `aud`, not covering this deployment, wrong issuer, revoked | `401` |
-| Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After` |
+| Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After`; MCP hosts return the tool error `rate_limited` / `concurrency_limited` with `retry_after` |
 | Engine: no revocation document accepted yet, or accepted one older than `min(exp, iat + S)` | Every signed credential `401`; shared secret unaffected |
 | Engine: valid key lacking permission | `403 insufficient_scope` |
 | Client: project resolution fails | `ProjectResolutionError` / exit 1; no localhost fallback |

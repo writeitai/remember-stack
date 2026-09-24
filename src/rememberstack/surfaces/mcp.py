@@ -22,15 +22,19 @@ from typing import Literal
 from uuid import UUID
 
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
+from remember.mcp_tools import invalid_arguments
+from remember.mcp_tools import map_error
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool
+from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model.client import DocumentDeletion
@@ -223,8 +227,8 @@ class OperationMcpServer:
         """Run a write, assured-operation, or open-query tool.
 
         Operation answers use their declared contract as JSON text. Open-query
-        answers are QueryResult/v1 or discovery payloads. Write tools use their
-        structured error envelope. Typed failures remain protocol error results.
+        answers are QueryResult/v1 or discovery payloads. Every failure is the
+        catalogue's one structured error envelope.
         """
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
@@ -239,36 +243,39 @@ class OperationMcpServer:
             )
         if name in OPEN_QUERY_TOOL_NAMES:
             if self._open_query is None:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"open-query tool {name!r} is not composed",
-                        }
-                    ],
-                    "isError": True,
-                }
+                return error_result(
+                    ToolError(
+                        code="tool_not_composed",
+                        detail=f"open-query tool {name!r} is not composed here.",
+                        status_code=None,
+                        retryable=False,
+                        agent_action="Use a tool from tools/list.",
+                    )
+                )
             try:
                 payload = _run_open_query(
                     facade=self._open_query, name=name, arguments=arguments
                 )
-            except (SandboxRejection, ValueError, TypeError, KeyError) as error:
-                return {
-                    "content": [{"type": "text", "text": str(error)}],
-                    "isError": True,
-                }
+            except (SandboxRejection, ValueError) as error:
+                return error_result(map_error(error))
             return {
                 "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
                 "isError": False,
             }
         try:
             result = self._surface.run(name=name, arguments=arguments)
-        except (
-            UnknownOperationError,
-            MissingArgumentError,
-            InvalidArgumentError,
-        ) as error:
-            return {"content": [{"type": "text", "text": str(error)}], "isError": True}
+        except UnknownOperationError as error:
+            return error_result(
+                ToolError(
+                    code="unknown_tool",
+                    detail=str(error),
+                    status_code=None,
+                    retryable=False,
+                    agent_action="Call tools/list and use one of the listed tools.",
+                )
+            )
+        except (MissingArgumentError, InvalidArgumentError) as error:
+            return error_result(invalid_arguments(detail=str(error)))
         return {
             "content": [{"type": "text", "text": result.model_dump_json()}],
             "isError": False,
