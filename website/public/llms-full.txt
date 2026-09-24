@@ -14570,7 +14570,7 @@ in [MCP tools](https://remember.dev/docs/reference/mcp).
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted | --cloud] [--api-url URL] [--api-key KEY]
+remember setup [--self-hosted] [--api-url URL] [--api-key KEY]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 

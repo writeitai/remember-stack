@@ -903,7 +903,9 @@ class MemoryClient:
         Only a key-routed client re-resolves (D136 §8.3): after a connection
         failure, a ``421``, or a ``404`` that is not the engine's error
         envelope, the issuer is asked again and the request is retried once if
-        the deployment URL changed. Every catalogue call is safe to repeat.
+        the deployment URL changed and the request is safe to repeat
+        (:func:`_repeatable`). A connect timeout counts as a connection
+        failure; a timeout after sending does not.
         """
         merged: dict[str, str] = dict(headers or {})
         if self._route is None:
@@ -918,6 +920,7 @@ class MemoryClient:
                 )
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
+        repeatable = _repeatable(method, path)
         for attempt in (1, 2):
             base, authorization = self._route.target()
             if authorization is not None:
@@ -932,14 +935,15 @@ class MemoryClient:
                     content=content,
                     headers=merged,
                 )
-            except httpx.NetworkError as error:
-                if attempt == 1 and self._route.re_resolve():
+            except (httpx.NetworkError, httpx.ConnectTimeout) as error:
+                if attempt == 1 and repeatable and self._route.re_resolve():
                     continue
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             if (
                 attempt == 1
+                and repeatable
                 and _looks_moved(response)
                 and self._route.key_routed
                 and self._route.re_resolve()
@@ -1248,6 +1252,17 @@ class AccountApi:
             return metadata.endpoint("remember_account_endpoint")
         except IssuerError as error:
             raise AccountApiUnavailable(detail=error.detail) from error
+
+
+def _repeatable(method: str, path: str) -> bool:
+    """Whether a request may be sent again to a re-resolved deployment.
+
+    Every request except creating a connector: reads repeat harmlessly, an
+    identical ingest is a no-op (D55), deletion and pausing are idempotent
+    (D135), while a repeated ``POST /connectors`` would create a second
+    connector.
+    """
+    return not (method == "POST" and path.rstrip("/") == "/connectors")
 
 
 def _looks_moved(response: httpx.Response) -> bool:

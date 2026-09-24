@@ -345,9 +345,18 @@ in [MCP tools](/docs/reference/mcp).
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted | --cloud] [--api-url URL] [--api-key KEY]
+remember setup [--self-hosted] [--api-url URL] [--api-key KEY]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
+
+<Cloud>
+
+```text
+remember setup --cloud [--api-url URL]
+               [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
+```
+
+</Cloud>
 
 Writes MCP configuration so your coding agents start `remember mcp`.
 

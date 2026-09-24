@@ -587,3 +587,55 @@ def test_setup_dry_run_does_not_claim_write(
     out = capsys.readouterr().out
     assert "[✓] Stored" not in out
     assert "Mode: DRY RUN (no files will be written)" in out
+
+
+def test_setup_waits_for_a_concurrent_login_and_keeps_its_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Setup reads, checks and writes under the login lock, so a key that a
+    concurrent login stores is never overwritten unrevoked."""
+    import threading
+
+    from pydantic import SecretStr
+
+    from remember.credentials import credential_lock
+    from remember.credentials import load_credentials
+    from remember.credentials import StoredCredentials
+    from remember.credentials import write_credentials
+
+    locked = threading.Event()
+    release = threading.Event()
+
+    def concurrent_login() -> None:
+        with credential_lock():
+            locked.set()
+            release.wait(5)
+            write_credentials(
+                credentials=StoredCredentials(
+                    version=2,
+                    issuer="https://issuer.test",
+                    key=SecretStr("rmb_login-key"),
+                )
+            )
+
+    login = threading.Thread(target=concurrent_login)
+    login.start()
+    assert locked.wait(5)
+    result: list[int] = []
+    setup = threading.Thread(
+        target=lambda: result.append(
+            main(
+                ["setup", "--self-hosted", "--dir", str(tmp_path), "--agent", "cursor"]
+            )
+        )
+    )
+    setup.start()
+    setup.join(0.5)
+    assert setup.is_alive()  # blocked on the lock the login holds
+    release.set()
+    login.join(5)
+    setup.join(5)
+    assert result == [1]
+    assert "run `remember logout`" in capsys.readouterr().err
+    stored = load_credentials()
+    assert stored is not None and stored.issuer == "https://issuer.test"

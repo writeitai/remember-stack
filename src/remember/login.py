@@ -27,6 +27,7 @@ import sys
 import httpx
 
 from remember.connection import resolve_project
+from remember.credentials import confirm_credentials_durable
 from remember.credentials import credential_lock
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
@@ -76,6 +77,13 @@ def retry_journal(*, http: httpx.Client) -> None:
         )
         return
     current_key = current.key.get_secret_value() if current and current.key else None
+    if any(entry.key.get_secret_value() != current_key for entry in journal.entries):
+        # Revoke a replaced key only once its replacement is durable.
+        try:
+            confirm_credentials_durable()
+        except DurabilityUnconfirmed as error:
+            _warn(f"{error}; replaced keys stay live until the file is durable")
+            return
     for entry in journal.entries:
         secret = entry.key.get_secret_value()
         label = entry.key_id or "unknown id"
@@ -84,17 +92,7 @@ def retry_journal(*, http: httpx.Client) -> None:
             # key in use, so the entry is discarded, not revoked.
             forget_journalled_key(key=secret)
             continue
-        try:
-            metadata = fetch_issuer_metadata(entry.issuer, http=http)
-            confirmed = revoke_key(
-                http=http,
-                metadata=metadata,
-                key=secret,
-                timeout=RECOVERY_TIMEOUT_SECONDS,
-            )
-        except IssuerError:
-            confirmed = False
-        if confirmed:
+        if _revoke_entry(http=http, entry=entry, timeout=RECOVERY_TIMEOUT_SECONDS):
             forget_journalled_key(key=secret)
             print(f"revoked replaced key {label} at {entry.issuer}", file=sys.stderr)
         else:
@@ -146,21 +144,25 @@ def login(
                 forget_journalled_key(key=old.key.get_secret_value())
             raise
         # Step 3 — replace.
+        durable = True
         try:
             credentials = _stored_from_issued(issuer=issuer, issued=issued)
             try:
                 write_credentials(credentials=credentials)
             except DurabilityUnconfirmed as error:
-                # The file is in place and names the new key: carry on.
-                _warn(str(error))
+                # The file names the new key, but a crash could still undo the
+                # rename: the old key stays live and journalled until a later
+                # command confirms the file durable.
+                durable = False
+                _warn(f"{error}; the previous key stays live for now")
         except BaseException:
             _withdraw_new_key(http=http, issuer=issuer, issued=issued)
             if old is not None:
                 forget_journalled_key(key=old.key.get_secret_value())
             raise
         # Step 4 — revoke the old key.
-        if old is not None:
-            if revoke_key(http=http, metadata=metadata, key=old.key.get_secret_value()):
+        if old is not None and durable:
+            if _revoke_entry(http=http, entry=old):
                 forget_journalled_key(key=old.key.get_secret_value())
             else:
                 _warn(
@@ -168,6 +170,22 @@ def login(
                     "it stays journalled and the next `remember` command retries"
                 )
         return credentials
+
+
+def _revoke_entry(
+    *, http: httpx.Client, entry: PendingRevocation, timeout: float = 10.0
+) -> bool:
+    """Revoke a journalled key at **its own** issuer; ``True`` once confirmed."""
+    try:
+        metadata = fetch_issuer_metadata(entry.issuer, http=http)
+        return revoke_key(
+            http=http,
+            metadata=metadata,
+            key=entry.key.get_secret_value(),
+            timeout=timeout,
+        )
+    except IssuerError:
+        return False
 
 
 def _stored_from_issued(*, issuer: str, issued: IssuedKey) -> StoredCredentials:

@@ -19,6 +19,8 @@ import pytest
 
 from remember.cli import main
 from remember.credentials import config_dir
+from remember.credentials import confirm_credentials_durable
+from remember.credentials import DurabilityUnconfirmed
 from remember.credentials import load_credentials
 from remember.credentials import load_pending_revocations
 from remember.credentials import PendingRevocation
@@ -117,6 +119,13 @@ def test_login_honours_retry_after_with_a_cap(issuer: FakeIssuer) -> None:
     sleeps = issuer.sleeps  # type: ignore[attr-defined]
     assert sleeps[:3] == [5.0, 12.0, 17.0]  # Retry-After 12 floors the next wait
     assert max(sleeps) == 30.0
+
+
+def test_poll_timeout_backs_off_like_slow_down(issuer: FakeIssuer) -> None:
+    """RFC 8628 §3.5: a timed-out poll raises the interval by 5 seconds."""
+    issuer.poll_script = ["timeout", "authorization_pending"]
+    assert main(["login", "--issuer", ISSUER]) == 0
+    assert issuer.sleeps == [5.0, 10.0, 10.0]  # type: ignore[attr-defined]
 
 
 def test_login_uses_remember_issuer_from_the_environment(
@@ -228,6 +237,87 @@ def test_failed_replace_journals_the_new_key_when_it_cannot_be_withdrawn(
     assert main(["login", "--issuer", ISSUER]) == 1
     assert _stored_key() == OLD_KEY
     assert _journal_keys() == [issuer.issued_key]
+
+
+OTHER_ISSUER = "https://other-issuer.test"
+
+
+def test_old_key_is_revoked_at_its_own_issuer(
+    issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Switching issuer A → B revokes the old key at A; B's answer never counts."""
+    old_issuer = FakeIssuer(base=OTHER_ISSUER)
+    routed = httpx.MockTransport(
+        lambda request: (
+            old_issuer.handle(request)
+            if request.url.host == "other-issuer.test"
+            else issuer.handle(request)
+        )
+    )
+    old_key = make_key(jti="key-b", iss=OTHER_ISSUER)
+    write_credentials(
+        credentials=StoredCredentials(
+            version=2, issuer=OTHER_ISSUER, key=SecretStr(old_key), key_id="key-b"
+        )
+    )
+    issuer.revoke_status = 404  # would wrongly "confirm" if asked
+    old_issuer.revoke_status = 503
+    monkeypatch.setattr(httpx, "Client", _routing_client(routed))
+    assert main(["login", "--issuer", ISSUER]) == 0
+    assert _stored_key() == issuer.issued_key
+    assert _journal_keys() == [old_key]  # B did not confirm: still journalled
+    assert issuer.calls("/oauth/revoke") == []
+    assert len(old_issuer.calls("/oauth/revoke")) == 1
+
+    old_issuer.revoke_status = 200
+    assert main(["whoami"]) == 0
+    assert old_issuer.revoked == [old_key]
+    assert _journal_keys() == []
+    assert issuer.calls("/oauth/revoke") == []
+
+
+def _routing_client(transport: httpx.MockTransport) -> object:
+    real_client = httpx._client.Client  # the class, under the fixture's patch
+
+    def patched(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    return patched
+
+
+def test_old_key_stays_live_until_the_new_file_is_durable(
+    issuer: FakeIssuer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No revocation while the replacement's directory sync is unconfirmed."""
+    _store_old_key()
+    real_write = write_credentials
+
+    def unsynced_write(**kwargs: object) -> None:
+        real_write(**kwargs)  # type: ignore[arg-type]
+        raise DurabilityUnconfirmed("directory sync failed")
+
+    def unconfirmed() -> None:
+        raise DurabilityUnconfirmed("directory sync failed")
+
+    monkeypatch.setattr("remember.login.write_credentials", unsynced_write)
+    monkeypatch.setattr("remember.login.confirm_credentials_durable", unconfirmed)
+    assert main(["login", "--issuer", ISSUER]) == 0
+    assert _stored_key() == issuer.issued_key
+    assert _journal_keys() == [OLD_KEY]
+    assert issuer.calls("/oauth/revoke") == []
+
+    assert main(["whoami"]) == 0  # recovery re-checks durability: still no
+    assert issuer.calls("/oauth/revoke") == []
+    assert _journal_keys() == [OLD_KEY]
+
+    monkeypatch.setattr("remember.login.write_credentials", real_write)
+    monkeypatch.setattr(
+        "remember.login.confirm_credentials_durable", confirm_credentials_durable
+    )
+    assert main(["whoami"]) == 0
+    assert issuer.revoked == [OLD_KEY]
+    assert _journal_keys() == []
 
 
 # --- the §8.4 crash table: what the next CLI start does ---------------------------

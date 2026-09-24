@@ -16,6 +16,7 @@ import pytest
 
 from remember import AccountApiUnavailable
 from remember import Client
+from remember import ConnectorCreate
 from remember import MemoryApiError
 from remember import ProjectResolutionError
 from remember import RateLimited
@@ -376,8 +377,8 @@ def _moved(issuer: FakeIssuer, first_outcome: int | Exception) -> None:
 
 @pytest.mark.parametrize(
     "first_outcome",
-    [421, 404, httpx.ConnectError("refused")],
-    ids=["421", "non-engine-404", "connection-error"],
+    [421, 404, httpx.ConnectError("refused"), httpx.ConnectTimeout("slow")],
+    ids=["421", "non-engine-404", "connection-error", "connect-timeout"],
 )
 def test_moved_deployment_is_re_resolved_and_retried_once(
     issuer: FakeIssuer, first_outcome: int | Exception
@@ -388,6 +389,28 @@ def test_moved_deployment_is_re_resolved_and_retried_once(
     hosts = [request.url.host for request in issuer.engine_requests()]
     assert hosts == ["dp-a.test", "dp-b.test"]
     assert len(issuer.calls("/api/v1/keys/self/project")) == 2
+
+
+@pytest.mark.parametrize(
+    "first_outcome", [421, httpx.ConnectError("refused")], ids=["421", "connect"]
+)
+def test_creating_a_connector_is_never_repeated(
+    issuer: FakeIssuer, first_outcome: int | Exception
+) -> None:
+    """A repeated POST /connectors would create a second connector."""
+    _moved(issuer, first_outcome)
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        with pytest.raises(MemoryApiError):
+            client.add_connector(connector=ConnectorCreate(kind="k", name="n"))
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"]
+
+
+def test_read_timeout_is_not_a_moved_deployment(issuer: FakeIssuer) -> None:
+    _moved(issuer, httpx.ReadTimeout("slow"))
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        with pytest.raises(MemoryApiError):
+            client.list_operations()
+    assert len(issuer.engine_requests()) == 1
 
 
 def test_engine_404_does_not_re_resolve(issuer: FakeIssuer) -> None:

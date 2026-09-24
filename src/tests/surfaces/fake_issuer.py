@@ -68,6 +68,8 @@ class FakeIssuer:
             "p-other": ("p-other", "other", DEPLOYMENT_B),
         }
     )
+    #: The issuer's URL (its ``iss``); every other origin is an engine.
+    base: str = ISSUER
     metadata_status: int = 200
     account_endpoint: bool = True
     #: Token-endpoint answers before success, e.g. ``["authorization_pending"]``.
@@ -86,15 +88,15 @@ class FakeIssuer:
 
     def metadata(self) -> dict[str, object]:
         body: dict[str, object] = {
-            "issuer": ISSUER,
-            "device_authorization_endpoint": f"{ISSUER}/oauth/device",
-            "token_endpoint": f"{ISSUER}/oauth/token",
-            "revocation_endpoint": f"{ISSUER}/oauth/revoke",
-            "remember_project_endpoint": f"{ISSUER}/api/v1/keys/self/project",
-            "remember_mcp_endpoint": f"{ISSUER}/mcp",
+            "issuer": self.base,
+            "device_authorization_endpoint": f"{self.base}/oauth/device",
+            "token_endpoint": f"{self.base}/oauth/token",
+            "revocation_endpoint": f"{self.base}/oauth/revoke",
+            "remember_project_endpoint": f"{self.base}/api/v1/keys/self/project",
+            "remember_mcp_endpoint": f"{self.base}/mcp",
         }
         if self.account_endpoint:
-            body["remember_account_endpoint"] = f"{ISSUER}/api"
+            body["remember_account_endpoint"] = f"{self.base}/api"
         return body
 
     def transport(self) -> httpx.MockTransport:
@@ -110,7 +112,7 @@ class FakeIssuer:
         return [
             request
             for request in self.requests
-            if f"{request.url.scheme}://{request.url.host}" != ISSUER
+            if f"{request.url.scheme}://{request.url.host}" != self.base
         ]
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -118,7 +120,7 @@ class FakeIssuer:
         origin = f"{request.url.scheme}://{request.url.host}"
         if request.url.port:
             origin += f":{request.url.port}"
-        if origin != ISSUER:
+        if origin != self.base:
             return self._engine(origin, request)
         path = request.url.path
         if path == "/.well-known/oauth-authorization-server":
@@ -133,8 +135,8 @@ class FakeIssuer:
                 json={
                     "device_code": "device-secret",
                     "user_code": "ABCD-EFGH",
-                    "verification_uri": f"{ISSUER}/device",
-                    "verification_uri_complete": f"{ISSUER}/device?code=ABCD-EFGH",
+                    "verification_uri": f"{self.base}/device",
+                    "verification_uri_complete": f"{self.base}/device?code=ABCD-EFGH",
                     "expires_in": 600,
                     "interval": 5,
                 },
@@ -147,6 +149,8 @@ class FakeIssuer:
             assert form["device_code"] == ["device-secret"]
             if self.poll_script:
                 error = self.poll_script.pop(0)
+                if error == "timeout":
+                    raise httpx.ReadTimeout("poll timed out", request=request)
                 headers = {"Retry-After": "12"} if error == "slow_down+retry" else {}
                 return httpx.Response(
                     400, json={"error": error.split("+")[0]}, headers=headers

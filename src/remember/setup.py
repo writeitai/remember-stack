@@ -453,6 +453,7 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
     from pydantic import SecretStr
 
     from remember.connection import normalize_key
+    from remember.credentials import credential_lock
     from remember.credentials import CredentialError
     from remember.credentials import load_credentials
     from remember.credentials import StoredCredentials
@@ -469,23 +470,36 @@ def run_setup(args: argparse.Namespace, *, cwd: Path | None = None) -> int:
         env["REMEMBER_API_URL"] = url
         print("Backend: Self-Hosted Engine")
         print(f"  Engine URL: {url}")
-        if stored is not None and stored.issuer:
-            print(
-                f"error: a key from {stored.issuer} is stored; run `remember logout` "
-                "before configuring a self-hosted engine",
-                file=sys.stderr,
-            )
-            return 1
-        if not dry_run:
-            # The key goes to the owner-only credential file, never into a
-            # harness configuration file.
-            write_credentials(
-                credentials=StoredCredentials(
-                    version=2,
-                    api_url=url,
-                    key=SecretStr(normalize_key(target_key)) if target_key else None,
+        refusal = (
+            "error: a key from {issuer} is stored; run `remember logout` "
+            "before configuring a self-hosted engine"
+        )
+        if dry_run:
+            if stored is not None and stored.issuer:
+                print(refusal.format(issuer=stored.issuer), file=sys.stderr)
+                return 1
+        else:
+            # Read, check and write under the lock `remember login` holds, so
+            # a concurrent login's key is never overwritten unrevoked. The key
+            # goes to the owner-only credential file, never into a harness
+            # configuration file.
+            with credential_lock():
+                try:
+                    current = load_credentials()
+                except CredentialError:
+                    current = None
+                if current is not None and current.issuer:
+                    print(refusal.format(issuer=current.issuer), file=sys.stderr)
+                    return 1
+                write_credentials(
+                    credentials=StoredCredentials(
+                        version=2,
+                        api_url=url,
+                        key=SecretStr(normalize_key(target_key))
+                        if target_key
+                        else None,
+                    )
                 )
-            )
             print(
                 "[✓] Stored the engine URL (and key) in the owner-only credential file"
             )

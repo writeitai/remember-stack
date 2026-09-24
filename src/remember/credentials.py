@@ -147,6 +147,33 @@ def write_credentials(*, credentials: StoredCredentials) -> None:
     _write_owner_only(path=credentials_path(), payload=dumped)
 
 
+def confirm_credentials_durable() -> None:
+    """Sync ``credentials.json`` and its directory again.
+
+    Reading the file back proves it is visible, not that it survives a crash.
+    A replaced key is revoked only after this succeeds, so a power loss can
+    never leave the machine holding a revoked key. Raises
+    :class:`DurabilityUnconfirmed` on failure.
+    """
+    path = credentials_path()
+    try:
+        handle = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except FileNotFoundError:
+        handle = -1
+    except OSError as error:
+        raise DurabilityUnconfirmed(f"{path} could not be opened ({error})") from error
+    if handle >= 0:
+        try:
+            os.fsync(handle)
+        except OSError as error:
+            raise DurabilityUnconfirmed(
+                f"{path} could not be synced ({error})"
+            ) from error
+        finally:
+            os.close(handle)
+    _fsync_directory(path.parent)
+
+
 def unlink_credentials() -> None:
     """Remove the credential file. A missing file is success."""
     path = credentials_path()

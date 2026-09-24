@@ -408,6 +408,10 @@ def poll_for_key(
             raise DeviceGrantError(detail="the device code expired before approval")
         try:
             response = _post_form(http, url, form)
+        except httpx.TimeoutException:
+            # RFC 8628 §3.5: back off on a timeout as on ``slow_down``.
+            wait = min(wait + _SLOW_DOWN_STEP_SECONDS, _POLL_CAP_SECONDS)
+            continue
         except httpx.TransportError:
             continue
         except httpx.HTTPError as error:
