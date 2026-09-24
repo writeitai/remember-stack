@@ -100,9 +100,14 @@ Read by `compose.yaml` from `.env`, not by the engine.
 |---|---|---|---|---|
 | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
 | `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
-| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | unset | JWKS JSON | — | Ed25519 public keys that verify signed tokens. |
-| `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | unset | comma-separated strings | — | `jti` values refused despite a valid signature. |
-| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Used by remember.dev; leave unset. Refuses to start without a bind or signing keys and a spend lease URL. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant (on remember.dev, the organisation id). Keys carry `aud = org:<this>` and `org = <this>`. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | passed | Where the issuer's JWKS of Ed25519 public keys is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | passed | Where the issuer's signed revocation document for this deployment is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | passed | Seconds between fetches of the key set and the revocation document. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | passed | Maximum age of the accepted revocation document; past it every signed key is refused. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Used by remember.dev; leave unset. Refuses to start without a bind or a key issuer and a spend lease URL. |
 
 See [Authentication and scopes](/docs/self-hosting/authentication).
 

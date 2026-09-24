@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Authentication and scopes",
-  description: "Protect a self-hosted RememberStack API with a shared secret or signed tokens, understand read, ingest and write scopes, and allow browser origins.",
+  description: "Protect a self-hosted RememberStack API with a shared secret or signed keys, understand read, ingest and write scopes, and allow browser origins.",
 };
 
 # Authentication and scopes
@@ -91,44 +91,101 @@ deployment rejects every request with `403` ("credential is for another
 deployment"). If you set both the token and the bind, they must describe
 the same secret, or the API refuses to start.
 
-## Signed tokens
+## Signed keys
 
-For more than one credential, or for credentials that expire and carry a
-narrower scope, the API verifies signed tokens (JWTs) against public keys
-you give it. The deployment holds only public keys, so it can check tokens
-but never mint them. Signed tokens and the shared secret can be configured
-together.
+For more than one credential, or for credentials that expire and carry
+narrower permissions, the API verifies signed keys (JWTs) minted by a
+**key issuer**: remember.dev, or a service of your own that follows the
+contract below. The deployment holds only the issuer's public keys, so it
+can check keys but never mint them. Signed keys and the shared secret can
+be configured together.
 
 | Variable | Meaning |
 |---|---|
-| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS` | A JWKS document (`{"keys": [...]}`) of Ed25519 public keys. |
-| `REMEMBERSTACK_SELFHOST_API_REVOKED_CREDENTIAL_IDS` | Comma-separated `jti` values to refuse even with a valid signature. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | The issuer's URL, compared exactly with the `iss` claim. Setting it turns signed keys on; the tenant id and both URLs below are then required. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | The issuer's id for the group of deployments this one belongs to (on remember.dev, the organisation id). |
+| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | The issuer's id for this deployment's project. Default: the deployment id. |
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | Where the issuer's public keys (a JWKS, `{"keys": [...]}`) are fetched. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | Where the issuer's signed revocation document for this deployment is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | How often both are fetched, in seconds. Default `60`. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | How old the accepted revocation document may get before signed keys stop working, in seconds. Default `3600`. |
 
-Neither is passed by `compose.yaml`. Set them in `engine.env` for the `api`
-service ([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)).
+`compose.yaml` passes all seven to the API.
 
-What the API accepts:
+### The public keys
 
-- **Algorithm:** EdDSA over Ed25519 only. Every key must have `"kty": "OKP"`,
-  `"crv": "Ed25519"`, a string `kid`, no private part (`d`), and, if present,
-  `"use": "sig"` and a `key_ops` list containing `verify`. A key set with
-  one bad key refuses to load, and the API does not start.
-- **Header:** `kid` naming one of the configured keys.
-- **Claims, all required:** `aud` (this deployment's id, as a single string),
-  `exp`, `iat`, `nbf`, `jti` (non-empty), `sub`, and `scope` (`read`,
-  `ingest` or `write`). A `sub` starting with `dpcred:` must be exactly
-  `dpcred:<jti>` and marks a machine credential; any other `sub` marks a
-  credential held by a person, named by that value.
-- **Clock skew:** 30 seconds of leeway on `exp` and `nbf`.
-- An optional `umc_dp_` prefix in front of the token is removed before
-  checking.
+The API fetches the JWKS every refresh interval. EdDSA over Ed25519 only:
+every key must have `"kty": "OKP"`, `"crv": "Ed25519"`, a string `kid`, no
+private part (`d`), and, if present, `"use": "sig"` and a `key_ops` list
+containing `verify`. A key set with one bad key is refused as a whole, and
+a failed fetch keeps the last good set. `{"keys": []}` is valid and refuses
+every signed key.
 
-A signature cannot be withdrawn: a token is valid until it expires unless
-its `jti` is on the revocation list. Keep lifetimes short. An empty key set,
-`{"keys": []}`, is valid and refuses every signed token.
+### The revocation document
 
-This example creates a key pair, prints the JWKS for the deployment, and
-mints a one-hour read token. It needs `pip install "pyjwt[crypto]"`:
+A signed key cannot be un-signed, so the issuer publishes a **revocation
+document**: a JWT signed with one of its keys, header `typ` set to
+`revocation+jwt`, with these claims:
+
+| Claim | Meaning |
+|---|---|
+| `iss` | The issuer, equal to `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER`. |
+| `aud` | This deployment's id. A document for another deployment is rejected. |
+| `seq` | An integer the issuer increases on every document it issues. |
+| `iat`, `exp` | When it was issued and when it expires (`iat` + the maximum age). |
+| `revoked` | `jti` values refused despite a valid signature. |
+| `active_kids` | The `kid`s whose keys are still valid. |
+
+The API accepts the first document whose signature, `iss` and `aud` check
+out. After that, a new document must have a higher `seq` and be signed by a
+`kid` listed in `active_kids` of the document it replaces; anything else is
+rejected and logged, and the last accepted document stays. The accepted
+document is stored in the database, so a restart does not lose it.
+
+**No fresh document, no signed keys.** Until a document is accepted, and
+whenever the accepted one is older than the maximum age (one hour by
+default) or past its `exp`, every signed key gets `401`. The
+shared secret keeps working. An issuer re-issues the document every refresh
+interval; a key revoked at time *r* stops working by *r* plus the maximum
+age plus 30 seconds, even if the issuer is unreachable.
+
+To retire a signing key, remove its `kid` from `active_kids`. Keys signed
+with it stop working from the next accepted document, even while the
+public key is still in the JWKS.
+
+### What a key must carry
+
+- **Form:** `<prefix>_<JWT>`, where the prefix is letters only (remember.dev
+  uses `rmb_`), so secret scanners can recognise a leaked key. A bare JWT is
+  also accepted. The header's `kid` must name a fetched key that is in
+  `active_kids`.
+- **Every key:** `iss`, `aud` (one string), `sub`, `kind`, `permissions` (a
+  list of strings), `iat`, `nbf`, `exp`, and a non-empty `jti` not in
+  `revoked`. 30 seconds of leeway on `exp` and `nbf`.
+- **Per `kind`:**
+
+| `kind` | `aud` | `org` | `projects` | `sub` |
+|---|---|---|---|---|
+| `key` (a long-lived key a person created) | `org:<tenant id>` | the tenant id | `"org:*"` (every project), or a list of 1 to 20 project ids that includes this deployment's project id | the person |
+| `session` (a short-lived key for this one deployment) | this deployment's id | the tenant id | exactly `[<project id>]` | the person |
+| `service` (a machine credential) | this deployment's id | — | — | exactly `dpcred:<jti>` |
+
+A `session` may also carry `src`, naming the service that derived it; it
+is recorded, never used to decide access. Any other `aud`, such as an OAuth
+token meant for a hosted MCP server, is refused.
+
+- **Permissions:** `memory:read` gives the `read` scope, `memory:write` the
+  `write` scope, and `memory:ingest` the `ingest` scope (see
+  [Scopes](#scopes)). `memory:write` wins when present; `memory:read` and
+  `memory:ingest` together without it are refused. Permissions without the
+  `memory:` prefix (such as `account:read`) are ignored. An unknown
+  `memory:` permission is refused. A key with no `memory:` permission gets
+  `403` on every route.
+
+This example creates a key pair, prints the JWKS, and signs a revocation
+document and a one-hour read key. It needs `pip install "pyjwt[crypto]"`.
+Serve the JWKS and the document at the two URLs, and sign a new document
+(with a higher `seq`) at least every refresh interval:
 
 ```python
 import json
@@ -139,34 +196,55 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from jwt.algorithms import OKPAlgorithm
 
+ISSUER = "https://issuer.example.com"  # REMEMBERSTACK_SELFHOST_API_KEY_ISSUER
+TENANT = "my-team"                      # REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID
 DEPLOYMENT_ID = "<your REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID>"
 
 private_key = Ed25519PrivateKey.generate()
 public_jwk = json.loads(OKPAlgorithm.to_jwk(private_key.public_key()))
 public_jwk.update({"kid": "k1", "use": "sig"})
-print("REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS=" + json.dumps({"keys": [public_jwk]}))
+print(json.dumps({"keys": [public_jwk]}))  # serve at API_SIGNING_KEYS_URL
 
-credential_id = str(uuid.uuid4())
 now = int(time.time())
-token = jwt.encode(
+revocation = jwt.encode(
     {
+        "iss": ISSUER,
         "aud": DEPLOYMENT_ID,
+        "seq": now,  # any integer that grows with every document
+        "iat": now,
+        "exp": now + 3600,
+        "revoked": [],
+        "active_kids": ["k1"],
+    },
+    private_key,
+    algorithm="EdDSA",
+    headers={"kid": "k1", "typ": "revocation+jwt"},
+)
+print(revocation)  # serve at API_REVOCATION_URL
+
+key = jwt.encode(
+    {
+        "iss": ISSUER,
+        "aud": f"org:{TENANT}",
+        "org": TENANT,
+        "projects": [DEPLOYMENT_ID],
+        "sub": "alice",
+        "kind": "key",
+        "permissions": ["memory:read"],
         "iat": now,
         "nbf": now,
         "exp": now + 3600,
-        "jti": credential_id,
-        "sub": f"dpcred:{credential_id}",
-        "scope": "read",
+        "jti": str(uuid.uuid4()),
     },
     private_key,
     algorithm="EdDSA",
     headers={"kid": "k1"},
 )
-print(token)
+print("mykey_" + key)
 ```
 
-In real use, store the private key somewhere safe and mint tokens from it;
-this script discards it when it exits.
+In real use, store the private key somewhere safe; this script discards it
+when it exits.
 
 ## Scopes
 
@@ -192,15 +270,15 @@ declare it (`mutates: false`), so a `read` token can run them.
 
 | Status | Meaning |
 |---|---|
-| `401` | No `Authorization` header, or the credential did not verify |
+| `401` | No `Authorization` header, the credential did not verify, or (for signed keys) no fresh revocation document has been accepted |
 | `403` | The credential is for another deployment, or its scope does not cover the route |
 
 ## `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH`
 
 Leave this `false` on a self-hosted deployment. The perimeter is enforced
-as soon as a token, a bind or signing keys are configured; this flag adds
+as soon as a token, a bind or a key issuer is configured; this flag adds
 nothing to that. It exists for remember.dev: with it set, the API refuses
-to start unless a bind or signing keys are configured **and**
+to start unless a bind or a key issuer is configured **and**
 `REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL` points at a billing service. A
 shared token alone (`API_BEARER_TOKEN` without `API_BEARER_BIND`) does not
 satisfy it either.

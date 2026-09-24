@@ -41,8 +41,10 @@ class CredentialKind(StrEnum):
     """Which kind of credential authenticated this request (D60).
 
     Audit needs it, and audit alone: the canonical actor id in a D8 event is
-    the kind's marker followed by the credential id — ``dpcred:<jti>`` for a
-    deployment token, ``browsercred:<jti>`` for a browser credential — so
+    the kind's marker followed by the credential id — ``keycred:<jti>`` for a
+    key a person created, ``browsercred:<jti>`` for a short-lived credential
+    derived for one deployment (browser sessions, hosted MCP calls), and
+    ``dpcred:<jti>`` for a machine credential (D136 §7.3) — so
     "which credential did this" and "which person did this" stay separate
     questions with separate answers.
 
@@ -50,12 +52,15 @@ class CredentialKind(StrEnum):
     finds this value used in an authorisation branch has found a bug.
     """
 
+    KEY = "key"
     DEPLOYMENT = "deployment"
     BROWSER = "browser"
 
     @property
     def actor_marker(self) -> str:
         """The prefix an audit event puts in front of the credential id."""
+        if self is CredentialKind.KEY:
+            return "keycred:"
         if self is CredentialKind.DEPLOYMENT:
             return "dpcred:"
         return "browsercred:"
@@ -104,16 +109,23 @@ class AuthenticatedContext(BaseModel):
     #: ``None`` for a credential that predates the distinction — the self-host
     #: shared secret, which names neither a person nor an issued credential.
     credential_kind: CredentialKind | None = None
-    #: Full authority unless the credential says otherwise. A credential that
-    #: predates scopes — the self-host shared secret — is unrestricted, which
-    #: is what it has always been.
-    scope: PerimeterScope = PerimeterScope.WRITE
+    #: Which host derived the credential (a signed ``session``'s ``src``, e.g.
+    #: ``mcp``), recorded for audit. It never decides authority.
+    source: str | None = None
+    #: Full authority unless the credential says otherwise; the self-host
+    #: shared secret is unrestricted. ``None`` is a signed credential with no
+    #: memory permission: it authenticates and may do nothing.
+    scope: PerimeterScope | None = PerimeterScope.WRITE
+
+    def may(self, *, required: PerimeterScope) -> bool:
+        """True when this caller's scope covers ``required``."""
+        return self.scope is not None and self.scope.covers(required=required)
 
     @property
     def actor_id(self) -> str | None:
         """The canonical id a D8 audit event records for this caller.
 
-        ``dpcred:<jti>`` or ``browsercred:<jti>`` — the credential, never the
+        ``keycred:<jti>``, ``browsercred:<jti>`` or ``dpcred:<jti>`` — the credential, never the
         person. The delegating member, when there is one, belongs in the
         event's ``resource.scope``, which is where D53 already puts it.
         """

@@ -48,13 +48,12 @@ Three rules follow from this:
 service gets a fixed `environment:` list, and only variables on that list
 reach the engine. The list covers the deployment identity, storage, the
 OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret, the graph and retrieval pools, the API
+authentication by shared secret or signed keys, the graph and retrieval pools, the API
 admission limits, Sentry, and
 the remember.dev-only billing settings.
 
 Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
-`REMEMBERSTACK_COST_EXPORT_BIND`, `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS`,
-the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
+`REMEMBERSTACK_COST_EXPORT_BIND`, the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
 `REMEMBERSTACK_WORK_BUDGETS` — has **no effect** if you only put it in
 `.env`. The reference marks which variables Compose passes.
 

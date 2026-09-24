@@ -7,58 +7,34 @@ both kinds of material are configured.
 
 from __future__ import annotations
 
-import json
+from typing import Any
 from uuid import uuid4
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-import jwt
-from jwt.algorithms import OKPAlgorithm
 from pydantic import SecretBytes
 from pydantic import SecretStr
+from pydantic import ValidationError
 import pytest
 
 from rememberstack.adapters.managed.composite_auth import CompositeAuth
-from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
 from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
-from rememberstack.adapters.managed.signed_token_auth import SignedTokenUnusable
 from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
 from rememberstack.adapters.selfhost.hashed_bearer_auth import HashedBearerAuth
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.profiles.selfhost import resolve_selfhost_api_auth
+from rememberstack.profiles.selfhost import resolve_selfhost_perimeter_trust
 from rememberstack.profiles.selfhost import SelfHostSettings
+from tests.signed_key_support import build_trust
+from tests.signed_key_support import FakeIssuer
+from tests.signed_key_support import ISSUER
+from tests.signed_key_support import JWKS_URL
+from tests.signed_key_support import MemoryStateStore
+from tests.signed_key_support import present
+from tests.signed_key_support import ready_auth
+from tests.signed_key_support import REVOCATION_URL
+from tests.signed_key_support import TENANT
 
 _SECRET = "a-shared-self-host-secret"
-
-
-def _keypair(*, kid: str) -> tuple[Ed25519PrivateKey, str]:
-    """An Ed25519 private key and the JWKS that verifies it."""
-    private = Ed25519PrivateKey.generate()
-    jwk = json.loads(OKPAlgorithm.to_jwk(private.public_key()))
-    jwk["kid"] = kid
-    jwk["alg"] = "EdDSA"
-    return private, json.dumps({"keys": [jwk]})
-
-
-def _signed(*, private: Ed25519PrivateKey, kid: str, audience: str) -> str:
-    """A credential the control plane would issue."""
-    import datetime
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    return jwt.encode(
-        {
-            "aud": audience,
-            "sub": "member-1",
-            "scope": "read",
-            "iat": now,
-            "nbf": now,
-            "exp": now + datetime.timedelta(minutes=5),
-            "jti": uuid4().hex,
-        },
-        private,
-        algorithm="EdDSA",
-        headers={"kid": kid},
-    )
 
 
 def _credential(*, secret: str) -> PerimeterCredential:
@@ -68,48 +44,52 @@ def _credential(*, secret: str) -> PerimeterCredential:
     )
 
 
+def _signed_settings(**overrides: Any) -> dict[str, Any]:
+    return {
+        "api_key_issuer": ISSUER,
+        "api_key_tenant_id": TENANT,
+        "api_signing_keys_url": JWKS_URL,
+        "api_revocation_url": REVOCATION_URL,
+        **overrides,
+    }
+
+
 def test_both_credential_kinds_reach_the_same_deployment() -> None:
     """The point of a composite: one set of routes, several callers."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
+    issuer, signed_auth = ready_auth()
+    deployment = issuer.deployment_id
     composite = CompositeAuth(
         adapters=(
             HashedBearerAuth(
                 issued_deployment_id=deployment,
                 digest=digest_bearer_secret(secret=_SECRET),
             ),
-            SignedTokenAuth(
-                deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-            ),
+            signed_auth,
         )
     )
 
     shared = composite.authenticate(credential=_credential(secret=_SECRET))
     assert shared.deployment_id == deployment
-    # A shared secret carries no subject and is unrestricted, as it always was.
+    # A shared secret carries no subject and is unrestricted.
     assert shared.subject is None
     assert shared.scope is PerimeterScope.WRITE
 
-    token = _signed(private=private, kid="k1", audience=str(deployment))
-    signed = composite.authenticate(credential=_credential(secret=token))
+    signed = present(composite, issuer.credential())
     assert signed.deployment_id == deployment
-    assert signed.subject == "member-1"
+    assert signed.subject == "person-1"
     assert signed.scope is PerimeterScope.READ
 
 
 def test_a_credential_no_adapter_accepts_is_one_refusal() -> None:
     """The refusal says nothing about which adapter came closest."""
-    deployment = uuid4()
-    _private, jwks = _keypair(kid="k1")
+    issuer, signed_auth = ready_auth()
     composite = CompositeAuth(
         adapters=(
             HashedBearerAuth(
-                issued_deployment_id=deployment,
+                issued_deployment_id=issuer.deployment_id,
                 digest=digest_bearer_secret(secret=_SECRET),
             ),
-            SignedTokenAuth(
-                deployment_id=deployment, keys=load_verification_keys(jwks=jwks)
-            ),
+            signed_auth,
         )
     )
 
@@ -125,15 +105,14 @@ def test_a_composite_needs_an_adapter() -> None:
 
 def test_the_profile_composes_when_both_are_configured() -> None:
     """Wiring, not just parts: an adapter nobody builds does not exist."""
-    deployment = uuid4()
-    _private, jwks = _keypair(kid="k1")
     settings = SelfHostSettings(
-        deployment_id=deployment,
-        api_bearer_token=SecretStr(_SECRET),
-        api_signing_keys=jwks,
+        deployment_id=uuid4(), api_bearer_token=SecretStr(_SECRET), **_signed_settings()
+    )
+    trust = resolve_selfhost_perimeter_trust(
+        settings=settings, store=MemoryStateStore()
     )
 
-    auth = resolve_selfhost_api_auth(settings=settings)
+    auth = resolve_selfhost_api_auth(settings=settings, trust=trust)
 
     assert isinstance(auth, CompositeAuth)
     assert auth.authenticate(credential=_credential(secret=_SECRET)).scope is (
@@ -141,19 +120,81 @@ def test_the_profile_composes_when_both_are_configured() -> None:
     )
 
 
-def test_signing_keys_alone_are_a_perimeter() -> None:
+def test_an_issuer_alone_is_a_perimeter() -> None:
     """A managed host may have no shared secret at all."""
     deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
+    issuer = FakeIssuer(deployment_id=deployment)
     settings = SelfHostSettings(
-        deployment_id=deployment, api_signing_keys=jwks, require_api_auth=True
+        deployment_id=deployment, require_api_auth=True, **_signed_settings()
     )
+    trust = build_trust(issuer=issuer)
 
-    auth = resolve_selfhost_api_auth(settings=settings)
+    auth = resolve_selfhost_api_auth(settings=settings, trust=trust)
 
     assert isinstance(auth, SignedTokenAuth)
-    token = _signed(private=private, kid="k1", audience=str(deployment))
-    assert auth.authenticate(credential=_credential(secret=token)).subject == "member-1"
+    issuer.revocation()
+    trust.refresh()
+    assert present(auth, issuer.credential()).subject == "person-1"
+
+
+def test_the_project_id_defaults_to_the_deployment_id() -> None:
+    deployment = uuid4()
+    issuer = FakeIssuer(deployment_id=deployment)
+    trust = build_trust(issuer=issuer)
+    issuer.revocation()
+    trust.refresh()
+
+    default = resolve_selfhost_api_auth(
+        settings=SelfHostSettings(deployment_id=deployment, **_signed_settings()),
+        trust=trust,
+    )
+    assert present(default, issuer.credential(projects=[str(deployment)]))
+
+    configured = resolve_selfhost_api_auth(
+        settings=SelfHostSettings(
+            deployment_id=deployment, **_signed_settings(api_key_project_id="p-7")
+        ),
+        trust=trust,
+    )
+    assert present(configured, issuer.credential(projects=["p-7"]))
+
+
+def test_an_issuer_without_a_trust_source_refuses_to_start() -> None:
+    settings = SelfHostSettings(deployment_id=uuid4(), **_signed_settings())
+    with pytest.raises(RuntimeError, match="trust"):
+        resolve_selfhost_api_auth(settings=settings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"api_key_tenant_id": None},
+        {"api_signing_keys_url": None},
+        {"api_revocation_url": None},
+        {"api_revocation_url": "file:///etc/revocation"},
+        {"api_signing_keys_url": "jwks.json"},
+        {"api_key_issuer": None},
+    ],
+)
+def test_incomplete_signed_key_settings_refuse_to_start(
+    overrides: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        SelfHostSettings(deployment_id=uuid4(), **_signed_settings(**overrides))
+
+
+def test_blank_signed_key_settings_are_unset() -> None:
+    """Compose interpolates unset variables as empty strings."""
+    settings = SelfHostSettings(
+        deployment_id=uuid4(),
+        api_key_issuer="",
+        api_key_tenant_id="",
+        api_key_project_id="",
+        api_signing_keys_url="",
+        api_revocation_url="",
+    )
+    assert settings.api_key_issuer is None
+    assert resolve_selfhost_api_auth(settings=settings) is None
 
 
 def test_require_api_auth_refuses_when_nothing_is_configured() -> None:
@@ -172,45 +213,32 @@ def test_the_quickstart_still_has_no_perimeter() -> None:
     )
 
 
-def test_an_unusable_key_set_refuses_to_start() -> None:
-    """Half-loading a key set is a rotation that half works."""
-    settings = SelfHostSettings(
-        deployment_id=uuid4(), api_signing_keys='{"keys": [{"kty": "OKP"}]}'
-    )
+def test_the_app_lifespan_loads_and_refreshes_the_trust() -> None:
+    """Start-up loads the persisted row and refreshes; shutdown stops the loop."""
+    import time
 
-    with pytest.raises(RuntimeError, match="SIGNING_KEYS"):
-        resolve_selfhost_api_auth(settings=settings)
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
+    from rememberstack.profiles.selfhost import attach_perimeter_trust_refresh
 
-def test_a_revoked_credential_is_refused_through_the_profile() -> None:
-    """The deny-list travels as configuration, like the bind."""
-    deployment = uuid4()
-    private, jwks = _keypair(kid="k1")
-    import datetime
+    issuer = FakeIssuer(deployment_id=uuid4())
+    store = MemoryStateStore()
+    issuer.revocation()
+    build_trust(issuer=issuer, store=store).refresh()  # a previous process
+    issuer.fail = True
+    trust = build_trust(issuer=issuer, store=store)
+    app = FastAPI()
+    attach_perimeter_trust_refresh(app=app, trust=trust)
 
-    now = datetime.datetime.now(datetime.timezone.utc)
-    revoked_id = uuid4().hex
-    token = jwt.encode(
-        {
-            "aud": str(deployment),
-            "sub": "member-1",
-            "scope": "read",
-            "iat": now,
-            "nbf": now,
-            "exp": now + datetime.timedelta(minutes=5),
-            "jti": revoked_id,
-        },
-        private,
-        algorithm="EdDSA",
-        headers={"kid": "k1"},
-    )
-    settings = SelfHostSettings(
-        deployment_id=deployment,
-        api_signing_keys=jwks,
-        api_revoked_credential_ids=f" {revoked_id} , other ",
-    )
-
-    auth = resolve_selfhost_api_auth(settings=settings)
-    assert isinstance(auth, SignedTokenAuth)
-    with pytest.raises(SignedTokenUnusable, match="revoked"):
-        auth.authenticate(credential=_credential(secret=token))
+    assert trust.current() is None
+    trust.refresh_s = 0.01
+    with TestClient(app):
+        current = trust.current()
+        assert current is not None and current[1].seq == 1  # loaded at start-up
+        issuer.fail = False
+        issuer.revocation()
+        deadline = time.monotonic() + 5
+        while (current := trust.current()) is not None and current[1].seq < 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)

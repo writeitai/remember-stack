@@ -129,8 +129,8 @@ Changing it does not rename the deployment; it asks for a different one:
 - With a new slug as well, `setup` creates a second deployment in the same
   database. The API then serves the new, empty one. The memory stored
   under the old id is still in the database but no longer served, shared
-  secrets bound to the old id and signed tokens with the old id as
-  audience are refused with `403`, and the cost export stops working
+  secrets bound to the old id are refused with `403`, signed keys for the
+  old deployment are refused, and the cost export stops working
   because it expects exactly one deployment.
 
 The same check covers the slug, the name, the default language and the
