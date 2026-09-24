@@ -1285,7 +1285,7 @@ CREATE TABLE document_members (
 );
 CREATE INDEX ix_document_members_child ON document_members (deployment_id, child_doc_id) WHERE child_doc_id IS NOT NULL;
 
--- D133 §5.4: a forgotten member stays forgotten when its parent is expanded again. Content-free:
+-- D133 §5.4: a member deleted on its own stays deleted when its parent is expanded again. Content-free:
 -- expand compares the hash of each member key.
 CREATE TABLE document_member_suppressions (
   deployment_id   uuid NOT NULL,

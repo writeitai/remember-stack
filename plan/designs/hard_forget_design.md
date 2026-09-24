@@ -27,9 +27,9 @@ operation forgets a source contribution, not every independently obtained copy o
 
 > **Amended 2026-09-23 (D133, D134).** Forgetting a **container** forgets its descendant
 > closure — every lineage reachable through `document_members` — under **one** manifest whose
-> inventory lists every lineage in the closure, admitted behind one barrier. Forgetting one
-> **member** writes a content-free `document_member_suppressions` key so re-expanding the
-> parent (including after restore) skips it. Private query assets and staged member bytes are
+> inventory lists every lineage in the closure, admitted behind one barrier. A hard-forget
+> request naming one **member** is refused with a typed error naming its root container, because
+> the container's immutable original holds the member's bytes. Private query assets and staged member bytes are
 > inventoried with their representation. D134's `document_metadata`, `document_people` and
 > `document_names` rows are source-bearing and deleted with the lineage. Authority:
 > [`format_conversion_design.md`](format_conversion_design.md) §5.4,
@@ -96,7 +96,7 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 lineage: its source fingerprint and content hashes refuse re-admission of the same source, and
 its IDs and prefixes are purged from each restored store. Replay admits no `expand` work for a root in `lineages[]`, so a restored container cannot be
 re-expanded into forgotten members. Verification (the S55 canary) runs per entry. A v1 manifest remains
-valid and is read as a v2 manifest with one root entry and empty new lists.
+valid and is read as a v2 manifest with one root entry and no members.
 
 IDs and hashes are retained because replay must still work when PostgreSQL has already scrubbed the
 payload columns or when only one external store was restored. The manifest is immutable and
