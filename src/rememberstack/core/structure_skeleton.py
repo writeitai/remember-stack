@@ -462,24 +462,65 @@ def _resolve_anchor_level(
             )
         )
 
-    # D137 next-block section absorption: a leaf section may not own only its
-    # anchor block when another section starts on the very next block (B -> B+1).
-    # Its next sibling is absorbed into it; the sibling's children are adopted.
-    absorbed: list[_AnchorNode] = []
+    return _absorb_adjacent_single_block_leaves(result)
+
+
+def _absorb_adjacent_single_block_leaves(nodes: list[_AnchorNode]) -> list[_AnchorNode]:
+    """Absorb runs of contiguous single-block leaf sections (D137).
+
+    A single-block leaf section owns only its anchor block (block_start == block_end)
+    and has no children. When such micro-sections occur consecutively (B -> B+1),
+    they represent split conversational dialogue turns or micro-remarks.
+
+    The run of consecutive single-block leaves is merged into the succeeding
+    leaf section if that section starts on the immediate next block and has no
+    subsections. If the succeeding section has subsections or does not exist
+    (e.g. at the end of the document), the run collapses into a single merged section,
+    preserving structured subtrees while preventing question/answer conversational fractures.
+    """
+    if not nodes:
+        return []
+
+    result: list[_AnchorNode] = []
     i = 0
-    while i < len(result):
-        curr = result[i]
-        if not curr.children and curr.block_start == curr.block_end and i + 1 < len(result):
-            next_sibling = result[i + 1]
-            if next_sibling.block_start == curr.block_start + 1:
-                curr.block_end = next_sibling.block_end
-                curr.children = next_sibling.children
-                absorbed.append(curr)
-                i += 2
+    n = len(nodes)
+    while i < n:
+        curr = nodes[i]
+        if not curr.children and curr.block_start == curr.block_end:
+            run_start = i
+            while (
+                i + 1 < n
+                and not nodes[i + 1].children
+                and nodes[i + 1].block_start == nodes[i + 1].block_end
+                and nodes[i + 1].block_start == nodes[i].block_end + 1
+            ):
+                i += 1
+            run_end = i
+
+            if (
+                run_end + 1 < n
+                and not nodes[run_end + 1].children
+                and nodes[run_end + 1].block_start == nodes[run_end].block_end + 1
+            ):
+                next_leaf = nodes[run_end + 1]
+                next_leaf.block_start = nodes[run_start].block_start
+                i = run_end + 1
                 continue
-        absorbed.append(curr)
+
+            merged = _AnchorNode(
+                proposal=nodes[run_start].proposal,
+                block_start=nodes[run_start].block_start,
+                block_end=nodes[run_end].block_end,
+                children=[],
+            )
+            result.append(merged)
+            i += 1
+            continue
+
+        result.append(curr)
         i += 1
-    return absorbed
+
+    return result
 
 
 def _resolve_anchor(

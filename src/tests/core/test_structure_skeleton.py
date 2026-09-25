@@ -264,30 +264,30 @@ def test_fallback_nesting_preserves_the_snap_depth_ceiling() -> None:
     assert sections[-1].node_path.count(".") == 15
 
 
-def test_d137_single_block_leaf_absorbs_next_block_sibling() -> None:
-    """A leaf section of 1 block absorbs its next sibling when the sibling starts at B+1."""
-    source = "Turn 1\n\nTurn 2\n\nTurn 3\n"
+def test_d137_single_block_run_absorbs_into_succeeding_leaf() -> None:
+    """A run of single-block leaves absorbs into a succeeding multi-block leaf."""
+    source = "Intro\n\nQuestion\n\nAnswer part 1\n\nAnswer part 2\n"
     blocks = blockize(document_md=source)
     sections = resolve_fallback_skeleton(
         proposed=(
-            FallbackAnchor(anchor="Turn 1", occurrence_index=0, children=()),
-            FallbackAnchor(anchor="Turn 2", occurrence_index=0, children=()),
-            FallbackAnchor(anchor="Turn 3", occurrence_index=0, children=()),
+            FallbackAnchor(anchor="Intro", occurrence_index=0, children=()),
+            FallbackAnchor(anchor="Question", occurrence_index=0, children=()),
+            FallbackAnchor(anchor="Answer part 1", occurrence_index=0, children=()),
         ),
         blocks=blocks,
         document_md=source,
         title="Dialogue",
     )
-    # Turn 1 (block 0) absorbs Turn 2 (block 1) -> spans blocks 0..1.
-    # Turn 3 (block 2) is the last section -> spans block 2..2.
+    # Intro (block 0) and Question (block 1) are single-block leaves.
+    # Answer (blocks 2..3) is a multi-block leaf.
+    # The run [0, 1] absorbs into the succeeding leaf [2..3], spanning 0..3.
     assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
-        ("Turn 1", 0, 1),
-        ("Turn 3", 2, 2),
+        ("Answer part 1", 0, 3)
     ]
 
 
-def test_d137_chain_of_single_block_anchors_absorbs_deterministically() -> None:
-    """Chains of single-block leaf sections absorb adjacent pairs deterministically."""
+def test_d137_contiguous_single_block_run_at_document_end_collapses() -> None:
+    """Contiguous single-block leaf sections at document end collapse into one merged section."""
     source = "\n\n".join(f"Turn {i}" for i in range(4))
     blocks = blockize(document_md=source)
     sections = resolve_fallback_skeleton(
@@ -299,10 +299,41 @@ def test_d137_chain_of_single_block_anchors_absorbs_deterministically() -> None:
         document_md=source,
         title="Dialogue",
     )
-    # Turn 0 absorbs Turn 1 (0..1), Turn 2 absorbs Turn 3 (2..3)
+    # All 4 turns are single-block leaves at the end of the document;
+    # they collapse into a single section starting at block 0 and ending at block 3.
     assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
-        ("Turn 0", 0, 1),
-        ("Turn 2", 2, 3),
+        ("Turn 0", 0, 3)
+    ]
+
+
+def test_d137_section_with_subsections_is_never_absorbed() -> None:
+    """A section with subsections is neither absorbed nor absorbs preceding leaves (D57)."""
+    source = "PART ONE\n\nChapter 1 Intro\n\nChapter 1 Body\n"
+    blocks = blockize(document_md=source)
+    sections = resolve_fallback_skeleton(
+        proposed=(
+            FallbackAnchor(anchor="PART ONE", occurrence_index=0, children=()),
+            FallbackAnchor(
+                anchor="Chapter 1 Intro",
+                occurrence_index=0,
+                children=(
+                    FallbackAnchor(
+                        anchor="Chapter 1 Body", occurrence_index=0, children=()
+                    ),
+                ),
+            ),
+        ),
+        blocks=blocks,
+        document_md=source,
+        title="Novel",
+    )
+    # PART ONE (block 0, 1 block) must NOT be absorbed into Chapter 1 (which has subsections),
+    # preserving chapter structure, headings, and hierarchy.
+    body_sections = sections[1:]
+    assert [(s.title, s.block_start, s.block_end) for s in body_sections] == [
+        ("PART ONE", 0, 0),
+        ("Chapter 1 Intro", 1, 2),
+        ("Chapter 1 Body", 2, 2),
     ]
 
 
@@ -340,7 +371,48 @@ def test_d137_session_question_answer_turns_share_section() -> None:
                 children=(),
             ),
             FallbackAnchor(
-                anchor="Joanna: Sounds fun!",
+                anchor="Joanna: Sounds fun!", occurrence_index=0, children=()
+            ),
+        ),
+        blocks=blocks,
+        document_md=source,
+        title="Session 27",
+    )
+    # Joanna's question turn (block 0, 1 block) is absorbed into Nate's succeeding turn (blocks 1..2).
+    # Thus both blocks 0 and 1 (question and answer) reside in the first section [0, 2]!
+    body_sections = sections[1:]
+    assert len(body_sections) == 2
+    qa_section = body_sections[0]
+    assert qa_section.block_start == 0
+    assert qa_section.block_end == 2
+    assert "currently playing" in qa_section.title
+    # Blocks 0 and 1 are within qa_section's range [0, 2]
+    assert qa_section.block_start <= 0 <= qa_section.block_end
+    assert qa_section.block_start <= 1 <= qa_section.block_end
+    # The trailing turn is its own section at block 3
+    assert body_sections[1].block_start == 3
+    assert body_sections[1].block_end == 3
+
+
+def test_d137_question_at_block_1_and_answer_at_block_2_share_section() -> None:
+    """When question is at block 1 following block 0 greeting, both merge into block 2 answer."""
+    source = (
+        "Nate: Hey Joanna!\n\n"
+        "Joanna: So what's your favorite game?\n\n"
+        "Nate: Yep! I'm currently playing Xenoblade Chronicles...\n\n"
+        "Nate: It has a great story and battle system.\n"
+    )
+    blocks = blockize(document_md=source)
+    sections = resolve_fallback_skeleton(
+        proposed=(
+            FallbackAnchor(anchor="Nate: Hey Joanna!", occurrence_index=0, children=()),
+            FallbackAnchor(
+                anchor="Joanna: So what's your favorite game?",
+                occurrence_index=0,
+                children=(),
+            ),
+            FallbackAnchor(
+                anchor="Nate: Yep! I'm currently playing Xenoblade Chronicles...",
                 occurrence_index=0,
                 children=(),
             ),
@@ -349,14 +421,13 @@ def test_d137_session_question_answer_turns_share_section() -> None:
         document_md=source,
         title="Session 27",
     )
-    # Joanna's question turn (block 0, 1 block) absorbs Nate's turn (block 1, ending at block 2).
-    # Thus both blocks 0 and 1 (question and answer) reside in the first section!
+    # Greeting (block 0) and question (block 1) are a run of 2 single-block leaves.
+    # They absorb into Nate's answer (blocks 2..3), so the section spans [0..3].
     body_sections = sections[1:]
-    assert len(body_sections) == 2
-    qa_section = body_sections[0]
-    assert qa_section.block_start == 0
-    assert qa_section.block_end == 2
-    assert "favorite game" in qa_section.title
-    # Blocks 0 and 1 are within qa_section's range [0, 2]
-    assert qa_section.block_start <= 0 <= qa_section.block_end
-    assert qa_section.block_start <= 1 <= qa_section.block_end
+    assert len(body_sections) == 1
+    section = body_sections[0]
+    assert section.block_start == 0
+    assert section.block_end == 3
+    # Question (block 1) and answer (block 2) are together in the section!
+    assert section.block_start <= 1 <= section.block_end
+    assert section.block_start <= 2 <= section.block_end

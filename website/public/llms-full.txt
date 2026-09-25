@@ -14918,13 +14918,14 @@ each tool the deployment reports at the same version:
    `pipeline_readiness` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
-3. The seven SQL query tools, when the deployment serves the query space.
+3. Context expansion: `adjacent_chunks`.
+4. The seven SQL query tools, when the deployment serves the query space.
 
 A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 14 tools: 3 + 4 + 7.
+lists 15 tools: 3 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for

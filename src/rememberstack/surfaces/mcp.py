@@ -205,9 +205,9 @@ class OperationMcpServer:
         """List the composed catalogue tools, in catalogue order.
 
         Write tools lead when both ports are composed, then `delete_document`
-        when deletion is composed, the four assured operations, and the seven
-        §3.1 tools when open query is composed. `examples.*` never appear as
-        top-level tools.
+        when deletion is composed, the four assured operations, `adjacent_chunks`,
+        and the seven §3.1 tools when open query is composed. `examples.*` never
+        appear as top-level tools.
         """
         names: list[str] = []
         if self._write_backend is not None:
@@ -215,6 +215,7 @@ class OperationMcpServer:
         if self._delete_backend is not None:
             names.append(DELETE_DOCUMENT_TOOL_NAME)
         names.extend(OPERATION_TOOL_NAMES)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)
         return {
@@ -270,22 +271,13 @@ class OperationMcpServer:
                 "isError": False,
             }
         if name == ADJACENT_CHUNKS_TOOL_NAME:
-            adjacent_fn = getattr(self._surface, "adjacent_chunks", None)
-            if not callable(adjacent_fn):
-                return error_result(
-                    ToolError(
-                        code="tool_not_composed",
-                        detail=f"tool {name!r} is not composed on this surface.",
-                        status_code=None,
-                        retryable=False,
-                        agent_action="Use a tool from tools/list.",
-                    )
-                )
             try:
                 args = validate_arguments(name, arguments)
                 chunk_id = cast(UUID, args["chunk_id"])
                 window = cast(int, args.get("window", 1))
-                envelope = adjacent_fn(chunk_id=chunk_id, window=window)
+                envelope = self._surface.adjacent_chunks(
+                    chunk_id=chunk_id, window=window
+                )
             except ToolArgumentError as error:
                 return error_result(error.error)
             except Exception:  # noqa: BLE001 — the MCP wire boundary

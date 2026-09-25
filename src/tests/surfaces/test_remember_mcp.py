@@ -37,6 +37,7 @@ from remember.mcp_http import MAX_BODY_BYTES
 from remember.mcp_http import MAX_CONCURRENT_REQUESTS
 from remember.mcp_http import McpHttpServer
 from remember.mcp_http import parse_bind
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import map_error
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPERATION_TOOL_NAMES
@@ -168,7 +169,10 @@ def test_engine_mode_renders_what_the_in_process_server_renders() -> None:
     in_process = OperationMcpServer(surface=_Surface())  # type: ignore[arg-type]
     engine = EngineMcpServer(
         client=_engine(
-            served={name: tool(name).tool_version for name in OPERATION_TOOL_NAMES}
+            served={
+                name: tool(name).tool_version
+                for name in (*OPERATION_TOOL_NAMES, ADJACENT_CHUNKS_TOOL_NAME)
+            }
         ),
         path_ingest=False,
     )
@@ -362,9 +366,7 @@ def test_in_process_mcp_adjacent_chunks_dispatches_successfully() -> None:
         name="adjacent_chunks", arguments={"chunk_id": str(chunk_id)}
     )
     assert result["isError"] is False
-    mock_surface.adjacent_chunks.assert_called_once_with(
-        chunk_id=chunk_id, window=1
-    )
+    mock_surface.adjacent_chunks.assert_called_once_with(chunk_id=chunk_id, window=1)
     content = cast("list[dict[str, object]]", result["content"])
     assert json.loads(str(content[0]["text"]))["grain"] == "fact"
 
@@ -380,8 +382,7 @@ def test_in_process_mcp_adjacent_chunks_validates_arguments() -> None:
     # Out of bounds window
     err2 = _error(
         server.call_tool(
-            name="adjacent_chunks",
-            arguments={"chunk_id": str(uuid4()), "window": 5},
+            name="adjacent_chunks", arguments={"chunk_id": str(uuid4()), "window": 5}
         )
     )
     assert err2["code"] == "invalid_arguments"

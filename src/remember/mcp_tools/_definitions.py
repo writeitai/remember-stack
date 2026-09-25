@@ -26,17 +26,13 @@ MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
 #: The four assured operations (D87), run through ``POST /operations/{name}``.
-ASSURED_OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
+OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
     "resolve_entity",
     "claims_and_sources_context",
     "facts_context",
     "combined_context",
 )
-#: Read operations exposed over MCP and the query surfaces.
-OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
-    *ASSURED_OPERATION_TOOL_NAMES,
-    ADJACENT_CHUNKS_TOOL_NAME,
-)
+ASSURED_OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = OPERATION_TOOL_NAMES
 #: The seven open-query facade operations (open query space §3.1).
 OPEN_QUERY_TOOL_NAMES: Final[tuple[str, ...]] = (
     "query_sql",
@@ -537,7 +533,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
     ToolDefinition(
         name=ADJACENT_CHUNKS_TOOL_NAME,
         description=(
-            "Retrieve sibling chunks preceding and succeeding a target chunk within the"
+            "Retrieve neighbouring chunks preceding and succeeding a target chunk within the"
             " same document to expand conversational or narrative context."
         ),
         input_schema=_object_schema(
@@ -552,7 +548,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                     "minimum": 1,
                     "maximum": 2,
                     "description": (
-                        "Number of sibling chunks to retrieve on each side (1 or 2, default 1)."
+                        "Number of neighbouring chunks to retrieve on each side (1 or 2, default 1)."
                     ),
                 },
             },
@@ -560,7 +556,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         ),
         permission="memory:read",
         tool_version=1,
-        http_route="POST /chunks/adjacent",
+        http_route="GET /chunks/{chunk_id}/adjacent",
     ),
     ToolDefinition(
         name="query_sql",

@@ -109,13 +109,15 @@ E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07h:d79-wave2"
 Maps old ``e0-structure-2026.07c:temp0-1`` (one-shot offsets/tree/roles/
 summaries/placement) to the D79 split: deterministic/anchor skeleton, sanity
 check, role pass, bottom-up summaries, and root-reduction placement.
-The ``07h`` seed includes D137 conversational section integrity and
-guidance prohibiting conversational micro-turns as section anchors.
+The ``07h`` seed is input/seat identity only; provider output never mints.
+It includes the fallback wire field ``subsections`` (internal ``children``),
+D137 conversational section integrity and guidance prohibiting conversational
+micro-turns as section anchors.
 """
 
 E0_SKELETON_VERSION: Final = (
     f"e0-skeleton-2026.07a:d79:{SKELETON_PARSER_VERSION}"
-    f":anchor-v2-depth{MAX_FALLBACK_DEPTH}"
+    f":anchor-v3-depth{MAX_FALLBACK_DEPTH}"
 )
 """Skeleton contract: canonical heading stack plus exact-anchor fallback."""
 

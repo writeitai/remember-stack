@@ -68,6 +68,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "pipeline_readiness",
         "delete_document",
         *OPERATION_TOOL_NAMES,
+        ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
     ]
     assert len(set(names)) == len(names)
@@ -143,10 +144,12 @@ def test_permission_matches_the_scope_the_engine_requires() -> None:
     """A tool's declared permission is what the perimeter demands of its route."""
     for definition in memory_tools():
         method, path = definition.http_route.split(" ", 1)
-        concrete = path.replace("{doc_id}", str(uuid4())).replace(
-            "{namespace}", "examples"
+        concrete = (
+            path.replace("{doc_id}", str(uuid4()))
+            .replace("{chunk_id}", str(uuid4()))
+            .replace("{namespace}", "examples")
+            .replace("{name}", "top_entities")
         )
-        concrete = concrete.replace("{name}", "top_entities")
         scope = required_scope(method=method, path=concrete)
         if scope is None:
             scope = operation_scope(mutates=definition.mutates)
@@ -159,7 +162,9 @@ def test_permission_matches_the_scope_the_engine_requires() -> None:
 def test_operations_registry_fields_are_generated_from_the_catalogue() -> None:
     """`GET /operations` name/description/schema/mutates/version equal the catalogue."""
     descriptors = operation_descriptors(operations=CANONICAL_OPERATIONS)
-    assert {descriptor.name for descriptor in descriptors} == set(ASSURED_OPERATION_TOOL_NAMES)
+    assert {descriptor.name for descriptor in descriptors} == set(
+        ASSURED_OPERATION_TOOL_NAMES
+    )
     for descriptor in descriptors:
         definition = tool(descriptor.name)
         assert descriptor.description == definition.description
@@ -179,10 +184,9 @@ def test_validate_arguments_parses_every_family() -> None:
         "doc_id": doc_id
     }
     chunk_id = uuid4()
-    assert validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id)}) == {
-        "chunk_id": chunk_id,
-        "window": 1,
-    }
+    assert validate_arguments(
+        ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id)}
+    ) == {"chunk_id": chunk_id, "window": 1}
     assert validate_arguments(
         ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "window": 2}
     ) == {"chunk_id": chunk_id, "window": 2}
@@ -191,9 +195,13 @@ def test_validate_arguments_parses_every_family() -> None:
     with pytest.raises(ToolArgumentError, match="chunk_id is not a valid UUID"):
         validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": "not-a-uuid"})
     with pytest.raises(ToolArgumentError, match="window must be between 1 and 2"):
-        validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "window": 3})
+        validate_arguments(
+            ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "window": 3}
+        )
     with pytest.raises(ToolArgumentError, match="Unknown argument keys: project"):
-        validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "project": "p"})
+        validate_arguments(
+            ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "project": "p"}
+        )
     ingest = validate_arguments("ingest", {"text": "hi", "filename": "a.md"})
     assert ingest["content"] == b"hi"
     assert ingest["mime"] == "text/markdown"
@@ -280,8 +288,20 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
     }
 
     operations_only = _deployment_tools(surface=surface)
-    assert set(operations_only) == set(OPERATION_TOOL_NAMES)
+    assert set(operations_only) == {*OPERATION_TOOL_NAMES, ADJACENT_CHUNKS_TOOL_NAME}
     assert operations_only["facts_context"] == tool("facts_context").tool_version
+    assert (
+        operations_only[ADJACENT_CHUNKS_TOOL_NAME]
+        == tool(ADJACENT_CHUNKS_TOOL_NAME).tool_version
+    )
+
+
+def test_read_only_mode_preserves_adjacent_chunks() -> None:
+    """Read-only MCP mode preserves read tools including adjacent_chunks."""
+    read_only_tools = _render(read_only=True)
+    assert ADJACENT_CHUNKS_TOOL_NAME in read_only_tools
+    assert "ingest" not in read_only_tools
+    assert "delete_document" not in read_only_tools
 
 
 def test_catalogue_imports_without_the_engine() -> None:
