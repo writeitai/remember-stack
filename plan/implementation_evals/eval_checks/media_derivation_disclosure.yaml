@@ -11,10 +11,12 @@ instructions: |
   for the FINAL system: if the subsystem is absent or partial, score 0.
 
   Verify ALL of the following:
-  1. The evidence_mode trichotomy exists as a typed enum with exactly the three values —
+  1. The evidence_mode exists as a typed enum with exactly the four values —
      source_expression (a fallible rendering of speech/symbols present in the source: a
-     transcript sentence, OCR'd text), model_observation (the model's account of what the
-     source shows), model_interpretation (the model's reading into the source) — alongside a
+     transcript sentence, OCR'd text), computed (a deterministic library's derivation from
+     source values — a row count, a date span; D133), model_observation (the model's account
+     of what the source shows), model_interpretation (the model's reading into the source) —
+     alongside a
      derivation_kind (asr | acoustic_events | vlm_description | ocr | shot_notes |
      passthrough | …).
   2. Both labels originate ONLY from the converter's manifest, which labels contiguous
@@ -27,7 +29,7 @@ instructions: |
   3. Claims inherit the labels deterministically through their source_span → labeled-range
      intersection, with the bound tie-break: a span crossing ranges with different modes
      takes the MOST-mediated mode it touches (model_interpretation > model_observation >
-     source_expression). The resolved labels are cached on the claim's occurrence record
+     computed > source_expression). The resolved labels are cached on the claim's occurrence record
      (chunk_claims.derivation_kind/evidence_mode, per schema §7) — queryable without
      re-walking the mapping. Verify against a fixture whose source mixes observation and
      interpretation content: the separation must be demonstrably deterministic, not asserted.

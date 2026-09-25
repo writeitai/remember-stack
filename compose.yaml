@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.17.1
+  image: ghcr.io/writeitai/remember-stack:0.17.2
   # Every variable in .env reaches the engine, so any engine setting can be
   # set there. The environment list below adds defaults and the values
   # Compose fixes itself (database URL, object-store endpoint, container port);
@@ -55,12 +55,6 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_API_REVOCATION_URL: ${REMEMBERSTACK_SELFHOST_API_REVOCATION_URL:-}
     REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S: ${REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S:-60}
     REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S: ${REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S:-3600}
-    # Direct-path admission limits, per credential and per deployment (429
-    # with Retry-After when reached). Counted in this one API process.
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE:-120}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT:-8}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE:-600}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT:-32}
     # Browser origins allowed to call this deployment. Empty advertises no
     # CORS at all, which is the right default for a deployment no app points at.
     REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS: ${REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS:-}
@@ -134,7 +128,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1
+    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2
     command:
       - postgres
       - -c
@@ -143,10 +137,11 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
-      # Above the stock stack's connection ceilings (API 23 + 12 workers x 16
-      # = 215), so a busy default deployment cannot run out of connections.
+      # Default 300: above the stock stack's connection ceiling (API 23 + 12
+      # workers x 16 = 215), so a busy default deployment cannot run out of
+      # connections. Raise it when you add API replicas or worker containers.
       - -c
-      - max_connections=300
+      - max_connections=${REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-300}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}

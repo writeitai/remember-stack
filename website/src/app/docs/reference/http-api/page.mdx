@@ -32,7 +32,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.2/openapi.json).
 
 ## Base URL
 
@@ -279,20 +279,27 @@ A self-hosted deployment has no spend hold unless you configure one
 
 ## Admission limits
 
-After the credential check, and before<Cloud> any spend hold or</Cloud> routing, every
-request except `GET /healthz` is counted against two sets of limits: one for
-its credential and one for the whole deployment. A request to an unknown path
+Admission limits are optional and **off by default**: a self-hosted
+deployment refuses no request for its rate or concurrency until you set one of
+the settings below.<Cloud> Cloud deployments have them set.</Cloud> Each limit
+applies only when its setting is a positive number; unset or `0` means no
+limit.
+
+When a limit is set, every request except `GET /healthz` is counted against it
+after the credential check and before<Cloud> any spend hold or</Cloud> routing,
+for its credential or for the whole deployment. A request to an unknown path
 counts too.
 
-| Limit | Default | Setting |
-|---|---|---|
-| Requests per credential | 120 per minute, bursts of 30 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
-| Requests running at once, per credential | 8 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
-| Requests per deployment | 600 per minute, bursts of 150 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
-| Requests running at once, per deployment | 32 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
+| Limit | Setting |
+|---|---|
+| Requests per minute, per credential | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
+| Requests running at once, per credential | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
+| Requests per minute, per deployment | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
+| Requests running at once, per deployment | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
 
 The request rate works as a bucket of tokens that refills continuously at the
-per-minute rate, up to a burst of a quarter of it; each request takes one. A
+per-minute rate, up to a burst of a quarter of it (30 at 120 per minute); each
+request takes one. A
 signed credential is counted by its id (`jti`). The shared secret, and every
 caller when authentication is off, is counted against the deployment limits
 only. A refused request counts against nothing.
