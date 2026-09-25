@@ -32,7 +32,7 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
-from rememberstack.client import ClientSettings
+import os
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
@@ -46,7 +46,7 @@ MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
 DEFAULT_API_TIMEOUT_SECONDS: Final = 180.0
-API_TIMEOUT_SECONDS: Final = ClientSettings.model_validate({}).api_timeout_seconds
+API_TIMEOUT_SECONDS: Final = float(os.environ.get("REMEMBER_API_TIMEOUT_SECONDS", os.environ.get("REMEMBERSTACK_API_TIMEOUT_SECONDS", "180.0")))
 """Transport budget for compound retrieval, larger than the server DB budget."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
