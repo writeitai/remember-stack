@@ -954,6 +954,11 @@ change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
 
+**Refined by D133.** The operator-built MIME → converter table is replaced by an
+engine-shipped format registry (family → posture → converter) that deployments
+overlay rather than replace; routing keys are normalized. The pluggable, versioned
+converter module and its contract remain binding.
+
 **Decision.** A pluggable, **configurable** conversion module (a reusable open-source library):
 interface `convert(bytes, mime, hints) -> { markdown, blocks[] }` where `blocks` carry **page +
 character offsets back to the source** (load-bearing for E2 grounding D32, chunking, PageIndex). A
@@ -1714,6 +1719,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+**Refined by D133.** A container and its members count as one lineage: the counting key is
+`documents.counting_lineage_id` (the root container's lineage for a member), so the count is
+`COUNT(DISTINCT counting_lineage_id)`. Everything else in this entry remains binding.
+
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
 
@@ -2314,6 +2323,10 @@ the person holding the role).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
 
+**Refined by D133.** The locator union gains `sheet_range`, `table_region`,
+`json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
+routes, contract shape and every other D65 binding remain.
+
 **Decision.** Standalone images, audio, and video enter the system as **E0 inputs, never a new
 plane or parallel pipeline**: a media file is a source whose testimony reaches the system
 through a lossy, versioned transcription, with the original always one explicit pointer away.
@@ -2815,6 +2828,10 @@ status documentation, but adds no new public runtime feature or configuration su
 D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
+
+**Refined by D133 and D134.** Forgetting an uploaded container forgets every member expanded from
+it under the same manifest; a member is not forgotten on its own. D134's document metadata,
+people and observed-name rows are deleted with their lineage.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -4219,6 +4236,9 @@ a shipped switch.
 D20, or D21.
 
 ## D96. No entity types; profile is observation prose
+
+**Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
+one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -5759,6 +5779,11 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
+**Refined by D133.** Parking applies to families the registry recognizes whose
+converter needs an unconfigured provider. A family a deployment explicitly turned
+off is refused at ingest with a typed error; unrecognized bytes remain a D132
+refusal.
+
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
 **Context.** Accepting an unsupported format previously stored it and then
@@ -5927,6 +5952,7 @@ promising billed tokens or a fixed saving.
 [delivery](plan/plans/lean_processing_delivery.md).
 
 ## D122. Share frozen source reference context between extraction chunks
+
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6147,7 +6173,138 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 **Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
 [analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
 
+## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
+
+**Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
+PR #452, which this decision builds on.)
+
+**Context.** Out of the box the engine converts two formats (text, Markdown).
+Routes are an exact lookup on the declared MIME in a table each deployment must
+rebuild by hand, and configuring one route replaces the defaults. The office/HTML
+converter is the thinnest and emits no source map, and the parser extras it needs
+are not installed. The pipeline assumes every file is prose to extract claims
+from, which is wrong for structured data: row-by-row extraction scales model cost
+with rows and still cannot answer aggregations. Containers (archives, email with
+attachments, mailboxes, message exports, documents with embedded images) have no
+way to become several documents.
+
+**Decision.**
+1. An engine-shipped **format registry** maps each format family to detection,
+   canonical MIME types, a **posture**, a converter, provider requirements, a size
+   limit and an opaque cost-class label; one registry-wide alias table maps
+   non-canonical MIME spellings, and originals keep D132's storage-class rule.
+   Deployments overlay it (turn families off, configure providers, lower limits);
+   they never replace it. Detection is byte-first in a fixed precedence (D132's
+   binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
+   then deterministic structural tests on text). **This refines D132's text-flavour
+   rule:** JSON, NDJSON, delimited and log text route to their own families when
+   their structural test passes. A family needing an unconfigured provider parks
+   (D117); a disabled family is refused.
+2. Four postures: **full** (complete reading), **profile** (a description of a data
+   file — overview, structure, identifying values, formulas — never its rows),
+   **expand** (members become child documents routed on their own), and **card**
+   (a deterministic file card for recognized formats with no reading). Structured
+   families are read fully only within hard bounds (200 rows, 20,000 characters).
+3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
+   structure searchable but not claim-extracted. Converters must change eligibility
+   only at block boundaries (validated at conversion); E1 forces a chunk boundary
+   there and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as normalized Parquet in a new **private store** (a
+   third object-store root no mount, P3 or `hydrate` reads), and a new direct
+   primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
+   inside a worker process with no network, OS resource limits, a staged read-only
+   input directory, a separate scratch directory, disabled external access and
+   extensions, and a parent-enforced wall time; a platform that cannot sandbox it
+   answers with a typed `boundary`. It returns its own `DataQueryResult/v1` and is
+   exposed on MCP beside `source_open`.
+5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
+   ordinary E0 lineages keyed by a content- or identifier-based member key (never a
+   position), linked by mutable member records; the parent's immutable
+   representation lists members by stable handle and does not wait for them. A
+   container and its members count as one source (`counting_lineage_id`, refining
+   D54). Delete and hard forget act on the uploaded document and cover every member
+   expanded from it; a member is never deleted or forgotten on its own (refining
+   D74). Bounds apply to the whole tree.
+6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. D133 binds the framework, not individual formats. The family table is the
+   target coverage. **Each family is delivered one at a time through its own
+   family design, implementation and test suite** (fixtures, detection, golden
+   rendering, source map, failures, end-to-end retrieval, performance), and is
+   supported only when all three are merged; until then its uploads are stored
+   and parked (D117).
+
+**Alternatives and consequences.** Full-row extraction for structured data,
+loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
+query dialects, in-process DuckDB relying on its settings alone, a separate
+conversation-ingest path, and OCR-provider captions instead of image children were
+rejected (analysis §6–§7). Normalized Parquet stores data a second time. The log
+event digest is a documented alternative with an adoption trigger.
+
+**Authority:** [design](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
+[delivery order](plan/plans/format_coverage_delivery.md).
+
+## D134. General document metadata, document search, and self-references that name the document
+
+**Status:** accepted. **Date:** 2026-09-24.
+
+**Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
+who and when ("emails from Alice"), and for information limited to certain
+files ("everything about Project X from Alice's emails"). Every derived record
+already links to its document, but nothing about a document — author,
+recipients, dates, title — is stored in a filterable form, `GET /documents`
+only pages by status, retrieval has no document search or document filters,
+and a claim like "this report summarizes the 2025 audit" does not say which
+report.
+
+**Decision.**
+1. **General document metadata.** Every version gets the same fields whatever
+   its format — `file_name`, `title`, `authors`, `recipients` (people as name
+   plus address or handle), `created_at`, `modified_at`, `language`,
+   `thread_ref`, `family` — with per-field provenance (source or connector),
+   plus every name a version was observed under (`document_names`), so renames
+   are searchable.
+   Each family design maps its native fields onto them (an email's From is
+   `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
+   `document_metadata` and `document_people`.
+2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
+   MCP: results are documents judged by their current version (or any live
+   version on request), filtered on the general fields, with a query matched
+   on names (file name, title, source path) and content (the document's best
+   `chunk_search` hit — no new search index), and carrying the judged
+   version's metadata and access handles. Ambiguous people matches are listed.
+3. **Document filters on `search`** for chunks, claims (through their live
+   occurrences, refining D80's origin-chunk join so reused claims are tested
+   per version) and facts (through supporting claims), applied before the
+   top-k cut. Only live versions match.
+4. **Self-references name the document.** When a passage refers to its own
+   document, Claimify writes the title (else file name) from the extraction
+   header, which gains the file name (and the extraction reuse key with it),
+   and returns the exact inserted name; the gate stores its span on the claim
+   only when it is one of the document's names, occurs once, and came from the
+   header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips only the reference
+   whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
+   merge while a person who shares a document's title still resolves. The
+   unused D18-era `documents.document_entity_id` bridge is not used and is removed
+   in a separate cleanup.
+
+**Alternatives and consequences.** Making documents entities bound to their
+lineage (the first D134 draft) was rejected as heavier than the questions
+require and kept as a proposal with an adoption trigger. Per-family metadata
+only, metadata only as Markdown text, appending the file name to every claim,
+and resolving file names as entities were rejected (design §7). Metadata values
+are what sources declare, not verified facts.
+
+**Authority:** [design](plan/designs/document_metadata_and_search_design.md),
+[proposal not chosen](plan/proposals/document_subject_entities.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.
+
 ## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
+
+**Refined by D133.** Once containers expand into members, deleting an uploaded container covers
+every member lineage expanded from it; a member's own `doc_id` is refused with an error naming its
+upload.
 
 **Status:** accepted. **Date:** 2026-09-23.
 

@@ -23,11 +23,15 @@ and E2 (claim extraction) need. E0 is not a single worker; it is a short chain o
 sub-workers**, because document ingestion is genuinely several distinct, separately-failing jobs:
 
 ```
-ingest ──► convert ──► structure ──► crossref
-(store raw  (raw → md,   (PageIndex     (citations /
- + hash)    OCR/logic)   tree + roles    document links)
-                         + placement)
+ingest ──► convert ──► expand ──► structure ──► crossref
+(store raw  (raw → md,   (container   (PageIndex     (citations /
+ + hash)    OCR/logic)   members →    tree + roles    document links)
+                         child docs)  + placement)
 ```
+
+`expand` runs only for families with the expand posture (archives, email attachments,
+mailboxes, message exports, embedded images) and is otherwise a no-op; it is bound in
+[`format_conversion_design.md`](format_conversion_design.md) §5.
 
 These are *sub-workers of E0*, not new top-level stages: **the E-numbers name product layers**
 (files → chunks → claims → relations), and PageIndex structure is metadata *about the document*
@@ -38,7 +42,8 @@ complexity is handled by *decomposition into sub-workers*, each separately idemp
 
 ## 2. Storage layout — GCS holds bodies, Postgres holds the index
 
-Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
+Three buckets per deployment (storage is per-deployment, like entity spaces, D16) — raw,
+artifacts, and the private store:
 
 - **raw** — `gs://rememberstack-<dep>-raw/<doc_id>/<content_hash>/original.<ext>` — immutable source-of-truth
   bytes (D1). Strict per-deployment IAM. **Mounted read-only, but off the navigation path**
@@ -79,6 +84,13 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   (timing-preserving, provenance-linked, for players and external tools), but text that
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
   does not exist as testimony.
+- **private** — `gs://rememberstack-<dep>-private/<doc_id>/<content_hash>/<representation_id>/…`
+  — engine-internal objects no agent surface reads (D133): a profiled data file's normalized
+  Parquet tables, read only by the `data_query` worker's staging step, and container members
+  staged between `convert` and `expand`. **Never mounted**, never projected into P3, never
+  returned by `hydrate`; separate IAM from the artifacts bucket so a mount of artifacts cannot
+  reach it. Purged with its representation and inventoried by hard forget
+  (`format_conversion_design.md` §4.6, §5.4).
 
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's
@@ -126,7 +138,10 @@ re-run on a version change; downstream E1/E2/P3 invalidation keys include `struc
 versions, so a converter or structurer bump reprocesses exactly the affected documents.
 
 Re-ingesting an identical file is a `content_hash` no-op (this is the *only* surviving "dedup" — as
-idempotency, never a value tier, per D25). **A changed file from a watched source is a new
+idempotency, never a value tier, per D25) — except that identical bytes arriving under a different
+name, title or path are a **metadata observation**: no version is created and the lineage's
+`title` is unchanged; a `document_names` row is added so `search_documents` (D134) finds the file
+under its new name. **A changed file from a watched source is a new
 *version* of its lineage** (D55): connectors debounce rapid edits to one ingested version per
 stability window; unchanged chunks of the new version **reuse** their prior extraction and
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to
@@ -160,19 +175,19 @@ gates everything downstream:
   sequence from `document.md` downstream of every route, emitting `blocks.json` — see
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
-- **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → dedicated OCR
-  plus an independent vision-LLM description call for every supported image, without a
-  classifier or conditional lane budgets (D115; `media_design.md` §2); office / html /
-  email → **markitdown**; plain
-  text → passthrough. (This generalizes the common practice of
-  *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
-  bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
-  block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;
-  standalone image that is a *picture* → **VLM description** + OCR of visible text, behind a
-  document-vs-picture discriminator (MIME alone cannot tell a scanned page from a photo).
-  Media converters are versioned like every other — an ASR/VLM upgrade is a
-  `converter_version` bump, flowing the processing-driven lifecycle ruleset
+- **Routing by format family (D133).** An engine-shipped **format registry** maps every
+  recognized family to a posture — **full** reading, **profile** (a description of a data
+  file, not its rows), **expand** (container members become child documents), or **card**
+  (a deterministic file card) — and to the converter implementing it. Deployments overlay
+  the registry (turn families off, configure providers, lower limits); they never replace
+  it. The routing key is the byte-detected MIME (D132), normalized and alias-resolved. The
+  family table, postures, profiles, `data_query`, child documents and new locator kinds
+  are bound in [`format_conversion_design.md`](format_conversion_design.md). **Media
+  routes (D65/D115),** bound in `media_design.md` §2: audio → **diarized ASR**
+  (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
+  keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
+  independent vision-LLM description call. Converters are versioned — a model or parser
+  upgrade is a `converter_version` bump, flowing the processing-driven lifecycle ruleset
   (`evidence_lifecycle_design.md` §3).
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
@@ -191,8 +206,10 @@ gates everything downstream:
   configured route table. Adding one route cannot release other unsupported
   formats. A worker that still lacks the route parks the item again and refunds
   its just-started attempt; converter content errors remain ordinary failures.
-  This handles configuration skew without a dead-letter loop. Matching follows
-  the router's exact MIME lookup. The admission and managed text-classification
+  This handles configuration skew without a dead-letter loop. Matching uses
+  the registry's normalized routing key (D133). Parking covers recognized families
+  whose converter needs an unconfigured provider; a family the deployment turned
+  off is refused at ingest. The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps

@@ -573,18 +573,24 @@ denies every signed credential.
 ### 7.6 Direct-path admission limits
 
 SDK and CLI traffic reaches the engine directly, not through a host that could
-meter it, so the perimeter bounds what one key and one deployment can ask for.
-After authentication and before the spend lease and routing, for every
-request including one to an unknown path:
+meter it, so the perimeter can bound what one key and one deployment can ask
+for. The limits are **off by default in the engine**: each applies only when
+its setting is a positive number (unset or `0` is no limit), and with none set
+the perimeter does no admission work at all, only authentication. A
+self-hosted deployment has no limits unless its operator sets them. **The
+hosted fleet sets them** for every cloud deployment, where many callers share
+one deployment; these are its starting values:
 
-| Limit | Starting value |
+| Limit | Cloud starting value |
 | --- | --- |
 | Requests per credential (`jti`) | 120 per minute, burst 30 |
 | In flight per credential | 8 |
 | Requests per deployment | 600 per minute, burst 150 |
 | In flight per deployment | 32 |
 
-The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
+Each configured limit applies after authentication and before the spend lease
+and routing, for every request including one to an unknown path. The four
+numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
 `…_KEY_IN_FLIGHT`, `…_DEPLOYMENT_PER_MINUTE`, `…_DEPLOYMENT_IN_FLIGHT`);
 nothing else about admission is configurable. Each burst is derived, not set:
 a quarter of its per-minute rate (15 seconds of traffic), which gives the 30
@@ -611,7 +617,7 @@ and 150 above.
   API replicas the effective ceilings are N times the numbers; an operator
   running N replicas divides by N. The self-host profile runs one replica.
 - Spend metering (D91), the spend lease and the D74 admission barrier are
-  unchanged and apply after this check: authentication, then admission, then
+  unchanged and apply after this check (when configured): authentication, then admission, then
   the spend hold, then routing. An unauthenticated or refused request never
   places a hold.
 
