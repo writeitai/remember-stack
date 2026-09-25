@@ -382,6 +382,62 @@ jobs:
             docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
+      - name: Back up, destroy and restore as the upgrades page documents
+        run: |
+          # The commands between the markers are the ones on
+          # website/src/app/docs/self-hosting/upgrades/page.mdx; keep them equal.
+          psql_count() {
+            docker compose --env-file .env exec -T postgres \
+              psql -U rememberstack -d rememberstack -Atc "$1"
+          }
+          # Through the restricted SQL role: proves its grants and password.
+          sql_count() {
+            curl --fail --silent \
+              --header 'Content-Type: application/json' \
+              --data '{"sql":"SELECT count(*) AS n FROM documents_live","parameters":[],"max_rows":1}' \
+              http://localhost:8000/query/sql \
+              | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["termination_reason"] == "completed", r; print(r["rows"][0][0])'
+          }
+          before="$(psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)')"
+          sql_before="$(sql_count)"
+
+          # --- back up
+          docker compose stop
+          docker compose up -d --wait postgres object-store
+          mkdir -p backup
+          docker compose exec -T postgres sh -c \
+            'pg_dumpall -U "$POSTGRES_USER" --roles-only --no-role-passwords' > backup/roles.sql
+          docker compose exec -T postgres sh -c \
+            'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > backup/database.dump
+          docker compose --profile backup run --rm -T rclone sync store: /backup/objects
+          docker compose up -d --wait
+          # --- end back up
+
+          test -s backup/database.dump
+          find backup/objects -type f | grep -q .
+          docker compose --env-file .env down --volumes
+
+          # --- restore
+          docker compose up -d --wait postgres object-store
+          docker compose exec -T postgres sh -c \
+            'grep -v "^CREATE ROLE $POSTGRES_USER;$" | psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres' < backup/roles.sql
+          docker compose exec -T postgres sh -c \
+            'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d postgres --create --exit-on-error' < backup/database.dump
+          docker compose --profile backup run --rm -T rclone copy /backup/objects store:
+          docker compose up -d --wait
+          # --- end restore
+
+          after="$(psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)')"
+          test "$before" = "$after"
+          test "$(sql_count)" = "$sql_before"
+          # The database-level grant narrowing came back with the dump.
+          test "$(psql_count "SELECT has_database_privilege('public', current_database(), 'CONNECT')")" = 'f'
+          # The filesystem snapshot the database points at came back with the objects.
+          docker compose --env-file .env run --rm --no-deps -T api mounts --root /tmp/views
+          docker compose --env-file .env exec -T api remember ops graph-catalog ensure \
+            | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
+          sudo rm -rf backup
+
       - name: Stage an upgrade from the prior schema
         run: |
           docker compose --env-file .env stop \
