@@ -22,6 +22,7 @@ INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
+ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -606,6 +607,34 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=4,
         http_route="POST /operations/combined_context",
+    ),
+    ToolDefinition(
+        name=ADJACENT_CHUNKS_TOOL_NAME,
+        description=(
+            "Retrieve neighbouring chunks preceding and succeeding a target chunk within the"
+            " same document to expand conversational or narrative context."
+        ),
+        input_schema=_object_schema(
+            properties={
+                "chunk_id": {
+                    "type": "string",
+                    "description": "UUID of the target chunk to expand around.",
+                },
+                "window": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Number of neighbouring chunks to retrieve on each side (1 or 2, default 1)."
+                    ),
+                },
+            },
+            required=("chunk_id",),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /chunks/{chunk_id}/adjacent",
     ),
     ToolDefinition(
         name="query_sql",

@@ -57,6 +57,7 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
@@ -870,6 +871,7 @@ def _served_tools(
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
     if open_query:
         names.extend(OPEN_QUERY_TOOL_NAMES)
     return {name: tool(name).tool_version for name in names}

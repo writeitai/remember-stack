@@ -75,6 +75,12 @@ class OperationSurface:
             arguments=_coerce_arguments(operation=operation, arguments=arguments),
         )
 
+    def adjacent_chunks(self, *, chunk_id: UUID, window: int = 1) -> Envelope:
+        """Fetch surrounding chunks through the composed executor."""
+        return self._executor.adjacent_chunks(
+            deployment_id=self._deployment_id, chunk_id=chunk_id, window=window
+        )
+
 
 def operation_descriptors(
     *, operations: tuple[AssuredOperation, ...]
