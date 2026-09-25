@@ -37,10 +37,9 @@ Run the commands on this page from the directory that holds your
 ## Running operator commands
 
 Several fixes below use `remember ops`. These commands read PostgreSQL
-directly, so they run inside the `api` container, and they
-are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set there. Without it,
-`remember ops` exits with "'remember ops' is confined to internal container
-environments".
+directly, so they run inside the `api` container
+(`docker compose exec api remember ops …`). Run anywhere else, `remember ops`
+exits with "'remember ops' runs inside the engine container".
 
 Read the deployment id once per shell:
 
@@ -48,10 +47,10 @@ Read the deployment id once per shell:
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 ```
 
-Then pass the variable with `-e` on each command:
+Then pass it to each command:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -75,13 +74,14 @@ this way:
 | `setup` exited with code 0 | Normal. `setup` runs once on every `up` and exits. | Nothing. |
 | `setup` exited with a non-zero code, `api` and the workers are not running | `setup` failed, and nothing that depends on it starts. | `docker compose logs setup` |
 | `api` is `health: starting` | The API is still starting. Compose checks it every 10 seconds, up to 30 times. | Wait, then check again. |
-| `api` exited or keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
-| A `worker-…` container exited | That stage has no worker. Its work waits as `pending`. | `docker compose logs worker-…` |
+| `api` keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
+| A `worker-…` container keeps restarting | The worker fails at start or crashes. Its stage's work waits as `pending` meanwhile. | `docker compose logs worker-…` |
 
-No service in `compose.yaml` has a restart policy. A container that exits
-stays stopped until you run `docker compose up -d` again, and `/healthz`
-keeps answering `ok` while a worker is down: it checks the API and the
-database, not the pipeline.
+The API, the workers, PostgreSQL and the object store have the restart
+policy `unless-stopped`: Docker starts a container that exits again, until
+you stop it yourself. A container that fails at start therefore shows as
+restarting rather than exited. `/healthz` keeps answering `ok` while a
+worker is down: it checks the API and the database, not the pipeline.
 
 Configuration mistakes that stop a container at start:
 
@@ -89,7 +89,7 @@ Configuration mistakes that stop a container at start:
 |---|---|---|
 | A validation error that names `api_key` | `REMEMBERSTACK_OPENROUTER_API_KEY` is empty. | Set it in `.env`, then `docker compose up -d`. |
 | `setup` refuses because the deployment id, slug or name differ | `.env` no longer matches what the first `setup` recorded. | Restore the original values. See [The deployment id is permanent](/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
-| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or not `https`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
+| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
 | The shared secret and the bind disagree | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` describe different secrets. | See [Authentication and scopes](/docs/self-hosting/authentication). |
 | A validation error that names `API_KEY_ISSUER`, `API_KEY_TENANT_ID`, `API_SIGNING_KEYS_URL` or `API_REVOCATION_URL` | Signed keys are half configured: an issuer without its tenant id or URLs, or those without an issuer. | Set all four, or none. See [Signed keys](/docs/self-hosting/authentication#signed-keys). |
 | "no fresh revocation document; every signed credential is refused" | The API has not accepted a revocation document yet, or the accepted one is older than `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S`. Every signed key gets `401`; the shared secret still works. | Check that the API can fetch both issuer URLs and that the issuer re-signs the document with a growing `seq`. The warnings just before it name the reason (a failed fetch, or a rejected document). |
@@ -160,12 +160,11 @@ API is running; the browser refused the response because the API did not
 name the page's origin.
 
 Check `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`. It is empty by default,
-which allows no origin. Each entry must be an `https` origin written
-exactly as the browser sends it: lowercase, no path, no trailing slash.
-An `http` origin such as `http://localhost:3000` is not accepted: the API
-refuses to start with it. For local development, serve the app over
-`https`, or send the API calls through your development server's proxy so
-the browser sees one origin.
+which allows no origin. Each entry must be written exactly as the browser
+sends it: lowercase, no path, no trailing slash. It must be `https`, unless
+the app runs on the same machine: `http://localhost:3000`,
+`http://127.0.0.1:5173` and `http://[::1]:8080` are accepted, and any other
+`http` origin stops the API at start.
 
 Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
 headers are allowed, and cookies are not. See
@@ -196,8 +195,9 @@ for version in report.versions:
 | What readiness shows | Meaning | Next |
 |---|---|---|
 | Stages `running` or `succeeded`, later ones `missing` | Still processing. | Wait. See [Processing is slow](#processing-is-slow). |
-| `convert` stays `pending` | Parked for lack of a converter, a stopped `worker-convert`, or a spend budget. | [Parked conversions](#parked-conversions) |
-| Another stage stays `pending` | Its worker is not running, or a spend budget parked it. | `docker compose ps -a`, then [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| `convert` is `pending` with `defer_reason` `no_route` | No converter for the file's type. | [Parked conversions](#parked-conversions) |
+| A stage is `pending` with `defer_reason` `budget` | A spend budget parked it. | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| A stage stays `pending` with no `defer_reason` | Its worker is not running. | `docker compose ps -a` |
 | `failed` | The last attempt failed and a retry is scheduled. | Watch the worker logs; a repeated failure becomes `dead_letter`. |
 | `dead_letter` | Out of attempts. Nothing retries it on its own. | [Dead letters](#dead-letters) |
 | Every stage done, `p1` or `live_graph` not ready | A deployment-wide index or graph check is failing, not your document. | [Operating the pipeline](/docs/self-hosting/operating#the-graph-catalog) |
@@ -208,24 +208,19 @@ facts exist.
 
 ### See what is waiting and why
 
-Readiness and `remember ops inspect` both show parked work as `pending`
-without the reason. To see the reason, read the work table directly. This
-is a read-only diagnostic query on an internal table, and its columns can
-change between releases:
+Readiness gives each waiting stage a `defer_reason`, and the `routes` in
+`remember ops inspect` count work by stage, status and `defer_reason`, for
+the whole deployment:
 
 ```bash
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT stage, status, defer_reason, count(*)
-FROM processing_state
-WHERE status IN ('pending', 'running', 'failed', 'dead_letter')
-GROUP BY stage, status, defer_reason
-ORDER BY stage, status;
-SQL
+docker compose exec -T api \
+  remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
 `defer_reason` is `no_route` for a file no converter accepts, `budget` for
-work a spend budget parked, and `retry_backoff` for a failure waiting to
-be retried.
+work a spend budget parked, `scheduled` for work due later, and
+`retry_backoff` for a failure waiting to be retried. Pending work with no
+reason is simply queued for its worker.
 
 ### Parked conversions
 
@@ -241,7 +236,7 @@ a route for the type as described in
 `docker compose up -d`, then release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -289,7 +284,7 @@ in Python.
 Find what failed and why:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -300,7 +295,7 @@ converter route, a file that is not UTF-8. Then give the item more
 attempts:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -315,7 +310,7 @@ cannot start until every chunk or claim of the version has finished the
 stage before. Check where work is piling up:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 docker compose logs -f --since 10m worker-extract-claims worker-normalize-relations
 ```
@@ -364,8 +359,8 @@ If you set `REMEMBERSTACK_WORK_BUDGETS`, a stage that reaches its ceiling
 parks its work until the budget window ends. Nothing fails and nothing is
 dropped; readiness shows the stage as `pending`.
 
-Rows with `defer_reason` `budget` in the query under
-[See what is waiting and why](#see-what-is-waiting-and-why) are the cause.
+A `defer_reason` of `budget` (see
+[See what is waiting and why](#see-what-is-waiting-and-why)) shows it.
 Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
 `docker compose up -d`. See [Spend budgets](/docs/self-hosting/operating#spend-budgets).
 

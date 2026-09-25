@@ -162,11 +162,11 @@ def _count(
 
 _ROUTE_STATUS = text(
     """
-    SELECT stage, lane, status, count(*) AS count
+    SELECT stage, lane, status, defer_reason, count(*) AS count
     FROM processing_state
     WHERE deployment_id = :deployment_id
-    GROUP BY stage, lane, status
-    ORDER BY stage, lane NULLS FIRST, status
+    GROUP BY stage, lane, status, defer_reason
+    ORDER BY stage, lane NULLS FIRST, status, defer_reason NULLS FIRST
     """
 )
 

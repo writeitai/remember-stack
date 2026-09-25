@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Requirements",
-  description: "What you need to run RememberStack yourself \u2014 PostgreSQL 19, S3-compatible storage, Docker, a model key \u2014 and what is not measured yet.",
+  description: "What you need to run RememberStack yourself \u2014 PostgreSQL 19, S3-compatible storage, Docker, a model key \u2014 and how to size disk and database connections.",
 };
 
 # Requirements
@@ -95,10 +95,10 @@ Compose starts PostgreSQL with:
 shared_preload_libraries=pg_textsearch,pg_partman_bgw
 pg_partman_bgw.dbname=<REMEMBERSTACK_POSTGRES_DB>
 pg_partman_bgw.role=<REMEMBERSTACK_POSTGRES_USER>
+max_connections=300
 ```
 
-Everything else stays at the image defaults, including
-`max_connections = 100`.
+Everything else stays at the image defaults.
 
 Running the engine against a PostgreSQL server you manage yourself is not a
 documented path. If you try it, the server must match everything on this
@@ -143,14 +143,51 @@ calls cost money on your OpenRouter account; see
 
 ## Sizing
 
-Nothing about hardware sizing has been measured yet: no CPU, memory, disk
-or throughput figures exist for a self-hosted deployment. The only timing
-the project checks is that a cold start on a CI runner (building images,
-migrating, and answering a first query on an empty memory) finishes within
-600 seconds.
+No hardware minimum has been measured, and the project publishes no
+throughput figures. What follows is what the configuration and schema fix,
+so you can size a machine from your own corpus.
 
-What is configured, and therefore known, are the bounds each process
-works within:
+**Where it has run.** Continuous integration starts the full stack on a
+standard GitHub-hosted Ubuntu runner, which for a public repository has
+4 CPUs and 16 GB of memory. It ingests a document and waits for every
+stage there; it does not measure speed.
+
+**What uses CPU and memory.** Most pipeline work is waiting on model calls
+to OpenRouter, so the engine's own processes are light. PostgreSQL does the
+local heavy lifting: search, graph queries and SQL queries all run in it.
+The query-side memory each of those may take is bounded (see the table
+below and [Scaling](/docs/self-hosting/scaling)).
+
+**What uses disk.** Two volumes grow with the corpus:
+
+- `postgres-data` holds every chunk, claim, fact, observation and entity.
+  Each of these also carries a 1,536-dimension embedding, about 6 KB, plus
+  its share of the vector index.
+- `object-store-data` holds each uploaded file as sent, its converted
+  Markdown and other artifacts, and filesystem snapshots. The bundled store
+  is capped at about 100 GiB (see
+  [S3-compatible object storage](#s3-compatible-object-storage)).
+
+Nothing is deleted automatically; a hard forget removes a document's data.
+
+**Database connections.** Compose starts PostgreSQL with
+`max_connections=300` (the image default is 100). Each engine process opens
+connections as it needs them, up to these ceilings:
+
+| Process | General pool | Other | Ceiling |
+|---|---|---|---|
+| `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
+| Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
+
+The ceilings of the default stack add up to 23 + 12 × 16 = 215, which fits
+within 300 with room to spare. They are ceilings, not what a stack holds:
+pools open connections only on demand. Nothing caps the total, though, so
+budget against the ceilings when you add replicas or API processes: each
+worker replica can add 16 connections and each API process 23, plus any
+increase in the retrieval and graph pool sizes. Past 300, raise the limit. [Scaling](/docs/self-hosting/scaling#database-connections)
+shows how to raise `max_connections`.
+
+Other configured bounds:
 
 | Bound | Default |
 |---|---|
@@ -161,7 +198,7 @@ works within:
 | Graph query `work_mem` | 16,384 KiB |
 | Retrieval connection pool in the API | 4 connections, at most 4 retrievals at once |
 | SQL query sandbox | 5 s default and 15 s maximum statement time, 16 MiB `work_mem`, 8 statements at once per deployment |
-| PostgreSQL `max_connections` | 100 (image default) |
+| PostgreSQL `max_connections` | 300 (set in `compose.yaml`) |
 
 [Scaling](/docs/self-hosting/scaling) explains each bound and how to change it.
 

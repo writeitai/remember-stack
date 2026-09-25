@@ -184,7 +184,7 @@ for volume in postgres-data object-store-data forget-manifests app-state; do
     alpine tar -xzf "/backup/${volume}.tar.gz" -C /target
 done
 docker compose up -d --wait
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api remember ops graph-catalog ensure
+docker compose exec -T api remember ops graph-catalog ensure
 ```
 
 The last command checks that the graph definitions in the restored database

@@ -82,7 +82,7 @@ that ledger. It contains no document text and no prompts.
 ```bash
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
 ```
 

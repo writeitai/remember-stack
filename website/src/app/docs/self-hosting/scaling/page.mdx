@@ -7,11 +7,12 @@ export const metadata = {
 
 <AppliesTo products={["self-hosted"]} />
 
-RememberStack has no measured throughput figures yet: nobody has published
-how many documents per hour, or queries per second, a given machine
-handles. What exists are explicit bounds on every process, so a busy
-deployment slows down or refuses work instead of exhausting PostgreSQL.
-This page lists those bounds and how to move them.
+RememberStack publishes no throughput figures: how many documents per hour,
+or queries per second, a machine handles depends mostly on your model
+provider and corpus. What exists are explicit bounds on every process, so a
+busy deployment slows down or refuses work. The one budget you keep
+yourself is PostgreSQL's connection limit, once you add replicas. This
+page lists those bounds and how to move them.
 
 The model provider is usually the first limit you meet. Most pipeline
 stages spend their time waiting on OpenRouter calls, and the provider's
@@ -52,10 +53,50 @@ The claim-heavy stages (`extract_claims`, `ground_claims`,
 `normalize_relations`, `adjudicate_observations`) make the most model calls
 per document.
 
-Every replica holds its own database connections. PostgreSQL in Compose
-keeps its default `max_connections` of 100, and the engine does not size
-itself against it. Watch for connection errors in the logs when you add
-many replicas.
+Every replica holds its own database connections; see
+[Database connections](#database-connections) before adding many.
+
+## Database connections
+
+Each engine process has its own connection pools. Compose starts
+PostgreSQL with `max_connections=300`; the engine does not size itself
+against that limit. The ceilings per process are:
+
+| Process | Ceiling | Made of |
+|---|---|---|
+| `api` | 23 | General pool 15 (5 kept open, 10 more under load), retrieval pool 4, graph pool 4 |
+| Each `worker-…` replica | 16 | General pool 15, plus 1 connection that listens for new work |
+
+The general pool's size is fixed. The retrieval and graph pools follow
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` and
+`REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` (see
+[Retrieval and graph queries](#retrieval-and-graph-queries)).
+
+Pools open connections only on demand, so a running stack holds fewer than
+the sum of its ceilings. The default stack's ceilings add up to 215, within
+the limit of 300. When you add replicas or API processes, keep the sum of
+their ceilings under the limit, and when PostgreSQL refuses connections
+(`too many clients already` in the logs), raise it. The Compose `command` for PostgreSQL is one list, so an
+override repeats it whole and adds the new setting:
+
+```yaml
+# compose.override.yaml
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
+      - -c
+      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
+      - -c
+      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      - -c
+      - max_connections=600
+```
+
+Every PostgreSQL connection takes memory on the database host, so raise the
+limit only as far as that machine allows.
 
 ### Embedding batches
 

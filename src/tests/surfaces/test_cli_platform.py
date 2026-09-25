@@ -156,12 +156,32 @@ def test_doctor_cli_reports_health(capsys: pytest.CaptureFixture[str]) -> None:
 def test_ops_is_confined_to_internal_environments(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """CLI ops refuses outside internal container environments with exit 1."""
+    """Outside the engine image, ops refuses with exit 1 and says where it runs."""
     dummy_dep = "74000000-0000-0000-0000-000000000001"
     res_ops = main(["ops", "inspect", "--deployment", dummy_dep])
     assert res_ops == 1
     err_ops = capsys.readouterr().err
-    assert "remember ops' is confined to internal container environments" in err_ops
+    assert "'remember ops' runs inside the engine container" in err_ops
+    assert "docker compose exec api remember ops" in err_ops
+
+
+def test_ops_is_listed_in_help_where_it_is_enabled(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The engine image enables ops, so its help lists the command."""
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "operator commands against this deployment's database" in (
+        capsys.readouterr().out
+    )
+
+
+def test_engine_image_enables_ops() -> None:
+    """`docker compose exec api remember ops ...` needs no extra environment."""
+    dockerfile = (Path(__file__).parents[3] / "Dockerfile").read_text(encoding="utf-8")
+    runtime_stage = dockerfile.rsplit("\nFROM ", maxsplit=1)[1]
+    assert "REMEMBERSTACK_INTERNAL_OPS=1" in runtime_stage
 
 
 def test_query_free_text_dispatch(

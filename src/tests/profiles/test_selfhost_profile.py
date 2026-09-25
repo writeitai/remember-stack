@@ -143,6 +143,35 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     assert 'profiles: ["managed"]' in compose
 
 
+def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
+    """A crashed worker comes back; setup and the projection job run once."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor = compose.split("\nservices:\n", maxsplit=1)[0]
+    assert "\n  restart: unless-stopped\n" in anchor
+    for one_shot in (
+        'setup:\n    <<: *app\n    command: ["setup"]\n    restart: "no"\n',
+        'projections:\n    <<: *app\n    command: ["project", "--plane", "p3"]\n'
+        '    restart: "no"\n',
+    ):
+        assert one_shot in compose
+    for dependency in ("postgres", "object-store"):
+        block = compose.split(f"\n  {dependency}:\n", maxsplit=1)[1]
+        block = block.split("\n\n", maxsplit=1)[0]
+        assert "    restart: unless-stopped\n" in block
+
+
+def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
+    """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    limits = re.findall(r"- max_connections=(\d+)\n", compose)
+    assert len(limits) == 1
+    workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
+    api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
+    ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
+    assert ceiling == 215
+    assert int(limits[0]) >= ceiling + 50
+
+
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
     """Resolved `${VAR:-}` UUID blanks cannot crash ordinary OSS services."""
     settings = SelfHostSettings.model_validate(
