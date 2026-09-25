@@ -141,9 +141,15 @@ The module also exports, as the single implementation every host uses:
 - `validate_arguments(name, arguments)` — the parsers now in
   `mcp_memory_tools.py` and `query_sandbox/mcp_tools.py` (including the
   path-ingest root allowlist and resource guard, and base64 decoding).
-- `map_error(...)` and `error_result(...)` — the structured tool error
-  envelope (`{"error": {"status_code", "code", "detail"}}`) for HTTP and
-  transport failures, so every host reports failures identically.
+- `map_error(...)` and `error_result(...)` — the one structured tool error
+  envelope, used by every tool family (writes, assured operations, SQL query
+  tools) on every host, so all failures read the same:
+  `{"error": {"code", "status_code", "detail", "retryable", "agent_action"}}`,
+  plus `reason_code`, `request_id` and `retry_after` when known. `code` is
+  the engine's own code when it sent one (`relation_not_allowed`,
+  `rate_limited`, …); `status_code` is the engine's HTTP status, `0` when no
+  answer arrived, and `null` when there was no HTTP exchange (the host refused
+  the call itself, or an in-process engine answered).
 - MCP tool annotations on every rendered tool: `readOnlyHint: true` for
   `memory:read` tools and `false` for `memory:write` tools, and
   `destructiveHint: true` for `delete_document`. Hosts must not alter them;
@@ -279,9 +285,11 @@ start-up error.
   - `POST /mcp` accepts one JSON-RPC message; responses are
     `application/json`. The server has no server-initiated messages, so
     `GET /mcp` returns `405`. `DELETE /mcp` ends a session.
-  - `initialize` returns an `Mcp-Session-Id`; later requests must carry it;
-    an unknown or expired session gets `404`, which tells the client to
-    initialize again. Sessions hold no memory state, only protocol state.
+  - A successful `initialize` returns an `Mcp-Session-Id`; later requests
+    must carry it; an unknown or expired session gets `404`, which tells the
+    client to initialize again. Sessions hold no memory state, only protocol
+    state. A later request whose `MCP-Protocol-Version` is not the negotiated
+    version gets `400`.
   - A request whose `Origin` header is present and is not the listener's own
     origin is refused with `403` (defence against DNS rebinding, where a web
     page reaches a loopback server through a hostname it controls).
@@ -289,13 +297,21 @@ start-up error.
     `Authorization` header to the engine unchanged and holds no credential of
     its own, so the engine perimeter decides every call and records the real
     caller (analysis §3.7). A call without a bearer is forwarded without one.
-  - It binds to loopback by default. With a non-loopback `--bind`, start-up
-    probes the engine without a credential and refuses to start if the engine
-    answers a read: an unauthenticated engine is never exposed this way. TLS
-    is terminated by the operator's proxy; the listener does not implement it.
+  - It binds to loopback only; a non-loopback `--bind` is refused. Reaching
+    it from other machines is the job of an operator's reverse proxy, which
+    authenticates callers and terminates TLS. (A start-up probe of the
+    engine's auth was rejected: the answer can change after start-up, and a
+    loopback-only rule needs no probe.)
+  - It is bounded: 16 open connections, each holding its slot from accept
+    until it closes (more get `503`), a 30-second deadline
+    on each socket read, and a 32 MiB body — only an `ingest` body sent as
+    `content_base64` is large, and bigger files go through `remember ingest`
+    (starting values).
   - Per-request `tools/list` is not filtered by the caller's permissions (the
     listener does not know them); a call the engine refuses returns
     `insufficient_permission`.
+  - `ingest` never offers the local `path` body over HTTP: the caller may be
+    on another machine, and a path would name a file on the listener's.
 - `--read-only` keeps its meaning in both transports: write-permission tools
   are omitted and refused locally.
 
@@ -348,7 +364,7 @@ HTTP endpoint. It is generic: any HTTPS MCP URL and any bearer key.
 ## 6. `remember setup`
 
 `remember setup` writes each detected harness's MCP entry. It chooses among
-three entry shapes:
+four entry shapes:
 
 | Situation | Entry written |
 | --- | --- |
@@ -364,11 +380,39 @@ Rules:
   support). The table above is the selection rule; the probe decides which
   row applies, and uncertainty falls to the stdio bridge, which works
   everywhere.
+- What each harness takes (the probe's answers):
+
+  | Harness | Remote entry (OAuth) | Key header by reference | Probe |
+  | --- | --- | --- | --- |
+  | Cursor (`.cursor/mcp.json`) | yes: `{"url": …}` | yes: `${env:REMEMBER_API_KEY}` in `headers` | none; the file format has no version, and both are documented Cursor features |
+  | Claude Code (`claude mcp add --scope local`) | yes: `--transport http` | no — whether a CLI-added entry expands variables is not established, so headless use gets the bridge | `claude mcp add --help` lists `--transport` |
+  | Codex (`.codex/config.toml`) | yes: `url`; the user runs `codex mcp login remember` once | yes: `bearer_token_env_var = "REMEMBER_API_KEY"` | `codex mcp add --help` lists `--bearer-token-env-var` |
+  | Claude Desktop (`claude_desktop_config.json`) | no (the file takes stdio servers only) | no | none |
+  | Antigravity (`.agents/mcp_config.json`) | not established | not established | none |
+
+  A probe that cannot run (the CLI is missing, fails or times out) answers
+  "no".
+- **Headless** is `--headless`, or a `CI` environment variable that is set
+  and not `0`/`false`. A headless run never starts `remember login`; the
+  agents read the key from `REMEMBER_API_KEY` at run time.
+- `--api-url` or `--mcp-url` means a self-hosted engine; combining either
+  with `--cloud` is a usage error. With `--mcp-url`, the remote entry
+  carries the key header only when the engine has a key (`--api-key`),
+  because a self-hosted listener has no OAuth sign-in; a harness that cannot
+  reference a variable in a header gets the stdio engine entry.
+- Writes are idempotent and keep unrelated configuration: only the
+  `remember` entry (for Codex, the `[mcp_servers.remember]` tables) is
+  replaced, a file whose content would not change is left untouched, and a
+  rewritten file is replaced atomically with its permissions kept. Claude
+  Code's entry is re-registered (`claude mcp remove`, then `add`) in the
+  project's local scope. A failure in one harness does not stop the others;
+  the command then exits 1.
 - Launcher resolution (absolute `remember` or `uvx` path) is unchanged from
   [unified_remember_distribution_design.md §4.3](unified_remember_distribution_design.md).
 - `--cloud` means "use the issuer": with no stored key it runs `remember login`
   first. `--issuer URL` selects a non-default issuer.
-- `--dry-run` prints the entries with the key replaced by `***`.
+- `--dry-run` prints the entries it would write and writes nothing. No entry
+  ever holds a key, so there is nothing to mask.
 
 ## 7. Engine perimeter: the signed-key contract
 
@@ -761,10 +805,10 @@ The account API's operations and their permissions are defined by the issuer
 | Engine: credential signed by a `kid` absent from `active_kids` | `401` |
 | Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve; retry once if the URL changed |
 | Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
-| HTTP transport: non-loopback bind in front of an unauthenticated engine | Refuses to start |
+| HTTP transport: non-loopback `--bind` | Refuses to start |
 | HTTP transport: bad `Origin` | `403` |
 | Engine: wrong `aud`, not covering this deployment, wrong issuer, revoked | `401` |
-| Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After` |
+| Engine: per-key or per-deployment admission limit reached | `429` with `Retry-After`; MCP hosts return the tool error `rate_limited` / `concurrency_limited` with `retry_after` |
 | Engine: no revocation document accepted yet, or accepted one older than `min(exp, iat + S)` | Every signed credential `401`; shared secret unaffected |
 | Engine: valid key lacking permission | `403 insufficient_scope` |
 | Client: project resolution fails | `ProjectResolutionError` / exit 1; no localhost fallback |
@@ -797,7 +841,7 @@ Engine consistency:
 - engine mode refuses `project`;
 - HTTP transport: session issuance and `404` on unknown session, `405` on
   `GET`, `Origin` refusal, bearer forwarded unchanged and never stored,
-  loopback default, non-loopback refusal against an unauthenticated engine;
+  loopback-only bind, the concurrency, read-deadline and body bounds;
 - bridge: verbatim relay of JSON and event-stream responses; unknown remote
   tools passed through; no `path` ingest; `404` session recovery; `401` message; cross-origin
   redirect refusal; `http` non-loopback refusal; key absent from all output;

@@ -22,7 +22,8 @@ def main() -> None:
     _validate_semver(version=version)
     _validate_compose_pin(root=root, version=version)
     _validate_release_docs(root=root, version=version)
-    _validate_postgres_release(root=root)
+    _validate_postgres_release(root=root, version=version)
+    _validate_engine_image_release(root=root)
     _validate_terminal_package_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
@@ -117,7 +118,7 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
                 )
 
 
-def _validate_postgres_release(*, root: Path) -> None:
+def _validate_postgres_release(*, root: Path, version: str) -> None:
     """Bind Compose to the multi-architecture immutable image publisher."""
     dockerfile = (root / "Dockerfile.postgres").read_text(encoding="utf-8")
     base = next(
@@ -131,9 +132,10 @@ def _validate_postgres_release(*, root: Path) -> None:
     if base is None:
         raise ValueError("Dockerfile.postgres must pin a PostgreSQL 19 source marker")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
-    if f"image: rememberstack-postgres:{base}" not in compose:
+    if f"image: {_IMAGE}-postgres:{base}-{version}" not in compose:
         raise ValueError(
-            "Compose PostgreSQL source marker must match Dockerfile.postgres"
+            "Compose must name the published PostgreSQL image "
+            f"{_IMAGE}-postgres:{base}-{version}"
         )
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
@@ -149,6 +151,27 @@ def _validate_postgres_release(*, root: Path) -> None:
         if required not in workflow:
             raise ValueError(
                 f"release workflow is missing PostgreSQL image contract {required!r}"
+            )
+
+
+def _validate_engine_image_release(*, root: Path) -> None:
+    """Require the API/worker image to publish for both supported architectures."""
+    workflow = (root / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    start, end = "\n  publish-ghcr:\n", "\n  publish-postgres-ghcr:\n"
+    if start not in workflow or end not in workflow:
+        raise ValueError("release workflow must keep the publish-ghcr job")
+    job = workflow.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+    for required in (
+        "platforms: linux/amd64,linux/arm64",
+        "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
+        'sort == ["amd64", "arm64"]',
+        "for platform in linux/amd64 linux/arm64; do",
+    ):
+        if required not in job:
+            raise ValueError(
+                f"release workflow is missing engine image contract {required!r}"
             )
 
 

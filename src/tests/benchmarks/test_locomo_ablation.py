@@ -28,12 +28,12 @@ import pytest
 
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
+from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool as catalogue_tool
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAccessError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports import ModelProviderPort
@@ -92,7 +92,7 @@ def test_mcp_catalog_is_read_only_input_schema_only() -> None:
     )
 
     catalog = ablation._mcp_catalog(  # noqa: SLF001
-        server=cast(RemoteOperationMcpServer, _FakeMcpServer(tools=tools))
+        server=cast(EngineMcpServer, _FakeMcpServer(tools=tools))
     )
     prompt = ablation._answer_template(profile="mcp").format(  # noqa: SLF001
         tools=json.dumps(
@@ -191,13 +191,15 @@ def test_remote_mcp_preserves_api_failure_status_for_the_answer_loop() -> None:
                 status_code=503, detail="database unavailable", code="pg_unavailable"
             )
 
-    server = RemoteOperationMcpServer(
-        client=cast(MemoryClient, _UnavailableClient()), read_only=True
+    server = EngineMcpServer(
+        client=cast(MemoryClient, _UnavailableClient()),
+        read_only=True,
+        path_ingest=False,
     )
 
     with pytest.raises(MemoryApiError) as unavailable:
         ablation._decode_mcp_result(  # noqa: SLF001
-            result=server.call_tool(name="facts_context", arguments={})
+            result=server.call_tool(name="facts_context", arguments={"query": "x"})
         )
 
     assert unavailable.value.status_code == 503

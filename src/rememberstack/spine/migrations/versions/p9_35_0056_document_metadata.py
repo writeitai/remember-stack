@@ -27,12 +27,12 @@ from sqlalchemy import text
 from rememberstack.spine.migrations._helpers import apply_ddl
 from rememberstack.spine.migrations._helpers import drop_tables
 
-revision: str = "p9_34_0055"
-down_revision: str | None = "p9_33_0054"
+revision: str = "p9_35_0056"
+down_revision: str | None = "p9_34_0055"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-BACKFILL_MAPPING_VERSION = "backfill-p9_34"
+BACKFILL_MAPPING_VERSION = "backfill-p9_35"
 
 _DDL = r"""
 CREATE TABLE document_metadata (

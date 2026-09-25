@@ -617,6 +617,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `component_version` | string | The version of that stage's component the deployment expects. |
 | `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
 | `finished_at` | date-time, nullable | |
+| `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
 
 `missing` means no work for that stage and component version exists yet.
 `failed` may be retried by the pipeline; `dead_letter` will not be.

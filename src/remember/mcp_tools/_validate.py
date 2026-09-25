@@ -81,7 +81,7 @@ def validate_arguments(
     if missing:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=f"Missing required arguments: {', '.join(missing)}."
+                detail=f"Missing required arguments: {', '.join(missing)}."
             )
         )
     return dict(arguments)

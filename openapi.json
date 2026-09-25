@@ -2803,6 +2803,23 @@
             "title": "Component Version",
             "type": "string"
           },
+          "defer_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scheduled",
+                  "retry_backoff",
+                  "budget",
+                  "no_route"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defer Reason"
+          },
           "finished_at": {
             "anyOf": [
               {

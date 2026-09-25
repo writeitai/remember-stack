@@ -384,27 +384,28 @@ client and CLI.*
 
 ## 1. Get an endpoint
 
-You need Docker with Compose and an
-[OpenRouter](https://openrouter.ai) API key.
+You need Docker Engine 28.0.0 or later with Compose, and an
+[OpenRouter](https://openrouter.ai) API key. On an older Docker Engine,
+turn on API authentication before the first start; see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose).
 
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The first start builds the PostgreSQL image and runs migrations. When
-`docker compose ps` shows `api` as healthy, the endpoint is
-`http://localhost:8000`. No token is needed by default.
-
-**Warning:**
-
-Compose publishes port 8000 on every network interface of the
-machine, and the API is open by default. On a shared network, read
-[Before you expose it](https://remember.dev/docs/self-hosting/install#before-you-expose-it)
-first.
+The `printf` line generates the database password, the object-store
+credentials and the deployment id; Compose refuses to start without them. The first start builds the PostgreSQL image and runs
+migrations. When `docker compose ps` shows `api` as healthy, the endpoint
+is `http://localhost:8000`. No token is needed by default, because the API
+is reachable from this machine only. To open it to others, see
+[Before you expose it](https://remember.dev/docs/self-hosting/install#before-you-expose-it).
 
 ## 2. Install the client
 
@@ -545,6 +546,20 @@ remember doctor
 
 The files `remember setup` writes, and how to write them by hand, are
 in the [MCP reference](https://remember.dev/docs/reference/mcp).
+
+For an agent that connects to a URL rather than starting a program, run the
+server over HTTP and point the agent at `http://127.0.0.1:8765/mcp`:
+
+```bash
+remember mcp --transport http --api-url http://localhost:8000
+remember setup --mcp-url http://127.0.0.1:8765/mcp
+```
+
+Cursor, Claude Code and Codex get the URL; Claude Desktop and Antigravity
+still start `remember mcp` themselves.
+
+The HTTP server holds no key: it passes each agent's `Authorization` header
+to the engine. See [MCP tools: Over HTTP](https://remember.dev/docs/reference/mcp#over-http).
 
 ## What the agent can do
 
@@ -2265,7 +2280,7 @@ deployment as the shipped `compose.yaml` runs it.
 | Piece | What it does |
 |---|---|
 | **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
-| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs MinIO. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs SeaweedFS. |
 | **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
 | **The workers** | One process per [pipeline stage](https://remember.dev/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
 | **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |
@@ -4142,13 +4157,18 @@ dead-lettered, and the message names them too. What to do next is under
 |---|---|
 | `ready` | `True` when every required capability is ready. |
 | `versions[]` | One entry per version: `version_id`, `ready`, and `stages[]`. |
-| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`. |
+| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`, `defer_reason`. |
 | `capabilities` | `pipeline`, `p1`, `live_graph`, `p3`, each with `required`, `ready`, `checked_at` and a `reason`. |
 | `model_bindings`, `build_revision`, `document_binding_generation` | Which code and models are serving, for your records. |
 
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
-stage has `succeeded` or been `skipped` and has a `finished_at`.
+stage has `succeeded` or been `skipped` and has a `finished_at`. A
+`pending` stage with a `defer_reason` of `no_route` is parked: it will not
+move until an operator adds a conversion route, so waiting does not help.
+With `budget`, a spend budget has reached its ceiling: the work resumes by
+itself when the budget window ends, or sooner if an operator raises the
+ceiling.
 
 Capability reasons when not ready:
 
@@ -6011,7 +6031,7 @@ Source: https://remember.dev/docs/self-hosting/requirements
 # Requirements
 
 A self-hosted RememberStack is a set of containers from one Compose file:
-PostgreSQL, MinIO object storage, an API process and twelve pipeline
+PostgreSQL, SeaweedFS object storage, an API process and twelve pipeline
 workers. The Compose file builds or pulls everything it needs. This page
 lists what has to be true of the machine and the accounts around it.
 
@@ -6020,39 +6040,38 @@ lists what has to be true of the machine and the accounts around it.
 You need Docker Engine with the Compose v2 plugin: the `docker compose`
 command, not the older `docker-compose` script. `compose.yaml` uses a
 top-level `name`, `depends_on` conditions such as
-`service_completed_successfully`, and profiles, which the v2 plugin
-supports.
+`service_completed_successfully`, profiles, and an optional `env_file`
+(`required: false`), which needs Compose 2.24.0 or later.
 
-The project does not state a minimum Docker or Compose version. Its own
+Run the tokenless quickstart only on Docker Engine 28.0.0 or later
+(`docker version --format '{{.Server.Version}}'`). Compose publishes the
+API on `127.0.0.1` only, and before Engine 28.0.0 a port published on
+`127.0.0.1` can still be reached by other hosts on the same local network.
+On an older engine, turn on API authentication before the first start:
+set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` in `.env` (see
+[A shared secret](https://remember.dev/docs/self-hosting/authentication#a-shared-secret)).
+
+The project states no other minimum Docker or Compose version. Its own
 continuous-integration check runs `docker compose up --build --detach --wait`
 on a current GitHub Actions Ubuntu runner.
 
 ## Image architectures
 
-Two images make up the stack:
+Two images from this project make up the stack. Both are published for
+`linux/amd64` and `linux/arm64`, so an arm64 machine (Apple Silicon,
+Graviton, Ampere) runs them natively, without emulation:
 
-| Image | Where it comes from | Architectures |
-|---|---|---|
-| `ghcr.io/writeitai/remember-stack:0.17.1` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
-| `rememberstack-postgres:19beta3` | Built locally by Compose from `Dockerfile.postgres` on first start | Whatever your machine builds |
+| Image | Used by |
+|---|---|
+| `ghcr.io/writeitai/remember-stack:0.17.1` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1` | PostgreSQL |
 
-The release workflow publishes the API/worker image for `linux/amd64`
-only. On an arm64 machine (Apple Silicon, Graviton, Ampere) you have two
-choices:
-
-- Build the image from source for your own architecture:
-  `docker compose build api`. All the app services share that image. The
-  release workflow does not build or test this image on arm64.
-- Run the published amd64 image under emulation, for example by exporting
-  `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `docker compose up`. Docker
-  Desktop on Apple Silicon emulates amd64. It works more slowly than a
-  native image.
-
-The release workflow also publishes a multi-architecture PostgreSQL image,
-`ghcr.io/writeitai/remember-stack-postgres:19beta3-<version>`, for
-`linux/amd64` and `linux/arm64`. The shipped `compose.yaml` does not use it:
-it builds `rememberstack-postgres:19beta3` locally from `Dockerfile.postgres`.
-That first build compiles one extension from source and takes a few minutes.
+Compose pulls both from GitHub Container Registry. It builds an image from
+source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
+when you pass `--build`. Building PostgreSQL compiles one extension and
+takes a few minutes. The third image, SeaweedFS, is also published for both
+architectures.
 
 ## PostgreSQL 19 (beta)
 
@@ -6099,10 +6118,10 @@ Compose starts PostgreSQL with:
 shared_preload_libraries=pg_textsearch,pg_partman_bgw
 pg_partman_bgw.dbname=<REMEMBERSTACK_POSTGRES_DB>
 pg_partman_bgw.role=<REMEMBERSTACK_POSTGRES_USER>
+max_connections=300
 ```
 
-Everything else stays at the image defaults, including
-`max_connections = 100`.
+Everything else stays at the image defaults.
 
 Running the engine against a PostgreSQL server you manage yourself is not a
 documented path. If you try it, the server must match everything on this
@@ -6115,13 +6134,21 @@ Original files, converted Markdown and other artifacts, and filesystem
 snapshots live in object storage, in three buckets (`remember-raw`,
 `remember-artifacts`, `remember-corpusfs`). The `setup` step creates them.
 
-Compose runs MinIO for this (image pinned to
-`RELEASE.2025-09-07T16-13-09Z`). The engine talks to it through the S3 API
-with path-style addressing and SigV4 signing. It writes every object with a
-conditional create (`If-None-Match: *`), so an object is never silently
-replaced. Only MinIO is exercised by the project's checks. Another
-S3-compatible store has to support path-style requests and conditional
-writes.
+Compose runs [SeaweedFS](https://github.com/seaweedfs/seaweedfs) for this
+(image `chrislusf/seaweedfs`, pinned to `4.44` by digest). The engine talks
+to it through the S3 API with path-style addressing and SigV4 signing. It
+writes every object with a conditional create (`If-None-Match: *`), so an
+object is never silently replaced. Only SeaweedFS is exercised by the
+project's checks. Another S3-compatible store has to support path-style
+requests, conditional writes and user metadata on objects.
+
+SeaweedFS stores objects in volumes of at most 1 GiB. Compose allows 100
+of them, so the bundled store holds up to about 100 GiB before writes fail
+(each bucket also reserves 7 volumes on its first write). Volumes are not
+preallocated, so unused capacity takes no disk. To store more, raise
+`-volume.max` on the `object-store` service in `compose.yaml`. The engine
+sets no S3 lifecycle (expiry) rules and does not need them: it deletes
+objects itself, during a hard forget.
 
 ## Model provider keys
 
@@ -6139,25 +6166,62 @@ calls cost money on your OpenRouter account; see
 
 ## Sizing
 
-Nothing about hardware sizing has been measured yet: no CPU, memory, disk
-or throughput figures exist for a self-hosted deployment. The only timing
-the project checks is that a cold start on a CI runner (building images,
-migrating, and answering a first query on an empty memory) finishes within
-600 seconds.
+No hardware minimum has been measured, and the project publishes no
+throughput figures. What follows is what the configuration and schema fix,
+so you can size a machine from your own corpus.
 
-What is configured, and therefore known, are the bounds each process
-works within:
+**Where it has run.** Continuous integration starts the full stack on a
+standard GitHub-hosted Ubuntu runner, which for a public repository has
+4 CPUs and 16 GB of memory. It ingests a document and waits for every
+stage there; it does not measure speed.
+
+**What uses CPU and memory.** Most pipeline work is waiting on model calls
+to OpenRouter, so the engine's own processes are light. PostgreSQL does the
+local heavy lifting: search, graph queries and SQL queries all run in it.
+The query-side memory each of those may take is bounded (see the table
+below and [Scaling](https://remember.dev/docs/self-hosting/scaling)).
+
+**What uses disk.** Two volumes grow with the corpus:
+
+- `postgres-data` holds every chunk, claim, fact, observation and entity.
+  Each of these also carries a 1,536-dimension embedding, about 6 KB, plus
+  its share of the vector index.
+- `object-store-data` holds each uploaded file as sent, its converted
+  Markdown and other artifacts, and filesystem snapshots. The bundled store
+  is capped at about 100 GiB (see
+  [S3-compatible object storage](#s3-compatible-object-storage)).
+
+Nothing is deleted automatically; a hard forget removes a document's data.
+
+**Database connections.** Compose starts PostgreSQL with
+`max_connections=300` (the image default is 100). Each engine process opens
+connections as it needs them, up to these ceilings:
+
+| Process | General pool | Other | Ceiling |
+|---|---|---|---|
+| `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
+| Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
+
+The ceilings of the default stack add up to 23 + 12 × 16 = 215, which fits
+within 300 with room to spare. They are ceilings, not what a stack holds:
+pools open connections only on demand. Nothing caps the total, though, so
+budget against the ceilings when you add replicas or API processes: each
+worker replica can add 16 connections and each API process 23, plus any
+increase in the retrieval and graph pool sizes. Past 300, raise the limit. [Scaling](https://remember.dev/docs/self-hosting/scaling#database-connections)
+shows how to raise `max_connections`.
+
+Other configured bounds:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 15: `postgres`, `minio`, `setup` (exits), `api`, 12 workers |
+| Containers started by `docker compose up` | 15: `postgres`, `object-store`, `setup` (exits), `api`, 12 workers |
 | Items one worker process runs at once | 1 |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
 | Graph query `work_mem` | 16,384 KiB |
 | Retrieval connection pool in the API | 4 connections, at most 4 retrievals at once |
 | SQL query sandbox | 5 s default and 15 s maximum statement time, 16 MiB `work_mem`, 8 statements at once per deployment |
-| PostgreSQL `max_connections` | 100 (image default) |
+| PostgreSQL `max_connections` | 300 (set in `compose.yaml`) |
 
 [Scaling](https://remember.dev/docs/self-hosting/scaling) explains each bound and how to change it.
 
@@ -6169,8 +6233,7 @@ Source: https://remember.dev/docs/self-hosting/install
 
 This page takes you from an empty machine to a running RememberStack that
 has read its first document. It uses the `compose.yaml` and `.env.example`
-that ship in the repository. Check [Requirements](https://remember.dev/docs/self-hosting/requirements) first,
-in particular the note on arm64 machines.
+that ship in the repository. Check [Requirements](https://remember.dev/docs/self-hosting/requirements) first.
 
 ## 1. Get the files
 
@@ -6179,7 +6242,14 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 ```
+
+The last command generates the database password, the object-store
+credentials and the deployment id (a random UUID); `.env.example` ships
+none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -6188,37 +6258,33 @@ one on download, so it appears as `default.env.example`.
 
 ## 2. Fill in `.env`
 
-Docker Compose reads `.env` from the project directory and substitutes its
-values into `compose.yaml`. These variables have no default in
-`compose.yaml` and must be set:
+**Warning:**
+
+The API needs no token by default. That is safe only on Docker Engine
+28.0.0 or later; on an older engine, set a token first. See
+[Before you expose it](#before-you-expose-it).
+
+Docker Compose reads `.env` from the project directory, substitutes its
+values into `compose.yaml` and passes every variable in it to the engine
+containers. These variables have no default in `compose.yaml` and must be
+set:
 
 | Variable | What to put there |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Your OpenRouter API key. The placeholder lets the stack start, but every model call fails with it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | A new random UUID for this deployment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | This deployment's id, a random UUID generated in step 1. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
-| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. |
-| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials. PostgreSQL creates them on first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials. MinIO requires a secret of at least 8 characters. |
-
-Generate the deployment id rather than keeping the example value:
-
-```bash
-python3 -c "import uuid; print(uuid.uuid4())"
-```
+| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
+| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
 **Warning:**
 
-Decide the deployment id, slug and name before the first start. The
-first `setup` run records them in the database, and every later `setup`
-refuses to run if they differ. A different id is a different
-deployment: tokens bound to the old id stop working and the memory
-already stored belongs to the old id. See
+Decide the slug and name before the first start, and keep the generated
+deployment id. The first `setup` run records all three in the database,
+and every later `setup` refuses to run if they differ. See
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
-
-The example passwords in `.env.example` are marked local-only. Replace them
-before the stack is reachable from anywhere but your own machine.
 
 ## 3. Start the stack
 
@@ -6227,10 +6293,10 @@ docker compose up -d --wait
 ```
 
 On the first run Compose builds the PostgreSQL image (it compiles the
-`pg_textsearch` extension, which takes a few minutes), pulls MinIO and the
+`pg_textsearch` extension, which takes a few minutes), pulls SeaweedFS and the
 RememberStack image, and starts everything in dependency order:
 
-1. `postgres` and `minio` start and report healthy.
+1. `postgres` and `object-store` start and report healthy.
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
@@ -6243,9 +6309,9 @@ RememberStack image, and starts everything in dependency order:
 | Service | Command | Role |
 |---|---|---|
 | `postgres` | `postgres` | PostgreSQL 19 beta with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
-| `minio` | `server /data` | S3-compatible storage for original files, converted Markdown and snapshots. Its web console is published on port 9001. |
+| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
-| `api` | `api` | The HTTP API on port 8000 inside the container, published on `REMEMBERSTACK_SELFHOST_API_PORT`. |
+| `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](https://remember.dev/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
@@ -6343,7 +6409,7 @@ Compose names volumes after the project, `rememberstack`:
 | Volume | Mounted at | Holds |
 |---|---|---|
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
-| `rememberstack_minio-data` | `/data` in `minio` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
+| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
 | `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Hard-forget manifests. Empty in a Compose deployment. |
 
@@ -6352,11 +6418,16 @@ The first two hold the memory. Back them up together; see
 
 ## Before you expose it
 
-By default the API needs no token, and Compose publishes port 8000 and the
-MinIO console on port 9001 on **every** network interface of the host, not
-only on `localhost`. Anyone who can reach those ports can read and change
-the memory. Before the machine is on a shared network, set a token and
-limit the published ports; see [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
+By default the API needs no token, so Compose publishes its port on
+`127.0.0.1` only: only this machine can reach it. That holds on Docker
+Engine 28.0.0 or later. On an older engine, other hosts on the same local
+network can reach a port published on `127.0.0.1`, so set
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` before the first start (see
+[Requirements](https://remember.dev/docs/self-hosting/requirements#docker-and-compose)). To serve other machines,
+set a token and then the address to publish on
+(`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`); see
+[Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines).
 
 ---
 
@@ -6366,8 +6437,8 @@ Source: https://remember.dev/docs/self-hosting/configuration
 
 RememberStack is configured entirely through environment variables. There
 is no configuration file inside the engine. This page explains how the
-variables reach the containers, which ones matter first, and how to set
-the rest. [Configuration variables](https://remember.dev/docs/reference/configuration) lists
+variables reach the containers, which ones matter first, and which ones
+cannot change later. [Configuration variables](https://remember.dev/docs/reference/configuration) lists
 every variable with its default.
 
 ## How the engine reads settings
@@ -6380,7 +6451,7 @@ a prefix:
 |---|---|
 | `REMEMBERSTACK_SELFHOST_` | The deployment, the API, authentication, pools and workers, converter routes |
 | `REMEMBERSTACK_OPENROUTER_` | The model provider |
-| `REMEMBERSTACK_MINIO_` | Object storage |
+| `REMEMBERSTACK_MINIO_` | Object storage (any S3-compatible store; Compose runs SeaweedFS) |
 | `REMEMBERSTACK_STRUCTURER_`, `_E2_`, `_E3_`, `_OBS_`, `_FACT_`, `_P1_` … | One pipeline model seat each ([Models and providers](https://remember.dev/docs/self-hosting/models)) |
 | `REMEMBERSTACK_MISTRAL_OCR_`, `REMEMBERSTACK_IMAGE_DESCRIPTION_` | [Converters](https://remember.dev/docs/self-hosting/converters) |
 | `REMEMBERSTACK_WORK_` | Retries and spend budgets |
@@ -6401,57 +6472,24 @@ Three rules follow from this:
 
 ## What Compose passes through
 
-`compose.yaml` does not hand your whole `.env` to the containers. Each app
-service gets a fixed `environment:` list, and only variables on that list
-reach the engine. The list covers the deployment identity, storage, the
-OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret or signed keys, the graph and retrieval pools, the API
-admission limits and Sentry.
+`compose.yaml` loads your `.env` into every engine container (`env_file`),
+so any engine variable you put in `.env` takes effect: for example
+`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`, `REMEMBERSTACK_COST_EXPORT_BIND`,
+the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
+`REMEMBERSTACK_WORK_BUDGETS`.
 
-Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
-`REMEMBERSTACK_COST_EXPORT_BIND`, the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
-`REMEMBERSTACK_WORK_BUDGETS` — has **no effect** if you only put it in
-`.env`. The reference marks which variables Compose passes.
+Each engine service also has an `environment:` list. It supplies defaults
+and three values Compose sets itself, which win over `.env`:
 
-To set the others, keep them in a separate file and add a
-`compose.override.yaml` next to `compose.yaml`. Compose merges that file
-automatically.
+| Variable | Value inside the containers |
+|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | Built from `REMEMBERSTACK_POSTGRES_USER`, `_PASSWORD` and `_DB`, pointing at the `postgres` service. |
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | `http://object-store:8333`, the bundled SeaweedFS store. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000`. In `.env` the same variable is the host port Compose publishes. |
 
-`engine.env`:
-
-```bash
-REMEMBERSTACK_OPENROUTER_ZDR=true
-REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S=5
-```
-
-`compose.override.yaml`:
-
-```yaml
-x-engine-env: &engine-env
-  env_file: [engine.env]
-
-services:
-  setup: *engine-env
-  api: *engine-env
-  worker-convert: *engine-env
-  worker-structure: *engine-env
-  worker-chunk: *engine-env
-  worker-embed-chunk: *engine-env
-  worker-extract-claims: *engine-env
-  worker-ground-claims: *engine-env
-  worker-normalize-relations: *engine-env
-  worker-adjudicate-observations: *engine-env
-  worker-adjudicate-supersession: *engine-env
-  worker-embed-claim: *engine-env
-  worker-reconcile: *engine-env
-  worker-label-relation: *engine-env
-  projections: *engine-env
-```
-
-Keep in `engine.env` only variables that `compose.yaml` does not already
-set: a value in a service's `environment:` list wins over the same variable
-from `env_file`. The later pages reuse this file; where a setting matters to
-only some services, they say which.
+A variable exported in your shell overrides `.env` only if it is on the
+`environment:` list, because Compose substitutes shell values into that
+list but reads `env_file` from the file alone. Put settings in `.env`.
 
 ## Apply a change
 
@@ -6465,16 +6503,18 @@ A running process never picks up a changed variable on its own.
 
 ## What to change first
 
-For a machine only you can reach, three settings matter:
+For a machine only you can reach, these settings matter:
 
 | Variable | Why |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Replace the local-only examples. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). Compose refuses to start without them. |
 
-Before anyone else can reach the machine, add a token:
-`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` ([Authentication and scopes](https://remember.dev/docs/self-hosting/authentication)).
+Compose publishes the API on `127.0.0.1` only. To let other machines reach
+it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true`, then
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`
+([Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines)).
 
 To accept more than Markdown and plain text, set
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` ([File formats and converters](https://remember.dev/docs/self-hosting/converters)).
@@ -6482,7 +6522,8 @@ To accept more than Markdown and plain text, set
 ## Settings fixed after the first start
 
 The first `setup` records these in the database, and later runs refuse to
-start if they change:
+start if they change. A database holds one deployment, so a new deployment
+id is refused too; it does not start a second, empty deployment.
 
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG`
@@ -6491,8 +6532,9 @@ start if they change:
 - the three bucket names, `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME`,
   `…_ARTIFACTS_BUCKET_NAME` and `…_CORPUSFS_BUCKET_NAME`
 
-The embedding model is not checked this way, but changing it has
-consequences of its own; see [Models and providers](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model).
+`setup` also refuses a new `REMEMBERSTACK_P1_EMBEDDING_MODEL` once
+anything has been embedded; see
+[Models and providers](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model).
 
 ## The client side
 
@@ -6541,27 +6583,6 @@ under `model_bindings`, so you can check what is serving:
 ```bash
 curl http://localhost:8000/deployment
 ```
-
-### Variables that exist but are not used
-
-`compose.yaml` also passes these, with defaults. The shipped pipeline does
-not use them to choose a model; changing them changes nothing, except where
-noted:
-
-| Variable | Default | Status |
-|---|---|---|
-| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Ignored for embedding: chunks are embedded with `REMEMBERSTACK_P1_EMBEDDING_MODEL`. `GET /deployment` still reports this value as `chunk_embedding`, so keep the two equal. |
-| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | Reported as `context_prefix`; chunk context is now built without a model. |
-| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | Reported as `fact_label`; relation labels are built without a model. |
-| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-
-The same holds for the observation thresholds
-`REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` (0.75), `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN`
-(0.8), `REMEMBERSTACK_OBS_NOVELTY_FLOOR` (0.3), `REMEMBERSTACK_OBS_HUB_TOP_K`
-(5) and `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` (0.75).
 
 ## Fact adjudication
 
@@ -6614,18 +6635,24 @@ length. An embedding model can replace `qwen/qwen3-embedding-8b` only if it
 can return 1,536-dimension vectors on request.
 
 Each stored vector is stamped with the model that produced it, and search
-compares a query only with vectors of the current model. If you change
-`REMEMBERSTACK_P1_EMBEDDING_MODEL` on a deployment that already holds
-documents:
+compares a query only with vectors of the same model. Nothing re-embeds
+stored chunks, claims and facts, so the embedding model is fixed once
+anything has been embedded:
 
-- `setup` points the search channels at the new model and re-embeds entity
-  profiles.
-- Chunks, claims and facts embedded with the old model stay as they are
-  and drop out of semantic search. Keyword (BM25) search still finds them.
-- Nothing re-embeds them automatically.
+- Before the first document is embedded, you can change
+  `REMEMBERSTACK_P1_EMBEDDING_MODEL` freely.
+- After that, `setup` refuses to run with a different model. It exits with
+  an error that names the configured model and the stored one, and the API
+  and workers do not start. Set the variable back to the stored model.
 
-Treat the embedding model as fixed for the life of a deployment. To use a
-different one, start a new deployment and send the documents again.
+To change it before anything is embedded, stop the workers first
+(`docker compose stop`), then change the variable and run
+`docker compose up -d`. A worker still running on the old model could
+otherwise embed with it after the switch; the next `setup` would then
+refuse the new model.
+
+To use a different embedding model, start a new deployment and send the
+documents again.
 
 ## OpenRouter routing and limits
 
@@ -6637,14 +6664,14 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. A call they cannot serve fails. Cannot be combined with the order. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. Not passed by `compose.yaml`; set it through `engine.env` ([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)). |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
-| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. |
 
 When you set a provider list or ZDR, each chat call also tells OpenRouter
 not to route to providers that collect data (`data_collection: deny`). With
@@ -6806,14 +6833,8 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | Output allowance of the description call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | Run the two calls in parallel (`2`) or one after the other (`1`). |
 
-**Warning:**
-
-`compose.yaml` does not pass any `REMEMBERSTACK_IMAGE_DESCRIPTION_*`
-variable into the containers, although `.env.example` lists them.
-Putting them in `.env` has no effect. Put them in `engine.env` with the
-override file described in [Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through);
-the `api` and `worker-convert` services need them. Without the key, the
-`convert` worker refuses to start once a route names this converter.
+Set them in `.env`. Without the key, the `convert` worker refuses to start
+once a route names this converter.
 
 ## Files no route accepts
 
@@ -6832,7 +6853,7 @@ After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   sh -c 'remember ops resume-no-route --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"'
 ```
 
@@ -6861,31 +6882,45 @@ That is convenient on your own laptop and unsafe anywhere else. This page
 shows how to require a token, what each kind of token may do, and how to
 let a browser app call the API.
 
-## Open by default
+## Open by default, on this machine only
 
 With no authentication variable set, the API has no perimeter: any caller
 that reaches port 8000 can read the whole memory, send documents, and run
 every operation. Nothing is logged about who they were.
 
-That is acceptable only when nobody else can reach the port. Note that
-`compose.yaml` publishes the API (`${REMEMBERSTACK_SELFHOST_API_PORT}:8000`)
-and the MinIO console (`9001:9001`) on **all** network interfaces of the
-host. On a laptop on a shared Wi-Fi network, a colleague can reach both.
+So `compose.yaml` publishes the API on the loopback interface only
+(`127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000`): other machines
+cannot connect. (The object store publishes no host port at all.)
 
-To publish them on the loopback interface only, add to
-`compose.override.yaml` (Compose 2.24.4 or later, for the `!override` tag):
+## Opening the API to other machines
 
-```yaml
-services:
-  api:
-    ports: !override
-      - "127.0.0.1:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
-  minio:
-    ports: !override
-      - "127.0.0.1:9001:9001"
-```
+Set a token first, then choose the address to publish on:
 
-Do this and set a token before the machine is reachable by anyone else.
+1. Set a shared secret as described in [A shared secret](#a-shared-secret),
+   and make the API refuse to start without one:
+
+    ```bash
+    # .env
+    REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN=<the secret>
+    REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true
+    ```
+
+2. Publish the port on every interface, or on one interface's address:
+
+    ```bash
+    # .env
+    REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS=0.0.0.0
+    ```
+
+3. Apply it:
+
+    ```bash
+    docker compose up -d
+    ```
+
+The API speaks plain HTTP. Across an untrusted network, put a TLS-terminating
+reverse proxy in front of it, keep the publish address on loopback, and let
+the proxy reach it there.
 
 ## A shared secret
 
@@ -7123,6 +7158,16 @@ declare it (`mutates: false`), so a `read` token can run them.
 | `401` | No `Authorization` header, the credential did not verify, or (for signed keys) no fresh revocation document has been accepted |
 | `403` | The credential is for another deployment, or its scope does not cover the route |
 
+## `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH`
+
+The perimeter is enforced as soon as a token, a bind or a key issuer is
+configured. `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` makes that a
+start condition: the API refuses to start unless at least one of
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN`,
+`REMEMBERSTACK_SELFHOST_API_BEARER_BIND` or
+`REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` is set. Set it on any deployment
+other machines can reach, so a lost `.env` line cannot leave it open.
+
 ## Browser origins (CORS)
 
 A web app served from another origin cannot call the API unless the API
@@ -7133,9 +7178,12 @@ comma-separated list of exact origins:
 REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.example.com
 ```
 
-- Each entry must be an `https` origin exactly as a browser sends it:
-  lowercase scheme and host, an optional port, nothing else. A malformed
-  entry, an empty entry or a trailing comma stops the API at start.
+- Each entry must be an origin exactly as a browser sends it: lowercase
+  scheme and host, an optional port, nothing else. A malformed entry, an
+  empty entry or a trailing comma stops the API at start.
+- The scheme must be `https`, except for an app on the same machine:
+  `http://localhost`, `http://127.0.0.1` and `http://[::1]`, with any port,
+  are accepted, so `http://localhost:3000` works during development.
 - Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
   headers are allowed. `DELETE` (deleting a document) still needs a token with
   `write` scope. Cookies are not allowed; the browser must send a token.
@@ -7165,11 +7213,12 @@ Source: https://remember.dev/docs/self-hosting/scaling
 
 # Scaling
 
-RememberStack has no measured throughput figures yet: nobody has published
-how many documents per hour, or queries per second, a given machine
-handles. What exists are explicit bounds on every process, so a busy
-deployment slows down or refuses work instead of exhausting PostgreSQL.
-This page lists those bounds and how to move them.
+RememberStack publishes no throughput figures: how many documents per hour,
+or queries per second, a machine handles depends mostly on your model
+provider and corpus. What exists are explicit bounds on every process, so a
+busy deployment slows down or refuses work. The one budget you keep
+yourself is PostgreSQL's connection limit, once you add replicas. This
+page lists those bounds and how to move them.
 
 The model provider is usually the first limit you meet. Most pipeline
 stages spend their time waiting on OpenRouter calls, and the provider's
@@ -7189,9 +7238,7 @@ notification was missed.
 | `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5` | Seconds between polls when no notification arrives. |
 | `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600` | Length of one worker session in seconds; the worker then starts the next one. |
 
-These are not passed by `compose.yaml`. Set them in `engine.env` for the
-worker services ([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)).
-Lowering the rate is the way to stay under a provider's rate limit; the
+Set them in `.env`. Lowering the rate is the way to stay under a provider's rate limit; the
 rate applies per process, so it multiplies with replicas.
 
 ### More replicas of a stage
@@ -7210,10 +7257,50 @@ The claim-heavy stages (`extract_claims`, `ground_claims`,
 `normalize_relations`, `adjudicate_observations`) make the most model calls
 per document.
 
-Every replica holds its own database connections. PostgreSQL in Compose
-keeps its default `max_connections` of 100, and the engine does not size
-itself against it. Watch for connection errors in the logs when you add
-many replicas.
+Every replica holds its own database connections; see
+[Database connections](#database-connections) before adding many.
+
+## Database connections
+
+Each engine process has its own connection pools. Compose starts
+PostgreSQL with `max_connections=300`; the engine does not size itself
+against that limit. The ceilings per process are:
+
+| Process | Ceiling | Made of |
+|---|---|---|
+| `api` | 23 | General pool 15 (5 kept open, 10 more under load), retrieval pool 4, graph pool 4 |
+| Each `worker-…` replica | 16 | General pool 15, plus 1 connection that listens for new work |
+
+The general pool's size is fixed. The retrieval and graph pools follow
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` and
+`REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` (see
+[Retrieval and graph queries](#retrieval-and-graph-queries)).
+
+Pools open connections only on demand, so a running stack holds fewer than
+the sum of its ceilings. The default stack's ceilings add up to 215, within
+the limit of 300. When you add replicas or API processes, keep the sum of
+their ceilings under the limit, and when PostgreSQL refuses connections
+(`too many clients already` in the logs), raise it. The Compose `command` for PostgreSQL is one list, so an
+override repeats it whole and adds the new setting:
+
+```yaml
+# compose.override.yaml
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
+      - -c
+      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
+      - -c
+      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      - -c
+      - max_connections=600
+```
+
+Every PostgreSQL connection takes memory on the database host, so raise the
+limit only as far as that machine allows.
 
 ### Embedding batches
 
@@ -7315,7 +7402,8 @@ how to see that state and act on it.
 The operator commands are part of the `remember` CLI, under
 `remember ops`. They talk to PostgreSQL directly rather than to the API, so
 they run inside the engine image, where the database settings already are.
-They are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set.
+Run them with `docker compose exec api remember ops …`; the image enables
+them, so no extra setting is needed.
 
 Read the deployment id from `.env` once per shell:
 
@@ -7326,7 +7414,7 @@ DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2
 Then run each command in the `api` container:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7345,7 +7433,7 @@ Pipe it through `python3 -m json.tool` to read it.
 ## Inspect the pipeline
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7353,7 +7441,7 @@ The report has five parts:
 
 | Field | Contents |
 |---|---|
-| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`). A large `pending` count on one stage shows where the pipeline is behind. |
+| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
 | `latest_projections` | The latest filesystem snapshot, if any. |
@@ -7387,7 +7475,7 @@ Find the `processing_id` in the `dead_letters.items` of the inspect report,
 fix the cause (a key, a model, a converter route), then replay it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7407,7 +7495,7 @@ reason `no_route` rather than failed. It uses no attempts. After you add a
 route and restart with `docker compose up -d`, release it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7427,20 +7515,17 @@ deployment, the stage, the lane (`steady` or `backfill`), the window in
 seconds, and the ceiling:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_WORK_BUDGETS=[{"deployment_id":"<your deployment id>","stage":"extract_claims","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"},{"deployment_id":"<your deployment id>","stage":"normalize_relations","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"}]
 ```
 
 Only one budget may exist per deployment, stage and lane. Stages without a
 budget are not capped.
 
-`compose.yaml` does not pass this variable. Put it in `engine.env`
-([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through));
-the workers enforce it.
+Put it in `.env` and run `docker compose up -d`; the workers enforce it.
 
-Work a budget parked shows as `pending` in `remember ops inspect`, and with
-`defer_reason` `budget` in the diagnostic query under
-[Troubleshooting](https://remember.dev/docs/self-hosting/troubleshooting#see-what-is-waiting-and-why).
+Work a budget parked shows as `pending` with `defer_reason` `budget`, both
+in `remember ops inspect` and in readiness.
 The spend itself is in the cost ledger; read it with `remember ops
 cost-export` ([Observability](https://remember.dev/docs/self-hosting/observability#cost-export)).
 
@@ -7453,7 +7538,7 @@ or a restore leaves them missing or different,
 expects, replays the definitions if needed, and reports the result:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops graph-catalog ensure
 ```
 
@@ -7510,10 +7595,9 @@ Run the commands on this page from the directory that holds your
 ## Running operator commands
 
 Several fixes below use `remember ops`. These commands read PostgreSQL
-directly, so they run inside the `api` container, and they
-are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set there. Without it,
-`remember ops` exits with "'remember ops' is confined to internal container
-environments".
+directly, so they run inside the `api` container
+(`docker compose exec api remember ops …`). Run anywhere else, `remember ops`
+exits with "'remember ops' runs inside the engine container".
 
 Read the deployment id once per shell:
 
@@ -7521,10 +7605,10 @@ Read the deployment id once per shell:
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 ```
 
-Then pass the variable with `-e` on each command:
+Then pass it to each command:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7548,34 +7632,37 @@ this way:
 | `setup` exited with code 0 | Normal. `setup` runs once on every `up` and exits. | Nothing. |
 | `setup` exited with a non-zero code, `api` and the workers are not running | `setup` failed, and nothing that depends on it starts. | `docker compose logs setup` |
 | `api` is `health: starting` | The API is still starting. Compose checks it every 10 seconds, up to 30 times. | Wait, then check again. |
-| `api` exited or keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
-| A `worker-…` container exited | That stage has no worker. Its work waits as `pending`. | `docker compose logs worker-…` |
+| `api` keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
+| A `worker-…` container keeps restarting | The worker fails at start or crashes. Its stage's work waits as `pending` meanwhile. | `docker compose logs worker-…` |
 
-No service in `compose.yaml` has a restart policy. A container that exits
-stays stopped until you run `docker compose up -d` again, and `/healthz`
-keeps answering `ok` while a worker is down: it checks the API and the
-database, not the pipeline.
+The API, the workers, PostgreSQL and the object store have the restart
+policy `unless-stopped`: Docker starts a container that exits again, until
+you stop it yourself. A container that fails at start therefore shows as
+restarting rather than exited. `/healthz` keeps answering `ok` while a
+worker is down: it checks the API and the database, not the pipeline.
 
 Configuration mistakes that stop a container at start:
 
 | In the logs | Cause | Fix |
 |---|---|---|
 | A validation error that names `api_key` | `REMEMBERSTACK_OPENROUTER_API_KEY` is empty. | Set it in `.env`, then `docker compose up -d`. |
-| `setup` refuses because the deployment id, slug or name differ | `.env` no longer matches what the first `setup` recorded. | Restore the original values. See [The deployment id is permanent](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
-| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or not `https`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
+| `setup` refuses with "deployment identity or mapped profile values conflict" or "this database already holds deployment …" | `.env` no longer matches what the first `setup` recorded; the message names the changed values or the recorded id. | Restore the original values. See [The deployment id is permanent](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
+| Compose says `set REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | `.env` has no deployment id. | Generate one as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
+| `setup` refuses because `REMEMBERSTACK_P1_EMBEDDING_MODEL` differs from the stored vectors | The embedding model changed after documents were embedded. | Set it back to the model the message names. See [Changing the embedding model](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model). |
+| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
 | The shared secret and the bind disagree | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` describe different secrets. | See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication). |
 | A validation error that names `API_KEY_ISSUER`, `API_KEY_TENANT_ID`, `API_SIGNING_KEYS_URL` or `API_REVOCATION_URL` | Signed keys are half configured: an issuer without its tenant id or URLs, or those without an issuer. | Set all four, or none. See [Signed keys](https://remember.dev/docs/self-hosting/authentication#signed-keys). |
 | "no fresh revocation document; every signed credential is refused" | The API has not accepted a revocation document yet, or the accepted one is older than `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S`. Every signed key gets `401`; the shared secret still works. | Check that the API can fetch both issuer URLs and that the issuer re-signs the document with a growing `seq`. The warnings just before it name the reason (a failed fetch, or a rejected document). |
 | `worker-convert` names an unknown converter | A route in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` names a converter that does not exist, or needs a key that is not set. | See [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | A migration error in `setup` that says the store already holds claims | The new release cannot convert the existing data. | See [setup refuses an existing database](#setup-refuses-an-existing-database). |
 
-On an arm64 machine, also check that the image runs at all; see
-[Requirements](https://remember.dev/docs/self-hosting/requirements).
-
 ## Wrong port or wrong address
 
 Compose publishes the API on the host port in
-`REMEMBERSTACK_SELFHOST_API_PORT`. The `remember` client and CLI do not
+`REMEMBERSTACK_SELFHOST_API_PORT`, on `127.0.0.1` only unless
+`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` says otherwise, so another
+machine gets "Connection refused" until you
+[open it](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). The `remember` client and CLI do not
 read that variable. Without `REMEMBER_API_URL` they use
 `http://127.0.0.1:8000`, whatever port the API is published on.
 
@@ -7620,12 +7707,11 @@ API is running; the browser refused the response because the API did not
 name the page's origin.
 
 Check `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`. It is empty by default,
-which allows no origin. Each entry must be an `https` origin written
-exactly as the browser sends it: lowercase, no path, no trailing slash.
-An `http` origin such as `http://localhost:3000` is not accepted: the API
-refuses to start with it. For local development, serve the app over
-`https`, or send the API calls through your development server's proxy so
-the browser sees one origin.
+which allows no origin. Each entry must be written exactly as the browser
+sends it: lowercase, no path, no trailing slash. It must be `https`, unless
+the app runs on the same machine: `http://localhost:3000`,
+`http://127.0.0.1:5173` and `http://[::1]:8080` are accepted, and any other
+`http` origin stops the API at start.
 
 Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
 headers are allowed, and cookies are not. See
@@ -7656,8 +7742,9 @@ for version in report.versions:
 | What readiness shows | Meaning | Next |
 |---|---|---|
 | Stages `running` or `succeeded`, later ones `missing` | Still processing. | Wait. See [Processing is slow](#processing-is-slow). |
-| `convert` stays `pending` | Parked for lack of a converter, a stopped `worker-convert`, or a spend budget. | [Parked conversions](#parked-conversions) |
-| Another stage stays `pending` | Its worker is not running, or a spend budget parked it. | `docker compose ps -a`, then [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| `convert` is `pending` with `defer_reason` `no_route` | No converter for the file's type. | [Parked conversions](#parked-conversions) |
+| A stage is `pending` with `defer_reason` `budget` | A spend budget parked it. | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| A stage stays `pending` with no `defer_reason` | Its worker is not running. | `docker compose ps -a` |
 | `failed` | The last attempt failed and a retry is scheduled. | Watch the worker logs; a repeated failure becomes `dead_letter`. |
 | `dead_letter` | Out of attempts. Nothing retries it on its own. | [Dead letters](#dead-letters) |
 | Every stage done, `p1` or `live_graph` not ready | A deployment-wide index or graph check is failing, not your document. | [Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog) |
@@ -7668,24 +7755,19 @@ facts exist.
 
 ### See what is waiting and why
 
-Readiness and `remember ops inspect` both show parked work as `pending`
-without the reason. To see the reason, read the work table directly. This
-is a read-only diagnostic query on an internal table, and its columns can
-change between releases:
+Readiness gives each waiting stage a `defer_reason`, and the `routes` in
+`remember ops inspect` count work by stage, status and `defer_reason`, for
+the whole deployment:
 
 ```bash
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT stage, status, defer_reason, count(*)
-FROM processing_state
-WHERE status IN ('pending', 'running', 'failed', 'dead_letter')
-GROUP BY stage, status, defer_reason
-ORDER BY stage, status;
-SQL
+docker compose exec -T api \
+  remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
 `defer_reason` is `no_route` for a file no converter accepts, `budget` for
-work a spend budget parked, and `retry_backoff` for a failure waiting to
-be retried.
+work a spend budget parked, `scheduled` for work due later, and
+`retry_backoff` for a failure waiting to be retried. Pending work with no
+reason is simply queued for its worker.
 
 ### Parked conversions
 
@@ -7701,7 +7783,7 @@ a route for the type as described in
 `docker compose up -d`, then release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7749,7 +7831,7 @@ in Python.
 Find what failed and why:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7760,7 +7842,7 @@ converter route, a file that is not UTF-8. Then give the item more
 attempts:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7775,7 +7857,7 @@ cannot start until every chunk or claim of the version has finished the
 stage before. Check where work is piling up:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 docker compose logs -f --since 10m worker-extract-claims worker-normalize-relations
 ```
@@ -7824,9 +7906,9 @@ If you set `REMEMBERSTACK_WORK_BUDGETS`, a stage that reaches its ceiling
 parks its work until the budget window ends. Nothing fails and nothing is
 dropped; readiness shows the stage as `pending`.
 
-Rows with `defer_reason` `budget` in the query under
-[See what is waiting and why](#see-what-is-waiting-and-why) are the cause.
-Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
+A `defer_reason` of `budget` (see
+[See what is waiting and why](#see-what-is-waiting-and-why)) shows it.
+Wait for the window to end, or raise `ceiling_usd` in `.env` and run
 `docker compose up -d`. See [Spend budgets](https://remember.dev/docs/self-hosting/operating#spend-budgets).
 
 ## Empty or surprising answers
@@ -8015,7 +8097,7 @@ that ledger. It contains no document text and no prompts.
 ```bash
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
 ```
 
@@ -8033,13 +8115,11 @@ from the memory API. It is off unless you give it an address and a token:
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Where to listen: `host:port`, `[ipv6]:port` or `unix:/path/to/socket`. Unset means no HTTP export. |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | The bearer token callers must send. At least 32 bytes; the API refuses to start with a shorter one once the bind is set. |
 
-`compose.yaml` does not pass either variable, although `.env.example`
-mentions them. Set them for the `api` service in `engine.env`
-([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)) and publish
-the port in `compose.override.yaml`:
+Set both in `.env`, and publish the port with a `compose.override.yaml`
+next to `compose.yaml`, which Compose merges automatically:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_COST_EXPORT_BIND=0.0.0.0:8001
 REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 ```
@@ -8048,14 +8128,11 @@ REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 # compose.override.yaml
 services:
   api:
-    env_file: [engine.env]
     ports:
       - "127.0.0.1:8001:8001"
 ```
 
-If your override already has the line `api: *engine-env`, replace that line
-with the `api:` block above. The extra port is added to the API's existing
-one.
+The extra port is added to the API's existing one.
 
 The bind is an address inside the container, so it must be `0.0.0.0` for
 the published port to reach it.
@@ -8167,8 +8244,9 @@ The `setup` service runs before the API and workers every time you run
    (`alembic upgrade head`);
 2. checks that the deployment id, slug and name still match the database;
 3. installs any assured operations and example saved queries the release adds;
-4. re-publishes the search channels, re-embedding entity profiles if the
-   embedding model changed.
+4. checks that the embedding model still matches the stored vectors, then
+   re-publishes the search channels, rebuilding entity profile vectors
+   when needed.
 
 The API and the workers start only after `setup` exits successfully. If a
 migration fails, `setup` exits with an error, nothing else starts, and
@@ -8219,14 +8297,11 @@ documents again. Keep your source files for this reason. See
 5. **Get the new images:**
 
     ```bash
-    docker compose pull api
-    docker compose build postgres
+    docker compose pull api postgres
     ```
 
-    All app services share the image `pull api` fetches. `build postgres`
-    rebuilds the PostgreSQL image in case `Dockerfile.postgres` changed; it
-    reuses the cache when nothing did. On arm64, build the app image
-    instead of pulling it: `docker compose build api`.
+    All app services share the image `pull api` fetches. Each release also
+    publishes its own PostgreSQL image, so `postgres` is pulled too.
 
 6. **Start:**
 
@@ -8255,19 +8330,17 @@ send your documents again.
 
 `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` names the deployment: its trust
 domain. Every token is bound to it, and every stored row belongs to it.
-Changing it does not rename the deployment; it asks for a different one:
+The install step generates it once, and the first `setup` records it.
 
-- With the same slug, `setup` refuses to start: the id and slug no longer
-  match what the database records.
-- With a new slug as well, `setup` creates a second deployment in the same
-  database. The API then serves the new, empty one. The memory stored
-  under the old id is still in the database but no longer served, shared
-  secrets bound to the old id are refused with `403`, signed keys for the
-  old deployment are refused, and the cost export stops working
-  because it expects exactly one deployment.
+A database holds exactly one deployment. If the id in `.env` differs from
+the recorded one, `setup` refuses to start and names the recorded id, so
+the API and workers do not start either. Restore the recorded value. The
+same check covers the slug, the name, the default language and the bucket
+names: `setup` names the ones that changed. Change none of them after the
+first start.
 
-The same check covers the slug, the name, the default language and the
-bucket names. Change none of them after the first start.
+To start over under a new id, remove the volumes
+(`docker compose down --volumes`) and send your documents again.
 
 ## Back up
 
@@ -8280,11 +8353,11 @@ A deployment's state lives in four Docker volumes:
 | Volume | Must be backed up |
 |---|---|
 | `rememberstack_postgres-data` | Yes: the database |
-| `rememberstack_minio-data` | Yes: original files and derived artifacts |
+| `rememberstack_object-store-data` | Yes: original files and derived artifacts |
 | `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
 | `rememberstack_app-state` | Optional: working directories and debug captures |
 
-Filesystem-view snapshots in MinIO can be rebuilt; everything else in the
+Filesystem-view snapshots in the object store can be rebuilt; everything else in the
 first three volumes cannot. The database and the object store refer to
 each other, so back them up at the same moment.
 
@@ -8295,7 +8368,7 @@ The simplest consistent backup stops the stack and copies the volumes:
 ```bash
 docker compose stop
 mkdir -p backup
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/source:ro" \
     -v "$PWD/backup:/backup" \
@@ -8305,7 +8378,7 @@ docker compose start
 ```
 
 Keep the `backup/` directory and your `.env` together: a restore needs the
-same deployment id and the same database and MinIO credentials.
+same deployment id and the same database and object-store credentials.
 
 To restore it into an empty stack on the same or another machine, with the
 same `.env`:
@@ -8313,14 +8386,14 @@ same `.env`:
 ```bash
 docker compose down -v          # deletes the current volumes
 docker compose create           # creates empty volumes and containers
-for volume in postgres-data minio-data forget-manifests app-state; do
+for volume in postgres-data object-store-data forget-manifests app-state; do
   docker run --rm \
     -v "rememberstack_${volume}:/target" \
     -v "$PWD/backup:/backup:ro" \
     alpine tar -xzf "/backup/${volume}.tar.gz" -C /target
 done
 docker compose up -d --wait
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api remember ops graph-catalog ensure
+docker compose exec -T api remember ops graph-catalog ensure
 ```
 
 The last command checks that the graph definitions in the restored database
@@ -8339,9 +8412,9 @@ docker compose exec -T postgres \
 
 Use your own user and database names from `.env`. The second file matters:
 the migrations create a separate, restricted PostgreSQL role for SQL
-queries, and roles are not part of `pg_dump`. Copy the MinIO buckets
+queries, and roles are not part of `pg_dump`. Copy the object-store buckets
 (`remember-raw`, `remember-artifacts`, `remember-corpusfs`) at the same
-time with an S3 tool such as `mc mirror`. Restoring a logical backup means
+time with an S3 tool such as `rclone sync`. Restoring a logical backup means
 creating the roles, restoring the dump into an empty database with
 `pg_restore`, copying the buckets back, and running `setup`; the project
 has not tested this path.
@@ -8378,7 +8451,7 @@ docker compose --profile operations run --rm projections
 ```
 
 The `projections` service runs `project --plane p3`. It renders the whole
-tree, writes it to the `remember-corpusfs` bucket in MinIO under a new
+tree, writes it to the `remember-corpusfs` bucket in the object store under a new
 version, and marks that version as the latest. It prints a short report
 with the `snapshot_id`, the `version` and the number of `files`. Each run
 builds the tree from scratch.
@@ -8388,7 +8461,7 @@ by hand, when you want the view to catch up.
 
 ## Publish it to a directory
 
-`mounts` copies the latest snapshot out of MinIO into a directory:
+`mounts` copies the latest snapshot out of the object store into a directory:
 
 ```bash
 mkdir -p "$PWD/memory-views"
@@ -8486,8 +8559,8 @@ logged only if your mount tool logs them.
 
 `remember ops rebuild --deployment ID --snapshot-root DIR --version V`
 writes a snapshot tree straight into a directory inside the container
-instead of MinIO. It also records that snapshot as the latest, and `mounts`
-then fails to find it in MinIO. Run the `projections` service again before
+instead of the object store. It also records that snapshot as the latest, and `mounts`
+then fails to find it in the object store. Run the `projections` service again before
 the next `mounts`.
 
 ## When it refuses
@@ -8538,7 +8611,7 @@ export REMEMBER_API_URL=http://localhost:8000
 
 The engine listens on port 8000 inside its container
 (`REMEMBERSTACK_SELFHOST_API_PORT`, default `8000`). The Compose file
-publishes it on the host.
+publishes it on the host's loopback address, `127.0.0.1`.
 
 Paths in this reference are relative to that base URL. The `remember` client
 reads the same variable (`REMEMBER_API_URL`) and falls back to
@@ -8775,7 +8848,8 @@ text up to 65,536 bytes, and so on. Each group page lists them.
 
 A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
-exact `https` origins; empty by default). For those origins it allows:
+exact `https` origins, or `http` origins on `localhost`, `127.0.0.1` or
+`[::1]`; empty by default). For those origins it allows:
 
 - methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
@@ -8783,7 +8857,8 @@ exact `https` origins; empty by default). For those origins it allows:
 - preflight caching for 600 seconds.
 
 Wildcards are refused at startup, and so is an origin with a path, a user,
-port `443` written out, or upper-case letters.
+the default port (`443`, or `80` for `http`) written out, or upper-case
+letters.
 
 ## Routes outside the documented API
 
@@ -10858,7 +10933,7 @@ None.
 | Field | Meaning |
 |---|---|
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
-| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `chunk_embedding`, `context_prefix`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding`, `fact_label`, and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
+| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
 | `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, and `search_documents`
 only when document search is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
@@ -12017,6 +12092,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `component_version` | string | The version of that stage's component the deployment expects. |
 | `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
 | `finished_at` | date-time, nullable | |
+| `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
 
 `missing` means no work for that stage and component version exists yet.
 `failed` may be retried by the pipeline; `dead_letter` will not be.
@@ -14563,7 +14639,7 @@ models below are Pydantic models (frozen) unless noted.
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
-| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`. |
+| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
 | `ToolDescriptor` | One operation's descriptor: `name`, `description`, `input_schema`, `result_schema`, `result_contract`, `output_grain`, `answer_intent`, `mutates`, `version`, `implementation_plan_hash`. |
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |
@@ -14878,33 +14954,39 @@ in [Assured operations](https://remember.dev/docs/reference/assured-operations).
 
 ```text
 remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
 ```
 
-Runs an MCP server on standard input and output for a coding agent. It finds
-the deployment the same way as every other command. `--read-only` removes the `ingest` and
-`delete_document` tools.
+Runs an MCP server for a coding agent. By default it speaks on standard input
+and output and finds the deployment the same way as every other
+command.
+`--transport http` serves the same tools over HTTP at
+`http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
+`--read-only` removes the tools that change memory, `ingest` and
+`delete_document`.
 
 You rarely start it yourself; `remember setup` writes the agent
-configuration that starts it. The tools, their parameters and the errors are
-in [MCP tools](https://remember.dev/docs/reference/mcp).
+configuration that starts it. The two transports, the tools, their parameters
+and the errors are in [MCP tools](https://remember.dev/docs/reference/mcp).
 
 ### `remember setup`
 
 ```text
-remember setup [--self-hosted] [--api-url URL] [--api-key KEY]
+remember setup [--self-hosted] [--api-url URL] [--api-key KEY] [--mcp-url URL]
                [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
 ```
 
-Writes MCP configuration so your coding agents start `remember mcp`.
+Writes each coding agent's MCP entry for Remember.
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--self-hosted` | | Configure for an engine at `--api-url`, default `http://127.0.0.1:8000`. |
-| `--api-url` | none | The engine address. It is written into the agent configuration as `REMEMBER_API_URL`. |
+| `--api-url` | none | The engine address. It implies `--self-hosted` and is written into stdio entries as `REMEMBER_API_URL`. |
 | `--api-key` | none | With `--self-hosted`: the engine's key, stored in the [credential file](#credential-file) and never written into agent configuration. |
+| `--mcp-url` | none | The URL of your own `remember mcp --transport http` server. It implies `--self-hosted`. Agents that accept a URL entry connect to it; the others get a stdio entry. |
 | `--agent` | `all` | Which agent to configure. `agy` is Antigravity; `claude` means Claude Code and Claude Desktop. |
 | `--dir` | current directory | The project directory for project-level configuration. |
-| `--dry-run` | off | Print what would change; write nothing. |
+| `--dry-run` | off | Print the entries it would write; write nothing. |
 
 What it does, in order:
 
@@ -14913,14 +14995,26 @@ What it does, in order:
    it uses `uvx remember mcp`. Paths are resolved to absolute paths so an
    editor started from a desktop launcher finds them. With neither
    `remember` nor `uvx` on `PATH` it exits with status 1.
-2. With `--self-hosted`, stores the engine address and key in the credential
-   file (see the warning below).
-3. Configures each agent. With `--agent all` it configures what it finds:
+2. Chooses the agents. With `--agent all` it configures what it finds:
    Cursor if `.cursor/` exists in the directory, Antigravity if `.agents/`
    exists, Codex if `.codex/` exists or `codex` is installed, Claude Code if
-   `claude` is on `PATH`, Claude Desktop if its configuration file exists
-   (or, on macOS, the app is installed). If it finds none, it configures
-   Cursor and Antigravity.
+   `claude` is on `PATH`, Claude Desktop if its configuration file or
+   directory exists (or, on macOS, the app is installed). If it finds none,
+   it configures Cursor and Antigravity.
+3. For a self-hosted engine, stores the engine address and key in the
+   credential file (see the warning below).
+4. Writes one entry per agent. For a self-hosted engine the entry starts
+   `remember mcp` with `REMEMBER_API_URL`. With `--mcp-url`, Cursor, Claude
+   Code and Codex get a URL entry instead; Claude Desktop and Antigravity
+   keep the stdio entry. A key, if any, is never written: a URL entry refers
+   to the `REMEMBER_API_KEY` variable, which you set in the agent's
+   environment.
+
+Claude Code and Codex count as accepting URL entries only when their
+installed command line supports them: `claude mcp add --help` must list
+`--transport`, and `codex mcp add --help` must list
+`--bearer-token-env-var`. Otherwise they get the stdio entry, which works
+everywhere.
 
 The exact files and their content are listed in
 [MCP tools: configuration that `remember setup` writes](https://remember.dev/docs/reference/mcp#configuration-that-remember-setup-writes).
@@ -14931,8 +15025,10 @@ The exact files and their content are listed in
 address and the key from `--api-key` (or no key). Afterwards every command
 talks to that engine.
 
-Existing configuration files must be valid JSON or TOML; otherwise the
-command stops with status 1 and changes nothing in that file.
+Existing configuration files must be valid JSON or TOML and must not be
+symbolic links; otherwise that agent is not configured and the command exits with status 1. A failure in
+one agent does not stop the others. Running the command again with the same
+flags leaves the files unchanged.
 
 ```bash
 remember setup --self-hosted --agent cursor --dry-run
@@ -14952,8 +15048,9 @@ Checks your setup and prints one line per check:
    authenticated exactly as every other command.
 4. Agent configuration in the current directory: `.cursor/mcp.json`,
    `.agents/mcp_config.json`, `.codex/config.toml`, and Claude Desktop's
-   configuration file. For each it checks the file parses, contains a
-   `remember` server, and that server's command exists and is executable.
+   configuration file. For each it checks the file parses and contains a
+   `remember` server. For a stdio entry it checks the command exists and is
+   executable; for a URL entry it prints the URL.
 
 `[✓]` is a pass, `[-]` is informational, `[!]` is a failure. Exit status 1
 when any check fails.
@@ -14974,13 +15071,13 @@ Every one fails with `API 404` and exit status 1. Connectors are listed in
 ## Self-hosted operations: `remember ops`
 
 `remember ops` repairs and inspects a self-hosted engine's pipeline. It runs
-only inside the engine container, and only when
-`REMEMBERSTACK_INTERNAL_OPS=1` is set (`REMEMBER_INTERNAL_OPS` also works).
-Elsewhere it prints an error and exits with status 1. The help output does
-not list it.
+inside the engine container, which enables it by setting
+`REMEMBERSTACK_INTERNAL_OPS=1`. Elsewhere, including a `remember` installed
+from PyPI, it prints an error and exits with status 1, and the help output
+does not list it.
 
 ```bash
-docker compose exec -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec api \
   remember ops inspect --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"
 ```
 
@@ -15066,7 +15163,7 @@ it.
 | `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
 | `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
 | `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
-| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops` inside the engine container. |
+| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops`. The engine image sets it. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](https://remember.dev/docs/reference/mcp#ingest-from-a-path). |
 | `APPDATA` (Windows), `XDG_CONFIG_HOME` (Linux) | `setup`, `doctor` | Where Claude Desktop's configuration lives. |
 
@@ -15081,8 +15178,10 @@ Source: https://remember.dev/docs/reference/mcp
 
 MCP (Model Context Protocol) is how coding agents call external tools.
 **`remember mcp`** gives an agent access to your memory. It is part of the
-`remember` package, runs on your machine next to the agent, and talks to one
-deployment.
+`remember` package, runs next to the agent, and talks to one
+deployment. It
+speaks on standard input and output (the agent starts it), or over HTTP
+(agents connect to a URL).
 
 How to connect an agent step by step:
 [Connect your coding agent](https://remember.dev/docs/start/connect-your-agent).
@@ -15091,16 +15190,19 @@ How to connect an agent step by step:
 
 ```bash
 remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
 ```
 
-The server reads JSON-RPC 2.0 messages from standard input, one per line,
-and writes one response per line to standard output. It finds the
+By default the server reads JSON-RPC 2.0 messages from standard input, one
+per line, and writes one response per line to standard output. It finds the
 deployment and key the same way as every other `remember` command: flags,
 then environment variables, then the credential file. See [CLI: How the CLI finds your deployment](https://remember.dev/docs/reference/cli#how-the-cli-finds-your-deployment).
+`--transport http` serves the same tools over HTTP; see
+[Over HTTP](#over-http).
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
-`delete_document`, and refuses calls to them. `pipeline_readiness` and
-`search_documents` only read, so they stay.
+`delete_document`, and refuses calls to them with the error `read_only`.
+`pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
 
@@ -15117,37 +15219,79 @@ JSON-RPC error codes: `-32700` for a line that is not JSON, `-32600` for a
 message that is not a valid request, `-32602` for bad `initialize` or
 `tools/call` parameters, `-32603` for a failure while building the answer
 (for example `tools/list` when the deployment cannot be reached or rejects
-the token).
+the key).
 
 The server offers tools only: no resources and no prompts.
 
 ### How `tools/list` is built
 
-Every `tools/list` call asks the deployment what it serves and returns, in
-this order:
+The tool definitions — names, descriptions, input schemas — come from the
+`remember` package itself, so every server that uses the package describes
+the same tools the same way. Each tool has a version number that rises when
+its arguments change in a way an older engine could not handle.
 
-1. `ingest`, `pipeline_readiness` and `delete_document`, then
-   `search_documents` when the deployment's `GET /deployment` lists it at
-   the same tool version as this `remember` package
+Every `tools/list` call reads `GET /deployment` and lists, in this order,
+each tool the deployment reports at the same version:
+
+1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
    (only `pipeline_readiness` and `search_documents` with `--read-only`).
-   A deployment that does not answer `GET /deployment` gets no
-   `search_documents`.
-2. The assured operations the deployment lists at `GET /operations`:
-   `resolve_entity`, `claims_and_sources_context`, `facts_context`,
-   `combined_context`. Their input schemas come from the deployment. If
-   the deployment answers `404` there, this group is empty. Any other
-   failure (unreachable, `401`, `403`) makes `tools/list` fail with `-32603`,
-   so a wrong token never looks like an empty tool list.
-3. The seven SQL query tools, only when `GET /query/space` answers with the
-   `memory_v1` query space (schema `memory_v1`, major version 1 and a
-   64-character manifest hash). Any error or other answer leaves them out.
+2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
+   `facts_context`, `combined_context`.
+3. The seven SQL query tools, when the deployment serves the query space.
 
-A full server therefore lists 15 tools: 4 + 4 + 7.
+A tool the deployment does not serve, or serves at another version, is left
+out: upgrade `remember` or the engine so their versions match. If
+`GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
+`-32603`, so a wrong key never looks like an empty tool list. A full server
+lists 15 tools: 4 + 4 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
 `ingest` and `delete_document`, and `destructiveHint` is `true` only for
 `delete_document`.
+
+The server serves one deployment, so no tool takes a `project` argument; a
+call that passes one is refused with `project_routing_unavailable`. A call to
+a name that is not one of these tools is refused with `unknown_tool`. Neither
+reaches the deployment.
+
+### Over HTTP
+
+```bash
+remember mcp --transport http --api-url http://127.0.0.1:8000
+```
+
+The server listens at `http://127.0.0.1:8765/mcp` (Streamable HTTP, the MCP
+transport for servers an agent reaches by URL). `--bind HOST:PORT` changes
+the address.
+
+| Request | Behaviour |
+|---|---|
+| `POST /mcp` | One JSON-RPC message per request, answered with `application/json`; a notification gets `202` and no body. |
+| `initialize` | A successful one opens a session: the answer carries an `Mcp-Session-Id` header. Every later request must send it back. |
+| Missing `Mcp-Session-Id` | `400`. |
+| `MCP-Protocol-Version` other than `2025-11-25` | `400`. The header is optional. |
+| Unknown or expired session | `404`: initialize again. A session unused for an hour expires. |
+| `DELETE /mcp` with `Mcp-Session-Id` | Ends the session (`204`). |
+| `GET /mcp` | `405`: the server never sends messages of its own. |
+| `Origin` header that is not the server's own address | `403`. This stops a web page from reaching the server through a hostname it controls. |
+| More than 16 open connections | `503` with `Retry-After: 1`, and the connection is closed. An idle connection is closed after 30 seconds. |
+| Body over 32 MiB | `413`. Only an `ingest` body sent as `content_base64` gets this big; use `remember ingest` for larger files. |
+| A client that stops sending for 30 seconds | The connection is closed. |
+
+The HTTP server holds no key. It passes each caller's `Authorization`
+header to the engine unchanged with every call, so the engine decides what
+each caller may do, and a caller without a key reaches the engine without
+one. `tools/list` therefore shows every tool the deployment serves; a call
+the caller's key may not make returns `insufficient_permission`.
+`--api-key` and `--project` are refused with `--transport http`.
+
+`ingest` does not offer the `path` body over HTTP: the caller may be on
+another machine.
+
+It listens on a loopback address only; `--bind` with any other address is
+refused. To let agents on other machines reach it, put a reverse proxy in
+front of it that authenticates callers and terminates TLS.
 
 ### Results
 
@@ -15161,8 +15305,7 @@ Every `tools/call` result has this shape:
 ```
 
 The text is a JSON document: the tool's result on success, an error object
-when `isError` is `true`. The error object differs by tool group; see
-[Errors](#errors).
+when `isError` is `true`; see [Errors](#errors).
 
 ### `ingest`
 
@@ -15332,8 +15475,8 @@ token needs `read` scope. How matching and paging work:
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
-schemas are served by the deployment; the tables below are what a v0.17.0
-engine serves. Behaviour and results: [Assured operations](https://remember.dev/docs/reference/assured-operations).
+schemas come from the `remember` package, as for every tool. Behaviour and
+results: [Assured operations](https://remember.dev/docs/reference/assured-operations).
 
 #### `resolve_entity`
 
@@ -15421,85 +15564,88 @@ Identifiers (`namespace`, `name`) must match `^[a-z][a-z0-9_]*$`. See
 ### Errors
 
 Errors come back as a tool result with `isError: true`, so the agent can read
-them. The JSON inside depends on the tool group.
-
-**`ingest`, `pipeline_readiness` and `delete_document`** return:
+them. Every tool returns the same JSON:
 
 ```json
 {
-  "code": "path_not_allowed",
-  "message": "…",
-  "http_status": 400,
-  "retryable": false,
-  "agent_action": "Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. …",
-  "reason_code": "…",
-  "request_id": "…"
+  "error": {
+    "code": "rate_limited",
+    "status_code": 429,
+    "detail": "…",
+    "retryable": true,
+    "agent_action": "Wait retry_after seconds (if given), then retry; …",
+    "retry_after": 7
+  }
 }
 ```
 
-`reason_code` and `request_id` appear only when known. `agent_action` tells
-the agent what to do next.
+| Field | Meaning |
+|---|---|
+| `code` | A stable code: the deployment's own code when it sent one (SQL query errors, `rate_limited`), else one of the codes below. |
+| `status_code` | The deployment's HTTP status. `0` when no answer arrived; `null` when the call never reached the deployment (the server refused it itself). |
+| `detail` | What went wrong. |
+| `retryable` | Whether the same call can succeed later. |
+| `agent_action` | What the agent should do next. |
+| `retry_after` | Seconds to wait, when the deployment said. |
+| `reason_code`, `request_id` | Present only when known. |
 
-| `code` | `http_status` | `retryable` | When | `agent_action` in short |
-|---|---|---|---|---|
-| `invalid_arguments` | 422 | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. | Fix the arguments and retry. |
-| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. | Do not retry; check the `doc_id`. |
-| `tool_not_composed` | 404 | no | `delete_document` on a read-only server. | Tell the user deletion is not available here. |
-| `invalid_arguments` | 422 | no | `search_documents` with bad arguments, or a `cursor` the deployment cannot read. | Fix the arguments; start a new search instead of reusing the cursor. |
-| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. | Retry later with back-off. |
-| `source_lineage_pair` | 422 | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. | Send both or neither. |
-| `encoding_error` | 422 | no | `text` cannot be encoded as UTF-8. | Remove invalid characters or send `content_base64`. |
-| `empty_body` | 422 | no | The body is empty. | Send non-empty content. |
-| `path_not_allowed` | 400 | no | Path ingest is off, or the path is outside the listed directories, or contains a NUL byte. | Use `text`/`content_base64`, or ask the operator to set the roots. |
-| `path_unreadable` | 400 | no | The path does not exist or cannot be read. | Check the path on the machine running the server. |
-| `path_not_regular_file` | 400 | no | Directory, pipe, device or other special file. | Point at a regular file. |
-| `path_too_large` | 413 | no | Larger than the read limit. | Split the file or raise the limit. |
-| `body_too_large` | 413 | no | The deployment refused the body as too large. | Split or shorten the document. |
-| `unauthorized` | 401 | no | The token is missing, wrong or revoked. | Replace the token. |
-| `forbidden` | 403 | no | The token may not do this. | Use a token for this deployment with the right scope. |
-| `transport_error` | 0 | yes | No answer from the deployment. | Retry with back-off; check the address and network. |
-| `engine_client_error` | the 4xx status | no | Any other 4xx from the deployment. | Read the message and fix the call. |
-| `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. | Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
-| `local_backend_error` | 500 | no | The deployment's answer did not match the expected shape. | Report a defect; do not retry. |
-| `internal_error` | 500 | no | An unexpected failure in the server. | Report it; do not retry. |
-
-With `--read-only`, a call to `ingest` returns `isError: true` with the
-plain text
-`write tool 'ingest' is disabled on this read-only MCP server`. A call to
-`delete_document` returns the `tool_not_composed` error object.
-
-**Assured operations and SQL query tools** return:
-
-```json
-{"error": {"status_code": 422, "detail": "…", "code": "relation_not_allowed"}}
-```
-
-`status_code` is the deployment's HTTP status (`0` when no answer arrived,
-`null` when `remember mcp` refused the arguments before calling the
-deployment). `code` is present for SQL query failures; the codes are listed
-in [Errors and status codes](https://remember.dev/docs/reference/errors). A few argument errors come back as
-plain text instead of JSON.
-
-A `tools/call` for a name the server does not know is sent to the deployment
-as an operation and returns the deployment's error in this shape.
+| `code` | `status_code` | `retryable` | When |
+|---|---|---|---|
+| `invalid_arguments` | `null` | no | Missing, unknown or malformed arguments; not exactly one body; bad base64; bad UUID; bad timestamp. |
+| `unknown_tool` | `null` | no | The name is not one of the server's tools. |
+| `project_routing_unavailable` | `null` | no | The call passed a `project` argument. |
+| `read_only` | `null` | no | A tool that changes memory, on a `--read-only` server. |
+| `source_lineage_pair` | `null` | no | Only one of `source_kind` and `source_ref`, or lineage-only fields without them. |
+| `encoding_error` | `null` | no | `text` cannot be encoded as UTF-8. |
+| `empty_body` | `null`, or the deployment's | no | The body is empty. |
+| `path_not_allowed` | `null` | no | Path ingest is off, or the path is outside the listed directories, or contains a NUL byte. |
+| `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
+| `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
+| `path_too_large` | `null` | no | Larger than the read limit. |
+| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. |
+| `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
+| `body_too_large` | 413 | no | The deployment refused the body as too large. |
+| `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |
+| `insufficient_permission` | 403 | no | The key may not do this on this deployment. |
+| `rate_limited` | 429 | yes | The key or the deployment sent too many requests; wait `retry_after` seconds. |
+| `concurrency_limited` | 429 | yes | Too many calls at once; wait `retry_after` seconds. |
+| `transport_error` | 0 | yes | No answer from the deployment. |
+| SQL query codes | as sent | as the code | A SQL query tool failed; the codes are in [Errors and status codes](https://remember.dev/docs/reference/errors). |
+| `engine_client_error` | the 4xx status | no | Any other 4xx from the deployment. |
+| `engine_unavailable` | the 5xx status | yes | A 5xx from the deployment. Retry 3–5 times with back-off (2 s to 30 s); then report an outage. |
+| `local_backend_error` | `null` | no | The deployment's answer did not match the expected shape. |
+| `internal_error` | `null` | no | An unexpected failure in the server. |
 
 ## Configuration that `remember setup` writes
 
-[`remember setup`](https://remember.dev/docs/reference/cli#remember-setup) writes the files below. In each,
-`<launcher>` and `<args>` are one of:
+[`remember setup`](https://remember.dev/docs/reference/cli#remember-setup) writes one `remember`
+entry per agent, in one of these shapes:
+
+| Shape | When | What the agent does |
+|---|---|---|
+| Stdio entry | A self-hosted engine | Starts `<launcher> <args>` with `REMEMBER_API_URL`; the server reads the key from the credential file. |
+| URL entry | `--mcp-url`, engine without a key, agent accepts URL entries | Connects to your `remember mcp --transport http` server. |
+| URL entry with key header | `--mcp-url` with `--api-key`, agent can refer to a variable in a header | Connects to that URL and sends `Authorization: Bearer` with the value of `REMEMBER_API_KEY` from its own environment. |
+
+Claude Code and Codex take URL entries only when their installed command
+line supports them (see [`remember setup`](https://remember.dev/docs/reference/cli#remember-setup));
+otherwise they get the stdio entry. A key is never written into any of
+these files: a URL entry names the `REMEMBER_API_KEY` variable, never its
+value.
+
+In a stdio entry, `<launcher>` and `<args>` are one of:
 
 | Situation | `command` | `args` |
 |---|---|---|
 | A `remember` binary installed outside a virtual environment or cache | absolute path of `remember` | `["mcp"]` |
 | Otherwise, when `uvx` is installed | absolute path of `uvx` | `["remember", "mcp"]` |
 
-An `env` block is added only when there is an address to pin: with
-`--self-hosted` (default `http://127.0.0.1:8000`) or with `--api-url`. It holds
-exactly one variable, `REMEMBER_API_URL`. Keys are never written into these
-files; the server reads them from the credential file.
+A stdio entry's `env` block holds exactly one variable: `REMEMBER_API_URL`
+for a self-hosted engine (default `http://127.0.0.1:8000`).
 
 Existing files are merged: other servers and settings are kept, and the
-`remember` entry is replaced.
+`remember` entry is replaced. A file whose content would not change is not
+rewritten, and a rewritten file keeps its permissions.
 
 ### Cursor
 
@@ -15518,6 +15664,22 @@ Existing files are merged: other servers and settings are kept, and the
   }
 }
 ```
+
+A URL entry is `{ "url": "http://127.0.0.1:8765/mcp" }`. With a key header:
+
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer ${env:REMEMBER_API_KEY}" }
+    }
+  }
+}
+```
+
+Cursor replaces `${env:REMEMBER_API_KEY}` with the variable's value when it
+connects.
 
 It also writes a rule file, `<project>/.cursor/rules/remember.mdc`,
 replacing any earlier version:
@@ -15549,19 +15711,23 @@ available MCP tools (`facts_context`, `combined_context`, `claims_and_sources_co
 
 ### Claude Code
 
-`remember setup` runs Claude Code's own command:
+`remember setup` runs Claude Code's own command in the project directory,
+after removing any earlier `remember` entry with
+`claude mcp remove --scope local remember`:
 
 ```bash
-claude mcp add remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
+claude mcp add --scope local remember -e REMEMBER_API_URL=http://127.0.0.1:8000 -- /Users/ravi/.local/bin/remember mcp
 ```
 
-The `-e` part appears only when an address is pinned. Claude Code decides
-where it stores the entry. When `claude` is not on `PATH`, `remember setup`
-prints this command for you to run.
+A URL entry is added with
+`claude mcp add --scope local --transport http remember <url>`. Claude Code
+does not get the key-header shape; with a key it gets the stdio entry. When
+`claude` is not on `PATH`, `remember setup` prints the command for you to
+run.
 
 ### Claude Desktop
 
-The same JSON as for Cursor (the `mcpServers.remember` entry, no rule file),
+Always a stdio entry, as JSON like Cursor's (the `mcpServers.remember` entry, no rule file),
 merged into Claude Desktop's configuration file:
 
 | System | File |
@@ -15585,14 +15751,17 @@ args = ["mcp"]
 REMEMBER_API_URL = "http://127.0.0.1:8000"
 ```
 
+A URL entry is `url = "<url>"` in that table; with a key header it adds
+`bearer_token_env_var = "REMEMBER_API_KEY"`.
+
 Any earlier `[mcp_servers.remember]` and `[mcp_servers.remember.*]` tables
 are removed first; the rest of the file is kept. Codex loads a project's
 `.codex/config.toml` only when you trust the project in Codex.
 
 ### Antigravity
 
-`<project>/.agents/mcp_config.json`, with the same `mcpServers.remember`
-entry as Cursor, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
+`<project>/.agents/mcp_config.json`, always with a stdio
+`mcpServers.remember` entry like Cursor's, and a skill file `<project>/.agents/skills/remember/SKILL.md`,
 replacing any earlier version:
 
 ```markdown
@@ -15647,14 +15816,11 @@ explains how they reach the containers.
 The variables in **Client** are read by the `remember` CLI, Python client and
 MCP server on your own machine. Every other section applies to a self-hosted engine.
 
-The **Compose** column says how the shipped `compose.yaml` treats each
-engine variable:
-
-- **passed**: listed in the app services' `environment:`; set it in `.env`.
-- **set**: `compose.yaml` sets a fixed value itself.
-- **—**: not passed. Setting it in `.env` has no effect; use `engine.env`
-  and `compose.override.yaml` as described in
-  [Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through).
+The shipped `compose.yaml` hands every variable in `.env` to the engine
+containers. It sets three itself, overriding `.env`:
+`REMEMBERSTACK_DATABASE_URL`, `REMEMBERSTACK_MINIO_ENDPOINT_URL` and the
+container's `REMEMBERSTACK_SELFHOST_API_PORT`
+([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)).
 
 Booleans accept `true`/`false` (also `1`/`0`). An empty value counts as
 unset for optional settings.
@@ -15667,7 +15833,7 @@ unset for optional settings.
 | `REMEMBER_API_KEY` | unset | secret | The API key, raw or as `Bearer …`. |
 | `REMEMBER_PROJECT` | unset | id or name | The project to use when the key covers several. |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where `credentials.json` lives. |
-| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false`; `true` in the engine image | bool | Enables `remember ops`, which works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
@@ -15685,191 +15851,181 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. |
+| `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
 ## Deployment and API
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_DATABASE_URL` | required | SQLAlchemy URL | set | PostgreSQL connection, `postgresql+psycopg://user:password@host:5432/db`. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | required | UUID | passed | The deployment's identity. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | `local` | string | passed | Short name. Fixed after the first start. Default Sentry environment. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | `Local memory` | string | passed | Display name. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | — | Default language of the deployment. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | — | Address the API listens on inside the container. |
-| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
-| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
-| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
-| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | passed | Requests per minute for the whole deployment (bursts of a quarter of it). |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | passed | Requests running at once for the whole deployment. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | required | SQLAlchemy URL | PostgreSQL connection, `postgresql+psycopg://user:password@host:5432/db`. Compose builds it from the `REMEMBERSTACK_POSTGRES_*` values. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | required | UUID | The deployment's identity; `.env.example` ships none, generate it at install. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | `local` | string | Short name. Fixed after the first start. Default Sentry environment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | `Local memory` | string | Display name. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | Default language of the deployment. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | Address the API listens on inside the container. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
+| `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Read by Compose only. Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
+| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | Largest `POST /ingest` body; larger uploads get `413`. |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | Browser origins allowed by CORS. |
+| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | Requests running at once for the whole deployment. |
 
 ## Storage
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://minio:9000`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also MinIO's root user. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also MinIO's root password. |
-| `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
-| `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | — | Bucket for filesystem-view snapshots. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | — | Default `--raw-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | — | Default `--artifacts-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | — | Working directory created by `setup`. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | — | Where hard-forget manifests are read. |
-| `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | — | Alembic configuration used by `setup`. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | S3-compatible endpoint. Compose sets `http://object-store:8333`. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | S3 region name used for signing. |
+| `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | Default `--raw-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | Default `--artifacts-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
+| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
+| `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | Alembic configuration used by `setup`. |
 
 ## Authentication
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
-| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |
-| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | passed | Where the issuer's JWKS of Ed25519 public keys is fetched. |
-| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | passed | Where the issuer's signed revocation document for this deployment is fetched. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | passed | Seconds between fetches of the key set and the revocation document. |
-| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | passed | Maximum age of the accepted revocation document; past it every signed key is refused. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | Shared secret with `write` scope. Setting it turns authentication on. |
+| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | The shared secret's digest instead of the secret. Must match the token if both are set. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | Refuse to start unless the token, the bind or the key issuer is set. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | The issuer's project id for this deployment, matched against a key's `projects`. |
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | Where the issuer's JWKS of Ed25519 public keys is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | Where the issuer's signed revocation document for this deployment is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | Seconds between fetches of the key set and the revocation document. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | Maximum age of the accepted revocation document; past it every signed key is refused. |
 
 See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
 
 ## Pools and workers
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S` | `20.0` | float > 0 | — | Claims per second per worker process. |
-| `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | — | Claim burst per worker process. |
-| `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | — | Poll interval when no notification arrives. |
-| `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | — | Length of one worker session. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | passed | Connections for retrieval in the API. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a retrieval connection. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | passed | Retrievals at once. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | `4` | int 1–32 | passed | Connections for graph queries in the API. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a graph slot. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | passed | Graph queries at once. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | passed | PostgreSQL `work_mem` per graph query. |
-| `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | — | First retry delay; doubles per attempt. |
-| `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | — | Longest retry delay. |
-| `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | — | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |
-| `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | — | Chunks per embedding request. |
-| `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | — | Claims or facts per embedding request. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S` | `20.0` | float > 0 | Claims per second per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | Claim burst per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | Poll interval when no notification arrives. |
+| `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | Length of one worker session. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | Connections for retrieval in the API. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a retrieval connection. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | Retrievals at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | `4` | int 1–32 | Connections for graph queries in the API. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a graph slot. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | Graph queries at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
+| `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |
+| `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | Chunks per embedding request. |
+| `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | Claims or facts per embedding request. |
 
 ## Model provider
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | passed | OpenRouter key for every model call. |
-| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | OpenRouter API address. |
-| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | — | Per-request timeout. |
-| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | passed | Output allowance per chat call, reasoning included. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred chat providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | passed | Only these chat providers, no fallback. Exclusive with the order. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred embedding providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | passed | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | — | Only zero-data-retention endpoints for chat. |
-| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | passed | Reasoning effort for every chat call. |
-| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | passed | Reasoning effort per model id; wins over the global value. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | — | Retries of a chat call after HTTP 429, outside the work attempts. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | — | Longest wait before retrying an overloaded provider. |
-| `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | passed | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | passed | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
-| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | passed | TypeSafe model. |
-| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | passed | TypeSafe API address. |
-| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | passed | TypeSafe request timeout. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | OpenRouter key for every model call. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | OpenRouter API address. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | Per-request timeout. |
+| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | Output allowance per chat call, reasoning included. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers, no fallback. Exclusive with the order. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | TypeSafe request timeout. |
 
 ## Model seats
 
 See [Models and providers](https://remember.dev/docs/self-hosting/models).
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Structure fallback: section anchors when headings are unusable. |
-| `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | — | Largest prompt sent to the structure fallback. |
-| `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | — | Structure check: minimum headings per 10,000 characters. |
-| `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | — | Structure check: largest share of oversized sections. |
-| `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | — | Accepted for compatibility; not used. |
-| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Checks a proposed section outline. |
-| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Classifies section roles. |
-| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Section summaries. |
-| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Claim selection and extraction. |
-| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Relation normalisation. |
-| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Entity resolution. |
-| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Fact adjudication with the `prompt` engine. |
-| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | passed | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
-| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | passed | Below this, both the new statement and the existing fact are kept. |
-| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | passed | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
-| `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | passed | Every embedding, including search queries. |
-| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Reported by `GET /deployment` as `chunk_embedding`; chunks actually use the P1 model. Keep equal to it. |
-| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
-| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
-| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN` | `0.8` | float 0–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_NOVELTY_FLOOR` | `0.3` | float −1–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_HUB_TOP_K` | `5` | int ≥ 1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | Structure fallback: section anchors when headings are unusable. |
+| `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | Largest prompt sent to the structure fallback. |
+| `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | Structure check: minimum headings per 10,000 characters. |
+| `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | Structure check: largest share of oversized sections. |
+| `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | Accepted for compatibility; not used. |
+| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | Checks a proposed section outline. |
+| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | Classifies section roles. |
+| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | Section summaries. |
+| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | Claim selection and extraction. |
+| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | Relation normalisation. |
+| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | Entity resolution. |
+| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | Fact adjudication with the `prompt` engine. |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | Below this, both the new statement and the existing fact are kept. |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
+| `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | Every embedding, including search queries. Fixed once anything is embedded. |
 
 ## Converters
 
 See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | passed | MIME type → converter. Replaces the default table. |
-| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | passed | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
-| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | passed | Mistral API address. |
-| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | passed | OCR model. |
-| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | float > 0 | passed | OCR request timeout. |
-| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | int > 0 | passed | Largest file sent to OCR. |
-| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | bool | passed | Keep embedded images. |
-| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` | passed | Table format. |
-| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | bool | passed | Extract headers and footers separately. |
-| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` | passed | Confidence score detail. |
-| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | bool | passed | Keep the provider response as an artifact. |
-| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | passed | Price used to record OCR cost. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | — | OpenRouter key for image descriptions; required by `image_ocr_description`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | API address. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | — | Vision model; must accept image input. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | — | Request timeout. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | — | Largest image. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | — | Largest width × height. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | int > 0 | — | Largest width. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | int > 0 | — | Largest height. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | int > 0 | — | Longest description. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | int ≥ 1 | — | Output allowance of the description call. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | int 1–2 | — | OCR and description in parallel (2) or in turn (1). |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
+| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
+| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |
+| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | float > 0 | OCR request timeout. |
+| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | int > 0 | Largest file sent to OCR. |
+| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | bool | Keep embedded images. |
+| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` | Table format. |
+| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | bool | Extract headers and footers separately. |
+| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` | Confidence score detail. |
+| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | bool | Keep the provider response as an artifact. |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | Price used to record OCR cost. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | int > 0 | Largest width. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | int > 0 | Largest height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | int > 0 | Longest description. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | int ≥ 1 | Output allowance of the description call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | int 1–2 | OCR and description in parallel (2) or in turn (1). |
 
 ## Operations
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | — | Cap on lists in `remember ops inspect`. |
-| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | — | Object prefix of filesystem-view snapshots. |
-| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | — | Top-level view directories of the corpus tree. |
-| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | — | Entries above which a directory is split. |
-| `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | — | Address of the HTTP cost export. Unset: off. |
-| `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | — | Bearer token for the cost export. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | Cap on lists in `remember ops inspect`. |
+| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | Object prefix of filesystem-view snapshots. |
+| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | Top-level view directories of the corpus tree. |
+| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | Entries above which a directory is split. |
+| `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | Address of the HTTP cost export. Unset: off. |
+| `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | Bearer token for the cost export. |
 
 ## Observability
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SENTRY_DSN` | unset | secret | passed | Sentry-protocol DSN; unset keeps error tracking off. |
-| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | deployment slug | string | passed | Environment name on events. |
-| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | float 0–1 | passed | Share of error events sent. |
-| `REMEMBERSTACK_LANGFUSE_ENABLED`, `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, `_CA_FILE`, `_RUN_TAG` | `false` / empty | | passed | Read only by the benchmark harness; no effect on the engine. |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | empty | | passed | Read only by the benchmark harness; no effect on the engine. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SENTRY_DSN` | unset | secret | Sentry-protocol DSN; unset keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | deployment slug | string | Environment name on events. |
+| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | float 0–1 | Share of error events sent. |
+| `REMEMBERSTACK_LANGFUSE_ENABLED`, `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, `_CA_FILE`, `_RUN_TAG` | `false` / empty | | Read only by the benchmark harness; no effect on the engine. |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | empty | | Read only by the benchmark harness; no effect on the engine. |
 
 ## Knowledge plane and other unused settings
 
@@ -16011,63 +16167,53 @@ timeouts, store codes).
 ## MCP tool errors
 
 The MCP server returns a tool failure as a normal tool result with
-`"isError": true` and one JSON text block.
-
-### Ingest, readiness and delete tools
-
-The `ingest`, `pipeline_readiness` and `delete_document` tools return a
-structured error:
+`"isError": true` and one JSON text block. Every tool — `ingest`,
+`pipeline_readiness`, `delete_document`, the assured operations and the SQL
+query tools — returns the same object:
 
 ```json
 {
-  "code": "body_too_large",
-  "message": "Ingest body exceeds the deployment size limit.",
-  "http_status": 413,
-  "retryable": false,
-  "agent_action": "Split or shorten the document; do not retry the same payload.",
-  "reason_code": null
+  "error": {
+    "code": "body_too_large",
+    "status_code": 413,
+    "detail": "Ingest body exceeds the deployment size limit.",
+    "retryable": false,
+    "agent_action": "Split or shorten the document; do not retry the same payload."
+  }
 }
 ```
 
-`reason_code` and `request_id` appear only when known.
+`status_code` is the deployment's HTTP status, `0` when no answer arrived,
+and `null` when the call never reached the deployment. `reason_code`,
+`request_id` and `retry_after` (seconds) appear only when known. When the
+deployment sent its own code — a SQL query code from the tables above, or
+`rate_limited` / `concurrency_limited` — `code` is that code.
 
-| `code` | `http_status` | `retryable` | `agent_action` |
+| `code` | `status_code` | `retryable` | `agent_action` |
 |---|---|---|---|
-| `invalid_arguments` | 422 | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
+| `invalid_arguments` | `null` | no | Fix the tool arguments and retry. (Or, when more than one body was given: Supply exactly one body source: path, text, or content_base64.) |
+| `unknown_tool` | `null` | no | Call tools/list and use one of the listed tools. |
+| `project_routing_unavailable` | `null` | no | Call the tool again without `project`. |
+| `read_only` | `null` | no | Tell the user this server cannot change memory. |
+| `source_lineage_pair` | `null` | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
+| `empty_body` | `null`, or the deployment's | no | Provide non-empty path / text / content_base64 content. |
+| `encoding_error` | `null` | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
+| `path_not_allowed` | `null` | no | Pass a clean filesystem path without NUL characters. / Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. Do not retry path until roots are set. / Place the file under an allowlisted root, or use text/content_base64. Ask the operator to extend roots only when intentional. |
+| `path_not_regular_file` | `null` | no | Point path at a regular file, or send text/content_base64. |
+| `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
+| `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
-| `source_lineage_pair` | 422 | no | Send both source_kind and source_ref, or neither. (Or: Provide source_kind and source_ref together with lineage fields.) |
-| `empty_body` | 422 | no | Provide non-empty path / text / content_base64 content. |
-| `encoding_error` | 422 | no | Remove lone surrogates / invalid code points, or send content_base64 for binary. |
-| `path_not_allowed` | 400 | no | Pass a clean filesystem path without NUL characters. / Use text or content_base64, or ask the operator to configure REMEMBERSTACK_MCP_INGEST_ROOTS. Do not retry path until roots are set. / Place the file under an allowlisted root, or use text/content_base64. Ask the operator to extend roots only when intentional. |
-| `path_not_regular_file` | 400 | no | Point path at a regular file, or send text/content_base64. |
-| `path_unreadable` | 400 | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
-| `path_too_large` | 413 | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
-| `unauthorized` | 401 | no | Refresh or replace REMEMBER_API_KEY; re-mint if the token was revoked. |
-| `forbidden` | 403 | no | Use a token for the configured deployment; check origin and scope constraints. |
-| `engine_client_error` | the HTTP status (4xx) | no | Read the message; fix arguments. Do not retry blindly. |
+| `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
+| `insufficient_permission` | 403 | no | The key may not do this here: use a key with the needed permission for this deployment. |
+| `rate_limited`, `concurrency_limited` | 429 | yes | Wait retry_after seconds (if given), then retry; do not retry sooner. Lower the request rate or run fewer calls at once. |
+| SQL query codes | as sent, or `null` when refused before sending | for `quota_exceeded`, `concurrency_exceeded`, timeouts and store codes | Retry later with back-off. / Read the detail and fix the query or its arguments. |
+| `engine_client_error` | the HTTP status (4xx) | no | Read the detail; fix the call. Do not retry it unchanged. |
 | `engine_unavailable` | the HTTP status (5xx) | yes | Retry with back-off (3–5 attempts, 2s→30s). If still failing, report an operator outage. |
-| `transport_error` | 0 | yes | Retry with back-off; check REMEMBER_API_URL, credentials, and network reachability. |
-| `tool_not_composed` | 404 | no | Use remote MCP against a deployment that exposes write, or compose the full local MCP profile with ingest and pipeline_readiness ports. (For `delete_document` on a read-only server: Tell the user deletion is not available on this server; do not retry.) |
-| `local_backend_error` | 500 | no | Report a composition/contract defect; do not retry the same call. |
-| `internal_error` | 500 | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
-
-### Assured operation and SQL query tools
-
-The operation tools and the seven SQL query tools return:
-
-```json
-{"error": {"status_code": 422, "detail": "unknown argument(s): limit", "code": "invalid_parameter"}}
-```
-
-`code` is present when the deployment sent one. A SQL query argument refused
-before any request is sent has `"status_code": null` and the SQL query
-`code`. A local argument problem that is not a SQL query code comes back as
-plain text.
-
-On a read-only MCP server, calling `ingest` returns the text
-`write tool 'ingest' is disabled on this read-only MCP server`.
+| `transport_error` | 0 | yes | Retry with back-off; check the deployment URL and network. |
+| `local_backend_error` | `null` | no | Report a composition/contract defect; do not retry the same call. |
+| `internal_error` | `null` | no | Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect. |
 
 ### JSON-RPC errors
 
@@ -16077,7 +16223,7 @@ On a read-only MCP server, calling `ingest` returns the text
 | `-32600` | `invalid JSON-RPC request` / `request is not an object` | Not a JSON-RPC 2.0 request. |
 | `-32601` | `unknown method '<name>'` | A method other than `initialize`, `ping`, `tools/list`, `tools/call`. |
 | `-32602` | `bad initialize params` / `bad params` / `bad arguments` | Malformed parameters. |
-| `-32603` | the error text | An API or argument error while listing or calling tools. |
+| `-32603` | the error text | `tools/list` could not read the deployment (unreachable, or the key was refused). |
 
 See [MCP tools](https://remember.dev/docs/reference/mcp).
 
