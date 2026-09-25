@@ -6136,7 +6136,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
 
-**Status:** accepted. **Date:** 2026-09-21.
+**Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
 **Context.** Arbitrary chunk boundary cutoffs in documents and conversational transcripts frequently split multi-turn dialogues, answers to questions, or lists across chunk boundaries. When callers query `search_chunks` or `claims_and_sources_context`, relevant context from preceding or succeeding chunks often lacks search query keywords and is omitted from top-$K$ candidates. Previously, callers had no direct mechanism to read neighboring chunks for a given chunk, forcing prompt workarounds or leading to missing context (e.g. `conv-42/qa/0094`).
 
@@ -6144,7 +6144,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 1. Implement a first-class retrieval primitive `adjacent_chunks(chunk_id, window=1)` on `QueryEngine`.
 2. Given a target `chunk_id`, the engine looks up its `(doc_id, version_id, ordinal)` in `memory_v1.chunks_live` and queries all live chunks within `[ordinal - window, ordinal + window]` for that document version, returning hydrated chunks in document order (`ordinal ASC`).
 3. Bound `window` strictly between 1 and 2 (default 1), preventing context flooding while providing immediate preceding/succeeding dialogue turns.
-4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and does not mint a top-level MCP tool (D50, D83, D87).
+4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and originally did not mint a top-level MCP tool (D50, D83, D87). *(Superseded in part by D137: adjacent_chunks is now exposed in the shared MCP catalogue for surface parity).*
 5. Register `adjacent_chunks` in the benchmark tool catalog (expanding to 22 tools) and execution dispatch table.
 
 **Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL index `ix_chunks_doc (deployment_id, doc_id)` prefixes the lookup and per-document row counts are bounded, requiring no schema migrations.
@@ -6373,7 +6373,7 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
-**Status:** accepted. **Date:** 2026-09-23.
+**Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
 
 **Context.** On 2026-09-23 the owner approved one credential for every client
 surface of remember.dev — a signed key covering one or more projects with the
@@ -6477,9 +6477,54 @@ credential behind the HTTP transport; keeping environment aliases.
 D108 item 4's authentication, credential-separation and `setup` default
 clauses and its amendment of D92; the metering design's §6 login contract;
 the distribution design's §3.1/§3.4/§4 credential text. Cloud-side
-supersessions are recorded in the companion cloud design.
+supersessions are recorded in the companion cloud design. *(Amended in part by D137:
+adjacent_chunks is added to remember.mcp_tools as an exposed read tool).*
 
 **Authority:** [design](plan/designs/one_key_client_surfaces_design.md),
 [analysis](plan/analysis/one_key_client_surfaces_analysis.md). Companion:
 the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 `design/one-key-one-mcp`).
+
+---
+
+## D137. Conversational section integrity and MCP adjacent_chunks parity
+
+**Status:** accepted. **Date:** 2026-09-25.
+
+**Context.** In multi-turn conversational transcripts and dialogue-heavy documents, two structural fractures impaired recall:
+1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
+2. **MCP catalogue surface parity:** While `adjacent_chunks` was implemented across the HTTP API, SDK, CLI, and benchmark harness in D130, D130 excluded it from the shared MCP catalogue (`remember.mcp_tools`, D136) on the grounds that raw primitives should not mint top-level MCP tools. However, in practice coding agents connecting via MCP had no capability to expand dialogue context around a retrieved chunk, creating an artificial capability gap between MCP agents and SDK/CLI callers.
+
+**Decision.**
+1. **Deterministic run-merging of single-block leaf sections in fallback skeletons (`structure_skeleton.py`):**
+   - In `resolve_fallback_skeleton()`, identify runs of contiguous single-block leaf sections (sections with `block_start == block_end` and no child subsections).
+   - If a run is followed by an immediate next leaf section without subsections, the run is merged forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`.
+   - In all cases, the merged section is titled by the proposal at `run_start` (its first block), so title, heading level, and starting position remain aligned without in-place mutation.
+   - Sections with subsections are never absorbed and never absorb single-block runs, preserving hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+2. **Fallback prompt guidance (`e0.py`):**
+   - Update `_FALLBACK_PROMPT` to explicitly instruct models that individual conversational turns, rhetorical questions, and brief remarks must not form section headings. Section anchors must represent substantive topic shifts or document sections.
+3. **Skeleton cache invalidation (`e0.py`):**
+   - Bump `E0_SKELETON_VERSION` to `:anchor-v3-depth{MAX_FALLBACK_DEPTH}` and `E0_STRUCTURE_VERSION` to `e0-structure-2026.07h:d79-wave2`. This guarantees that existing documents re-structure under the new integrity rules upon re-ingestion or rebuild.
+4. **First-class MCP tool parity for `adjacent_chunks` (`remember.mcp_tools`, `mcp.py`, `http_api.py`):**
+   - Add `adjacent_chunks` as an exposed read tool in `remember.mcp_tools._definitions.py` with `permission="memory:read"`, `tool_version=1`, `http_route="GET /chunks/{chunk_id}/adjacent"`, and description referencing neighbouring chunks.
+   - Keep `OPERATION_TOOL_NAMES` strictly to the four assured operations (`resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`) to preserve the D50 contract with `AssuredOperationRegistry`.
+   - Expose `adjacent_chunks` in `OperationMcpServer` and `EngineMcpServer` `list_tools()` and dispatch tables.
+   - In `http_api._served_tools`, advertise `adjacent_chunks` whenever operations are composed.
+
+**Consequences.**
+- Question turns and answer turns in dialogue transcripts now usually share the same section in E0 (bounded by non-contiguous section boundaries per Cost 3), allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
+- Re-ingesting existing documents updates their skeleton cache keys via `anchor-v3`.
+- Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
+- Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
+
+**Costs and boundaries.**
+1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE` title. Hierarchy protection relies on the model emitting subsections.
+2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
+
+**Supersedes.**
+- D130 item 4 in part: supersedes the restriction that `adjacent_chunks` does not mint an MCP tool.
+- D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
+
+**Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).

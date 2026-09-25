@@ -80,6 +80,6 @@ def test_fallback_prompt_names_subsections() -> None:
 
 def test_structure_generation_identity_includes_subsections_contract() -> None:
     """Work ledger and skeleton cache keys change with the fallback wire field."""
-    assert E0_STRUCTURE_VERSION == "e0-structure-2026.07g:d79-wave2"
-    assert ":anchor-v2-depth" in E0_SKELETON_VERSION
-    assert ":anchor-v1-depth" not in E0_SKELETON_VERSION
+    assert E0_STRUCTURE_VERSION == "e0-structure-2026.07h:d79-wave2"
+    assert ":anchor-v3-depth" in E0_SKELETON_VERSION
+    assert ":anchor-v2-depth" not in E0_SKELETON_VERSION

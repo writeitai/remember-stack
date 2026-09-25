@@ -1,151 +1,103 @@
 # RememberStack
 
 [![CI](https://github.com/writeitai/remember-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/writeitai/remember-stack/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/writeitai/remember-stack/python-coverage-comment-action-data/endpoint.json)](https://github.com/writeitai/remember-stack/tree/python-coverage-comment-action-data)
 [![Docs](https://img.shields.io/badge/docs-remember.dev-ee5b44)](https://remember.dev/docs)
 [![PyPI](https://img.shields.io/pypi/v/remember)](https://pypi.org/project/remember/)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-**Memory for AI agents that have to act — not just chat about a corpus.**
+**Give your agents a past.**
 
-Pour documents into it. Get back **what sources said**, **what the system currently holds true**, and a full audit trail to the exact span, page, or second of audio. Built to stay useful at **a million documents**.
+RememberStack is open-source memory for AI agents. You give it the documents
+your work already produces: email, chat, specs, meeting notes, tickets,
+agent transcripts. It reads them, keeps what matters, and answers your
+agent's questions with facts it can trace back to the source. It knows what
+is true now, what was true a month ago, and who said so.
 
-**Docs:** [remember.dev/docs](https://remember.dev/docs) · **Product:** [remember.dev](https://remember.dev)
-
----
-
-## Why this exists
-
-Most “memory” stacks answer: *where did I read something like this?*
-
-Agents that take real actions need a harder question:
-
-> **What do we actually know — and what changed our mind?**
-
-| Typical RAG / note memory | RememberStack |
-| --- | --- |
-| Source text treated as truth | **Claims** (testimony) stay separate from **facts** (current belief) |
-| Edits overwrite history | Supersession **closes a window** — history stays queryable |
-| Contradictions hidden or averaged | Contradictions **return together** |
-| Re-ingest inflates “confidence” | Support counts **independent document lineages** |
-| Vector index is the authority | Indexes **nominate**; Postgres **confirms** |
-| LLM on every query | **No chat-completion on the query path** — the agent plans |
-| Vague empty results | Typed negatives: unknown entity / known empty / boundary |
-
-If your agent spends money, changes state, or briefs a human, those distinctions are load-bearing.
+**[Read the docs](https://remember.dev/docs)** ·
+**[Quickstart](https://remember.dev/docs/start/quickstart)** ·
+**[What is a memory system?](https://remember.dev/docs/start/what-is-a-memory-system)**
 
 ---
 
-## TL;DR
+## Why you should care
 
-1. **Ingest** heterogeneous inputs into an evidence spine (files → chunks → claims → facts).
-2. **Separate** *what a source said* from *what is true now*.
-3. **Project** search, graph, and a browsable filesystem — rebuildable anytime.
-4. **Serve agents** first: mounts, MCP, CLI, API — with honest, grain-typed answers.
+Every AI session starts from zero. The agent does not know which decision
+still holds, which file said it, or what changed overnight. You paste the
+same notes in again, or the model fills the gap with something plausible.
 
-```text
-E  what we ingested     (ground truth)
-K  what we concluded    (compiled + authored knowledge)
-P  how we reach it      (search · graph · corpus FS)  ← always rebuildable from E
-```
+Most "memory" for agents is a vector search over text: it finds passages that
+sound like the question. It cannot tell you which of them is still current,
+which one a later document corrected, whether two of them contradict each
+other, or when anything was true. And it always returns something, even when
+nothing relevant exists.
+
+RememberStack keeps four things a context window loses:
+
+- **What each source said.** Every statement worth keeping is stored as a
+  claim, with the exact passage it came from and the date it was said.
+  Claims are never edited.
+- **What is true now.** From those claims it maintains facts about the
+  people, systems and decisions in your work. When a newer source changes a
+  fact, the fact changes and the old one stays on record. When two sources
+  disagree, you see both, marked as a contradiction.
+- **When it was true.** Facts carry the period in which they held. Ask what
+  is true today, what held last March, or how something changed.
+- **Where it came from.** Every fact links to its claims, every claim to the
+  characters in the source. Your agent can quote and cite; you can check.
 
 <p align="center">
-  <img src="website/public/docs/diagrams/three-planes.jpg" alt="Three planes: Evidence, Knowledge, Projections" width="820" />
+  <img src="website/public/docs/diagrams/claims-and-facts.svg" alt="Claims (what sources said) feed facts (what is true now)" width="820" />
 </p>
 
----
+## What your agent gets back
 
-## Testimony is not truth
+Not the passages most similar to the question, but the facts that answer
+it, each with its time window, the evidence behind it and any
+contradiction, in one typed result that is ready to put into a prompt.
+
+- **Honest negatives.** If memory has nothing on the subject, the result says
+  so. If a name could mean two different people, it says that too. An agent
+  that is told "unknown" stops inventing.
+- **No model writes the answer.** The only model on the read path embeds your
+  question for search. The same question against the same memory returns the
+  same result, and you can see why each item is there.
+- **Search nominates, the database confirms.** Vector, keyword, graph and time
+  signals propose candidates; every one is checked against what is currently
+  held before it is returned.
+
+| Where typical agent memory goes wrong | What RememberStack does instead |
+|---|---|
+| Source text is treated as the truth | What a source said (a claim) is kept apart from what is held true now (a fact) |
+| A correction overwrites what came before | The old fact's time window is closed, not erased |
+| Contradictions are averaged away | Both sides come back, marked as a contradiction |
+| Re-sending a file makes it look more certain | Support counts distinct documents, not repetitions |
+| "No results" could mean anything | The result says whether the entity is unknown or known with nothing matching |
 
 <p align="center">
-  <img src="website/public/docs/diagrams/testimony-vs-truth.jpg" alt="Claims vs facts" width="820" />
+  <img src="website/public/docs/diagrams/search-vs-memory.svg" alt="Search returns similar passages; memory returns what is known" width="820" />
 </p>
-
-| Grain | Answers | Rule for agents |
-| --- | --- | --- |
-| **Evidence** (claims) | Who said what, when | Never “is it true *now*?” |
-| **Fact** (relations & observations) | What we currently hold true | Default for present-tense belief |
-| **Compiled** (knowledge pages) | Orientation with citations | Verify before load-bearing action |
-
-Default reading motion:
-
-<p align="center">
-  <img src="website/public/docs/diagrams/orient-verify-audit.jpg" alt="Orient, verify, audit" width="820" />
-</p>
-
-**Orient** on knowledge pages and the corpus tree → **verify** on facts → **audit** claims and raw sources when stakes demand it.
-
----
-
-## Two clocks
-
-Every fact carries **world time** (when it held in the world) and **system time** (when this deployment learned it).
-
-<p align="center">
-  <img src="website/public/docs/diagrams/two-clocks.jpg" alt="World time and system time" width="820" />
-</p>
-
-Ask both honestly:
-
-- “Who worked at Acme in 2022?”
-- “What did we believe last March?”
-
----
-
-## Write path: ingestion
-
-<p align="center">
-  <img src="website/public/docs/diagrams/ingestion-pipeline.jpg" alt="Ingestion pipeline" width="820" />
-</p>
-
-- Immutable **claims**, grounded to source spans  
-- Entity resolution into a canonical registry  
-- Adjudicated **relations** and **observations** with supersession + contradictions  
-- Document versions and watched sources — reprocess cost proportional to the *edit*  
-- Support that cannot be gamed by re-extracting the same file  
-
-Deep dive: [Ingestion](https://remember.dev/docs/guides/ingest-files)
-
----
-
-## Read path: retrieval
-
-<p align="center">
-  <img src="website/public/docs/diagrams/retrieval-flow.jpg" alt="Nominate, confirm, account" width="820" />
-</p>
-
-**Projections nominate. The spine confirms. The envelope accounts.**
-
-Exactly **four** top-level assured operations (API / CLI / MCP):
-
-| Operation | Use for |
-| --- | --- |
-| `resolve_entity` | Name → ranked entity candidates |
-| `claims_and_sources_context` | High-recall **claims and source chunks** for a question |
-| `facts_context` | **Current or historical fact** context with live testimony |
-| `combined_context` | Both complete authority views in `ContextBundle/v2` |
-
-Plus open SQL, typed live-graph helpers, saved examples, and schema discovery.
-
-Every assured answer self-accounts: grain, freshness, contradictions, truncation, typed “no”s.
-
-Deep dive: [Retrieval](https://remember.dev/docs/concepts/retrieval)
-
----
 
 ## Built for agents
 
-| Surface | Job |
-| --- | --- |
-| **Filesystem mounts** | `ls` / read / `grep` the corpus and knowledge like a codebase |
-| **MCP · CLI · API** | Semantic search, graph, time-travel, open query — one operation set |
-| **Skill bundle** | Dynamic prompt for agents to self-learn Remember |
+- **MCP.** `remember mcp` gives Claude Code, Cursor, Codex, Claude Desktop and
+  other MCP clients the memory tools; `remember setup` configures them in one
+  command. [Connect your agent →](https://remember.dev/docs/start/connect-your-agent)
+- **Python SDK and CLI.** `pip install remember`.
+  [SDK →](https://remember.dev/docs/reference/python-sdk) ·
+  [CLI →](https://remember.dev/docs/reference/cli)
+- **HTTP API.** The same operations over plain HTTP.
+  [API →](https://remember.dev/docs/reference/http-api)
+- **Your files.** Markdown, text, HTML, Word, PowerPoint and Excel convert out
+  of the box; PDFs and images with an OCR converter.
+  [File types →](https://remember.dev/docs/guides/file-types)
 
----
+## Quickstart
 
-## Quick start
+You need Docker (Engine 28 or later for the tokenless local setup) and an
+[OpenRouter](https://openrouter.ai) API key.
 
 ```bash
-# 1. Run the self-hosted engine (Postgres 19 + SeaweedFS + workers)
+git clone https://github.com/writeitai/remember-stack && cd remember-stack
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -153,56 +105,27 @@ printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nR
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 
-# 2. Configure your AI agent in one command
-uvx remember setup
+uvx remember setup --self-hosted   # connect your coding agent
 ```
 
-Verify everything is running:
+Then send a document and ask your first question:
+**[Quickstart →](https://remember.dev/docs/start/quickstart)** ·
+**[Self-hosting →](https://remember.dev/docs/self-hosting/install)**
 
-```bash
-curl --fail http://localhost:8000/healthz
-curl --fail http://localhost:8000/operations
-```
+## Open source, all of it
 
-Ingest Markdown, wait for readiness, then call the assured ops — full walkthrough:
+Apache-2.0. Everything that decides what your memory holds (extraction,
+entity resolution, supersession, provenance, forgetting) is in this
+repository. Nothing that affects correctness is held back.
 
-**→ [Getting started](https://remember.dev/docs/start/quickstart)**
-**→ [Self-host deployment](https://remember.dev/docs/self-hosting/install)**
-
-Client package:
-
-```bash
-pip install remember
-# Run the full server engine via Docker: ghcr.io/writeitai/remember-stack
-```
-
-`remember` is the sole current Python distribution. The GitHub repository and
-self-hosted container retain the `remember-stack` name.
-
----
-
-## Open source = full engine
-
-Apache-2.0. **If it affects correctness, it is here** — extraction, resolution, supersession, provenance, budgets, DLQ, hard-forget. Never paywalled.
-
-The managed cloud runs **this same engine**. Cloud adds operations and product chrome, not a secret core.
-
-| | |
-| --- | --- |
-| Docs | [remember.dev/docs](https://remember.dev/docs) |
-| Managed product | [remember.dev](https://remember.dev) |
-| Release | [v0.17.1](https://github.com/writeitai/remember-stack/releases/tag/v0.17.1) |
-
----
+- Docs: [remember.dev/docs](https://remember.dev/docs)
+- Current release: [v0.17.2](https://github.com/writeitai/remember-stack/releases/tag/v0.17.2) ·
+  [PyPI](https://pypi.org/project/remember/) ·
+  [container](https://github.com/writeitai/remember-stack/pkgs/container/remember-stack)
+- How it works inside: [architecture](https://remember.dev/docs/concepts/architecture) ·
+  [design corpus](plan/README.md) · [decision log](decisions.md)
 
 ## Contributing
 
-Architecture and delivery authority: [planning corpus](plan/README.md) and
-[decision log](decisions.md).
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). Pull requests need the contributor-agreement checkbox in the PR template.
-
----
-
-<p align="center"><b>Stop retrieving passages. Start knowing what is true.</b><br/>
-<a href="https://remember.dev/docs">Read the docs</a> · <a href="https://remember.dev/docs/start/quickstart">Run it</a></p>
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [CLA.md](CLA.md). Pull requests need
+the contributor-agreement checkbox in the PR template.
