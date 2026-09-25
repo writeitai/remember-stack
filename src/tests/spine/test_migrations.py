@@ -139,6 +139,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_33_0054",
         "p9_34_0055",
         "p9_35_0056",
+        "p9_36_0057",
     )
     assert len(script.get_heads()) == 1
 
@@ -678,7 +679,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_35_0056"
+    assert head_before_noop == head_after_noop == "p9_36_0057"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1266,7 +1267,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1310,7 +1311,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
 
 
 _BACKFILL_MIMES = (
@@ -1469,4 +1470,63 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
+
+
+def test_d134_own_document_name_span_downgrade_guard() -> None:
+    """An empty span column drops; a recorded span refuses and stays intact."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_36_0057")
+    engine = create_engine(database_url)
+    claim_id = uuid4()
+
+    def span_column_exists() -> bool:
+        with engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'claims'"
+                    " AND column_name = 'own_document_name_span')"
+                )
+            ).scalar_one()
+
+    try:
+        # an unused column drops cleanly and re-adds on upgrade
+        command.downgrade(config=config, revision="p9_35_0056")
+        assert _head_revision(database_url=database_url) == "p9_35_0056"
+        assert not span_column_exists()
+        command.upgrade(config=config, revision="p9_36_0057")
+        assert span_column_exists()
+
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                    " claim_text, source_span, char_start, char_end, anchor_ok,"
+                    " window_membership_ok, extractor_version,"
+                    " own_document_name_span) VALUES (:c, :d, :doc, :chunk,"
+                    " 'The report Audit_2025.pdf summarizes the audit.',"
+                    " 'This report summarizes the audit.', 0, 33, true, true,"
+                    " 'test-extractor', int4range(11, 25))"
+                ),
+                {"c": claim_id, "d": uuid4(), "doc": uuid4(), "chunk": uuid4()},
+            )
+        with pytest.raises(RuntimeError, match="own_document_name_span is recorded"):
+            command.downgrade(config=config, revision="p9_35_0056")
+        assert _head_revision(database_url=database_url) == "p9_36_0057"
+        with engine.connect() as connection:
+            stored = connection.execute(
+                text(
+                    "SELECT lower(own_document_name_span),"
+                    " upper(own_document_name_span) FROM claims WHERE claim_id = :c"
+                ),
+                {"c": claim_id},
+            ).one()
+        assert tuple(stored) == (11, 25)
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_36_0057"

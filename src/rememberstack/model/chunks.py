@@ -51,6 +51,12 @@ class ChunkSource(BaseModel):
     corrupt bytes are a failure, never silent passthrough.
     """
     title: str | None
+    file_name: str | None = None
+    """The file name recorded for this version (D134 document metadata).
+
+    None for versions ingested before D134 recorded file names."""
+    version_title: str | None = None
+    """The title declared for this version (D134 document metadata), if any."""
     source_kind: str
     source_modified_at: UTCDateTime | None
     published_at: UTCDateTime | None
@@ -63,6 +69,18 @@ class ChunkSource(BaseModel):
     thread_ref: str | None = None
     author_ref: str | None = None
     message_ts: str | None = None
+
+    def header_title(self) -> str | None:
+        """The title the extraction header shows for this version (D134).
+
+        A version with a recorded file name shows only the title declared
+        for that version, so a renamed file is never labelled with the stem
+        of the first version's file name the lineage title falls back to.
+        Versions without recorded metadata keep the lineage title.
+        """
+        if self.file_name is not None:
+            return self.version_title
+        return self.title
 
 
 class PackedChunk(BaseModel):
