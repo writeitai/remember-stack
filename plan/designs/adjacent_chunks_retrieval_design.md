@@ -109,4 +109,4 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
 2. **Top-level MCP Scope Boundary (D50, D83, D87, amended by D137):**
-   * Originally, raw primitives did not mint top-level MCP tools. Under D137, `adjacent_chunks` is elevated to a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` to ensure complete client parity across HTTP API, Python SDK, CLI, and MCP.
+   * Under D137, `adjacent_chunks` is a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` to ensure complete client parity across HTTP API, Python SDK, CLI, and MCP.

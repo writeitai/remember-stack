@@ -6492,7 +6492,7 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 **Status:** accepted. **Date:** 2026-09-25.
 
 **Context.** In multi-turn conversational transcripts and dialogue-heavy documents, two structural fractures impaired recall:
-1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py:691`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
+1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
 2. **MCP catalogue surface parity:** While `adjacent_chunks` was implemented across the HTTP API, SDK, CLI, and benchmark harness in D130, D130 excluded it from the shared MCP catalogue (`remember.mcp_tools`, D136) on the grounds that raw primitives should not mint top-level MCP tools. However, in practice coding agents connecting via MCP had no capability to expand dialogue context around a retrieved chunk, creating an artificial capability gap between MCP agents and SDK/CLI callers.
 
 **Decision.**
@@ -6513,13 +6513,13 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
    - In `http_api._served_tools`, advertise `adjacent_chunks` whenever operations are composed.
 
 **Consequences.**
-- Question turns and answer turns in dialogue transcripts now reliably share the same section in E0, allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
+- Question turns and answer turns in dialogue transcripts now usually share the same section in E0 (bounded by non-contiguous section boundaries per Cost 3), allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
 - Re-ingesting existing documents updates their skeleton cache keys via `anchor-v3`.
 - Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
 - Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
 
 **Costs and boundaries.**
-1. Flat unnested chapters: If the model proposes `PART ONE` and `Chapter 1` as flat siblings without nesting `Chapter 1` as a child, and both are single blocks, they will merge forward with the succeeding section. Hierarchy protection relies on the model emitting subsections.
+1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE` title. Hierarchy protection relies on the model emitting subsections.
 2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
 3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
 

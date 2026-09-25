@@ -274,7 +274,7 @@ class OperationMcpServer:
             try:
                 args = validate_arguments(name, arguments)
                 chunk_id = cast(UUID, args["chunk_id"])
-                window = cast(int, args.get("window", 1))
+                window = cast(int, args["window"])
                 envelope = self._surface.adjacent_chunks(
                     chunk_id=chunk_id, window=window
                 )

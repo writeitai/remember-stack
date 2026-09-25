@@ -183,7 +183,7 @@ class EngineMcpServer:
                 parsed = validate_arguments(name, arguments)
                 envelope = self._client.adjacent_chunks(
                     chunk_id=cast(UUID, parsed["chunk_id"]),
-                    window=cast(int, parsed.get("window", 1)),
+                    window=cast(int, parsed["window"]),
                 )
                 text = envelope.model_dump_json()
             else:
