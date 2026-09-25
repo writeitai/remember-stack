@@ -294,6 +294,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
@@ -507,6 +508,45 @@ while True:
     if page.cursor is None:
         break
     cursor = page.cursor
+```
+
+#### `search_documents`
+
+```python
+MemoryClient.search_documents(
+    query: str | None = None,
+    *,
+    filters: DocumentSearchFilters | None = None,
+    versions: Literal["current", "all"] = "current",
+    k: int = 20,
+    cursor: str | None = None,
+) -> DocumentSearchPage
+```
+
+Finds documents by the names they were stored under, their general metadata
+and their text, and returns a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage).
+`filters` is a
+[`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
+(`from remember import DocumentSearchFilters`): `family`, `authors`,
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
+and `doc_ids`. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
+`query`, a date without a timezone, or `k` outside 1 to 200 raises
+`pydantic.ValidationError` before any request. A malformed cursor raises
+`MemoryApiError` with `status_code` 400. What matches, and how, is in
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("audit report")
+emails = memory.search_documents(
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+)
+if len(emails.people_matched) > 1:
+    print("several people matched:", emails.people_matched)
 ```
 
 #### `delete_document`

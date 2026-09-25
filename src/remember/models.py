@@ -17,6 +17,7 @@ from typing import TypeAlias
 from uuid import UUID
 
 from pydantic import AfterValidator
+from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -161,6 +162,114 @@ class DocumentDeletion(BaseModel):
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+DOCUMENT_SEARCH_MAX_K: Final = 200
+DOCUMENT_SEARCH_DEFAULT_K: Final = 20
+
+
+class DocumentSearchFilters(BaseModel):
+    """General document metadata filters (D134 §3); every one given must hold.
+
+    ``authors`` and ``recipients`` match a person when any listed term equals
+    their normalized address or appears as whole words in their normalized
+    name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
+    Date ranges are inclusive and exclude documents that do not declare the
+    date.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    family: tuple[str, ...] = ()
+    authors: tuple[str, ...] = ()
+    recipients: tuple[str, ...] = ()
+    created_from: AwareDatetime | None = None
+    created_to: AwareDatetime | None = None
+    modified_from: AwareDatetime | None = None
+    modified_to: AwareDatetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    doc_ids: tuple[UUID, ...] = ()
+
+
+class DocumentSearchRequest(BaseModel):
+    """One ``search_documents`` call.
+
+    With a ``query`` the results are ranked by name and content matches and
+    there is no cursor. Without one they are every document the filters
+    match, newest declared creation date first, paged by ``cursor``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    query: str | None = Field(default=None, min_length=1, max_length=4096)
+    filters: DocumentSearchFilters = DocumentSearchFilters()
+    versions: Literal["current", "all"] = "current"
+    k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def cursor_pages_filters_only(self) -> Self:
+        """A ranked query has no stable order to page, so it takes no cursor."""
+        if self.query is not None and self.cursor is not None:
+            raise ValueError("cursor pages filter-only searches; drop query or cursor")
+        return self
+
+
+class DocumentSearchPerson(BaseModel):
+    """One author or recipient as the document declares them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: str | None = None
+    address: str | None = None
+
+
+class DocumentSearchResult(BaseModel):
+    """One matching document, described by the version it was judged by."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    version_no: int
+    status: DocumentStatus
+    lineage_title: str | None = None
+    file_name: str | None = None
+    title: str | None = None
+    source_path: str | None = None
+    p3_path: str
+    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
+    the corpus root; present in a published snapshot only where the
+    deployment builds the filesystem view."""
+    family: str
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    authors: tuple[DocumentSearchPerson, ...] = ()
+    recipients: tuple[DocumentSearchPerson, ...] = ()
+    extra: dict[str, JsonValue] = Field(default_factory=dict)
+    overview: str | None = None
+    other_matching_version_ids: tuple[UUID, ...] = ()
+    matched_by: tuple[Literal["name", "content"], ...] = ()
+    score: float | None = None
+
+
+class DocumentPeopleMatch(BaseModel):
+    """One distinct person an authors/recipients filter matched."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    role: Literal["author", "recipient"]
+    name: str | None = None
+    address: str | None = None
+    documents: int = Field(ge=0)
+
+
+class DocumentSearchPage(BaseModel):
+    """A page of ``search_documents`` results."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    documents: tuple[DocumentSearchResult, ...]
+    cursor: str | None = None
+    as_of: datetime
+    people_matched: tuple[DocumentPeopleMatch, ...] = ()
 
 
 class SearchRequest(BaseModel):

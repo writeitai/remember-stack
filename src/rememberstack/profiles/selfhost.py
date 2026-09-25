@@ -995,6 +995,7 @@ class SelfHostProfile:
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
+        from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
@@ -1132,6 +1133,7 @@ class SelfHostProfile:
                 build_revision=_build_revision(),
             ),
             documents=DocumentInventory(engine=self._engine),
+            document_search=DocumentSearch(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,

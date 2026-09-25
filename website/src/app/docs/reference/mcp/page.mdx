@@ -42,7 +42,7 @@ writes</Cloud>. See [CLI: How the CLI finds your deployment](/docs/reference/cli
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
 `delete_document`, and refuses calls to them with the error `read_only`.
-`pipeline_readiness` only reads, so it stays.
+`pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
 
@@ -73,8 +73,8 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness` and `delete_document` (only
-   `pipeline_readiness` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+   (only `pipeline_readiness` and `search_documents` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -84,7 +84,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 15 tools: 3 + 4 + 1 + 7.
+lists 16 tools: 4 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -283,6 +283,36 @@ remove a specific document, or the document is plainly wrong or unwanted,
 and never as a way to correct a fact: to correct one, ingest a document that
 says the right thing. The token needs `write` scope. See
 [`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+### `search_documents`
+
+Finds documents (files) by the names they were stored under, their general
+metadata and their text. The tool description tells the agent to use it when
+the user names or describes a file ("find Q3_sales_2025.xlsx", "emails from
+Alice") rather than asking about its content.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
+| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
+| `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
+| `language`, `thread_ref` | string | no | Exact match. |
+| `doc_ids` | array of strings | no | Document UUIDs. |
+| `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `k` | integer | no | 1–200; default 20. |
+| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+
+Unknown keys are refused. The result is a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
+`documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
+`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
+`overview`),
+`cursor`, `as_of` and `people_matched`. When a people filter matches several
+different people, `people_matched` lists each with a document count and the
+description tells the agent to narrow the filter instead of guessing. The
+token needs `read` scope. How matching and paging work:
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
 ### Assured operations
 
@@ -755,7 +785,7 @@ It does not answer `ping`.
 | Input schemas | Full JSON Schemas | None (any object) |
 | Read-only mode | `--read-only` | No |
 | Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
-| Tool count | Up to 14 | 6 |
+| Tool count | Up to 15 | 6 |
 
 remember.dev serves SQL queries over the query space to every project; the
 hosted MCP server does not expose the seven SQL query tools yet. Until it

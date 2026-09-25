@@ -27,6 +27,7 @@ from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
 from remember.mcp_tools import map_error
@@ -35,18 +36,22 @@ from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model.client import DocumentDeletion
+from rememberstack.model.client import DocumentSearchPage
+from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.surfaces.http_api import DocumentDeletionPort
+from rememberstack.surfaces.http_api import DocumentSearchPort
 from rememberstack.surfaces.http_api import IngestPort
 from rememberstack.surfaces.http_api import PipelineReadinessPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
@@ -139,6 +144,33 @@ class _LocalDocumentDeleteBackend:
             raise _ForgetInProgress() from error
 
 
+class _LocalDocumentSearchBackend:
+    """Adapt the in-process document search port to the shared tool (D134)."""
+
+    def __init__(self, *, search: DocumentSearchPort, deployment_id: UUID) -> None:
+        self._search = search
+        self._deployment_id = deployment_id
+
+    def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
+        """Search through the composed port; a bad cursor is a 400 shape."""
+        try:
+            return self._search.search_documents(
+                deployment_id=self._deployment_id, request=request
+            )
+        except ValueError as error:
+            raise _BadSearchRequest(str(error)) from error
+
+
+class _BadSearchRequest(Exception):
+    """The HTTP-shaped refusal of a malformed cursor."""
+
+    status_code = 400
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+
+
 class _DocumentNotFound(Exception):
     """The HTTP-shaped absence the shared tool maps to ``document_not_found``."""
 
@@ -164,6 +196,7 @@ class OperationMcpServer:
         ingest: IngestPort | None = None,
         pipeline_readiness: PipelineReadinessPort | None = None,
         deletion: DocumentDeletionPort | None = None,
+        document_search: DocumentSearchPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -172,7 +205,8 @@ class OperationMcpServer:
         tools require both ingest and pipeline_readiness; half-wiring either
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
-        `delete_document` is advertised only when `deletion` is composed.
+        `delete_document` is advertised only when `deletion` is composed, and
+        `search_documents` only when `document_search` is.
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
@@ -200,9 +234,19 @@ class OperationMcpServer:
                 deletion=deletion, deployment_id=surface.deployment_id
             )
         )
+        self._search_backend: _LocalDocumentSearchBackend | None = (
+            None
+            if document_search is None
+            else _LocalDocumentSearchBackend(
+                search=document_search, deployment_id=surface.deployment_id
+            )
+        )
 
     def list_tools(self) -> dict[str, object]:
         """List the composed catalogue tools, in catalogue order.
+
+        `search_documents` follows `delete_document` when a search port is
+        composed.
 
         Write tools lead when both ports are composed, then `delete_document`
         when deletion is composed, the four assured operations, `adjacent_chunks`,
@@ -214,6 +258,8 @@ class OperationMcpServer:
             names.extend((INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME))
         if self._delete_backend is not None:
             names.append(DELETE_DOCUMENT_TOOL_NAME)
+        if self._search_backend is not None:
+            names.append(SEARCH_DOCUMENTS_TOOL_NAME)
         names.extend(OPERATION_TOOL_NAMES)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
@@ -239,6 +285,10 @@ class OperationMcpServer:
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
                 arguments=arguments, backend=self._delete_backend
+            )
+        if name == SEARCH_DOCUMENTS_TOOL_NAME:
+            return handle_search_documents_tool(
+                arguments=arguments, backend=self._search_backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(

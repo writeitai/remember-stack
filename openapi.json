@@ -664,6 +664,501 @@
         "title": "DocumentPage",
         "type": "object"
       },
+      "DocumentPeopleMatch": {
+        "additionalProperties": false,
+        "description": "One distinct person an authors/recipients filter matched.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "documents": {
+            "minimum": 0.0,
+            "title": "Documents",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "enum": [
+              "author",
+              "recipient"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "documents"
+        ],
+        "title": "DocumentPeopleMatch",
+        "type": "object"
+      },
+      "DocumentSearchFilters": {
+        "additionalProperties": false,
+        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+        "properties": {
+          "authors": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "created_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created From"
+          },
+          "created_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created To"
+          },
+          "doc_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Doc Ids",
+            "type": "array"
+          },
+          "family": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Family",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "modified_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified From"
+          },
+          "modified_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified To"
+          },
+          "recipients": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "thread_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ref"
+          }
+        },
+        "title": "DocumentSearchFilters",
+        "type": "object"
+      },
+      "DocumentSearchPage": {
+        "additionalProperties": false,
+        "description": "A page of ``search_documents`` results.",
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchResult"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "people_matched": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentPeopleMatch"
+            },
+            "title": "People Matched",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents",
+          "as_of"
+        ],
+        "title": "DocumentSearchPage",
+        "type": "object"
+      },
+      "DocumentSearchPerson": {
+        "additionalProperties": false,
+        "description": "One author or recipient as the document declares them.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "DocumentSearchPerson",
+        "type": "object"
+      },
+      "DocumentSearchRequest": {
+        "additionalProperties": false,
+        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/DocumentSearchFilters",
+            "default": {
+              "authors": [],
+              "doc_ids": [],
+              "family": [],
+              "recipients": []
+            }
+          },
+          "k": {
+            "default": 20,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "versions": {
+            "default": "current",
+            "enum": [
+              "current",
+              "all"
+            ],
+            "title": "Versions",
+            "type": "string"
+          }
+        },
+        "title": "DocumentSearchRequest",
+        "type": "object"
+      },
+      "DocumentSearchResult": {
+        "additionalProperties": false,
+        "description": "One matching document, described by the version it was judged by.",
+        "properties": {
+          "authors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchPerson"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "extra": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Extra",
+            "type": "object"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "lineage_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage Title"
+          },
+          "matched_by": {
+            "default": [],
+            "items": {
+              "enum": [
+                "name",
+                "content"
+              ],
+              "type": "string"
+            },
+            "title": "Matched By",
+            "type": "array"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "other_matching_version_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Other Matching Version Ids",
+            "type": "array"
+          },
+          "overview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overview"
+          },
+          "p3_path": {
+            "title": "P3 Path",
+            "type": "string"
+          },
+          "recipients": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchPerson"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "source_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Path"
+          },
+          "status": {
+            "enum": [
+              "ingesting",
+              "converting",
+              "structuring",
+              "ready",
+              "failed",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ref"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "version_no",
+          "status",
+          "p3_path",
+          "family"
+        ],
+        "title": "DocumentSearchResult",
+        "type": "object"
+      },
       "DocumentSummary": {
         "additionalProperties": false,
         "properties": {
@@ -2019,6 +2514,7 @@
         "title": "IngestedVersion",
         "type": "object"
       },
+      "JsonValue": {},
       "KFreshness": {
         "additionalProperties": false,
         "description": "The compiled-grain honesty block (retrieval \u00a75): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it \u2014 the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -3674,6 +4170,53 @@
           }
         ],
         "summary": "List Documents"
+      }
+    },
+    "/documents/search": {
+      "post": {
+        "description": "Find documents by observed name, general metadata and content.\n\nEach result is a document judged by one version: its current version\nby default, or with ``versions: all`` the newest live version that\nmatches. With a ``query`` results are ranked and not paged; with\nfilters only they are ordered by declared creation date and paged by\n``cursor``, which pins the first call's as-of instant.",
+        "operationId": "search_documents_documents_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentSearchPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "cursor is malformed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Documents"
       }
     },
     "/documents/{doc_id}": {

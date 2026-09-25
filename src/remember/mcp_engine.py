@@ -29,16 +29,20 @@ from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_memory_write_tool
+from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentDeletion
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
@@ -49,7 +53,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness and delete tools' backend over ``MemoryClient``.
+    """The write, readiness, delete and document-search tools' backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -96,6 +100,10 @@ class _ClientBackend:
     def delete_document(self, *, doc_id: UUID) -> DocumentDeletion:
         """Delete one document through the HTTP SDK."""
         return self._client.delete_document(doc_id=doc_id)
+
+    def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
+        """Run one document search through the HTTP SDK (D134)."""
+        return self._client.search_documents_request(request=request)
 
 
 class EngineMcpServer:
@@ -164,6 +172,10 @@ class EngineMcpServer:
             )
         if name == DELETE_DOCUMENT_TOOL_NAME:
             return handle_delete_document_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == SEARCH_DOCUMENTS_TOOL_NAME:
+            return handle_search_documents_tool(
                 arguments=arguments, backend=self._backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:

@@ -79,6 +79,7 @@ src/tests/surfaces/test_client_first_run.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
+src/tests/surfaces/test_document_search_clients.py
 src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py

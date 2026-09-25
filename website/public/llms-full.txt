@@ -574,6 +574,7 @@ The `remember mcp` server gives the agent these tools:
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `delete_document` | Remove a document from the memory when the user asks. |
+| `search_documents` | Find a file by its name, title, path, authors, dates or text. |
 | `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
@@ -751,6 +752,24 @@ jumps back to an old snapshot.
 Bytes sent again after the document was [deleted](#deleting-a-document)
 also create a new version (`created=true`), and it is processed from the
 start.
+
+## Finding a document
+
+Every version records the names it was stored under: its file name, the
+title the caller declared, and the source path. Sending the same bytes again
+under another name creates no version, but the new name is recorded next to
+the old ones. `search_documents` (`POST /documents/search`,
+`MemoryClient.search_documents`, `remember documents search`, or the
+`search_documents` MCP tool) finds documents by any of those names, even
+partial or misspelled, by their text, and by general metadata: format
+family, authors, recipients, dates, language and thread.
+
+Each result is a document judged by one version, its current one by
+default, and it reports that version's status, so a file still being
+processed can already be found by name. Say Ravi uploaded
+`billing-migration-draft.md` and later sent the same file as
+`billing-migration.md`: searching for either name finds the one document.
+See [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ## Deleting a document
 
@@ -8867,10 +8886,11 @@ Source: https://remember.dev/docs/reference/http-api/ingest
 
 # Ingest, readiness and documents
 
-Four routes cover the write side of memory. `POST /ingest` adds one file.
+Five routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
-document first. `DELETE /documents/{doc_id}` removes a document from the
+document first. `POST /documents/search` finds documents by name, metadata
+and text. `DELETE /documents/{doc_id}` removes a document from the
 memory.
 
 Base URL, authentication and error shapes are described in
@@ -8962,8 +8982,8 @@ the new name next to the old ones. A parameter you leave out does not count
 as a change. The document's own `title` in the response does not change: it
 stays the one set by the first ingest.
 
-No route searches documents by these names yet; see
-[What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
+[`POST /documents/search`](#post-documentssearch) finds a document by any of
+these names.
 
 ### Attribution
 
@@ -9221,6 +9241,158 @@ for document in page.documents:
 ```
 
 `remember documents list` prints the same page as JSON.
+
+## POST /documents/search
+
+Find documents by the names they were stored under, by their general
+metadata, and by their text.
+
+**Scope:** `read`.
+
+### Request body
+
+A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#documentsearchrequest):
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string | no | | 1 to 4,096 characters. Words from the file name, title, source path or text. |
+| `filters` | object | no | `{}` | See below. Every filter you give must hold. |
+| `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
+| `k` | integer | no | `20` | 1 to 200 results. |
+| `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
+
+`filters`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `family` | array of strings | The document's format family: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office` or `other`. Any listed family matches. |
+| `authors` | array of strings | A name or an address. Any listed term matches. |
+| `recipients` | array of strings | The same, for recipients. |
+| `created_from`, `created_to` | date-time with timezone | The date the document declares it was created or sent, inclusive. A document that declares no date does not match a range. |
+| `modified_from`, `modified_to` | date-time with timezone | The declared last-modified date, inclusive. |
+| `language` | string | Exact match. |
+| `thread_ref` | string | The conversation or thread key, exact match. |
+| `doc_ids` | array of UUIDs | Only these documents. |
+
+Unknown fields are rejected (`422`).
+
+### What matches
+
+**Documents, judged by one version.** Each result is a document. With
+`versions: current` and a `query`, a document is judged by its current
+version, or, while it has none yet because its first upload is still
+processing, by its newest version. Without a `query` (paged results), it is
+judged by its newest version that had arrived when the search started (see
+[Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
+newest version that did, with the others in `other_matching_version_ids`.
+Filters and names always use the returned version's own metadata. Deleted
+documents and deleted versions never match.
+
+Each result's `p3_path` is the document's stable path in the
+[filesystem view](https://remember.dev/docs/self-hosting/filesystem-views), relative to its root:
+`documents/<doc_id>`. It exists there only when the deployment publishes the
+filesystem view; `source_path` is where the file came from instead.
+
+**`query`** matches every name the version was stored under: the
+`filename`, `title` and `source_path` of the ingest that created it, and of
+each later ingest of the same bytes under another name (see
+[File names, titles and paths](#file-names-titles-and-paths)). So a renamed
+file is found by its new and old names, and a partial or misspelled name
+still finds it. It also matches the document's text, by its best-matching
+passage. Names (matched by whole words and by similar spelling) and text are two
+equal channels combined by rank; each document counts once per channel, by
+its best match. `matched_by` says which matched.
+Text matching is by words; there is no semantic matching on this route.
+
+**People.** A term matches a person when it equals their address, or when
+its words appear whole in their name, ignoring case and accents: `alice`
+matches "Alice Novák" but `ali` does not. Metadata such as authors comes
+from the format's converter. Today the only value read from inside a file is
+the title the markitdown converter reports (an HTML page's `<title>`, for
+example), so authors and recipients are empty, and a newly ingested version's only
+date is `modified_at`, from the `source_modified_at` you sent with it. When a people filter
+is given, `people_matched` lists each distinct person it matched, with the
+number of matching documents, so you can narrow an ambiguous filter (for
+example to an address) instead of guessing.
+
+### Order and paging
+
+With `query`, results are ranked, and there is no next page: `cursor` is
+`null`. Raise `k` for more.
+
+Without `query`, results are every document the filters match, newest first
+by when the judged version was ingested, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `cursor` back for the next page. The
+first page fixes an instant, returned as `as_of`, and every later page judges
+each document by its newest version ingested by then. A document added, a
+version promoted to current, or a date filled in by processing while you
+page therefore neither moves nor repeats a row. Start a new search to see
+what arrived since.
+
+### Response
+
+`200` with a [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
+
+```json
+{
+  "documents": [
+    {
+      "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "version_no": 1,
+      "status": "ready",
+      "lineage_title": "Q3_sales_2025",
+      "file_name": "Q3_sales_2025.xlsx",
+      "title": null,
+      "source_path": "finance/2025",
+      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "family": "office",
+      "created_at": null,
+      "modified_at": null,
+      "language": null,
+      "thread_ref": null,
+      "authors": [],
+      "recipients": [],
+      "extra": {},
+      "overview": "Quarterly sales by region …",
+      "other_matching_version_ids": [],
+      "matched_by": ["name"],
+      "score": 0.0328
+    }
+  ],
+  "cursor": null,
+  "as_of": "2026-09-24T10:12:03.117Z",
+  "people_matched": []
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | `cursor is malformed` | The cursor does not parse. |
+| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, or `cursor` together with `query`. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/search" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "q3 sales", "filters": {"family": ["office"]}, "k": 5}'
+```
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("office",)))
+for result in page.documents:
+    print(result.doc_id, result.file_name, result.matched_by)
+```
+
+`remember documents search "q3 sales" --family office` prints the same page
+as JSON.
 
 ## DELETE /documents/{doc_id}
 
@@ -10750,6 +10922,7 @@ None.
     "ingest": 1,
     "pipeline_readiness": 1,
     "delete_document": 1,
+    "search_documents": 1,
     "resolve_entity": 1,
     "claims_and_sources_context": 2,
     "facts_context": 3,
@@ -10765,7 +10938,8 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
-| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, and `delete_document` only when document deletion is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, and `search_documents`
+only when document search is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
 The first three fields also appear on every
 [`PipelineReadinessReport`](https://remember.dev/docs/reference/result-types#pipelinereadinessreport).
@@ -11972,6 +12146,73 @@ The `require` object of `POST /readiness`. All four fields are required.
 A version `status` of `ready` means conversion and structuring are done. It
 does not mean claims and facts have been extracted; check
 [readiness](#pipelinereadinessreport) for that.
+
+### DocumentSearchRequest
+
+Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string, nullable | no | | 1 to 4,096 characters. |
+| `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
+| `versions` | `current` \| `all` | no | `current` | |
+| `k` | integer | no | `20` | 1 to 200. |
+| `cursor` | string, nullable | no | | Only without `query`. |
+
+### DocumentSearchFilters
+
+| Field | Type | Default | Contents |
+|---|---|---|---|
+| `family` | array of strings | `[]` | Any listed format family. |
+| `authors` | array of strings | `[]` | Any listed name or address. |
+| `recipients` | array of strings | `[]` | Any listed name or address. |
+| `created_from`, `created_to` | date-time with timezone, nullable | | Inclusive range on the declared creation date. |
+| `modified_from`, `modified_to` | date-time with timezone, nullable | | Inclusive range on the declared modification date. |
+| `language` | string, nullable | | |
+| `thread_ref` | string, nullable | | |
+| `doc_ids` | array of UUIDs | `[]` | |
+
+### DocumentSearchPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
+| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
+| `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
+
+### DocumentSearchResult
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | The version the document was judged by. |
+| `version_no` | integer | |
+| `status` | string | That version's processing status, as in [`DocumentVersionSummary`](#documentversionsummary). |
+| `lineage_title` | string, nullable | The document's title, set by its first ingest. |
+| `file_name` | string, nullable | The file name this version was ingested under. |
+| `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
+| `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
+| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
+| `family` | string | The format family. |
+| `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
+| `language` | string, nullable | |
+| `thread_ref` | string, nullable | |
+| `authors`, `recipients` | array of `{name, address}` | Either field may be `null`. |
+| `extra` | object | Format-specific metadata; not filterable. |
+| `overview` | string, nullable | A summary of the whole document, when processing produced one. Orientation, not evidence. |
+| `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
+| `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
+| `score` | number, nullable | The combined rank score with a query; `null` without one. |
+
+### DocumentPeopleMatch
+
+| Field | Type | Contents |
+|---|---|---|
+| `role` | `author` \| `recipient` | |
+| `name` | string, nullable | |
+| `address` | string, nullable | |
+| `documents` | integer | Matching documents that list this person. |
 
 ### DocumentDeletion
 
@@ -13564,6 +13805,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
@@ -13777,6 +14019,45 @@ while True:
     if page.cursor is None:
         break
     cursor = page.cursor
+```
+
+#### `search_documents`
+
+```python
+MemoryClient.search_documents(
+    query: str | None = None,
+    *,
+    filters: DocumentSearchFilters | None = None,
+    versions: Literal["current", "all"] = "current",
+    k: int = 20,
+    cursor: str | None = None,
+) -> DocumentSearchPage
+```
+
+Finds documents by the names they were stored under, their general metadata
+and their text, and returns a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage).
+`filters` is a
+[`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters)
+(`from remember import DocumentSearchFilters`): `family`, `authors`,
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
+and `doc_ids`. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
+`query`, a date without a timezone, or `k` outside 1 to 200 raises
+`pydantic.ValidationError` before any request. A malformed cursor raises
+`MemoryApiError` with `status_code` 400. What matches, and how, is in
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("audit report")
+emails = memory.search_documents(
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+)
+if len(emails.people_matched) > 1:
+    print("several people matched:", emails.people_matched)
 ```
 
 #### `delete_document`
@@ -14520,6 +14801,13 @@ readiness command. See [Wait until a document is queryable](https://remember.dev
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
                         [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
+                          [--recipient NAME_OR_ADDRESS]...
+                          [--created-from T] [--created-to T]
+                          [--modified-from T] [--modified-to T]
+                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--versions {current,all}] [--limit N] [--cursor CURSOR]
+                          [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -14531,6 +14819,20 @@ documents whose newest version has that status.
 
 ```bash
 remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`search` finds documents by name, metadata and text and prints a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage) as
+JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
+several; any listed value matches. Dates are ISO 8601 with a timezone, for
+example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+```bash
+remember documents search "q3 sales" --family office | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
 ```
 
 `delete` removes one document, every version of it, from the memory and
@@ -14903,7 +15205,7 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
 `delete_document`, and refuses calls to them with the error `read_only`.
-`pipeline_readiness` only reads, so it stays.
+`pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
 
@@ -14934,8 +15236,8 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness` and `delete_document` (only
-   `pipeline_readiness` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+   (only `pipeline_readiness` and `search_documents` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -14945,7 +15247,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 15 tools: 3 + 4 + 1 + 7.
+lists 16 tools: 4 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -15143,6 +15445,36 @@ remove a specific document, or the document is plainly wrong or unwanted,
 and never as a way to correct a fact: to correct one, ingest a document that
 says the right thing. The token needs `write` scope. See
 [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+### `search_documents`
+
+Finds documents (files) by the names they were stored under, their general
+metadata and their text. The tool description tells the agent to use it when
+the user names or describes a file ("find Q3_sales_2025.xlsx", "emails from
+Alice") rather than asking about its content.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
+| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
+| `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
+| `language`, `thread_ref` | string | no | Exact match. |
+| `doc_ids` | array of strings | no | Document UUIDs. |
+| `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `k` | integer | no | 1–200; default 20. |
+| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+
+Unknown keys are refused. The result is a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
+`documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
+`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
+`overview`),
+`cursor`, `as_of` and `people_matched`. When a people filter matches several
+different people, `people_matched` lists each with a document count and the
+description tells the agent to narrow the filter instead of guessing. The
+token needs `read` scope. How matching and paging work:
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ### Assured operations
 
@@ -16406,10 +16738,12 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Finding a document by name or metadata.** Each version records its file
-  name, title and source path, but no route, SDK method, CLI command or MCP
-  tool searches or filters documents by them; `GET /documents` pages by
-  status only.
+- **Document filters on search.** `search_documents` finds documents by
+  name and metadata, but the claim, chunk and fact searches and the assured
+  operations cannot yet be limited to documents matching such filters.
+- **Metadata read from inside files.** Converters read only a document's
+  title, and only where the markitdown converter reports one; no converter
+  reads authors, recipients or dates from files yet.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.
