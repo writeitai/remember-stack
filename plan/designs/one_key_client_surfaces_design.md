@@ -119,9 +119,10 @@ It defines one `ToolDefinition` per memory tool:
 The catalogue contains exactly the memory tools the binding designs expose
 over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `resolve_entity`, `facts_context`, `claims_and_sources_context`,
-`combined_context`, `source_open`, `query_sql`, `explain_sql`,
+`combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
-`describe_saved_query`, `run_saved_query`. (`delete_document` is D135's tool,
+`describe_saved_query`, `run_saved_query`. (`adjacent_chunks` is D130/D137's
+tool, for neighbouring chunk retrieval; `delete_document` is D135's tool,
 PR #456; `source_open` is D115's, [media_design.md §4a](media_design.md), and
 returns MCP content blocks — text, image or audio — rather than one JSON text
 block.) A new MCP-exposed memory tool is added here, never in a host. Saved queries, including the
@@ -198,7 +199,8 @@ separately, so a host's catalogue and a deployment can differ.
   `memory:read`; PR #455 adds the route to the read table), in a new `tools`
   object mapping tool name to `tool_version`, e.g. `{"facts_context": 3, …}`.
   The seven query tools appear only when the open query facade is composed,
-  and `delete_document` only when deletion is composed.
+  `adjacent_chunks` whenever operations are composed, and `delete_document`
+  only when deletion is composed.
 - A host renders a catalogue tool for a deployment only when the deployment
   lists it with the **same** `tool_version`. Otherwise the tool is omitted and
   `remember doctor` names it and the fix (upgrade `remember`, or upgrade the
@@ -839,7 +841,8 @@ Engine consistency:
 - for every catalogue tool, `permission` equals the scope `route_scope`
   requires for its `http_route` (and `operation_scope` for operations);
 - `GET /deployment` `tools` lists the query tools only when the open query
-  facade is composed, and `delete_document` only when deletion is composed;
+  facade is composed, `adjacent_chunks` whenever operations are composed,
+  and `delete_document` only when deletion is composed;
 - engine HTTP and in-process MCP reject a `project` argument.
 
 `remember mcp`:

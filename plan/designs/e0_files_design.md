@@ -335,6 +335,31 @@ unchanged):
   disambiguation, resolved by deterministic search — never raw character offsets; an anchor
   that resolves ambiguously or not at all degrades to the enclosing parent, mirroring the
   snap's degrade-to-parent rule.
+- **Fallback section run-merging (D137):** When models propose section anchors in conversational
+  transcripts or dialogue documents, individual dialogue turns (e.g. Joanna asking "So what's
+  your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62)
+  are frequently proposed as section headings. If unresolved, each turn becomes an isolated
+  single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py:691`)
+  inspects surrounding context only within the *same section*, this splits question turns from
+  their answers, breaking cross-turn anaphora resolution (D131).
+  *Rule:* In `resolve_fallback_skeleton()`, contiguous runs of single-block leaf sections are
+  identified. If followed by an immediate next leaf section without subsections, the run is merged
+  forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+  If at the end of the document or followed by a section with subsections, the run collapses into a
+  single merged section spanning `[run_start, run_end]`. In all cases, the merged section is titled
+  by the proposal at `run_start` (its first block), so title, heading level, and starting position
+  remain aligned without in-place mutation. Sections with subsections are never absorbed and never
+  absorb runs, protecting hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+  *Costs and Boundaries:*
+  1. Flat unnested chapters: If the model proposes `PART ONE` and `Chapter 1` as flat siblings
+     without nesting `Chapter 1` as a child, and both are single blocks, they will merge forward
+     with the succeeding section. Hierarchy protection relies on the model emitting subsections.
+  2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single
+     section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+  3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and
+     the answer begins the next section, or a single-block turn is stranded at document end without
+     an answer, run-merging does not bridge across multi-block sections. Such cross-boundary
+     dialogue remains a documented boundary of section-scoped context.
 - **Skeleton sanity check (2026-07-28 addition, revised after Grok + Codex review): a judge,
   never a proposer.** Density can look healthy while the parsed tree is nonsense — a
   complicated print template whose running headers, TOC pages, or scrambled heading order

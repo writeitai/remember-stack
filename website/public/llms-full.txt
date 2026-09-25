@@ -574,6 +574,7 @@ The `remember mcp` server gives the agent these tools:
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `delete_document` | Remove a document from the memory when the user asks. |
+| `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
@@ -2374,7 +2375,7 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](https://remember.dev/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](https://remember.dev/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, the four operations and the seven SQL query tools. No primitives. |
+| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](https://remember.dev/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 ## The four assured operations
@@ -15189,6 +15190,19 @@ Both of the above in one call, returned as `ContextBundle/v2`.
 
 For every operation, unknown keys are refused, and integers must be whole
 numbers.
+
+### Context expansion tool
+
+#### `adjacent_chunks`
+
+Retrieve neighbouring chunks preceding and succeeding a target chunk within the
+same document to expand conversational or narrative context. Returns an
+`Envelope` containing surrounding chunks ordered by ordinal.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `chunk_id` | string (UUID) | yes | Target chunk UUID to expand around. |
+| `window` | integer | no | Number of neighbouring chunks on each side (1 or 2, default 1). |
 
 ### SQL query tools
 

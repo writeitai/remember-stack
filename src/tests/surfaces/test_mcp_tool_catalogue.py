@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 import pytest
 
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools import ASSURED_OPERATION_TOOL_NAMES
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
@@ -162,9 +161,7 @@ def test_permission_matches_the_scope_the_engine_requires() -> None:
 def test_operations_registry_fields_are_generated_from_the_catalogue() -> None:
     """`GET /operations` name/description/schema/mutates/version equal the catalogue."""
     descriptors = operation_descriptors(operations=CANONICAL_OPERATIONS)
-    assert {descriptor.name for descriptor in descriptors} == set(
-        ASSURED_OPERATION_TOOL_NAMES
-    )
+    assert {descriptor.name for descriptor in descriptors} == set(OPERATION_TOOL_NAMES)
     for descriptor in descriptors:
         definition = tool(descriptor.name)
         assert descriptor.description == definition.description

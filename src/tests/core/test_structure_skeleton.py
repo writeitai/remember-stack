@@ -280,9 +280,9 @@ def test_d137_single_block_run_absorbs_into_succeeding_leaf() -> None:
     )
     # Intro (block 0) and Question (block 1) are single-block leaves.
     # Answer (blocks 2..3) is a multi-block leaf.
-    # The run [0, 1] absorbs into the succeeding leaf [2..3], spanning 0..3.
+    # The run [0, 1] merges forward into the section spanning 0..3, titled by the opening turn.
     assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
-        ("Answer part 1", 0, 3)
+        ("Intro", 0, 3)
     ]
 
 
@@ -385,7 +385,7 @@ def test_d137_session_question_answer_turns_share_section() -> None:
     qa_section = body_sections[0]
     assert qa_section.block_start == 0
     assert qa_section.block_end == 2
-    assert "currently playing" in qa_section.title
+    assert "favorite game" in qa_section.title
     # Blocks 0 and 1 are within qa_section's range [0, 2]
     assert qa_section.block_start <= 0 <= qa_section.block_end
     assert qa_section.block_start <= 1 <= qa_section.block_end

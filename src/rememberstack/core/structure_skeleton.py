@@ -469,14 +469,15 @@ def _absorb_adjacent_single_block_leaves(nodes: list[_AnchorNode]) -> list[_Anch
     """Absorb runs of contiguous single-block leaf sections (D137).
 
     A single-block leaf section owns only its anchor block (block_start == block_end)
-    and has no children. When such micro-sections occur consecutively (B -> B+1),
-    they represent split conversational dialogue turns or micro-remarks.
+    and has no children. When such micro-sections occur consecutively, they represent
+    split conversational dialogue turns or micro-remarks.
 
-    The run of consecutive single-block leaves is merged into the succeeding
-    leaf section if that section starts on the immediate next block and has no
-    subsections. If the succeeding section has subsections or does not exist
-    (e.g. at the end of the document), the run collapses into a single merged section,
-    preserving structured subtrees while preventing question/answer conversational fractures.
+    The run of consecutive single-block leaves is merged forward with the succeeding
+    leaf section if that section has no subsections. If the succeeding section has
+    subsections or does not exist (e.g. at the end of the document), the run collapses
+    into a single merged section. In all cases, the merged section is titled by the
+    text at its first block (proposal=nodes[run_start].proposal), ensuring title and
+    heading level match where the section begins without in-place mutation.
     """
     if not nodes:
         return []
@@ -492,19 +493,20 @@ def _absorb_adjacent_single_block_leaves(nodes: list[_AnchorNode]) -> list[_Anch
                 i + 1 < n
                 and not nodes[i + 1].children
                 and nodes[i + 1].block_start == nodes[i + 1].block_end
-                and nodes[i + 1].block_start == nodes[i].block_end + 1
             ):
                 i += 1
             run_end = i
 
-            if (
-                run_end + 1 < n
-                and not nodes[run_end + 1].children
-                and nodes[run_end + 1].block_start == nodes[run_end].block_end + 1
-            ):
+            if run_end + 1 < n and not nodes[run_end + 1].children:
                 next_leaf = nodes[run_end + 1]
-                next_leaf.block_start = nodes[run_start].block_start
-                i = run_end + 1
+                merged = _AnchorNode(
+                    proposal=nodes[run_start].proposal,
+                    block_start=nodes[run_start].block_start,
+                    block_end=next_leaf.block_end,
+                    children=[],
+                )
+                result.append(merged)
+                i = run_end + 2
                 continue
 
             merged = _AnchorNode(

@@ -6136,7 +6136,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
 
-**Status:** accepted. **Date:** 2026-09-21.
+**Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
 **Context.** Arbitrary chunk boundary cutoffs in documents and conversational transcripts frequently split multi-turn dialogues, answers to questions, or lists across chunk boundaries. When callers query `search_chunks` or `claims_and_sources_context`, relevant context from preceding or succeeding chunks often lacks search query keywords and is omitted from top-$K$ candidates. Previously, callers had no direct mechanism to read neighboring chunks for a given chunk, forcing prompt workarounds or leading to missing context (e.g. `conv-42/qa/0094`).
 
@@ -6373,7 +6373,7 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
-**Status:** accepted. **Date:** 2026-09-23.
+**Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
 
 **Context.** On 2026-09-23 the owner approved one credential for every client
 surface of remember.dev — a signed key covering one or more projects with the
@@ -6498,8 +6498,9 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 **Decision.**
 1. **Deterministic run-merging of single-block leaf sections in fallback skeletons (`structure_skeleton.py`):**
    - In `resolve_fallback_skeleton()`, identify runs of contiguous single-block leaf sections (sections with `block_start == block_end` and no child subsections).
-   - If a run is followed by an immediate next leaf section without subsections, the run is absorbed into that succeeding section (expanding its `block_start` backwards to cover the run). The absorbed sections' titles are subsumed into the succeeding section's title, keeping the question and answer within a single coherent section.
-   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`, titled by the run's opening turn.
+   - If a run is followed by an immediate next leaf section without subsections, the run is merged forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`.
+   - In all cases, the merged section is titled by the proposal at `run_start` (its first block), so title, heading level, and starting position remain aligned without in-place mutation.
    - Sections with subsections are never absorbed and never absorb single-block runs, preserving hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
 2. **Fallback prompt guidance (`e0.py`):**
    - Update `_FALLBACK_PROMPT` to explicitly instruct models that individual conversational turns, rhetorical questions, and brief remarks must not form section headings. Section anchors must represent substantive topic shifts or document sections.
@@ -6517,8 +6518,13 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 - Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
 - Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
 
+**Costs and boundaries.**
+1. Flat unnested chapters: If the model proposes `PART ONE` and `Chapter 1` as flat siblings without nesting `Chapter 1` as a child, and both are single blocks, they will merge forward with the succeeding section. Hierarchy protection relies on the model emitting subsections.
+2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
+
 **Supersedes.**
 - D130 item 4 in part: supersedes the restriction that `adjacent_chunks` does not mint an MCP tool.
 - D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
 
-**Authority:** Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+**Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).

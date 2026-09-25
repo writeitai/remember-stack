@@ -32,7 +32,6 @@ OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
     "facts_context",
     "combined_context",
 )
-ASSURED_OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = OPERATION_TOOL_NAMES
 #: The seven open-query facade operations (open query space §3.1).
 OPEN_QUERY_TOOL_NAMES: Final[tuple[str, ...]] = (
     "query_sql",

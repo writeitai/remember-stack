@@ -14,7 +14,6 @@ the base ``remember`` install.
 from __future__ import annotations
 
 from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
-from remember.mcp_tools._definitions import ASSURED_OPERATION_TOOL_NAMES
 from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import memory_tools
@@ -42,7 +41,6 @@ from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
     "ADJACENT_CHUNKS_TOOL_NAME",
-    "ASSURED_OPERATION_TOOL_NAMES",
     "DELETE_DOCUMENT_TOOL_NAME",
     "INGEST_TOOL_NAME",
     "MEMORY_WRITE_TOOL_NAMES",
