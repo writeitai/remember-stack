@@ -38,7 +38,7 @@ Applies to remember.dev and self-hosted.
 | `REMEMBER_API_KEY` | unset | secret | The API key, raw or as `Bearer …`. |
 | `REMEMBER_PROJECT` | unset | id or name | The project to use when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where `credentials.json` lives. |
-| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false`; `true` in the engine image | bool | Enables `remember ops`, which works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
@@ -84,7 +84,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
 | `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Read by Compose only. Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | Largest `POST /ingest` body; larger uploads get `413`. |
-| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | Browser origins allowed by CORS. |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | Requests running at once per credential. Over it: `429` `concurrency_limited`. |

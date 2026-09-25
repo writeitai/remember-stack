@@ -370,7 +370,8 @@ text up to 65,536 bytes, and so on. Each group page lists them.
 
 A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
-exact `https` origins; empty by default). For those origins it allows:
+exact `https` origins, or `http` origins on `localhost`, `127.0.0.1` or
+`[::1]`; empty by default). For those origins it allows:
 
 - methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
@@ -378,7 +379,8 @@ exact `https` origins; empty by default). For those origins it allows:
 - preflight caching for 600 seconds.
 
 Wildcards are refused at startup, and so is an origin with a path, a user,
-port `443` written out, or upper-case letters.<Cloud> remember.dev deployments allow
+the default port (`443`, or `80` for `http`) written out, or upper-case
+letters.<Cloud> remember.dev deployments allow
 the remember.dev console's origin.</Cloud>
 
 ## Routes outside the documented API

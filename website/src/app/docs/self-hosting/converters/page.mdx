@@ -146,7 +146,7 @@ After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   sh -c 'remember ops resume-no-route --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"'
 ```
 

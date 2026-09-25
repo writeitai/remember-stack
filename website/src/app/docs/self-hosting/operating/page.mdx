@@ -17,7 +17,8 @@ how to see that state and act on it.
 The operator commands are part of the `remember` CLI, under
 `remember ops`. They talk to PostgreSQL directly rather than to the API, so
 they run inside the engine image, where the database settings already are.
-They are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set.
+Run them with `docker compose exec api remember ops …`; the image enables
+them, so no extra setting is needed.
 
 Read the deployment id from `.env` once per shell:
 
@@ -28,7 +29,7 @@ DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2
 Then run each command in the `api` container:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -47,7 +48,7 @@ Pipe it through `python3 -m json.tool` to read it.
 ## Inspect the pipeline
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -55,7 +56,7 @@ The report has five parts:
 
 | Field | Contents |
 |---|---|
-| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`). A large `pending` count on one stage shows where the pipeline is behind. |
+| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
 | `latest_projections` | The latest filesystem snapshot, if any. |
@@ -89,7 +90,7 @@ Find the `processing_id` in the `dead_letters.items` of the inspect report,
 fix the cause (a key, a model, a converter route), then replay it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -109,7 +110,7 @@ reason `no_route` rather than failed. It uses no attempts. After you add a
 route and restart with `docker compose up -d`, release it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -138,9 +139,8 @@ budget are not capped.
 
 Put it in `.env` and run `docker compose up -d`; the workers enforce it.
 
-Work a budget parked shows as `pending` in `remember ops inspect`, and with
-`defer_reason` `budget` in the diagnostic query under
-[Troubleshooting](/docs/self-hosting/troubleshooting#see-what-is-waiting-and-why).
+Work a budget parked shows as `pending` with `defer_reason` `budget`, both
+in `remember ops inspect` and in readiness.
 The spend itself is in the cost ledger; read it with `remember ops
 cost-export` ([Observability](/docs/self-hosting/observability#cost-export)).
 
@@ -153,7 +153,7 @@ or a restore leaves them missing or different,
 expects, replays the definitions if needed, and reports the result:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops graph-catalog ensure
 ```
 
