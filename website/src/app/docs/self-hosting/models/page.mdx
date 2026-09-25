@@ -103,6 +103,12 @@ anything has been embedded:
   an error that names the configured model and the stored one, and the API
   and workers do not start. Set the variable back to the stored model.
 
+To change it before anything is embedded, stop the workers first
+(`docker compose stop`), then change the variable and run
+`docker compose up -d`. A worker still running on the old model could
+otherwise embed with it after the switch; the next `setup` would then
+refuse the new model.
+
 To use a different embedding model, start a new deployment and send the
 documents again.
 

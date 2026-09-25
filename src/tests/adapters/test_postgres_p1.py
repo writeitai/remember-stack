@@ -764,6 +764,14 @@ def test_setup_refuses_a_new_embedding_model_once_vectors_exist(
     switched = PostgresP1Index(engine=database_engine, embedding_model="other/model")
     with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
         switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    # The stamps decide, not the channel: channels already published under
+    # the new model do not make the old vectors acceptable.
+    switched.configure_channels(deployment_id=_DEPLOYMENT_ID)
+    try:
+        with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
+            switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    finally:
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID)
 
     empty_deployment = UUID("5f000000-0000-0000-0000-000000000096")
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(

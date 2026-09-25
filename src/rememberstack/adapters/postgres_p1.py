@@ -50,29 +50,22 @@ class EmbeddingModelChangedError(RuntimeError):
     """
 
 
-_PUBLISHED_OTHER_EMBEDDING_MODELS = text(
+_OTHER_STORED_EMBEDDING_MODELS = text(
     """
-    SELECT DISTINCT embedding_model FROM p1_search_channels
-    WHERE deployment_id = :deployment_id
-      AND channel = 'semantic' AND target <> 'entities'
-      AND embedding_model <> :embedding_model
+    SELECT DISTINCT embedding_model FROM (
+      SELECT embedding_model FROM chunk_search WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM claims WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM relations WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM observations WHERE deployment_id = :deployment_id
+    ) AS stored
+    WHERE embedding_model <> :embedding_model
     ORDER BY embedding_model
     """
 )
-"""Models setup last published for the chunk, claim and fact channels."""
-
-_ANY_STORED_VECTOR = text(
-    """
-    SELECT EXISTS (SELECT 1 FROM chunk_search
-                   WHERE deployment_id = :deployment_id AND embedding IS NOT NULL)
-        OR EXISTS (SELECT 1 FROM claims
-                   WHERE deployment_id = :deployment_id AND embedding IS NOT NULL)
-        OR EXISTS (SELECT 1 FROM relations
-                   WHERE deployment_id = :deployment_id AND embedding IS NOT NULL)
-        OR EXISTS (SELECT 1 FROM observations
-                   WHERE deployment_id = :deployment_id AND embedding IS NOT NULL)
-    """
-)
+"""Model stamps on stored chunk, claim and fact vectors other than the configured one."""
 
 
 class PostgresP1Index:
@@ -152,34 +145,28 @@ class PostgresP1Index:
             connection.execute(statement, rows)
 
     def require_stored_embedding_model(self, *, deployment_id: UUID) -> None:
-        """Refuse a configured model that differs from the stored vectors'.
+        """Refuse a configured model that differs from any stored vector's stamp.
 
-        The semantic channels record the model their vectors were made with.
-        A different configured model is accepted only while no chunk, claim
-        or fact vector exists yet. Entity vectors are left out: setup rebuilds
-        entity profiles under the configured model
-        (``entity_profile_backfill_required``); the others have no rebuild.
+        Every chunk, claim and fact vector carries the model that made it.
+        Entity vectors are left out: setup rebuilds entity profiles under the
+        configured model (``entity_profile_backfill_required``); the others
+        have no rebuild. A deployment with no vectors may switch freely.
         """
-        parameters = {
-            "deployment_id": deployment_id,
-            "embedding_model": self._embedding_model,
-        }
         with self._engine.connect() as connection:
-            published = tuple(
+            stored = tuple(
                 connection.execute(
-                    _PUBLISHED_OTHER_EMBEDDING_MODELS, parameters
+                    _OTHER_STORED_EMBEDDING_MODELS,
+                    {
+                        "deployment_id": deployment_id,
+                        "embedding_model": self._embedding_model,
+                    },
                 ).scalars()
             )
-            populated = bool(published) and bool(
-                connection.execute(
-                    _ANY_STORED_VECTOR, {"deployment_id": deployment_id}
-                ).scalar_one()
-            )
-        if populated:
+        if stored:
             raise EmbeddingModelChangedError(
                 "REMEMBERSTACK_P1_EMBEDDING_MODEL is "
                 f"{self._embedding_model!r}, but this deployment already holds "
-                f"vectors made with {', '.join(repr(m) for m in published)}. "
+                f"vectors made with {', '.join(repr(m) for m in stored)}. "
                 "Nothing re-embeds them, so semantic search would stop finding "
                 "them; set the variable back to the stored model."
             )
