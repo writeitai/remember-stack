@@ -42,27 +42,6 @@ under `model_bindings`, so you can check what is serving:
 curl http://localhost:8000/deployment
 ```
 
-### Variables that exist but are not used
-
-`compose.yaml` also passes these, with defaults. The shipped pipeline does
-not use them to choose a model; changing them changes nothing, except where
-noted:
-
-| Variable | Default | Status |
-|---|---|---|
-| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Ignored for embedding: chunks are embedded with `REMEMBERSTACK_P1_EMBEDDING_MODEL`. `GET /deployment` still reports this value as `chunk_embedding`, so keep the two equal. |
-| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | Reported as `context_prefix`; chunk context is now built without a model. |
-| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | Reported as `fact_label`; relation labels are built without a model. |
-| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-
-The same holds for the observation thresholds
-`REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` (0.75), `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN`
-(0.8), `REMEMBERSTACK_OBS_NOVELTY_FLOOR` (0.3), `REMEMBERSTACK_OBS_HUB_TOP_K`
-(5) and `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` (0.75).
-
 ## Fact adjudication
 
 Fact adjudication decides what the memory holds true, so it has two extra
@@ -114,18 +93,18 @@ length. An embedding model can replace `qwen/qwen3-embedding-8b` only if it
 can return 1,536-dimension vectors on request.
 
 Each stored vector is stamped with the model that produced it, and search
-compares a query only with vectors of the current model. If you change
-`REMEMBERSTACK_P1_EMBEDDING_MODEL` on a deployment that already holds
-documents:
+compares a query only with vectors of the same model. Nothing re-embeds
+stored chunks, claims and facts, so the embedding model is fixed once
+anything has been embedded:
 
-- `setup` points the search channels at the new model and re-embeds entity
-  profiles.
-- Chunks, claims and facts embedded with the old model stay as they are
-  and drop out of semantic search. Keyword (BM25) search still finds them.
-- Nothing re-embeds them automatically.
+- Before the first document is embedded, you can change
+  `REMEMBERSTACK_P1_EMBEDDING_MODEL` freely.
+- After that, `setup` refuses to run with a different model. It exits with
+  an error that names the configured model and the stored one, and the API
+  and workers do not start. Set the variable back to the stored model.
 
-Treat the embedding model as fixed for the life of a deployment. To use a
-different one, start a new deployment and send the documents again.
+To use a different embedding model, start a new deployment and send the
+documents again.
 
 ## OpenRouter routing and limits
 
@@ -137,14 +116,14 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. A call they cannot serve fails. Cannot be combined with the order. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. Not passed by `compose.yaml`; set it through `engine.env` ([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)). |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
-| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. |
 
 When you set a provider list or ZDR, each chat call also tells OpenRouter
 not to route to providers that collect data (`data_collection: deny`). With

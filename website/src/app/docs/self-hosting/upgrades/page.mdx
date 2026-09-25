@@ -32,8 +32,9 @@ The `setup` service runs before the API and workers every time you run
    (`alembic upgrade head`);
 2. checks that the deployment id, slug and name still match the database;
 3. installs any assured operations and example saved queries the release adds;
-4. re-publishes the search channels, re-embedding entity profiles if the
-   embedding model changed.
+4. checks that the embedding model still matches the stored vectors, then
+   re-publishes the search channels, rebuilding entity profile vectors
+   when needed.
 
 The API and the workers start only after `setup` exits successfully. If a
 migration fails, `setup` exits with an error, nothing else starts, and
@@ -122,19 +123,17 @@ send your documents again.
 
 `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` names the deployment: its trust
 domain. Every token is bound to it, and every stored row belongs to it.
-Changing it does not rename the deployment; it asks for a different one:
+The install step generates it once, and the first `setup` records it.
 
-- With the same slug, `setup` refuses to start: the id and slug no longer
-  match what the database records.
-- With a new slug as well, `setup` creates a second deployment in the same
-  database. The API then serves the new, empty one. The memory stored
-  under the old id is still in the database but no longer served, shared
-  secrets bound to the old id are refused with `403`, signed keys for the
-  old deployment are refused, and the cost export stops working
-  because it expects exactly one deployment.
+A database holds exactly one deployment. If the id in `.env` differs from
+the recorded one, `setup` refuses to start and names the recorded id, so
+the API and workers do not start either. Restore the recorded value. The
+same check covers the slug, the name, the default language and the bucket
+names: `setup` names the ones that changed. Change none of them after the
+first start.
 
-The same check covers the slug, the name, the default language and the
-bucket names. Change none of them after the first start.
+To start over under a new id, remove the volumes
+(`docker compose down --volumes`) and send your documents again.
 
 ## Back up
 

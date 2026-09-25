@@ -100,13 +100,11 @@ from the memory API. It is off unless you give it an address and a token:
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Where to listen: `host:port`, `[ipv6]:port` or `unix:/path/to/socket`. Unset means no HTTP export. |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | The bearer token callers must send. At least 32 bytes; the API refuses to start with a shorter one once the bind is set. |
 
-`compose.yaml` does not pass either variable, although `.env.example`
-mentions them. Set them for the `api` service in `engine.env`
-([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)) and publish
-the port in `compose.override.yaml`:
+Set both in `.env`, and publish the port with a `compose.override.yaml`
+next to `compose.yaml`, which Compose merges automatically:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_COST_EXPORT_BIND=0.0.0.0:8001
 REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 ```
@@ -115,14 +113,11 @@ REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 # compose.override.yaml
 services:
   api:
-    env_file: [engine.env]
     ports:
       - "127.0.0.1:8001:8001"
 ```
 
-If your override already has the line `api: *engine-env`, replace that line
-with the `api:` block above. The extra port is added to the API's existing
-one.
+The extra port is added to the API's existing one.
 
 The bind is an address inside the container, so it must be `0.0.0.0` for
 the published port to reach it.

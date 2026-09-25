@@ -66,8 +66,8 @@ class P1Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_P1_")
 
     embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
-    label_model: str = Field(default="openai/gpt-5.6-luna")
-    """Retained for settings compatibility; relation labels are deterministic."""
+    """The deployment's one embedding model: chunks, claims, facts, entities
+    and search queries. Setup refuses to change it once vectors exist."""
 
     embed_batch_size: int = Field(
         default=_DEFAULT_EMBED_BATCH_SIZE, ge=1, le=_OPENROUTER_EMBED_INPUT_CAP

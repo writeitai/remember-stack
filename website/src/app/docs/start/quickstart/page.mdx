@@ -42,15 +42,15 @@ turn on API authentication before the first start; see
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
-printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The `printf` line generates the database password and the object-store
-credentials; Compose refuses
-to start without them. The first start builds the PostgreSQL image and runs
+The `printf` line generates the database password, the object-store
+credentials and the deployment id; Compose refuses to start without them. The first start builds the PostgreSQL image and runs
 migrations. When `docker compose ps` shows `api` as healthy, the endpoint
 is `http://localhost:8000`. No token is needed by default, because the API
 is reachable from this machine only. To open it to others, see

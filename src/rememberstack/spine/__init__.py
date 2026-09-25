@@ -49,7 +49,6 @@ from rememberstack.spine.resolver import seed_resolver_version
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
-from rememberstack.spine.supersession import SupersessionSettings
 from rememberstack.spine.sync import SyncCatalog
 from rememberstack.spine.work_ledger import WorkLedger
 from rememberstack.spine.work_ledger import WorkLedgerSettings
@@ -67,7 +66,6 @@ __all__ = (
     "CascadeResolver",
     "EntityProfileRefresher",
     "SupersessionAdjudicator",
-    "SupersessionSettings",
     "SyncCatalog",
     "FactCatalog",
     "ForgetCatalog",
