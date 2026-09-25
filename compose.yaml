@@ -129,7 +129,6 @@ x-app: &app
 
 services:
   postgres:
-    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile.postgres
@@ -142,6 +141,7 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}
       POSTGRES_PASSWORD: ${REMEMBERSTACK_POSTGRES_PASSWORD:?set REMEMBERSTACK_POSTGRES_PASSWORD}

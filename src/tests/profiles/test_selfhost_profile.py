@@ -155,7 +155,9 @@ def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
     ):
         assert one_shot in compose
     for dependency in ("postgres", "object-store"):
-        assert f"\n  {dependency}:\n    restart: unless-stopped\n" in compose
+        block = compose.split(f"\n  {dependency}:\n", maxsplit=1)[1]
+        block = block.split("\n\n", maxsplit=1)[0]
+        assert "    restart: unless-stopped\n" in block
 
 
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
