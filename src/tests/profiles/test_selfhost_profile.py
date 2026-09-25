@@ -106,9 +106,6 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SENTRY_DSN",
         "REMEMBERSTACK_SENTRY_ENVIRONMENT",
         "REMEMBERSTACK_SENTRY_SAMPLE_RATE",
-        "LANGFUSE_PUBLIC_KEY",
-        "LANGFUSE_SECRET_KEY",
-        "LANGFUSE_HOST",
         "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
         "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
         "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
@@ -141,6 +138,8 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     )
     assert 'meter-receipts:\n    <<: *app\n    command: ["meter-receipts"]' in compose
     assert 'profiles: ["managed"]' in compose
+    # The engine builds no model-call tracer; only the benchmark harness does.
+    assert "LANGFUSE" not in compose
 
 
 def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
@@ -411,7 +410,9 @@ def test_model_bindings_ignore_chat_routing_transport_settings(
         "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
     )
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S", "5.0"
+    )
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
 
     assert _model_bindings() == baseline

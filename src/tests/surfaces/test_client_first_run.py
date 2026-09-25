@@ -186,6 +186,51 @@ def test_cli_ingest_sends_markdown_without_mime_flag(
     assert recorder.params[0]["mime"] == "text/markdown"
 
 
+def test_cli_ingest_filename_names_the_document_and_keeps_the_mime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--filename` changes the stored name; the type still follows the file."""
+    from remember.cli import main
+
+    recorder = _IngestRecorder()
+    real_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = httpx.MockTransport(recorder)
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", mock_client)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "config"))
+    source = tmp_path / "tmp-export-01.md"
+    source.write_text("# Standup", encoding="utf-8")
+    code = main(
+        [
+            "ingest",
+            str(source),
+            "--filename",
+            "standup-2026-09-25.md",
+            "--api-url",
+            "http://127.0.0.1:8000",
+        ]
+    )
+    assert code == 0, capsys.readouterr().err
+    assert recorder.params[0]["filename"] == "standup-2026-09-25.md"
+    assert recorder.params[0]["mime"] == "text/markdown"
+
+
+def test_both_clients_report_a_missing_path_as_file_not_found(tmp_path: Path) -> None:
+    """`Client` and `MemoryClient` fail the same way before any request."""
+    from remember import Client
+    from remember import MemoryClient
+
+    missing = tmp_path / "missing.md"
+    for client_type in (Client, MemoryClient):
+        with client_type(base_url="http://127.0.0.1:8000") as client:
+            for source in (missing, str(missing)):
+                with pytest.raises(FileNotFoundError):
+                    client.ingest(source)
+
+
 def test_cli_ingest_warns_when_the_engine_parks_the_file(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

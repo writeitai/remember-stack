@@ -984,7 +984,9 @@ def test_chat_routing_transport_settings_leave_fingerprints_stable(
         "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
     )
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S", "5.0"
+    )
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
 
     assert tool_catalog_sha256() == baseline_catalog

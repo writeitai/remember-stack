@@ -280,6 +280,11 @@ def test_query_free_text_with_preceding_flags(
     assert res2 == 0
     assert captured_calls[-1] == ("fact", "What were our decisions on auth?")
 
+    # A subcommand name later in the line is a flag value, not a subcommand
+    res3 = main(["query", "--project", "space", "What were our decisions?"])
+    assert res3 == 0
+    assert captured_calls[-1] == ("fact", "What were our decisions?")
+
 
 def test_doctor_warns_on_non_executable_configured_launcher(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

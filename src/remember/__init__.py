@@ -26,12 +26,14 @@ from remember.models import ClaimValidPrecision
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
+from remember.models import DeploymentBuildInfo
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
 from remember.models import Envelope
 from remember.models import IngestedVersion
+from remember.models import NegativeKind
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
 from remember.models import QueryResultDict
@@ -58,6 +60,7 @@ __all__ = (
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "ContextBundleV2",
+    "DeploymentBuildInfo",
     "DocumentDeletion",
     "DocumentPage",
     "DocumentSummary",
@@ -66,6 +69,7 @@ __all__ = (
     "IngestedVersion",
     "MemoryApiError",
     "MemoryClient",
+    "NegativeKind",
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",

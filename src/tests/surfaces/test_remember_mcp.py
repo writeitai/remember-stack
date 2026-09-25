@@ -141,6 +141,7 @@ def test_engine_mode_lifecycle_over_stdio() -> None:
     )
     assert [response["id"] for response in responses] == [1, 2, 3]
     assert responses[0]["result"]["protocolVersion"] == "2025-11-25"
+    assert responses[0]["result"]["serverInfo"]["name"] == "remember"
     names = [entry["name"] for entry in responses[1]["result"]["tools"]]
     assert names == [item.name for item in memory_tools()]
     assert responses[2]["result"]["isError"] is False

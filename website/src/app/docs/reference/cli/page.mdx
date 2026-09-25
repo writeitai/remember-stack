@@ -141,7 +141,7 @@ print a warning on standard error.
 ### `remember ingest`
 
 ```text
-remember ingest FILE [--mime MIME] [--title TITLE]
+remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-kind KIND --source-ref REF]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
@@ -161,6 +161,7 @@ document; nothing is processed again.
 | Flag | Default | Meaning |
 |---|---|---|
 | `FILE` | required | Path of the file to upload. |
+| `--filename` | the file's own name | The name the document is stored under. The media type still comes from `FILE`'s extension unless you pass `--mime`. |
 | `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
@@ -256,7 +257,7 @@ remember query --combined "Why did the cutover move to October?"
 
 <Callout type="note">
 
-The shorthand applies only when no argument after `query` is exactly a
+The shorthand applies unless the word right after `query` is exactly a
 subcommand name (`text`, `sql`, `explain-sql`, `space`, `search-space`,
 `list-saved`, `describe-saved`, `run-saved`, `adjacent-chunks`). To ask
 a one-word question such as "space", write `remember query text space`.

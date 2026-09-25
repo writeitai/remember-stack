@@ -8059,10 +8059,9 @@ Performance tracing is off.
 
 ## Model-call tracing
 
-RememberStack does not trace model calls from a self-hosted deployment yet.
-`compose.yaml` passes `LANGFUSE_*` and `REMEMBERSTACK_LANGFUSE_*` variables,
-but only the project's benchmark harness reads them; the API and workers
-ignore them. Setting them changes nothing.
+A self-hosted deployment does not trace model calls. The `LANGFUSE_*` and
+`REMEMBERSTACK_LANGFUSE_*` variables are read only by the project's
+benchmark harness; setting them for the API and workers changes nothing.
 
 What you can see of each model call is its cost receipt, below.
 
@@ -13373,12 +13372,14 @@ The client is synchronous. There is no async client yet
 | `ConnectorCreate` | model | [Models](#models) |
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
+| `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
+| `NegativeKind` | enum | [Result types](https://remember.dev/docs/reference/result-types#negativekind) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
@@ -13484,10 +13485,7 @@ Raises:
 
 ### `Client.ingest`
 
-Same signature and behaviour as [`MemoryClient.ingest`](#ingest), with one
-difference: a `str` `source` is always treated as a file path. A path that
-does not exist raises `FileNotFoundError` (on `MemoryClient` it raises
-`ValueError`).
+Inherited unchanged from [`MemoryClient.ingest`](#ingest).
 
 ### `Client.ingest_file`
 
@@ -13625,11 +13623,11 @@ Raises `ValueError` when:
 - `source_modified_at`, `source_version_ref` or `versioning_mode="living"` is
   given without `source_kind`/`source_ref`;
 - `source_modified_at` is naive or not UTC;
-- a `str` path is not a file (`MemoryClient` only);
 - neither `source` nor `content` is given;
 - bytes are given without `filename`.
 
-Reading a path can raise `OSError`.
+Reading a path can raise `OSError`: `FileNotFoundError` when it does not
+exist, whether given as `Path` or `str`.
 
 Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts.
@@ -13720,7 +13718,7 @@ Returns which engine build and which model bindings the deployment is
 serving: `build_revision` (str), `model_bindings` (dict of str to str),
 `document_binding_generation` (str or `None`), and `tools` (dict of MCP
 memory tool name to tool version). The class is
-`remember.models.DeploymentBuildInfo`; it is not in `__all__`.
+`remember.DeploymentBuildInfo`.
 
 ```python
 info = memory.deployment_build_info()
@@ -14445,7 +14443,7 @@ you can pipe the output into `jq` safely.
 ### `remember ingest`
 
 ```text
-remember ingest FILE [--mime MIME] [--title TITLE]
+remember ingest FILE [--filename NAME] [--mime MIME] [--title TITLE]
                      [--source-kind KIND --source-ref REF]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
@@ -14465,6 +14463,7 @@ document; nothing is processed again.
 | Flag | Default | Meaning |
 |---|---|---|
 | `FILE` | required | Path of the file to upload. |
+| `--filename` | the file's own name | The name the document is stored under. The media type still comes from `FILE`'s extension unless you pass `--mime`. |
 | `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](https://remember.dev/docs/self-hosting/converters). |
 | `--title` | none | Human title. |
 | `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
@@ -14560,7 +14559,7 @@ remember query --combined "Why did the cutover move to October?"
 
 **Note:**
 
-The shorthand applies only when no argument after `query` is exactly a
+The shorthand applies unless the word right after `query` is exactly a
 subcommand name (`text`, `sql`, `explain-sql`, `space`, `search-space`,
 `list-saved`, `describe-saved`, `run-saved`, `adjacent-chunks`). To ask
 a one-word question such as "space", write `remember query text space`.
@@ -14887,7 +14886,7 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 
 | Method | Behaviour |
 |---|---|
-| `initialize` | Requires `params.protocolVersion` (any string). Answers with `protocolVersion` `2025-11-25`, `capabilities: {"tools": {}}` and `serverInfo: {"name": "rememberstack", "version": "<package version>"}`. |
+| `initialize` | Requires `params.protocolVersion` (any string). Answers with `protocolVersion` `2025-11-25`, `capabilities: {"tools": {}}` and `serverInfo: {"name": "remember", "version": "<package version>"}`. |
 | `ping` | Answers `{}`. |
 | `tools/list` | Returns the tool list; see below. |
 | `tools/call` | Runs one tool. `params.name` is required; `params.arguments` must be an object when present. |

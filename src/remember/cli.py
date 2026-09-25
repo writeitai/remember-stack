@@ -86,8 +86,10 @@ def main(argv: list[str] | None = None) -> int:
                     "run-saved",
                     "adjacent-chunks",
                 }
-                has_subcmd = any(
-                    arg in known_query_subcmds for arg in effective_argv[1:]
+                # Only the word right after `query` can name a subcommand;
+                # anywhere else it is part of the question or a flag value.
+                has_subcmd = effective_argv[1:2] != [] and (
+                    effective_argv[1] in known_query_subcmds
                 )
                 has_help = any(arg in ("-h", "--help") for arg in effective_argv[1:])
                 if not has_subcmd and not has_help:
@@ -612,11 +614,12 @@ def _json_list(raw: str | None) -> list[object]:
 
 
 def _run_ingest(args: argparse.Namespace) -> int:
-    """Push one local file to the deployment's E0 ingress."""
+    """Send one local file to the deployment."""
     try:
         with _cli_memory_client(args) as client:
             result = client.ingest(
                 args.file,
+                filename=args.filename,
                 mime=args.mime,
                 title=args.title,
                 source_kind=args.source_kind,
@@ -1106,9 +1109,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     ingest = commands.add_parser(
-        "ingest", parents=[client_flags], help="push a file through E0"
+        "ingest", parents=[client_flags], help="send a file to the memory"
     )
     ingest.add_argument("file", type=Path)
+    ingest.add_argument(
+        "--filename", help="name to store the file under (default: its own name)"
+    )
     ingest.add_argument("--mime")
     ingest.add_argument("--title")
     ingest.add_argument("--source-kind")
