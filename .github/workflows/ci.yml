@@ -489,7 +489,7 @@ jobs:
   pr-gate:
     name: PR gate
     runs-on: ubuntu-latest
-    needs: [changes, quality, unit, contract-smoke]
+    needs: [changes, quality, unit, contract-smoke, engine-image-arm64]
     if: always()
     steps:
       - name: Require hard lanes (incl. path selector)
@@ -498,7 +498,14 @@ jobs:
           echo "quality=${{ needs.quality.result }}"
           echo "unit=${{ needs.unit.result }}"
           echo "contract-smoke=${{ needs.contract-smoke.result }}"
+          echo "engine-image-arm64=${{ needs.engine-image-arm64.result }}"
           test "${{ needs.changes.result }}" = "success"
           test "${{ needs.quality.result }}" = "success"
           test "${{ needs.unit.result }}" = "success"
           test "${{ needs.contract-smoke.result }}" = "success"
+          # Path-selected: skipped when no image input changed, but a run
+          # that happened must have passed.
+          case "${{ needs.engine-image-arm64.result }}" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac

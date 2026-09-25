@@ -167,6 +167,7 @@ def _validate_engine_image_release(*, root: Path) -> None:
         "platforms: linux/amd64,linux/arm64",
         "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
         'sort == ["amd64", "arm64"]',
+        "for platform in linux/amd64 linux/arm64; do",
     ):
         if required not in job:
             raise ValueError(

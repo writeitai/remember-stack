@@ -267,8 +267,12 @@ jobs:
           IMAGE: ghcr.io/writeitai/remember-stack:${{ needs.prepare.outputs.version }}
         run: |
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-            docker pull --platform linux/amd64 "$IMAGE" >/dev/null
-            test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "${{ needs.prepare.outputs.source_sha }}"
+            # Both platform images must come from this exact source revision.
+            for platform in linux/amd64 linux/arm64; do
+              docker pull --platform "$platform" "$IMAGE" >/dev/null
+              test "$(docker image inspect --format '{{ .Os }}/{{ .Architecture }}' "$IMAGE")" = "$platform"
+              test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "${{ needs.prepare.outputs.source_sha }}"
+            done
             echo 'present=true' >> "$GITHUB_OUTPUT"
           else
             echo 'present=false' >> "$GITHUB_OUTPUT"
