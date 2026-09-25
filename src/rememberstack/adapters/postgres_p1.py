@@ -50,7 +50,35 @@ class EmbeddingModelChangedError(RuntimeError):
     """
 
 
-_OTHER_STORED_EMBEDDING_MODELS = text(
+_OTHER_STORED_EMBEDDING_MODEL = text(
+    """
+    SELECT EXISTS (SELECT 1 FROM chunk_search WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM chunk_search WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM claims WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM claims WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM relations WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM relations WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM observations WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM observations WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+    """
+)
+"""Whether any stored chunk, claim or fact vector carries another model stamp.
+
+``<`` and ``>`` rather than ``<>`` or ``IS DISTINCT FROM``: each is an
+index range scan on ``(deployment_id, embedding_model)`` that stops at the
+first hit, and neither matches the NULL stamp of a row not embedded yet.
+"""
+
+
+_OTHER_STORED_EMBEDDING_MODEL_NAMES = text(
     """
     SELECT DISTINCT embedding_model FROM (
       SELECT embedding_model FROM chunk_search WHERE deployment_id = :deployment_id
@@ -65,7 +93,7 @@ _OTHER_STORED_EMBEDDING_MODELS = text(
     ORDER BY embedding_model
     """
 )
-"""Model stamps on stored chunk, claim and fact vectors other than the configured one."""
+"""The other stamps by name; read only to word the refusal."""
 
 
 class PostgresP1Index:
@@ -152,24 +180,26 @@ class PostgresP1Index:
         configured model (``entity_profile_backfill_required``); the others
         have no rebuild. A deployment with no vectors may switch freely.
         """
+        parameters = {
+            "deployment_id": deployment_id,
+            "embedding_model": self._embedding_model,
+        }
         with self._engine.connect() as connection:
-            stored = tuple(
-                connection.execute(
-                    _OTHER_STORED_EMBEDDING_MODELS,
-                    {
-                        "deployment_id": deployment_id,
-                        "embedding_model": self._embedding_model,
-                    },
-                ).scalars()
-            )
-        if stored:
-            raise EmbeddingModelChangedError(
-                "REMEMBERSTACK_P1_EMBEDDING_MODEL is "
-                f"{self._embedding_model!r}, but this deployment already holds "
-                f"vectors made with {', '.join(repr(m) for m in stored)}. "
-                "Nothing re-embeds them, so semantic search would stop finding "
-                "them; set the variable back to the stored model."
-            )
+            if not connection.execute(
+                _OTHER_STORED_EMBEDDING_MODEL, parameters
+            ).scalar_one():
+                return
+            stored = connection.execute(
+                _OTHER_STORED_EMBEDDING_MODEL_NAMES, parameters
+            ).scalars()
+            names = ", ".join(repr(model) for model in stored)
+        raise EmbeddingModelChangedError(
+            "REMEMBERSTACK_P1_EMBEDDING_MODEL is "
+            f"{self._embedding_model!r}, but this deployment already holds "
+            f"vectors made with {names}. Nothing re-embeds them, so semantic "
+            "search would stop finding them; set the variable back to the "
+            "stored model."
+        )
 
     def entity_profile_backfill_required(self, *, deployment_id: UUID) -> bool:
         """Whether setup must repair profiles before publishing entity semantics."""
