@@ -4145,9 +4145,11 @@ dead-lettered, and the message names them too. What to do next is under
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
 stage has `succeeded` or been `skipped` and has a `finished_at`. A
-`pending` stage with a `defer_reason` of `no_route` or `budget` is parked:
-it will not move until an operator adds a conversion route or the spend
-budget allows more work, so waiting longer does not help.
+`pending` stage with a `defer_reason` of `no_route` is parked: it will not
+move until an operator adds a conversion route, so waiting does not help.
+With `budget`, a spend budget has reached its ceiling: the work resumes by
+itself when the budget window ends, or sooner if an operator raises the
+ceiling.
 
 Capability reasons when not ready:
 
