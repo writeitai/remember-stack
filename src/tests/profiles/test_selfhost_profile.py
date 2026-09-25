@@ -127,10 +127,6 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE", "120"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT", "8"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE", "600"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT", "32"),
         ("REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S", "60"),
         ("REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S", "3600"),
     ):
@@ -163,7 +159,10 @@ def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
 def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
     """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
     compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
-    limits = re.findall(r"- max_connections=(\d+)\n", compose)
+    limits = re.findall(
+        r"- max_connections=\$\{REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-(\d+)\}\n",
+        compose,
+    )
     assert len(limits) == 1
     workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
     api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4

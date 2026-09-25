@@ -16,6 +16,7 @@ from datetime import datetime
 import json
 import logging
 import sys
+from typing import cast
 from typing import Literal
 from typing import TextIO
 from uuid import UUID
@@ -23,6 +24,7 @@ from uuid import UUID
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
@@ -189,6 +191,13 @@ class EngineMcpServer:
                     self._client.call_open_query(name=name, arguments=arguments),
                     default=str,
                 )
+            elif name == ADJACENT_CHUNKS_TOOL_NAME:
+                parsed = validate_arguments(name, arguments)
+                envelope = self._client.adjacent_chunks(
+                    chunk_id=cast(UUID, parsed["chunk_id"]),
+                    window=cast(int, parsed["window"]),
+                )
+                text = envelope.model_dump_json()
             else:
                 validate_arguments(name, arguments)
                 text = self._client.run_operation(

@@ -22,6 +22,7 @@ from typing import cast
 from typing import Literal
 from uuid import UUID
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
@@ -37,6 +38,7 @@ from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import tool
+from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from rememberstack.model import ForgetInProgressError
@@ -247,9 +249,9 @@ class OperationMcpServer:
         composed.
 
         Write tools lead when both ports are composed, then `delete_document`
-        when deletion is composed, the four assured operations, and the seven
-        §3.1 tools when open query is composed. `examples.*` never appear as
-        top-level tools.
+        when deletion is composed, the four assured operations, `adjacent_chunks`,
+        and the seven §3.1 tools when open query is composed. `examples.*` never
+        appear as top-level tools.
         """
         names: list[str] = []
         if self._write_backend is not None:
@@ -259,6 +261,7 @@ class OperationMcpServer:
         if self._search_backend is not None:
             names.append(SEARCH_DOCUMENTS_TOOL_NAME)
         names.extend(OPERATION_TOOL_NAMES)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)
         return {
@@ -315,6 +318,22 @@ class OperationMcpServer:
                 return _internal_error(name=name)
             return {
                 "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
+                "isError": False,
+            }
+        if name == ADJACENT_CHUNKS_TOOL_NAME:
+            try:
+                args = validate_arguments(name, arguments)
+                chunk_id = cast(UUID, args["chunk_id"])
+                window = cast(int, args["window"])
+                envelope = self._surface.adjacent_chunks(
+                    chunk_id=chunk_id, window=window
+                )
+            except ToolArgumentError as error:
+                return error_result(error.error)
+            except Exception:  # noqa: BLE001 — the MCP wire boundary
+                return _internal_error(name=name)
+            return {
+                "content": [{"type": "text", "text": envelope.model_dump_json()}],
                 "isError": False,
             }
         try:

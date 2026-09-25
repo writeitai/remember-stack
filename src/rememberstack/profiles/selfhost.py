@@ -198,14 +198,16 @@ class SelfHostSettings(BaseSettings):
     api_revocation_max_age_s: float = Field(default=3_600.0, gt=0)
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
-    #: Direct-path admission limits (D136 §7.6), counted in this API process.
-    #: Per credential (a signed token's ``jti``) and for the whole deployment;
-    #: the shared secret is bounded by the deployment limits only. With N API
-    #: replicas the effective ceilings are N times these numbers.
-    api_admission_key_per_minute: int = Field(default=120, ge=1)
-    api_admission_key_in_flight: int = Field(default=8, ge=1)
-    api_admission_deployment_per_minute: int = Field(default=600, ge=1)
-    api_admission_deployment_in_flight: int = Field(default=32, ge=1)
+    #: Optional direct-path admission limits (D136 §7.6), counted in this API
+    #: process. Each is off unless set to a positive number (``0``, the
+    #: default, means no limit). Per credential (a signed token's ``jti``) and
+    #: for the whole deployment; the shared secret is bounded by the deployment
+    #: limits only. With N API replicas the effective ceilings are N times
+    #: these numbers.
+    api_admission_key_per_minute: int = Field(default=0, ge=0)
+    api_admission_key_in_flight: int = Field(default=0, ge=0)
+    api_admission_deployment_per_minute: int = Field(default=0, ge=0)
+    api_admission_deployment_in_flight: int = Field(default=0, ge=0)
     spend_lease_url: str | None = None
     meter_ingest_url: str | None = None
     meter_ingest_token: SecretStr | None = None
@@ -1079,6 +1081,12 @@ class SelfHostProfile:
             max_concurrency=self._settings.graph_max_concurrency,
             pool_wait_seconds=self._settings.graph_pool_timeout_s,
         )
+        admission_limits = AdmissionLimits(
+            key_per_minute=self._settings.api_admission_key_per_minute,
+            key_in_flight=self._settings.api_admission_key_in_flight,
+            deployment_per_minute=self._settings.api_admission_deployment_per_minute,
+            deployment_in_flight=self._settings.api_admission_deployment_in_flight,
+        )
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
@@ -1087,17 +1095,10 @@ class SelfHostProfile:
             browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
-            direct_admission=DirectPathAdmission(
-                limits=AdmissionLimits(
-                    key_per_minute=self._settings.api_admission_key_per_minute,
-                    key_in_flight=self._settings.api_admission_key_in_flight,
-                    deployment_per_minute=(
-                        self._settings.api_admission_deployment_per_minute
-                    ),
-                    deployment_in_flight=(
-                        self._settings.api_admission_deployment_in_flight
-                    ),
-                )
+            direct_admission=(
+                DirectPathAdmission(limits=admission_limits)
+                if admission_limits.enabled
+                else None
             ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
             readiness=_FreshDeploymentReadiness(

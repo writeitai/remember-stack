@@ -215,6 +215,12 @@ generation's contribution — nothing is overwritten.
 > distinct document lineages** whose **current-testimony** claims support (resp. contradict)
 > the fact.
 
+**Containers (D133).** A container and its members are one source: an email and its
+attachment, or an archive and its files, count as one lineage. The counting key is
+`documents.counting_lineage_id` — the lineage's own `doc_id` for a root, the root container's
+for a member — denormalized write-once onto evidence rows, so the count is
+`COUNT(DISTINCT counting_lineage_id)` (`format_conversion_design.md` §5.3).
+
 One redefinition, three inflations dead: re-extraction (new generation, same lineage → no
 change), version churn (an hourly-edited doc re-asserting a fact per version → one lineage),
 and within-document repetition (three paragraphs asserting X → one lineage — corroboration is

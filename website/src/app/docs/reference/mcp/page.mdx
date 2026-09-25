@@ -77,13 +77,14 @@ each tool the deployment reports at the same version:
    (only `pipeline_readiness` and `search_documents` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
-3. The seven SQL query tools, when the deployment serves the query space.
+3. Context expansion: `adjacent_chunks`.
+4. The seven SQL query tools, when the deployment serves the query space.
 
 A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 15 tools: 4 + 4 + 7.
+lists 16 tools: 4 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -378,6 +379,19 @@ Both of the above in one call, returned as `ContextBundle/v2`.
 
 For every operation, unknown keys are refused, and integers must be whole
 numbers.
+
+### Context expansion tool
+
+#### `adjacent_chunks`
+
+Retrieve neighbouring chunks preceding and succeeding a target chunk within the
+same document to expand conversational or narrative context. Returns an
+`Envelope` containing surrounding chunks ordered by ordinal.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `chunk_id` | string (UUID) | yes | Target chunk UUID to expand around. |
+| `window` | integer | no | Number of neighbouring chunks on each side (1 or 2, default 1). |
 
 ### SQL query tools
 
