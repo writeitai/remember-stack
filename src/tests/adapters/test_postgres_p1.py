@@ -765,7 +765,7 @@ def test_setup_refuses_a_new_embedding_model_once_vectors_exist(
     with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
         switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
 
-    empty_deployment = UUID("5f000000-0000-0000-0000-000000000095")
+    empty_deployment = UUID("5f000000-0000-0000-0000-000000000096")
     DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
         deployment_input=DeploymentBootstrapInput(
             deployment_id=empty_deployment,
