@@ -230,8 +230,8 @@ These describe remember.dev's provider-cost safeguard, not your credits.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/settings` | session member | `diagnostics_opt_out`, `onboarding_state`, `alpha_terms_version` |
-| `PUT` | `/v1/orgs/{org_id}/settings` | session owner | Body any of `diagnostics_opt_out`, `onboarding_state`, `alpha_terms_version` (≤64) |
+| `GET` | `/v1/orgs/{org_id}/settings` | session member | `onboarding_state`, `alpha_terms_version` |
+| `PUT` | `/v1/orgs/{org_id}/settings` | session owner | Body any of `onboarding_state`, `alpha_terms_version` (≤64) |
 | `GET` | `/v1/orgs/{org_id}/onboarding` | session member | Same as settings |
 | `PUT` | `/v1/orgs/{org_id}/onboarding` | session owner | Same as settings |
 

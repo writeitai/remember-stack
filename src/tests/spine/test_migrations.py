@@ -139,6 +139,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_33_0054",
         "p9_34_0055",
         "p9_35_0056",
+        "p9_36_0057",
     )
     assert len(script.get_heads()) == 1
 
@@ -161,7 +162,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p1_04_0019_d79_structure_generations.py": 1,
         "p9_22_0043_document_entity_bindings.py": 1,
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
-        "p9_34_0055_document_metadata.py": 2,
+        "p9_35_0056_document_metadata.py": 2,
     }
     assert "bootstrap_deployment" not in migration_source
 
@@ -678,7 +679,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_35_0056"
+    assert head_before_noop == head_after_noop == "p9_36_0057"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1266,7 +1267,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1310,7 +1311,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
 
 
 _BACKFILL_MIMES = (
@@ -1343,7 +1344,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
     reset_database(config=config)
-    command.upgrade(config=config, revision="p9_33_0054")
+    command.upgrade(config=config, revision="p9_34_0055")
     engine = create_engine(database_url)
     deployment_id = uuid4()
     versions: dict[str, tuple[object, object]] = {}
@@ -1410,7 +1411,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
                 else:
                     versions[mime] = (version_id, doc_id)
 
-        command.upgrade(config=config, revision="p9_34_0055")
+        command.upgrade(config=config, revision="p9_35_0056")
         with engine.connect() as connection:
             rows = {
                 row["version_id"]: row
@@ -1442,7 +1443,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
             assert row["file_name"] is None and row["source_path"] is None
             # the declared title was never recorded; the lineage title is a name
             assert row["title"] is None
-            assert row["metadata_mapping_version"] == "backfill-p9_34"
+            assert row["metadata_mapping_version"] == "backfill-p9_35"
         untitled = versions[_BACKFILL_MIMES[1]][0]
         assert untitled not in names
         titled = versions[_BACKFILL_MIMES[0]][0]
@@ -1452,12 +1453,12 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
 
         # a populated store refuses the lossy downgrade and stays at head
         with pytest.raises(RuntimeError, match="D134 downgrade requires"):
-            command.downgrade(config=config, revision="p9_33_0054")
-        assert _head_revision(database_url=database_url) == "p9_34_0055"
+            command.downgrade(config=config, revision="p9_34_0055")
+        assert _head_revision(database_url=database_url) == "p9_35_0056"
         with engine.begin() as connection:
             connection.execute(text("DELETE FROM document_metadata"))
         # an empty store drops the three tables
-        command.downgrade(config=config, revision="p9_33_0054")
+        command.downgrade(config=config, revision="p9_34_0055")
         with engine.connect() as connection:
             assert (
                 connection.execute(
@@ -1469,7 +1470,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1477,7 +1478,7 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
     reset_database(config=config)
-    command.upgrade(config=config, revision="p9_35_0056")
+    command.upgrade(config=config, revision="p9_36_0057")
     engine = create_engine(database_url)
     claim_id = uuid4()
 
@@ -1493,10 +1494,10 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
 
     try:
         # an unused column drops cleanly and re-adds on upgrade
-        command.downgrade(config=config, revision="p9_34_0055")
-        assert _head_revision(database_url=database_url) == "p9_34_0055"
+        command.downgrade(config=config, revision="p9_35_0056")
+        assert _head_revision(database_url=database_url) == "p9_35_0056"
         assert not span_column_exists()
-        command.upgrade(config=config, revision="p9_35_0056")
+        command.upgrade(config=config, revision="p9_36_0057")
         assert span_column_exists()
 
         with engine.begin() as connection:
@@ -1513,8 +1514,8 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
                 {"c": claim_id, "d": uuid4(), "doc": uuid4(), "chunk": uuid4()},
             )
         with pytest.raises(RuntimeError, match="own_document_name_span is recorded"):
-            command.downgrade(config=config, revision="p9_34_0055")
-        assert _head_revision(database_url=database_url) == "p9_35_0056"
+            command.downgrade(config=config, revision="p9_35_0056")
+        assert _head_revision(database_url=database_url) == "p9_36_0057"
         with engine.connect() as connection:
             stored = connection.execute(
                 text(
@@ -1528,4 +1529,4 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_35_0056"
+    assert _head_revision(database_url=database_url) == "p9_36_0057"

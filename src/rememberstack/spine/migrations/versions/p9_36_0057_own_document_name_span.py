@@ -17,8 +17,8 @@ from sqlalchemy import text
 
 from rememberstack.spine.migrations._helpers import apply_ddl
 
-revision: str = "p9_35_0056"
-down_revision: str | None = "p9_34_0055"
+revision: str = "p9_36_0057"
+down_revision: str | None = "p9_35_0056"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

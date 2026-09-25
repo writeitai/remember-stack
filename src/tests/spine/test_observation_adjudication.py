@@ -86,7 +86,6 @@ def test_legacy_contradiction_diagnostic_records_and_rejects_missed_conflicts(
     from rememberstack.eval import run_contradiction_suite
     from rememberstack.eval import seed_contradiction_cases
     from rememberstack.spine import ObservationAdjudicator
-    from rememberstack.spine import ObservationSettings
 
     case = WriterCase(engine=database_engine)
     seed_contradiction_cases(engine=database_engine, deployment_id=case.dep)
@@ -104,7 +103,8 @@ def test_legacy_contradiction_diagnostic_records_and_rejects_missed_conflicts(
     correct = ObservationAdjudicator(
         engine=database_engine,
         model_provider=FakeModelProvider(generate_router=answer),
-        settings=ObservationSettings(),
+        small_model="small",
+        frontier_model="frontier",
     )
     report = run_contradiction_suite(
         engine=database_engine,
@@ -120,7 +120,8 @@ def test_legacy_contradiction_diagnostic_records_and_rejects_missed_conflicts(
                 "ObservationVerdict": {"outcome": "new", "confidence": 0.95}
             }
         ),
-        settings=ObservationSettings(),
+        small_model="small",
+        frontier_model="frontier",
     )
     assert not run_contradiction_suite(
         engine=database_engine,

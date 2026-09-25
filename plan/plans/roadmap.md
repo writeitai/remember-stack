@@ -53,7 +53,7 @@ needs to restate it:
   the E/K/P data model, PageIndex (structure), semchunk
   (packing), Codex/OpenCode (K producers) with cross-family checkers (D53).
 - **The substrate — reached only through the D61 ports**, each with a self-host and a GCP
-  reference adapter: object store (MinIO/local ↔ GCS), task queue (**delivery-only** over
+  reference adapter: object store (S3-compatible/local ↔ GCS), task queue (**delivery-only** over
   `processing_state`: the pg `LISTEN/NOTIFY`+`SKIP LOCKED` shell ↔ Cloud Tasks push, one
   janitor for both — D62), mount publication (local dirs ↔ gcsfuse), K git remote, model
   providers, telemetry, auth perimeter. Vendor SDKs live only in `adapters/`; designs naming

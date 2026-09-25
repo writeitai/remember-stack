@@ -126,16 +126,8 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | Output allowance of the description call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | Run the two calls in parallel (`2`) or one after the other (`1`). |
 
-<Callout type="warning">
-
-`compose.yaml` does not pass any `REMEMBERSTACK_IMAGE_DESCRIPTION_*`
-variable into the containers, although `.env.example` lists them.
-Putting them in `.env` has no effect. Put them in `engine.env` with the
-override file described in [Configuration](/docs/self-hosting/configuration#what-compose-passes-through);
-the `api` and `worker-convert` services need them. Without the key, the
-`convert` worker refuses to start once a route names this converter.
-
-</Callout>
+Set them in `.env`. Without the key, the `convert` worker refuses to start
+once a route names this converter.
 
 ## Files no route accepts
 
@@ -154,7 +146,7 @@ After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   sh -c 'remember ops resume-no-route --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"'
 ```
 
