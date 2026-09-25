@@ -9,6 +9,8 @@ import tomllib
 import pytest
 from scripts.check_github_release import _required_assets
 from scripts.check_pypi_release import _require_identical
+from scripts.check_release_contract import _validate_engine_image_release
+from scripts.check_release_contract import _validate_postgres_release
 from scripts.check_release_contract import _validate_release_docs
 from scripts.prepare_next_release import _COORDINATE_FILES
 
@@ -369,6 +371,48 @@ def test_release_contract_rejects_a_stale_document_coordinate(tmp_path: Path) ->
         "website/src/app/docs/reference/cli/page.mdx must contain release "
         f"coordinate '`remember` CLI (v{version}'"
     )
+
+
+def test_release_contract_requires_a_multi_architecture_engine_image(
+    tmp_path: Path,
+) -> None:
+    """The API/worker image ships for amd64 and arm64, like PostgreSQL."""
+    root = Path(__file__).resolve().parents[3]
+    workflow = tmp_path / ".github/workflows/release.yml"
+    workflow.parent.mkdir(parents=True)
+    source = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    workflow.write_text(source, encoding="utf-8")
+    _validate_engine_image_release(root=tmp_path)
+
+    engine_job, postgres_job = source.split("\n  publish-postgres-ghcr:\n", 1)
+    single_architecture = engine_job.replace(
+        "platforms: linux/amd64,linux/arm64", "platforms: linux/amd64"
+    )
+    workflow.write_text(
+        single_architecture + "\n  publish-postgres-ghcr:\n" + postgres_job,
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="engine image contract"):
+        _validate_engine_image_release(root=tmp_path)
+
+
+def test_compose_pulls_the_published_postgres_image(tmp_path: Path) -> None:
+    """Compose names the multi-architecture PostgreSQL image for this version."""
+    root = Path(__file__).resolve().parents[3]
+    version = _project_version(root=root)
+    for relative in (
+        Path("Dockerfile.postgres"),
+        Path("compose.yaml"),
+        Path(".github/workflows/release.yml"),
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(
+            (root / relative).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    _validate_postgres_release(root=tmp_path, version=version)
+    with pytest.raises(ValueError, match="published PostgreSQL image"):
+        _validate_postgres_release(root=tmp_path, version="0.0.0")
 
 
 def _project_version(*, root: Path) -> str:

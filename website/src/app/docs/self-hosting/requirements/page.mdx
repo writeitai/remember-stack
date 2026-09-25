@@ -35,30 +35,20 @@ on a current GitHub Actions Ubuntu runner.
 
 ## Image architectures
 
-Two images make up the stack:
+Two images from this project make up the stack. Both are published for
+`linux/amd64` and `linux/arm64`, so an arm64 machine (Apple Silicon,
+Graviton, Ampere) runs them natively, without emulation:
 
-| Image | Where it comes from | Architectures |
-|---|---|---|
-| `ghcr.io/writeitai/remember-stack:0.17.1` (API and workers) | Pulled from GitHub Container Registry; Compose can also build it from `Dockerfile` | **linux/amd64 only** |
-| `rememberstack-postgres:19beta3` | Built locally by Compose from `Dockerfile.postgres` on first start | Whatever your machine builds |
+| Image | Used by |
+|---|---|
+| `ghcr.io/writeitai/remember-stack:0.17.1` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1` | PostgreSQL |
 
-The release workflow publishes the API/worker image for `linux/amd64`
-only. On an arm64 machine (Apple Silicon, Graviton, Ampere) you have two
-choices:
-
-- Build the image from source for your own architecture:
-  `docker compose build api`. All the app services share that image. The
-  release workflow does not build or test this image on arm64.
-- Run the published amd64 image under emulation, for example by exporting
-  `DOCKER_DEFAULT_PLATFORM=linux/amd64` before `docker compose up`. Docker
-  Desktop on Apple Silicon emulates amd64. It works more slowly than a
-  native image.
-
-The release workflow also publishes a multi-architecture PostgreSQL image,
-`ghcr.io/writeitai/remember-stack-postgres:19beta3-<version>`, for
-`linux/amd64` and `linux/arm64`. The shipped `compose.yaml` does not use it:
-it builds `rememberstack-postgres:19beta3` locally from `Dockerfile.postgres`.
-That first build compiles one extension from source and takes a few minutes.
+Compose pulls both from GitHub Container Registry. It builds an image from
+source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
+when you pass `--build`. Building PostgreSQL compiles one extension and
+takes a few minutes. The third image, SeaweedFS, is also published for both
+architectures.
 
 ## PostgreSQL 19 (beta)
 

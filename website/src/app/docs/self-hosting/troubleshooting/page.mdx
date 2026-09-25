@@ -96,9 +96,6 @@ Configuration mistakes that stop a container at start:
 | `worker-convert` names an unknown converter | A route in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` names a converter that does not exist, or needs a key that is not set. | See [File formats and converters](/docs/self-hosting/converters). |
 | A migration error in `setup` that says the store already holds claims | The new release cannot convert the existing data. | See [setup refuses an existing database](#setup-refuses-an-existing-database). |
 
-On an arm64 machine, also check that the image runs at all; see
-[Requirements](/docs/self-hosting/requirements).
-
 ## Wrong port or wrong address
 
 Compose publishes the API on the host port in

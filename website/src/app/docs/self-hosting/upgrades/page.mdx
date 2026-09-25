@@ -86,14 +86,11 @@ documents again. Keep your source files for this reason. See
 5. **Get the new images:**
 
     ```bash
-    docker compose pull api
-    docker compose build postgres
+    docker compose pull api postgres
     ```
 
-    All app services share the image `pull api` fetches. `build postgres`
-    rebuilds the PostgreSQL image in case `Dockerfile.postgres` changed; it
-    reuses the cache when nothing did. On arm64, build the app image
-    instead of pulling it: `docker compose build api`.
+    All app services share the image `pull api` fetches. Each release also
+    publishes its own PostgreSQL image, so `postgres` is pulled too.
 
 6. **Start:**
 

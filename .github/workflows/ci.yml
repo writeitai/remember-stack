@@ -458,11 +458,38 @@ jobs:
         if: always()
         run: docker compose --env-file .env down --volumes
 
+  # The release publishes the engine image for linux/amd64 and linux/arm64.
+  # Build the arm64 half natively here, so a dependency without an arm64 build
+  # fails on its pull request rather than in the release.
+  engine-image-arm64:
+    name: Engine image (linux/arm64)
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.compose == 'true'
+      || needs.changes.outputs.ci_control == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the engine image
+        run: docker build --tag remember-stack:arm64-check .
+
+      - name: The image is arm64 and its native dependencies load
+        run: |
+          test "$(docker image inspect --format '{{.Architecture}}' remember-stack:arm64-check)" = arm64
+          docker run --rm --entrypoint python remember-stack:arm64-check -c \
+            'import onnxruntime, pglast, PIL, psycopg, pyarrow; import rememberstack.profiles.selfhost; print("ok")'
+          docker run --rm --entrypoint remember remember-stack:arm64-check --version
+
   # Single always-present required check. Integration path jobs are soft.
   pr-gate:
     name: PR gate
     runs-on: ubuntu-latest
-    needs: [changes, quality, unit, contract-smoke]
+    needs: [changes, quality, unit, contract-smoke, engine-image-arm64]
     if: always()
     steps:
       - name: Require hard lanes (incl. path selector)
@@ -471,7 +498,14 @@ jobs:
           echo "quality=${{ needs.quality.result }}"
           echo "unit=${{ needs.unit.result }}"
           echo "contract-smoke=${{ needs.contract-smoke.result }}"
+          echo "engine-image-arm64=${{ needs.engine-image-arm64.result }}"
           test "${{ needs.changes.result }}" = "success"
           test "${{ needs.quality.result }}" = "success"
           test "${{ needs.unit.result }}" = "success"
           test "${{ needs.contract-smoke.result }}" = "success"
+          # Path-selected: skipped when no image input changed, but a run
+          # that happened must have passed.
+          case "${{ needs.engine-image-arm64.result }}" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac

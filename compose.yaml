@@ -129,10 +129,12 @@ x-app: &app
 
 services:
   postgres:
+    # Pulled from the release (linux/amd64 and linux/arm64). Compose builds it
+    # from Dockerfile.postgres only when the pull fails or with --build.
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: rememberstack-postgres:19beta3
+    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1
     command:
       - postgres
       - -c
