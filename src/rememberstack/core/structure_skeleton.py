@@ -136,7 +136,9 @@ def resolve_fallback_skeleton(
     Missing anchors disappear and their children are retried in the enclosing
     parent. Duplicate text is resolved by ``occurrence_index``. Siblings are
     ordered by their resolved block and tile to the next sibling; same-block
-    siblings collapse with the first proposal adopting later children.
+    siblings collapse with the first proposal adopting later children. Runs of
+    single-block leaf sections merge forward to preserve conversational
+    section integrity (D137).
     """
     root = _root_section(blocks=blocks, title=title, markdown_chars=len(document_md))
     if not blocks or not proposed:
@@ -461,6 +463,57 @@ def _resolve_anchor_level(
                 proposal=proposal, block_start=start, block_end=end, children=children
             )
         )
+
+    return _absorb_adjacent_single_block_leaves(result)
+
+
+def _absorb_adjacent_single_block_leaves(nodes: list[_AnchorNode]) -> list[_AnchorNode]:
+    """Absorb runs of single-block leaf sections (D137).
+
+    A single-block leaf section owns only its anchor block (block_start == block_end)
+    and has no children. When such micro-sections occur (even a run of one), they
+    represent split conversational dialogue turns or micro-remarks.
+
+    A run of single-block leaves is merged forward with the succeeding leaf section
+    if that section has no subsections. If the succeeding section has subsections or
+    does not exist (e.g. at the end of the document), the run collapses into a single
+    merged section. In all cases, the merged section is titled by the text at its first
+    block (proposal=nodes[run_start].proposal), ensuring title and heading level match
+    where the section begins without in-place mutation.
+    """
+    result: list[_AnchorNode] = []
+    i = 0
+    n = len(nodes)
+    while i < n:
+        curr = nodes[i]
+        if not curr.children and curr.block_start == curr.block_end:
+            run_start = i
+            while (
+                i + 1 < n
+                and not nodes[i + 1].children
+                and nodes[i + 1].block_start == nodes[i + 1].block_end
+            ):
+                i += 1
+            run_end = i
+            merge_target = (
+                run_end + 1
+                if run_end + 1 < n and not nodes[run_end + 1].children
+                else run_end
+            )
+            result.append(
+                _AnchorNode(
+                    proposal=nodes[run_start].proposal,
+                    block_start=nodes[run_start].block_start,
+                    block_end=nodes[merge_target].block_end,
+                    children=[],
+                )
+            )
+            i = merge_target + 1
+            continue
+
+        result.append(curr)
+        i += 1
+
     return result
 
 

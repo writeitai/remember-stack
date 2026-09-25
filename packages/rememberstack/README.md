@@ -1,6 +1,8 @@
-# rememberstack (DEPRECATED)
+# rememberstack (RETIRED)
 
-> **Notice:** The `rememberstack` PyPI distribution is deprecated as of version 0.17.0 per Architecture Decisions D108 and D109.
+> **Notice:** Version 0.17.0 exists only to move existing installations to
+> `remember`. This project receives no further releases and is archived on PyPI
+> after the transition publication, per Architecture Decision D108.
 
 ## Migration Guide
 
@@ -15,7 +17,7 @@ uv add remember
 
 Import interfaces remain fully compatible:
 ```python
-from remember import RememberClient, MemoryClient, Client, CloudClient
+from remember import RememberClient, MemoryClient, Client
 ```
 
 ### 2. Self-Hosted Server Deployments

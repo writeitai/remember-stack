@@ -11,11 +11,11 @@ _VERSION = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _COORDINATE_FILES = (
     Path("README.md"),
     Path("compose.yaml"),
-    Path("website/src/app/docs/getting-started/page.mdx"),
-    Path("website/src/app/docs/deployment/page.mdx"),
+    Path("website/src/app/docs/start/quickstart/page.mdx"),
+    Path("website/src/app/docs/self-hosting/install/page.mdx"),
+    Path("website/src/app/docs/self-hosting/requirements/page.mdx"),
     Path("website/src/app/docs/reference/cli/page.mdx"),
-    Path("website/src/app/docs/reference/api/page.mdx"),
-    Path("website/src/app/docs/project-status/page.mdx"),
+    Path("website/src/app/docs/reference/http-api/page.mdx"),
 )
 
 

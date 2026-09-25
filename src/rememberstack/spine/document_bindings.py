@@ -178,6 +178,32 @@ def _document_coordinate(
     return doc_id, lemma
 
 
+def live_binding_rows(
+    *, deployment_id: UUID, decisions: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """D102 rows for one lineage's live decisions, oldest first (D135).
+
+    Same derivation as the setup rebuild and the insert trigger: one row per
+    (document, lemma, entity), carrying the newest non-new T4 anchor.
+    """
+    return _binding_rows(
+        deployment_id=deployment_id,
+        decisions=tuple(
+            _RebuildDecision(
+                decision_id=decision["decision_id"],  # type: ignore[arg-type]
+                decided_at=decision["decided_at"],  # type: ignore[arg-type]
+                doc_id=decision["doc_id"],  # type: ignore[arg-type]
+                entity_id=decision["entity_id"],  # type: ignore[arg-type]
+                method=str(decision["method"]),
+                is_new_entity=bool(decision["is_new_entity"]),
+                features=decision["features"],  # type: ignore[arg-type]
+            )
+            for decision in decisions
+        ),
+        aliases={},
+    )
+
+
 def _binding_rows(
     *,
     deployment_id: UUID,

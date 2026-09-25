@@ -65,6 +65,9 @@ class _RecordingCatalog:
             version_id=uuid4(),
             content_hash=record.content_hash,
             created=True,
+            mime=record.mime,
+            title=None,
+            versioning_mode="snapshot",
         )
 
 

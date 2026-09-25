@@ -31,9 +31,12 @@ FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea5
 
 COPY --from=uv /uv /uvx /bin/
 
+# REMEMBERSTACK_INTERNAL_OPS enables `remember ops`: this image is where the
+# operator commands run, against the deployment's own database.
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    REMEMBERSTACK_INTERNAL_OPS=1
 
 WORKDIR /app
 

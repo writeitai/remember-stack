@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -522,6 +523,59 @@ def _seed_documents(*, connection: Connection) -> None:
                 " WHERE deployment_id = :d AND version_id = :version"
             ),
             {"rep": representation_id, "d": _DEPLOYMENT_ID, "version": version_id},
+        )
+    for version_id, doc_id, marker in (
+        (_TARGET_VERSION_ID, _TARGET_DOC_ID, _TOKEN),
+        (_CONTROL_VERSION_ID, _CONTROL_DOC_ID, "control"),
+    ):
+        # D134 metadata, people and observed names are source-bearing.
+        connection.execute(
+            text(
+                "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                " family, file_name, source_path, title, thread_ref, extra,"
+                " metadata_mapping_version) VALUES (:d, :version, :doc, 'text',"
+                " :file_name, :path, :marker, :marker, CAST(:extra AS jsonb),"
+                " 'test')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "doc": doc_id,
+                "file_name": f"{marker}.txt",
+                "path": f"folder/{marker}",
+                "marker": marker,
+                "extra": json.dumps({"reply_to": marker}),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_people (deployment_id, version_id, role,"
+                " ordinal, display_name, address, normalized_name,"
+                " normalized_address, provenance) VALUES (:d, :version, 'author',"
+                " 0, :marker, :address, :marker, :address, 'source')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "marker": marker,
+                "address": f"{marker}@example.com",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_names (deployment_id, version_id,"
+                " observed_at, file_name, title, source_path, name_text, origin)"
+                " VALUES (:d, :version, now(), :file_name, :marker, :path,"
+                " :name_text, 'ingest')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "file_name": f"{marker}.txt",
+                "marker": marker,
+                "path": f"folder/{marker}",
+                "name_text": f"{marker}.txt {marker} folder/{marker}",
+            },
         )
     connection.execute(
         text(
@@ -1228,6 +1282,9 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             == 1
         )
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
+        for table in ("document_metadata", "document_people", "document_names"):
+            assert _count(connection, table, "version_id", _TARGET_VERSION_ID) == 0
+            assert _count(connection, table, "version_id", _CONTROL_VERSION_ID) == 1
         assert (
             _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)
             == 0
@@ -1375,6 +1432,18 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 " UNION ALL SELECT canonical_name FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT profile_summary FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT page_summary FROM knowledge_artifacts"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT file_name FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT source_path FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT title FROM document_metadata WHERE deployment_id = :d"
+                " UNION ALL SELECT extra::text FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT display_name FROM document_people"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT address FROM document_people WHERE deployment_id = :d"
+                " UNION ALL SELECT name_text FROM document_names"
                 "   WHERE deployment_id = :d"
                 ") residual WHERE value LIKE '%' || :token || '%'"
             ),

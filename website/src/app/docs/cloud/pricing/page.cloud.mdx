@@ -1,0 +1,165 @@
+export const metadata = {
+  title: "Pricing and credits",
+  description: "How remember.dev charges for an active project, for text it processes and for data it stores, how prepaid credits and holds work, and what is never charged.",
+};
+
+# Pricing and credits
+
+<AppliesTo products={["remember.dev"]} />
+
+remember.dev is prepaid. You buy credits, and three things draw on them:
+keeping a project running, processing text you send, and storing what the
+memory holds. Asking the memory questions is not charged.
+
+## Credits
+
+- **1 credit = €1**, excluding tax. Tax is calculated and added at checkout.
+- You buy credits through Stripe Checkout under **Billing**, choosing the
+  amount. The console shows the minimum and maximum you can buy at once.
+- Credits belong to the organisation. Every project in it draws on the same
+  balance.
+- **Credits do not expire.**
+- There is no free tier and no trial balance.
+
+Your organisation's first purchase also activates its Default project; see
+[Organisations, projects and members](/docs/cloud/organisations-and-projects). Each
+additional project is activated with its own purchase, and those credits go
+into the same balance.
+
+## The three charges
+
+<Callout type="note" title="Provisional rates">
+
+The rates below are development rates (rate version `dev-eur-2026-09-v4`,
+in force since 23 September 2026). They are provisional: they will be
+replaced when prices are published, and a new rate never changes a charge
+already made.
+
+</Callout>
+
+### Active project
+
+**20 credits per active project per month** (provisional).
+
+A project is charged only while its deployment is ready to serve you. The
+charge is prorated to the second across the UTC calendar month: a project
+that is active for ten days of a thirty-day month pays a third of the
+monthly rate.
+
+It is not charged while the project is waiting for payment, waiting for
+room on a host, being provisioned, blocked or closed.
+
+At the start of each UTC day remember.dev holds that day's maximum charge
+for each active project. At the end of the day it takes the exact amount
+for the seconds the project was active and releases the rest. If the
+balance or a cap cannot cover the next day's hold, the project is stopped
+until it can; see [Spend caps and auto top-up](/docs/cloud/spend-controls).
+
+### Processed text
+
+**20 credits per million characters** of processed text (provisional).
+
+This is charged once for each new document version that finishes
+processing successfully. The quantity is the number of characters in the
+document's text, after whitespace is normalised: every run of spaces, tabs
+and line breaks counts as one character. The size of the file in bytes does
+not matter; a character outside ASCII counts once, however many bytes it
+takes.
+
+The charge is taken only after processing succeeds. A rate may set a
+minimum billable quantity per document; the rate card shows it.
+
+Text is the only kind of input with a customer price, and remember.dev
+accepts only text: UTF-8 Markdown and plain text. Other kinds of input are
+refused before anything is stored or charged; see
+[Limits](/docs/cloud/limits#ingest).
+
+### Stored data
+
+**3 credits per GiB per month** (provisional).
+
+Once a day each deployment measures what it holds, and remember.dev charges
+for that day: gibibytes held multiplied by the part of the day the project
+was active. The console shows the rate per GiB-month.
+
+The measurement includes:
+
+- the project's database: documents, claims, facts, relations, entities,
+  indexes and the live graph;
+- the source files you sent and the artifacts derived from them.
+
+It does not include audit logs, caches, temporary copies made during
+upgrades, or anything remember.dev keeps for its own operations.
+
+If a day's measurement is missing, that day is not charged. remember.dev
+never estimates a storage charge.
+
+## What is not charged
+
+- **Reading.** Searches, assured operations, graph queries, SQL queries,
+  readiness checks and document listings cost nothing. They are limited
+  only by the deployment's capacity and remember.dev's provider-cost
+  safeguards.
+- **Access.** API, CLI and MCP use, tokens, and team members.
+- **Failed processing.** If a document version fails, the hold for it is
+  released in full.
+- **Sending the same content again.** Re-ingesting a document whose content
+  has not changed does not create a new version, so there is nothing to
+  process and nothing to charge.
+- **How the work is done.** Model tokens, retries, processing time and the
+  number of claims or relations produced are remember.dev's costs, not
+  meters.
+
+## Holds: how the balance moves
+
+Before remember.dev does chargeable work, it places a **hold**: it takes the
+most the work can cost from your available balance. When the work is done
+it charges the exact amount, which is never more than the hold, and returns
+the difference. If the work fails or is cancelled, the whole hold comes
+back.
+
+This is why your balance can drop while work is running and rise a little
+when it finishes. Open holds already count against the balance you see;
+do not subtract them again.
+
+If the balance cannot cover a hold, the work does not start. Nothing runs
+on debt, and your balance cannot go below zero.
+
+## Statements and receipts
+
+The **statement** under **Billing → Statements & receipts** is your bill.
+It lists the charges and credits from the organisation's ledger for a
+period, and its closing balance. Once published, a statement does not
+change; a correction appears as a new line on a later statement.
+
+A **receipt** is Stripe's record that you paid for credits. It shows money
+in, not usage.
+
+The ledger behind both is append-only: nothing is edited or deleted after
+it is written. A correction is added as a new entry.
+
+## Refunds
+
+Unused credits can be refunded. remember.dev refunds them when you ask;
+they are never forfeited, including when you close your account. Write to
+[support](/docs/cloud/support).
+
+## See the current rates
+
+The rate card is public:
+
+```bash
+curl -s https://remember.dev/app/api/v1/pricing/rates
+```
+
+The response lists each charge with its unit and rate in credits, and
+states that ordinary retrieval is included. Until prices are published it
+answers `404` with `pricing_not_published`; the provisional rates are the
+ones on this page. A new rate applies from the
+time it takes effect; it never changes a charge already made.
+
+## Related
+
+- [Spend caps and auto top-up](/docs/cloud/spend-controls)
+- [Limits](/docs/cloud/limits)
+- [remember.dev API: billing](/docs/reference/cloud-api#billing)

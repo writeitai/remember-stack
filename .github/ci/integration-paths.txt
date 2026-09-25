@@ -37,6 +37,7 @@ src/tests/surfaces/test_ingest_principal.py
 src/tests/surfaces/test_open_query_batch_f.py
 src/tests/surfaces/test_operation_registry.py
 src/tests/surfaces/test_ops_cli.py
+src/tests/surfaces/test_query_resolve_tiers.py
 src/tests/surfaces/test_query_sandbox_batch_b.py
 src/tests/surfaces/test_query_sandbox_batch_c.py
 src/tests/surfaces/test_retrieval_api.py
@@ -48,6 +49,7 @@ src/tests/surfaces/test_saved_queries_batch_e.py
 src/tests/surfaces/test_surface_cost.py
 src/tests/surfaces/test_surfaces_parity.py
 src/tests/workers/test_claimify_loss_ledger_pg.py
+src/tests/workers/test_document_metadata_chain.py
 src/tests/workers/test_e0_chain.py
 src/tests/workers/test_e1_chain.py
 src/tests/workers/test_e2_chain.py
@@ -62,3 +64,4 @@ src/tests/spine/test_d119_migration.py
 src/tests/workers/test_d119_versions.py
 src/tests/spine/test_d122_selection.py
 src/tests/spine/test_d122_e2.py
+src/tests/spine/test_perimeter_state.py

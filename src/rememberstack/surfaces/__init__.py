@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from rememberstack.model.client import ToolDescriptor as ToolDescriptor
-    from rememberstack.surfaces.cli import main as cli_main  # noqa: F401
     from rememberstack.surfaces.consumption_skill import (
         ConsumptionSkillSurface as ConsumptionSkillSurface,
     )
@@ -37,12 +36,6 @@ if TYPE_CHECKING:
     from rememberstack.surfaces.query_sandbox.open_query import (
         OpenQueryFacade as OpenQueryFacade,
     )
-    from rememberstack.surfaces.remote_mcp import (
-        RemoteOperationMcpServer as RemoteOperationMcpServer,
-    )
-    from rememberstack.surfaces.remote_mcp import serve_mcp_stdio as serve_mcp_stdio
-    from rememberstack.surfaces.sdk import MemoryApiError as MemoryApiError
-    from rememberstack.surfaces.sdk import MemoryClient as MemoryClient
 
 _EXPORTS = {
     "ConsumptionSkillSurface": (
@@ -54,8 +47,6 @@ _EXPORTS = {
         "rememberstack.surfaces.operation_surface",
         "InvalidArgumentError",
     ),
-    "MemoryApiError": ("rememberstack.surfaces.sdk", "MemoryApiError"),
-    "MemoryClient": ("rememberstack.surfaces.sdk", "MemoryClient"),
     "MissingArgumentError": (
         "rememberstack.surfaces.operation_surface",
         "MissingArgumentError",
@@ -78,26 +69,18 @@ _EXPORTS = {
         "rememberstack.surfaces.operation_surface",
         "OperationSurface",
     ),
-    "RemoteOperationMcpServer": (
-        "rememberstack.surfaces.remote_mcp",
-        "RemoteOperationMcpServer",
-    ),
     "ToolDescriptor": ("rememberstack.model.client", "ToolDescriptor"),
     "UnknownOperationError": (
         "rememberstack.surfaces.operation_surface",
         "UnknownOperationError",
     ),
     "build_api": ("rememberstack.surfaces.http_api", "build_api"),
-    "cli_main": ("rememberstack.surfaces.cli", "main"),
-    "serve_mcp_stdio": ("rememberstack.surfaces.remote_mcp", "serve_mcp_stdio"),
 }
 
 __all__ = (
     "ConsumptionSkillSurface",
     "GraphQueries",
     "InvalidArgumentError",
-    "MemoryApiError",
-    "MemoryClient",
     "MissingArgumentError",
     "OpenQueryFacade",
     "QueryEngine",
@@ -105,12 +88,9 @@ __all__ = (
     "OperationExecutor",
     "OperationMcpServer",
     "OperationSurface",
-    "RemoteOperationMcpServer",
     "ToolDescriptor",
     "UnknownOperationError",
     "build_api",
-    "cli_main",
-    "serve_mcp_stdio",
 )
 
 

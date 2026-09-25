@@ -53,6 +53,14 @@ class OperationExecutor:
                 evaluated_at=evaluated_at,
             )
 
+    def adjacent_chunks(
+        self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
+    ) -> Envelope:
+        """Fetch surrounding chunks through the composed query engine."""
+        return self._engine.adjacent_chunks(
+            deployment_id=deployment_id, chunk_id=chunk_id, window=window
+        )
+
     def _execute_named(
         self,
         *,

@@ -35,6 +35,8 @@ WHERE deployment_id = :deployment_id OR slug = :slug
 FOR UPDATE
 """
 
+_SELECT_ANY_DEPLOYMENT = "SELECT deployment_id FROM deployments LIMIT 1"
+
 _INSERT_DEPLOYMENT = """
 INSERT INTO deployments (
     deployment_id,
@@ -166,13 +168,23 @@ class DeploymentBootstrapper:
         self._engine = engine
 
     def bootstrap_deployment(
-        self, *, deployment_input: DeploymentBootstrapInput
+        self,
+        *,
+        deployment_input: DeploymentBootstrapInput,
+        sole_deployment: bool = False,
     ) -> DeploymentBootstrapResult:
-        """Create or verify all bootstrap state in one owned transaction."""
+        """Create or verify all bootstrap state in one owned transaction.
+
+        ``sole_deployment`` refuses to add a row to a database that already
+        holds a different deployment: a self-hosted database serves exactly
+        one, so a changed id must fail loudly instead of starting empty.
+        """
         with self._engine.begin() as connection:
             connection.execute(statement=text(_LOCK_DEPLOYMENT_BOOTSTRAP))
             deployment_created = _create_or_compare_deployment(
-                connection=connection, deployment_input=deployment_input
+                connection=connection,
+                deployment_input=deployment_input,
+                sole_deployment=sole_deployment,
             )
             if deployment_created:
                 _insert_core_manifest(
@@ -193,7 +205,10 @@ class DeploymentBootstrapper:
 
 
 def _create_or_compare_deployment(
-    *, connection: Connection, deployment_input: DeploymentBootstrapInput
+    *,
+    connection: Connection,
+    deployment_input: DeploymentBootstrapInput,
+    sole_deployment: bool,
 ) -> bool:
     """Insert an absent deployment or compare every mapped input field exactly."""
     expected = _deployment_values(deployment_input=deployment_input)
@@ -209,6 +224,15 @@ def _create_or_compare_deployment(
         .all()
     )
     if not rows:
+        if sole_deployment:
+            existing = connection.execute(
+                statement=text(_SELECT_ANY_DEPLOYMENT)
+            ).scalar_one_or_none()
+            if existing is not None:
+                raise DeploymentConflictError(
+                    f"this database already holds deployment {existing}; "
+                    "the deployment id and slug cannot change after the first setup"
+                )
         connection.execute(
             statement=text(_INSERT_DEPLOYMENT),
             parameters={
@@ -217,9 +241,15 @@ def _create_or_compare_deployment(
             },
         )
         return True
-    if len(rows) != 1 or dict(rows[0]) != expected:
+    if len(rows) != 1:
         raise DeploymentConflictError(
-            "deployment identity or mapped profile values conflict"
+            "the deployment id and slug belong to two different stored deployments"
+        )
+    changed = sorted(key for key, value in expected.items() if rows[0][key] != value)
+    if changed:
+        raise DeploymentConflictError(
+            "deployment identity or mapped profile values conflict: "
+            f"{', '.join(changed)} differ from the values recorded at first setup"
         )
     return False
 

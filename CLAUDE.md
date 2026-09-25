@@ -11,6 +11,10 @@ read it first:
 - `decisions.md` (root) — the architecture decision log (D1, D2, …), the canonical record
 
 When editing any of these, three rules are **non-negotiable**.
+Read [the design-corpus skill](.agents/skills/design-corpus/SKILL.md) before
+creating or editing planning and decision documents. Its current-state rule
+means `plan/designs/` must be reconciled when a design changes, and superseded
+decisions must be marked inside their original entries.
 
 ## Rule 1 — Design docs must be understandable by both future agents AND humans
 
@@ -87,7 +91,7 @@ GitHub Pages at `docs.remember.dev`). Two standing obligations when implementing
   surface, configuration, mounts, connectors, deployment, the consumption skill — updates
   the affected `website/src/app/docs/**/page.mdx` in the *same PR* (creating the page per
   the target IA in `website/README.md` if it doesn't exist yet), and keeps
-  `/docs/project-status` truthful.
+  `/docs/project/not-built-yet` truthful.
 - **Docs describe what ships, designs describe the full scope.** A `page.mdx` documents
   behavior that exists on `main` — never aspirations (readers will run what it says). The
   full-scope intent lives in `plan/`; do not blur the two. Authoring conventions and the

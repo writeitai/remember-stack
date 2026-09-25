@@ -76,7 +76,7 @@ Phase-5 detail (all merged, CI-green):
 Plus **D66 (docs ship with code):** any PR that changes user-facing behavior
 (CLI/API/MCP/config/mounts/connectors/deployment/skill) updates the affected
 `website/src/app/docs/**/page.mdx` *in the same PR*, and keeps
-`/docs/project-status` truthful. `page.mdx` documents what ships on `main`, not
+`/docs/project/not-built-yet` truthful. `page.mdx` documents what ships on `main`, not
 aspirations. Add new pages to `website/src/lib/docs/navigation.ts`.
 
 ---

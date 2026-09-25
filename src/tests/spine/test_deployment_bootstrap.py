@@ -193,6 +193,44 @@ def test_deployment_conflicts_are_typed_and_do_not_mutate_state(
     assert _state_hash(engine=database_engine) == expected_hash
 
 
+def test_sole_deployment_refuses_a_second_row(database_engine: Engine) -> None:
+    """A self-host database keeps one deployment: a new id and slug fail loudly."""
+    deployment_input = _deployment_input()
+    bootstrapper = DeploymentBootstrapper(engine=database_engine)
+    bootstrapper.bootstrap_deployment(
+        deployment_input=deployment_input, sole_deployment=True
+    )
+    bootstrapper.bootstrap_deployment(
+        deployment_input=deployment_input, sole_deployment=True
+    )
+    expected_hash = _state_hash(engine=database_engine)
+
+    with pytest.raises(DeploymentConflictError, match=str(_DEPLOYMENT_ID)):
+        bootstrapper.bootstrap_deployment(
+            deployment_input=deployment_input.model_copy(
+                update={
+                    "deployment_id": UUID("20000000-0000-0000-0000-000000000003"),
+                    "slug": "another-deployment",
+                }
+            ),
+            sole_deployment=True,
+        )
+    assert _state_hash(engine=database_engine) == expected_hash
+
+
+def test_conflict_names_the_changed_fields(database_engine: Engine) -> None:
+    """The operator learns which recorded value their settings changed."""
+    deployment_input = _deployment_input()
+    bootstrapper = DeploymentBootstrapper(engine=database_engine)
+    bootstrapper.bootstrap_deployment(deployment_input=deployment_input)
+    with pytest.raises(DeploymentConflictError, match="default_language, name"):
+        bootstrapper.bootstrap_deployment(
+            deployment_input=deployment_input.model_copy(
+                update={"name": "Renamed", "default_language": "de"}
+            )
+        )
+
+
 def test_changed_core_definition_conflicts_without_other_mutation(
     database_engine: Engine,
 ) -> None:

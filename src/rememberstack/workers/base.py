@@ -45,6 +45,11 @@ _logger = logging.getLogger(__name__)
 class NoRouteHandlerError(Exception):
     """Convert found no configured route before any I/O or provider work (D117)."""
 
+    def __init__(self, message: str, *, mime: str) -> None:
+        """Keep the stored MIME the handler found unroutable."""
+        super().__init__(message)
+        self.mime = mime
+
 
 class ExtractChunkBarrier(BaseModel):
     """D84: after a chunk extract succeeds, complete+barrier in one ledger txn."""
@@ -290,9 +295,11 @@ class Worker:
         )
         try:
             outcome = handler.handle(work=claimed, meter=meter)
-        except NoRouteHandlerError:
+        except NoRouteHandlerError as no_route:
             self._ledger.park_no_route(
-                processing_id=claimed.processing_id, attempt=claimed.attempt
+                processing_id=claimed.processing_id,
+                attempt=claimed.attempt,
+                mime=no_route.mime,
             )
             self._export_event(
                 event=_worker_event(

@@ -25,6 +25,10 @@ cannot surface content unique to that lineage, and their public negative is the 
 that never existed (S55). Information independently supported by another live lineage remains: the
 operation forgets a source contribution, not every independently obtained copy of a fact.
 
+> **Amended 2026-09-23 (D133, D134).** Forgetting an uploaded container forgets every member
+> expanded from it, under the same manifest (§2). D133's private-store objects and D134's
+> `document_metadata`, `document_people` and `document_names` rows are deleted with the lineage.
+
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**
 > surviving entity must invalidate and recompute that cache from remaining
@@ -67,6 +71,12 @@ The v1 manifest contains no source text, names, provider URIs, prompts, or prose
 - exact immutable object keys/prefixes that may contain the source;
 - pre-forget P3 snapshot prefixes; and
 - K artifact IDs whose body, curation sidecar, or history ever cited the lineage's evidence.
+
+**Containers (D133).** Forgetting an uploaded container forgets every member expanded from it.
+The manifest adds `member_doc_ids[]`, and each member's content hashes, row IDs and object
+prefixes join the manifest's existing lists, so replay after a restore purges members exactly
+like the container. A forget request naming a member is refused with an error naming its
+upload.
 
 IDs and hashes are retained because replay must still work when PostgreSQL has already scrubbed the
 payload columns or when only one external store was restored. The manifest is immutable and

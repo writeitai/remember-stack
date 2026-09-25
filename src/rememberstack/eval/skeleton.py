@@ -43,7 +43,11 @@ SKELETON_CANARIES: Final[tuple[dict[str, object], ...]] = (
     },
     {
         "description": "S39: unknown entity vs known-empty are typed differently",
-        "input": {"scenario": "s39", "unknown_name": "Contoso", "known_name": "Acme"},
+        # This ASCII token is absent from the fixture and avoids the fuzzy
+        # overlap that a plausible company name can gain as later scenarios
+        # add aliases. The separate S39 API proof keeps the realistic
+        # "Contoso" probe after clearing its uncalibrated test profile vectors.
+        "input": {"scenario": "s39", "unknown_name": "Qxzvjk", "known_name": "Acme"},
         "expected": {},
     },
     {

@@ -13,10 +13,11 @@ from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ManifestComponent
+from rememberstack.model.document_metadata import DocumentMetadata
 
-MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.2"
+MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.3"
 """Pins this route's generation: the markitdown 0.1.x library line plus D65
-envelope emission. Bumped whenever library or output contract changes so
+envelope emission and the D134 declared title. Bumped whenever library or output contract changes so
 replay never reuses artifacts from an older shape."""
 
 
@@ -46,8 +47,10 @@ class MarkitdownConverter:
         except MarkItDownException as err:
             raise ConversionError(f"markitdown could not convert {mime!r}") from err
         document_md = result.text_content
+        title = (result.title or "").strip()
         return ConversionResult(
             document_md=document_md,
+            metadata=DocumentMetadata(title=title) if title else None,
             manifest=ConverterManifest(
                 components=(
                     ManifestComponent(

@@ -135,7 +135,7 @@ publication manifest locally. For every assigned sample the driver:
 7. restarts the same stopped store without recreating its containers or
    volumes, re-verifies the receipt, then runs the complete-plane answer agent
    and judge with run-absolute caps; and
-8. stops the stack again; archives Postgres, MinIO, application state, forget
+8. stops the stack again; archives Postgres, the object store, application state, forget
    manifests, run state, and the published mount root; uploads them to a unique
    immutable GCS prefix with CRC32C transport validation and create-only
    preconditions; checks object sizes; reads back the manifest; and writes a
@@ -263,7 +263,7 @@ export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
 Restore first re-verifies the remote manifest and receipt plus every archive's
 size, GCS generation, and CRC32C, downloads to a new staging directory, checks
 every SHA-256 and tar member, and refuses non-empty run, mount, or Docker-volume
-targets. `--start` brings up Postgres, MinIO, setup, and the API after
+targets. `--start` brings up Postgres, the object store, setup, and the API after
 extraction. It makes the saved deployment ID, revision, and non-secret model
 and routing bindings authoritative over the operator-supplied secret-bearing
 base env and parent shell; secrets are never copied into backup metadata.

@@ -18,6 +18,6 @@ change.
 The full lane remains available locally when wanted:
 
 ```bash
-REMEMBERSTACK_DATABASE_URL=postgresql+psycopg://rememberstack:rememberstack-local-only@localhost:55432/rememberstack \
+REMEMBERSTACK_DATABASE_URL=postgresql+psycopg://rememberstack:<password>@localhost:55432/rememberstack \
   make test-full
 ```

@@ -1,0 +1,189 @@
+export const metadata = {
+  title: "Cite the source of an answer",
+  description: "Follow a fact to the claims behind it, the document they came from and the exact passage, and show why the memory holds it.",
+};
+
+# Cite the source of an answer
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+An answer without a source asks the reader to trust the model. Every fact
+RememberStack returns is linked to the claims that support it, each claim to
+the document and passage it came from. This page shows how to turn those
+links into a citation a person can check: "the migration moves to October
+(stand-up, 17 September: *'The migration moves from June to October.'*)".
+
+Setup is in the [Quickstart](/docs/start/quickstart). The model behind this
+page is in [Evidence and provenance](/docs/concepts/evidence).
+
+## The chain
+
+```text
+fact ──fact_evidence──▶ claim (evidence) ──doc_id──▶ document
+                            │
+                            └── source_span, char_start/char_end, chunk_id
+```
+
+In a `facts_context` result:
+
+- `facts[]` are the facts. Each has a `fact_id` and a `kind` (`relation`
+  or `observation`).
+- `fact_evidence[]` links a fact to a claim: `fact_id`, `claim_id`,
+  `stance` (`supports` or `contradicts`).
+- `evidence[]` are the claims: `claim_text`, `source_span` (the passage the
+  claim was cut from, word for word), `doc_id`, `document_title`,
+  `source_kind`, `chunk_id`, `asserted_at`, and positions.
+- `evidence_totals[]` say, per fact and stance, how many claims were
+  `returned` and how many exist in `total`.
+
+## Cite from a fact result
+
+```python
+import remember
+
+client = remember.Client.from_env()
+result = client.facts_context("When does the billing migration go live?")
+
+claims = {claim.claim_id: claim for claim in result.evidence}
+for fact in result.facts:
+    print(fact.label)
+    for link in result.fact_evidence:
+        if link.fact_id != fact.fact_id or link.stance != "supports":
+            continue
+        claim = claims[link.claim_id]
+        said = f"{claim.asserted_at:%d %B %Y}" if claim.asserted_at else "undated"
+        print(f'  {claim.document_title}, {said}: "{claim.source_span}"')
+    for total in result.evidence_totals:
+        if total.fact_id == fact.fact_id and total.returned < total.total:
+            print(f"  ({total.total - total.returned} more {total.stance} claims not shown)")
+```
+
+Quote `source_span`, not `claim_text`. `claim_text` is the claim as the
+extractor stated it, which may resolve a relative date or add missing
+context. It is the right thing to reason over, but it is not what the
+source said; `source_span` is.
+
+Show the `contradicts` links too when there are any. A fact with
+contradicting testimony is still the memory's verdict, but a reader should
+see the other side.
+
+`combined_context` returns the same chain inside its `facts` half, and
+`claims_and_sources_context` returns claims (`evidence[]`) and whole source
+passages (`chunks[]`) with their `doc_id` and `document_title`.
+
+## Positions and surrounding text
+
+- `char_start` / `char_end` locate `source_span` in the text of the
+  document version it was first extracted from, after conversion to
+  Markdown.
+- `evidence_spans[]` lists every range in that text that supports the
+  claim, as half-open `char_start` / `char_end` pairs. A claim built from
+  two sentences a paragraph apart has two spans.
+- `chunk_id` is the passage the claim came from.
+
+To show a passage with some context around it, fetch the neighbouring
+chunks:
+
+```python
+around = client.adjacent_chunks(chunk_id=claim.chunk_id, window=1)
+for chunk in around.chunks:
+    print(chunk.chunk_text)
+```
+
+`window` is 1 or 2 chunks on each side. The CLI equivalent is `remember
+query adjacent-chunks &lt;chunk-id> --window 1`.
+
+## From `doc_id` back to your file
+
+`doc_id` identifies the document inside RememberStack. To link a citation
+to your own system, look up the `source_ref` you ingested it with:
+
+```python
+docs = client.open_query(
+    "SELECT doc_id, title, source_kind, source_ref, current_version_no"
+    " FROM documents_live WHERE doc_id = $1::uuid",
+    parameters=[str(claim.doc_id)],
+)
+doc_id, title, source_kind, source_ref, version_no = docs.rows[0]
+print(f"{title} ({source_kind}:{source_ref}, version {version_no})")
+```
+
+This is a SQL query over the query space: prepared, read-only views such
+as `documents_live`, with every statement checked before it runs. See
+[Explore memory with SQL](/docs/guides/sql).
+
+## Every source for one relation: `hydrate_relation`
+
+`facts_context` returns up to `evidence_per_fact` claims per fact (at most
+5). To see all current supporting claims and the list of documents behind a
+relation, hydrate it by ID:
+
+```python
+fact = result.facts[0]
+if fact.kind == "relation":
+    full = client.hydrate_relation(relation_id=fact.fact_id)
+    for source in full.sources:
+        print(source.doc_id, source.title, source.source_kind)
+    for claim in full.evidence:
+        print(f'  "{claim.source_span}"')
+```
+
+The result has the relation in `facts` (with its contradiction and support
+state), its current supporting claims in `evidence`, and the documents in
+`sources`. It works for relations that have ended, too, and says so in the
+fact's `validity`. An unknown ID returns a `negative` of kind
+`unknown_entity`.
+
+There is no hydrate call for observations. For those, run the shipped
+saved query `examples.explain` with the fact ID, which also works for
+relations:
+
+```python
+why = client.run_saved_query(namespace="examples", name="explain", parameters=[str(fact.fact_id)])
+```
+
+It returns the fact's history, each supporting and contradicting claim, the
+document it came from and when it was said, up to 100 rows.
+
+## Why the memory decided: `transcript_relation`
+
+A citation says where a fact came from. A transcript says how the memory
+reached its verdict: which facts it replaced, contradicted or merged with,
+by what method and when.
+
+```python
+history = client.transcript_relation(relation_id=fact.fact_id)
+for entry in history.transcript:
+    print(entry.decided_at, entry.outcome, entry.method, entry.related_id)
+```
+
+`outcome` is one of `add`, `noop`, `supersede`, `contradict`,
+`same_as_merge_proposal`, `retracted_source_removal`. `related_id` is the
+other relation in the decision. The transcript keeps the 40 most recent
+decisions and sets `truncation` when there were more.
+
+Hydration and transcripts have no CLI command or MCP tool; use the Python
+client or `GET /hydrate/relation/{relation_id}` and `GET
+/transcript/relation/\{relation_id\}`.<Cloud> remember.dev's compatibility profile
+may not include these two routes; check [What remember.dev
+serves](/docs/cloud/compatibility).</Cloud>
+
+## A citation format for agents
+
+Ask the model to cite in a form you can check mechanically, and give it the
+IDs:
+
+```text
+- The billing migration goes live in October 2026.
+  [fact 3f9e…; claim 81c2…; "Stand-up, 17 September 2026"]
+```
+
+Then verify each cited `claim_id` appears in the result you gave it before
+you show the answer. A model that cites an ID you never sent has invented
+it.
+
+## Next
+
+- [Handle unknowns and ambiguity](/docs/guides/unknowns-and-ambiguity)
+- [Build a memory-backed agent](/docs/guides/build-an-agent)
+- [Evidence and provenance](/docs/concepts/evidence)

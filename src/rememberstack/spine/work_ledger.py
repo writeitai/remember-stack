@@ -32,8 +32,6 @@ from sqlalchemy.engine import RowMapping
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CostBudget
-from rememberstack.model import CostBudgetStatus
-from rememberstack.model import CostTierSpend
 from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
@@ -174,60 +172,6 @@ class WorkLedger:
                 .one()
             )
             return _claimed_work(row=started)
-
-    def budget_status(self, *, deployment_id: UUID) -> tuple[CostBudgetStatus, ...]:
-        """Return current spend and parked work for every configured deployment budget."""
-        statuses: list[CostBudgetStatus] = []
-        with self._engine.connect() as connection:
-            for budget in self._settings.budgets:
-                if budget.deployment_id != deployment_id:
-                    continue
-                spend = _budget_window_spend(connection=connection, budget=budget)
-                tier_rows = connection.execute(
-                    _BUDGET_TIER_SPEND,
-                    {
-                        "deployment_id": budget.deployment_id,
-                        "stage": budget.stage,
-                        "lane": budget.lane,
-                        "window_started_at": spend.started_at,
-                        "window_ends_at": spend.ends_at,
-                    },
-                ).mappings()
-                tiers = tuple(
-                    CostTierSpend(
-                        tier=cast(str | None, row["tier"]),
-                        cost_usd=_decimal(row["cost_usd"]),
-                    )
-                    for row in tier_rows
-                )
-                parked_work = int(
-                    connection.execute(
-                        _BUDGET_PARKED_COUNT,
-                        {
-                            "deployment_id": budget.deployment_id,
-                            "stage": budget.stage,
-                            "lane": budget.lane,
-                        },
-                    ).scalar_one()
-                )
-                remaining = max(Decimal(0), budget.ceiling_usd - spend.spent_usd)
-                statuses.append(
-                    CostBudgetStatus(
-                        deployment_id=budget.deployment_id,
-                        stage=budget.stage,
-                        lane=budget.lane,
-                        window_seconds=budget.window_seconds,
-                        window_started_at=spend.started_at,
-                        window_ends_at=spend.ends_at,
-                        ceiling_usd=budget.ceiling_usd,
-                        spent_usd=spend.spent_usd,
-                        remaining_usd=remaining,
-                        exhausted=spend.spent_usd >= budget.ceiling_usd,
-                        parked_work=parked_work,
-                        tiers=tiers,
-                    )
-                )
-        return tuple(statuses)
 
     def complete(
         self, *, processing_id: UUID, follow_up: tuple[EnqueueWork, ...] = ()
@@ -778,20 +722,34 @@ class WorkLedger:
                     "work can be budget-parked"
                 )
 
-    def park_no_route(self, *, processing_id: UUID, attempt: int) -> None:
+    def park_no_route(self, *, processing_id: UUID, attempt: int, mime: str) -> None:
         """Return a convert claim that found no route before doing work (D117).
 
         Only the matching running convert attempt can transition. The unused
         claim is refunded, historical errors remain, and no retry is scheduled.
+
+        ``mime`` is the stored MIME the handler found unroutable. An ingest
+        may meanwhile have replaced it with a routable one and released the
+        parked rows — which excludes this running claim. The park therefore
+        locks the content row (the lock that replacement takes) and parks
+        only if the MIME is unchanged; otherwise the claim returns to the
+        queue unparked and is announced, so it converts with the new MIME.
         """
         with self._engine.begin() as connection:
-            updated = connection.execute(
-                _PARK_NO_ROUTE, {"processing_id": processing_id, "attempt": attempt}
-            ).rowcount
-            if updated != 1:
+            parked = (
+                connection.execute(
+                    _PARK_NO_ROUTE,
+                    {"processing_id": processing_id, "attempt": attempt, "mime": mime},
+                )
+                .scalars()
+                .all()
+            )
+            if len(parked) != 1:
                 raise WorkNotRunningError(
                     f"processing row {processing_id} is not the running convert attempt"
                 )
+            if parked[0] is None:
+                connection.execute(_WAKE, {"processing_id": str(processing_id)})
 
     def resume_no_route(
         self, *, deployment_id: UUID, routable_mimes: Collection[str]
@@ -1582,11 +1540,26 @@ _PROMOTE_TO_STEADY = text(
 
 _PARK_NO_ROUTE = text(
     """
+    WITH stored AS (
+        SELECT c.mime
+        FROM processing_state p
+        JOIN document_versions v
+          ON v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+        JOIN content_objects c
+          ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+        WHERE p.processing_id = :processing_id
+        FOR SHARE OF c
+    )
     UPDATE processing_state
-    SET status = 'pending', defer_reason = 'no_route',
+    SET status = 'pending',
+        defer_reason = CASE
+            WHEN (SELECT mime FROM stored) IS DISTINCT FROM :mime THEN NULL
+            ELSE 'no_route'::processing_defer_reason
+        END,
         attempts = attempts - 1, started_at = NULL, not_before = now()
     WHERE processing_id = :processing_id AND status = 'running'
       AND stage = 'convert' AND attempts = :attempt AND attempts > 0
+    RETURNING defer_reason::text
     """
 )
 
@@ -1763,32 +1736,6 @@ _BUDGET_WINDOW_SPEND = text(
      AND cost_ledger.occurred_at >= bounds.window_started_at
      AND cost_ledger.occurred_at < bounds.window_ends_at
     GROUP BY bounds.window_started_at, bounds.window_ends_at
-    """
-)
-
-_BUDGET_TIER_SPEND = text(
-    """
-    SELECT tier, COALESCE(sum(cost_usd), 0) AS cost_usd
-    FROM cost_ledger
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND occurred_at >= :window_started_at
-      AND occurred_at < :window_ends_at
-    GROUP BY tier
-    ORDER BY tier NULLS FIRST
-    """
-)
-
-_BUDGET_PARKED_COUNT = text(
-    """
-    SELECT count(*)
-    FROM processing_state
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND status = 'pending'
-      AND defer_reason = 'budget'
     """
 )
 

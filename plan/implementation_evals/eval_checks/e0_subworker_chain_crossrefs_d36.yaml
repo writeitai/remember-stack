@@ -1,7 +1,7 @@
 schema_version: 1
 id: e0_subworker_chain_crossrefs_d36
 type: harness_judge
-description: E0 is one product layer implemented as separately idempotent, separately observable sub-workers (ingest, convert, structure, crossref) with per-sub-worker version boundaries.
+description: E0 is one product layer implemented as separately idempotent, separately observable sub-workers (ingest, convert, expand, structure, crossref — expand per D133) with per-sub-worker version boundaries.
 tags: [e0, D36]
 instructions: |
   You are judging whether this repository's IMPLEMENTATION honors a binding design invariant.
@@ -10,7 +10,7 @@ instructions: |
   acceptance checks for the FINAL system: if the subsystem is absent or partial, score 0.
 
   Verify ALL of the following:
-  1. E0 runs as a chain of distinct sub-workers — ingest, convert, structure, crossref — each
+  1. E0 runs as a chain of distinct sub-workers — ingest, convert, expand (D133; a no-op for non-container families), structure, crossref — each
      separately idempotent (keyed on content identity + its OWN version) and separately
      observable (own processing state / status).
   2. A version bump of one sub-worker re-runs exactly that sub-worker and its downstream

@@ -226,7 +226,7 @@ class EntityCandidate(BaseModel):
 
     entity_id: UUID
     canonical_name: str
-    tier: str  # which resolution tier surfaced it (T0 in the skeleton)
+    tier: str  # T0 exact, T1 trigram, T2 phonetic, or T3 embedding
     context_hits: int = 0
 
 

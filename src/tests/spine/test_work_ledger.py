@@ -44,7 +44,6 @@ from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.work_ledger import _ADVISORY_LOCK_REPRESENTATION
-from rememberstack.surfaces import cli_main
 from rememberstack.workers import HandlerOutcome
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import Worker
@@ -371,16 +370,6 @@ def test_configured_budget_parks_reports_and_resumes_without_losing_work(
     assert parked["last_error"] is None
     assert announcement.not_before_snapshot == parked["not_before"]
 
-    (status,) = budgeted.budget_status(deployment_id=_DEPLOYMENT_ID)
-    assert status.spent_usd == Decimal("1.250000")
-    assert status.remaining_usd == Decimal(0)
-    assert status.exhausted
-    assert status.parked_work == 1
-    assert {tier.tier: tier.cost_usd for tier in status.tiers} == {
-        "frontier": Decimal("0.500000"),
-        "selection": Decimal("0.750000"),
-    }
-
     with database_engine.begin() as connection:
         connection.execute(
             text("UPDATE cost_ledger SET occurred_at = occurred_at - interval '2 days'")
@@ -403,10 +392,8 @@ def test_configured_budget_parks_reports_and_resumes_without_losing_work(
     assert handler.calls == 1
 
 
-def test_budget_settings_are_unique_and_cli_inspection_uses_them(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The environment declares one unambiguous route ceiling visible through the CLI."""
+def test_budget_settings_are_unique(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The environment declares one unambiguous route ceiling."""
     configured = {
         "deployment_id": str(_DEPLOYMENT_ID),
         "stage": PipelineStage.EXTRACT_CLAIMS.value,
@@ -415,17 +402,10 @@ def test_budget_settings_are_unique_and_cli_inspection_uses_them(
         "ceiling_usd": "2.50",
     }
     monkeypatch.setenv("REMEMBERSTACK_WORK_BUDGETS", json.dumps([configured]))
-    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "1")
     settings = WorkLedgerSettings()
     assert settings.budgets[0].ceiling_usd == Decimal("2.50")
     with pytest.raises(ValidationError, match="only one cost budget"):
         WorkLedgerSettings(budgets=(settings.budgets[0], settings.budgets[0]))
-
-    assert cli_main(["budget", "inspect", "--deployment", str(_DEPLOYMENT_ID)]) == 0
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["stage"] == PipelineStage.EXTRACT_CLAIMS.value
-    assert payload["lane"] == ProcessingLane.STEADY.value
-    assert payload["ceiling_usd"] == "2.50"
 
 
 class _ChainingNoOpHandler:

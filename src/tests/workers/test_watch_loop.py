@@ -228,6 +228,19 @@ def test_edit_becomes_a_new_version_of_the_same_lineage(rig: _WatchRig) -> None:
     assert all(row["status"] == "ready" for row in versions)
     assert all(row["sync_cycle_id"] is not None for row in versions)
     assert all(row["source_modified_at"] is not None for row in versions)
+    with rig.engine.connect() as connection:
+        observed_names = connection.execute(
+            text(
+                "SELECT m.file_name, m.source_path FROM document_metadata m"
+                " JOIN document_versions v ON v.version_id = m.version_id"
+                " ORDER BY v.version_no"
+            )
+        ).all()
+    # D134: every version records the file name and path it was observed at
+    assert [tuple(row) for row in observed_names] == [
+        ("roster.md", "roster.md"),
+        ("roster.md", "roster.md"),
+    ]
     assert mode == "living"  # the edit-in-place heuristic
     assert current == 2
 

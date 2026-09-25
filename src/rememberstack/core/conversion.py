@@ -29,12 +29,23 @@ must bump this so replay never reuses artifacts from the old shape."""
 STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = {
     "text/markdown": "passthrough",
     "text/plain": "passthrough",
+    "text/html": "markitdown",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
+        "markitdown"
+    ),
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": (
+        "markitdown"
+    ),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ("markitdown"),
 }
 """The stock self-host MIME → converter-name table (the settings default).
 
-The CLI/SDK guess ``.txt`` as ``text/plain`` and MCP ``text`` ingest defaults
-to the same. Routing only ``text/markdown`` dead-letters those converts
-(UMC #228 / RememberStack #301).
+Every route here runs locally with no API key: Markdown and plain text pass
+through, and HTML, Word (.docx), PowerPoint (.pptx) and Excel (.xlsx) go to
+the bundled markitdown adapter. PDFs and images need a provider-backed OCR
+route (``mistral_ocr`` / ``image_ocr_description``) with its own key, so they
+stay unrouted by default: their uploads are stored and parked as
+``no_route`` until the operator configures a route.
 """
 
 
@@ -192,9 +203,3 @@ def entire_document_labeling(
             evidence_mode=evidence_mode,
         ),
     )
-
-
-def stock_passthrough_routes() -> dict[str, Converter]:
-    """Materialize ``STOCK_CONVERSION_ROUTE_NAMES`` (all passthrough) as a table."""
-    passthrough = MarkdownPassthroughConverter()
-    return {mime: passthrough for mime in STOCK_CONVERSION_ROUTE_NAMES}

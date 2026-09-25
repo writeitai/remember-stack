@@ -13,6 +13,7 @@ from remember.models import CapabilityReadiness
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import DeploymentBuildInfo
+from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
@@ -34,6 +35,7 @@ __all__ = (
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "DeploymentBuildInfo",
+    "DocumentDeletion",
     "DocumentPage",
     "DocumentStatus",
     "DocumentStatusFilter",

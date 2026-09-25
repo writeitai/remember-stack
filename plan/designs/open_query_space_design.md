@@ -75,7 +75,8 @@ D54, D80, and D87 remain controlling.*
    Missing, orphaned, mismatched, or incompletely forgotten state is absent from
    live output or fails the call.
 6. **D54 counting has one meaning.** `evidence_count` and
-   `contradict_count` count distinct current-testimony document lineages per
+   `contradict_count` count distinct current-testimony **counting lineages**
+   (`counting_lineage_id`: a container and its members are one, D133) per
    `supports` or `contradicts` stance. `support_state` is exactly `current` or
    `withdrawn`; `withdrawn` comes only from the open processing-driven
    `support_withdrawn` review state. A zero count MUST NOT manufacture it.
@@ -440,7 +441,7 @@ labeled orientation text, never evidence.
 | `facts_visible_history` | one historically visible relation or observation; `(deployment_id, fact_kind, fact_id)` | Raw valid/transaction clocks, subject/predicate/object or statement/label, contradiction group, `evidence_count_current`, `contradict_count_current`, and `support_state_current`; manifest comments state these are live current-testimony values, not historical reconstructions; at least one surviving historical provenance lineage |
 | `facts_current` | one currently valid relation or observation; `(deployment_id, fact_kind, fact_id)` | §3.3 D41 predicate, one shared `evaluated_at`, D54 counts/support state |
 | `fact_claim_evidence_live` | one current claim-to-fact association; `(deployment_id, fact_kind, fact_id, claim_id, stance)` | Stance is exactly `supports` or `contradicts`, matching shipped `evidence_stance`/`FactEvidence.stance`; claim-validity fields and source handle; current testimony and live lineage only |
-| `evidence_lineage` | one fact × current-testimony document lineage × stance; `(deployment_id, fact_kind, fact_id, doc_id, stance)` | Stance is exactly `supports` or `contradicts`; claim count is descriptive only; representative claim and assertion range; this view is the sole public input for D54 counts |
+| `evidence_lineage` | one fact × current-testimony counting lineage × stance; `(deployment_id, fact_kind, fact_id, counting_lineage_id, stance)` (D133: a container and its members are one counting lineage; member `doc_id`s are listed descriptively) | Stance is exactly `supports` or `contradicts`; claim count is descriptive only; representative claim and assertion range; this view is the sole public input for D54 counts |
 | `contradiction_members_current` | one current contradiction-group member; `(deployment_id, contradiction_group, fact_kind, fact_id)` | Member clocks/counts/support state and shared evaluation instant; SQL callers can still select one side, so QueryResult disclaims completeness |
 | `graph_edges_current` | one current relation edge; `(deployment_id, relation_id)` | Survivor endpoints, predicate/label, D41 clocks, contradiction group, D54 counts/state, shared evaluation instant |
 | `graph_edges_visible_history` | one historically visible relation edge; `(deployment_id, relation_id)` | Survivor endpoints, raw valid/transaction clocks, `evidence_count_current`, `contradict_count_current`, and `support_state_current`; manifest comments state these are live current-testimony values, not historical reconstructions; surviving historical provenance required |
@@ -578,7 +579,7 @@ belief history is authoritative.
 **D54 provenance and state.** `facts_visible_history` requires surviving
 historical provenance, not current support. A processing-withdrawn fact can
 therefore remain visible with zero current support. Count columns equal counts
-of distinct `doc_id` rows in `evidence_lineage` for the `supports` and
+of distinct `counting_lineage_id` rows in `evidence_lineage` for the `supports` and
 `contradicts` stances. `support_state` and `support_state_current` take exactly
 `current` or `withdrawn`. They are derived at read time exactly as the shipped
 query engine does: `withdrawn` iff an open `review_queue` row has

@@ -1,4 +1,8 @@
-"""S3-compatible MinIO object storage for the self-host profile."""
+"""S3-compatible object storage for the self-host profile (Compose bundles SeaweedFS).
+
+The module and `REMEMBERSTACK_MINIO_` names predate the bundled SeaweedFS store;
+any S3 API with path-style addressing and `If-None-Match: *` works.
+"""
 
 from typing import cast
 from typing import NotRequired
@@ -67,7 +71,7 @@ class _ListObjectsOutput(TypedDict):
 
 
 class _S3Client(Protocol):
-    """The narrow boto3 client subset the MinIO adapter owns."""
+    """The narrow boto3 client subset the object-store adapter owns."""
 
     def head_bucket(self, *, Bucket: str) -> object:
         """Check that one bucket is reachable."""
@@ -109,7 +113,7 @@ class _S3Client(Protocol):
 
 
 class MinIOObjectStore:
-    """Immutable objects in one explicitly selected MinIO bucket."""
+    """Immutable objects in one explicitly selected S3 bucket."""
 
     def __init__(
         self,
@@ -118,11 +122,11 @@ class MinIOObjectStore:
         settings: MinIOSettings | None = None,
         client: _S3Client | None = None,
     ) -> None:
-        """Bind one bucket to either injected test client or configured MinIO."""
+        """Bind one bucket to either an injected test client or the configured store."""
         if not bucket:
-            raise ValueError("a MinIO object store requires a non-empty bucket")
+            raise ValueError("an S3 object store requires a non-empty bucket")
         if client is None and settings is None:
-            raise ValueError("MinIO settings are required when no client is injected")
+            raise ValueError("S3 settings are required when no client is injected")
         self._bucket = bucket
         self._client = client or _client(settings=cast("MinIOSettings", settings))
 
@@ -252,12 +256,12 @@ class MinIOObjectStore:
             continuation = page.get("NextContinuationToken", "")
             if not continuation:
                 raise RuntimeError(
-                    "MinIO returned a truncated object page without a continuation token"
+                    "the object store returned a truncated object page without a continuation token"
                 )
 
 
 def _client(*, settings: MinIOSettings) -> _S3Client:
-    """Construct the path-style S3 client supported by local MinIO."""
+    """Construct the path-style S3 client the bundled store supports."""
     return cast(
         "_S3Client",
         boto3.client(

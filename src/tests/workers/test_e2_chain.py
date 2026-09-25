@@ -44,6 +44,7 @@ from rememberstack.workers import E2Settings
 from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import ExtractClaimsHandler
 from rememberstack.workers import HandlerRegistry
+from rememberstack.workers import P1Settings
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
@@ -240,9 +241,10 @@ class _E2Rig:
                 artifact_store=artifact_store,
                 model_provider=self.provider,
                 chunk_index=PostgresP1Index(
-                    engine=engine, embedding_model=E1Settings().embedding_model
+                    engine=engine, embedding_model=P1Settings().embedding_model
                 ),
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )

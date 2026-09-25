@@ -25,6 +25,7 @@ from rememberstack.model import EvalSuite
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PublishedMounts
 from rememberstack.model import S58Answer
+from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import ConsumptionCatalog
@@ -43,7 +44,22 @@ _MODEL = "cold-harness-test"
 
 
 class _NullSearchIndex:
-    """A P1 stub for the coexistence proof; the S39 case uses only Postgres."""
+    """A ready-but-empty P1 stub for the S58/S39 coexistence proof."""
+
+    def entity_semantic_ready(self, *, deployment_id: str) -> bool:
+        """Publish the empty entity channel so S39 can exhaust T3."""
+        return True
+
+    def search_entities_scored(
+        self,
+        *,
+        deployment_id: str,
+        vector: tuple[float, ...],
+        k: int,
+        deadline: float | None = None,
+    ) -> tuple[P1Nomination, ...]:
+        """Return no entity nominations from the published semantic channel."""
+        return ()
 
     def search_claims(
         self,
@@ -319,6 +335,7 @@ def test_s58_and_skeleton_canaries_share_one_retrieval_evaluator(
 
     assert report.total_cases == 2
     assert report.passed
+    assert "Qxzvjk" in provider.embedded_texts
 
 
 def test_surface_rejects_mounts_from_another_deployment(

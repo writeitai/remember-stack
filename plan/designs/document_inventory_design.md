@@ -5,7 +5,12 @@ much failed — can be answered from billing metering, which is deliberately
 content-free. **Which** document, under what name, ingested when, and where it
 got to cannot. Only the deployment holds the names, so the inventory is a
 deployment surface (`GET /documents`), served from the deployment's own
-hostname, and the control plane never proxies it (D33).
+hostname. A control plane never needs a copy of it: nothing is cached or
+stored off the deployment. A host may carry a caller's request to the engine
+and the answer back — remember.dev's hosted MCP endpoint does this for memory
+tools (D136) — but it does so as a caller holding a credential the engine
+verifies, and it keeps nothing. Every other client reads the inventory from
+the deployment directly.
 
 ## 1. Newest observed, not current
 

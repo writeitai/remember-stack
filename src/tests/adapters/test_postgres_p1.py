@@ -22,6 +22,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.postgres_p1 import _configure_p1_connection
+from rememberstack.adapters.postgres_p1 import EmbeddingModelChangedError
 from rememberstack.adapters.postgres_p1 import P1SearchUnavailableError
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
@@ -751,6 +752,43 @@ def test_setup_backfill_gate_tracks_the_exact_entity_channel(
         assert all(ready for target, ready in readiness.items() if target != "entities")
     finally:
         index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+
+
+def test_setup_refuses_a_new_embedding_model_once_vectors_exist(
+    database_engine: Engine, seeded: dict[str, object]
+) -> None:
+    """Stored vectors pin the model; an empty deployment may still switch."""
+    index = seeded["index"]
+    assert isinstance(index, PostgresP1Index)
+    index.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    switched = PostgresP1Index(engine=database_engine, embedding_model="other/model")
+    with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
+        switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    # The stamps decide, not the channel: channels already published under
+    # the new model do not make the old vectors acceptable.
+    switched.configure_channels(deployment_id=_DEPLOYMENT_ID)
+    try:
+        with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
+            switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    finally:
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+
+    empty_deployment = UUID("5f000000-0000-0000-0000-000000000096")
+    DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
+        deployment_input=DeploymentBootstrapInput(
+            deployment_id=empty_deployment,
+            slug="postgres-p1-empty",
+            name="PostgreSQL P1 empty deployment",
+            default_language="en",
+            raw_bucket="mem://raw",
+            artifacts_bucket="mem://artifacts",
+            corpusfs_bucket="mem://corpusfs",
+        )
+    )
+    PostgresP1Index(engine=database_engine, embedding_model=_MODEL).configure_channels(
+        deployment_id=empty_deployment
+    )
+    switched.require_stored_embedding_model(deployment_id=empty_deployment)
 
 
 def test_ranked_search_never_crosses_deployments(

@@ -41,7 +41,6 @@ from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
-from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
@@ -330,6 +329,7 @@ class _VersionRig:
                 model_provider=self.provider,
                 chunk_index=p1,
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )
@@ -396,9 +396,7 @@ class _VersionRig:
                 claim_catalog=claim_catalog,
                 chunker_version=chunker_version(params=_PARAMS),
                 adjudicator=SupersessionAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=SupersessionSettings(),
+                    engine=engine, model_provider=self.provider
                 ),
                 profile_refresher=profile_refresher,
             ),

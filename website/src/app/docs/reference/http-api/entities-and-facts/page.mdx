@@ -1,0 +1,289 @@
+export const metadata = {
+  title: "Entities and facts",
+  description: "Resolve a name to entities, look up relations and observations, hydrate a relation down to its sources, and read a relation's decision history.",
+};
+
+# Entities and facts
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+These five routes are the direct, single-purpose reads behind the assured
+operations. Use them when you already know what you want: the entity ids for
+a name, the relations that match a pattern, or the evidence behind one fact.
+Each returns an [`Envelope`](/docs/reference/result-types#envelope).
+
+All five need the `read` scope<Cloud> and carry no spend hold</Cloud>. Base URL,
+authentication and error shapes are described in
+[HTTP API conventions](/docs/reference/http-api).
+
+## GET /resolve
+
+Resolve a name to the current entities it can mean, ranked. It never guesses:
+if several entities match, you get all of them.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `name` | query | string | yes | | |
+| `context_entity_ids` | query | array of UUID | no | none | Repeat the parameter for each id. At most 8. Duplicates are collapsed. |
+
+Matching runs in tiers and stops at the first that finds anything:
+
+| Tier | `tier` value | How it matches |
+|---|---|---|
+| Exact | `T0` | The normalized name equals a current alias. Every entity with that alias is returned, uncapped. |
+| Trigram | `T1` | Fuzzy match against current aliases. |
+| Phonetic | `T2` | Sound-alike match against current aliases. |
+| Embedding | `T3` | The name is embedded and compared with entity profiles. |
+
+`T1`, `T2` and `T3` stop at the same candidate width the ingest pipeline uses
+and say so in `truncation` (`reason: "resolve_candidate_limit"`,
+`total_is_exact: false`). `context_entity_ids` does not add or remove
+candidates; it reorders them by how many current relations connect each
+candidate to those entities (`context_hits`).
+
+### Response
+
+`200` with an `Envelope` of grain `fact`. `entities` holds the candidates,
+best first. When nothing matches, `entities` is empty and `negative.kind` is
+`unknown_entity`. If the embedding tier was needed but the entity search index
+is not published, `negative.kind` is `boundary`.
+
+```json
+{
+  "grain": "fact",
+  "temporal_scope": {"mode": "current", "evaluated_at": "2026-09-23T10:00:00Z", "believed_at": "2026-09-23T10:00:00Z", "identity_regime": "current"},
+  "entities": [
+    {"entity_id": "7c1e…", "canonical_name": "Dana Whitfield", "tier": "T0", "context_hits": 0},
+    {"entity_id": "91ab…", "canonical_name": "Dana", "tier": "T0", "context_hits": 0}
+  ],
+  "freshness": {"pg_live_ts": "2026-09-23T10:00:00Z", "p1_written_inline": true, "p1_believed_at_horizon": null, "k": null},
+  "truncation": null,
+  "negative": null
+}
+```
+
+Array fields that are empty (`facts`, `evidence` and so on) are present in
+the real response and omitted here.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `name` missing, a malformed UUID, or more than 8 `context_entity_ids`. |
+| `503` | `model provider unavailable` | The embedding tier was needed and the embedding call failed. Retry with back-off. |
+
+### Example
+
+```bash
+curl -s -G "$REMEMBER_API_URL/resolve" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  --data-urlencode "name=Dana"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+envelope = memory.resolve(name="Dana")
+for candidate in envelope.entities:
+    print(candidate.entity_id, candidate.canonical_name, candidate.tier)
+```
+
+The assured operation [`resolve_entity`](/docs/reference/assured-operations#resolve_entity)
+runs the same resolution without `context_entity_ids`.
+
+## GET /lookup/relations
+
+Return the relations that match a subject–predicate–object pattern, as held
+now or at a past instant.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `subject_entity_id` | query | UUID | no | any | |
+| `predicate` | query | string | no | any | Exact predicate name. |
+| `object_entity_id` | query | UUID | no | any | |
+| `valid_at` | query | date-time | no | now | Must be UTC (`Z` or `+00:00`). |
+| `k` | query | integer | no | `50` | 1–400. The most relations to return. |
+
+Every filter is optional; the ones you send are combined with AND. A
+relation matches when it has not been invalidated and its validity window
+covers `valid_at` (or now). A relation with no known start or end is treated
+as open on that side.
+
+At most `k` relations come back. When more match, `truncation` says so
+(`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
+narrow the pattern or raise `k`.
+
+### Response
+
+`200` with an `Envelope` of grain `fact`. `facts` holds one
+[`FactResult`](/docs/reference/result-types#factresult) per relation (`kind:
+"relation"`), ordered by evidence count, highest first, then by when the
+memory learned it; `truncation` is set when the `k` cap left matches out.
+Each result carries its `validity`, its
+`temporal_match`, its `support` and, when the relation is part of a
+contradiction, the other sides in `contradiction`. With `valid_at`,
+`temporal_scope.mode` is `at`; without it, `current`. No match gives
+`negative.kind` `known_empty`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | A malformed UUID or timestamp, a `valid_at` without a zero UTC offset, or `k` outside 1–400. |
+
+### Example
+
+```bash
+curl -s -G "$REMEMBER_API_URL/lookup/relations" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  --data-urlencode "subject_entity_id=$RAVI_ID" \
+  --data-urlencode "valid_at=2026-06-01T00:00:00Z"
+```
+
+```python
+from datetime import datetime, UTC
+from remember import Client
+
+memory = Client()
+envelope = memory.lookup_relations(
+    subject_entity_id=ravi_id,
+    valid_at=datetime(2026, 6, 1, tzinfo=UTC),
+)
+```
+
+## GET /lookup/observations
+
+Return the live observations (single-entity facts, such as "the billing
+migration is behind schedule") about one entity, optionally ranked by how
+well they match a phrase.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `entity_id` | query | UUID | yes | | |
+| `property_query` | query | string | no | | When present, observations are found by semantic similarity to this text. |
+| `k` | query | integer | no | `10` | 1–400. The most observations to return. |
+
+Without `property_query`, the live observations on the entity whose validity
+covers now are returned, strongest evidence first, at most `k`; when more
+exist, `truncation` says so (`reason: "lookup_k_limit"`). With
+`property_query`, up to `k` candidates are nominated by similarity and each is
+re-checked against the database before it is returned; candidates that no
+longer hold are dropped and counted in `dropped_by_hydration`.
+
+### Response
+
+`200` with an `Envelope` of grain `fact`. `facts` holds one `FactResult` per
+observation (`kind: "observation"`). No match gives `negative.kind`
+`known_empty`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `entity_id` missing or malformed, or `k` not an integer in 1–400. |
+| `503` | `model provider unavailable` | The embedding call for `property_query` failed. Retry with back-off. |
+
+### Example
+
+```bash
+curl -s -G "$REMEMBER_API_URL/lookup/observations" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  --data-urlencode "entity_id=$BILLING_MIGRATION_ID" \
+  --data-urlencode "property_query=schedule" \
+  --data-urlencode "k=10"
+```
+
+```python
+envelope = memory.lookup_observations(
+    entity_id=billing_migration_id, property_query="schedule", k=10
+)
+```
+
+## GET /hydrate/relation/\{relation_id\}
+
+Follow one relation down to the claims that support it and the documents
+those claims came from. This is the audit hop: it answers "why does the memory
+hold this?".
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `relation_id` | path | UUID | yes | |
+
+### Response
+
+`200` with an `Envelope` of grain `composite`:
+
+- `facts`: the relation itself, with its contradiction block and support
+  state. An invalidated relation is still returned, with `invalidated_at` set
+  in its `validity`: this route does not hide history.
+- `evidence`: the supporting claims
+  ([`EvidenceResult`](/docs/reference/result-types#evidenceresult)), each with its source
+  span and character offsets.
+- `sources`: the documents
+  ([`SourceRecord`](/docs/reference/result-types#sourcerecord)).
+
+An unknown relation id gives `negative.kind` `unknown_entity`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `relation_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/hydrate/relation/$RELATION_ID" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+envelope = memory.hydrate_relation(relation_id=relation_id)
+```
+
+## GET /transcript/relation/\{relation_id\}
+
+Return the decisions the memory made about one relation: when it was
+superseded, by what, how, and on what grounds.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `relation_id` | path | UUID | yes | |
+
+### Response
+
+`200` with an `Envelope` of grain `composite`. `transcript` holds up to the 40
+most recent decisions ([`TranscriptEntry`](/docs/reference/result-types#transcriptentry)),
+oldest first. `truncation` is always present and says whether older decisions
+were left out (`truncated`, `returned`, `estimated_total`). A relation with no
+recorded decisions, or an unknown id, gives `negative.kind` `known_empty`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `422` | validation list | `relation_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/transcript/relation/$RELATION_ID" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+envelope = memory.transcript_relation(relation_id=relation_id)
+for decision in envelope.transcript:
+    print(decision.decided_at, decision.outcome, decision.method)
+```

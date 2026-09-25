@@ -7,6 +7,10 @@ a stable `reconciliation_id` (a retried run re-emits its rows as no-ops) so
 reconciliation can ride the ordinary work ledger.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime
+from typing import Self
 from uuid import UUID
 from uuid import uuid4
 
@@ -18,6 +22,7 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.model import CurrencyTransition
 from rememberstack.model import ReconciliationDelta
+from rememberstack.spine.document_bindings import live_binding_rows
 from rememberstack.spine.fact_applications import application_fence
 
 CURRENCY_CACHE_MISMATCH_SQL = """
@@ -38,12 +43,46 @@ CURRENCY_CACHE_MISMATCH_SQL = """
 """Single source for the D33 currency-cache versus append-only-ledger invariant."""
 
 
+class _PinnedConnection:
+    """Serve ``begin``/``connect`` from one open transaction (savepoints).
+
+    Lets every catalog method below run inside a caller's transaction, so a
+    multi-step operation — the public delete (D135) — commits or rolls back
+    as one unit and holds its locks (the D74 fence) for its whole duration.
+    """
+
+    def __init__(self, *, connection: Connection) -> None:
+        self._connection = connection
+
+    @contextmanager
+    def begin(self) -> Iterator[Connection]:
+        with self._connection.begin_nested():
+            yield self._connection
+
+    @contextmanager
+    def connect(self) -> Iterator[Connection]:
+        yield self._connection
+
+
 class LifecycleCatalog:
     """Currency transitions, the D54 recount, per-shape closure, deletion."""
 
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+
+    @classmethod
+    def on_connection(cls, *, connection: Connection) -> Self:
+        """A catalog whose every statement runs in ``connection``'s transaction."""
+        catalog = cls.__new__(cls)
+        catalog._engine = _PinnedConnection(connection=connection)  # type: ignore[assignment]
+        return catalog
+
+    @contextmanager
+    def transaction(self) -> Iterator["LifecycleCatalog"]:
+        """A catalog whose statements share one transaction, committed on exit."""
+        with self._engine.begin() as connection:
+            yield LifecycleCatalog.on_connection(connection=connection)
 
     def reconciliation_context(self, *, version_id: UUID) -> dict[str, object]:
         """What reconciling one completed version needs to know."""
@@ -539,15 +578,138 @@ class LifecycleCatalog:
             )
         return dict(row)
 
-    def delete_lineage(self, *, doc_id: UUID) -> None:
+    def delete_lineage(self, *, doc_id: UUID) -> datetime:
         """Tombstone a lineage by operator decision (§8; audit-visible).
 
         Claims are retained as history — normal deletion never scrubs
         content (forgotten ≠ deleted); the caller runs the currency cascade.
+        Every version is tombstoned with the lineage, so the deletion
+        survives a later re-ingest that brings the lineage back: the old
+        versions stay deleted, their testimony is never reused, and the
+        returning bytes are processed as a new version (D135). Returns the
+        lineage's deletion instant (the first one, on a repeated call).
         """
         with self._engine.begin() as connection:
             connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
+            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
             connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
+            return connection.execute(
+                _SELECT_LINEAGE_DELETED_AT, {"doc_id": doc_id}
+            ).scalar_one()
+
+    def clear_document_bindings(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+        """Drop T4 anchors a deleted lineage's late pipeline work created (D102)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                _CLEAR_DOCUMENT_BINDINGS,
+                {"deployment_id": deployment_id, "doc_id": doc_id},
+            )
+
+    def stale_for_deleted_testimony(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> tuple[CurrencyTransition, ...]:
+        """Current claims of the lineage that no live version carries (D135).
+
+        Scoped to deleted versions rather than to the lineage id, so testimony
+        of a version that is live again (the document was re-added) is never
+        retired by a deletion that started before it arrived.
+        """
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_STALE_DELETED_TESTIMONY,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
+                .mappings()
+                .all()
+            )
+        return tuple(
+            CurrencyTransition(
+                claim_id=row["claim_id"],
+                doc_id=doc_id,
+                became_current=False,
+                reason="version_deleted",
+                from_version_id=row["from_version_id"],
+            )
+            for row in rows
+        )
+
+    def resolve_deleted_support_reviews(
+        self, *, deployment_id: UUID, claim_ids: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
+        """Auto-resolve support_withdrawn reviews whose claim was deleted.
+
+        A support_withdrawn review asks whether an extractor was right to
+        stop deriving a claim from an unchanged file. Once no live version
+        carries the claim, the source itself has acted and the question is
+        moot: the review closes as ``auto_resolved`` (no verdict, history
+        appended), so zero-support closure is no longer held back by it and a
+        later ``restore_support`` verdict is refused.
+        """
+        if not claim_ids:
+            return ()
+        with self._engine.begin() as connection:
+            return tuple(
+                connection.execute(
+                    _AUTO_RESOLVE_DELETED_REVIEWS,
+                    {
+                        "deployment_id": deployment_id,
+                        "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                    },
+                ).scalars()
+            )
+
+    def rebuild_live_document_bindings(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> None:
+        """Rebuild a live lineage's D102 anchors from its live testimony only.
+
+        Late work of a deleted version can add bindings to a lineage that is
+        live again. Rather than dropping the live version's anchors with them,
+        the lineage's rows are recomputed from resolution decisions whose
+        mention belongs to testimony a live version carries.
+        """
+
+        with self._engine.begin() as connection:
+            connection.execute(
+                _CLEAR_DOCUMENT_BINDINGS,
+                {"deployment_id": deployment_id, "doc_id": doc_id},
+            )
+            decisions = (
+                connection.execute(
+                    _SELECT_LIVE_BINDING_DECISIONS,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
+                .mappings()
+                .all()
+            )
+            rows = live_binding_rows(
+                deployment_id=deployment_id, decisions=[dict(row) for row in decisions]
+            )
+            if rows:
+                connection.execute(_INSERT_BINDING, rows)
+
+    def lineage_deletion_state(
+        self, *, deployment_id: UUID, doc_id: UUID
+    ) -> dict[str, object] | None:
+        """Whether a lineage exists here, is tombstoned, and still testifies.
+
+        ``None`` when the deployment never held the lineage. Otherwise
+        ``deleted_at`` (``None`` while live) and ``holds_current_testimony``
+        — a tombstoned lineage that still holds current claims has a
+        deletion that has not finished (an interrupted cascade, or pipeline
+        work that landed after the tombstone).
+        """
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    _SELECT_LINEAGE_DELETION_STATE,
+                    {"deployment_id": deployment_id, "doc_id": doc_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+        return None if row is None else dict(row)
 
     def cycles_ready_to_finalize(
         self, *, deployment_id: UUID
@@ -580,21 +742,65 @@ class LifecycleCatalog:
                 ).scalars()
             )
 
-    def tombstoned_lineages_needing_cascade(
-        self, *, deployment_id: UUID
-    ) -> tuple[UUID, ...]:
-        """Source-tombstoned lineages that still hold current testimony.
+    def lock_lineage(self, *, doc_id: UUID) -> None:
+        """Lock the lineage row, serializing with E0 (re)ingest of it (D135)."""
+        with self._engine.begin() as connection:
+            connection.execute(
+                text("SELECT doc_id FROM documents WHERE doc_id = :doc_id FOR UPDATE"),
+                {"doc_id": doc_id},
+            )
 
-        Deployment-wide, not per cycle: the cascade re-derives from current
-        state, so a finalizer crash between claiming a cycle and finishing
-        its cascades self-heals on the next pass instead of orphaning the
-        tombstone.
-        """
+    def lineage_is_deleted(self, *, doc_id: UUID) -> bool:
+        """Whether the lineage row is currently tombstoned."""
+        with self._engine.connect() as connection:
+            return bool(
+                connection.execute(
+                    text(
+                        "SELECT deleted_at IS NOT NULL FROM documents"
+                        " WHERE doc_id = :doc_id"
+                    ),
+                    {"doc_id": doc_id},
+                ).scalar_one_or_none()
+            )
+
+    def version_claim_ids(
+        self, *, deployment_id: UUID, version_id: UUID
+    ) -> tuple[UUID, ...]:
+        """Every claim a version carries, by origin or by a reuse link."""
         with self._engine.connect() as connection:
             return tuple(
                 connection.execute(
-                    _SELECT_TOMBSTONES_NEEDING_CASCADE, {"deployment_id": deployment_id}
+                    _SELECT_VERSION_CLAIMS,
+                    {"deployment_id": deployment_id, "version_id": version_id},
                 ).scalars()
+            )
+
+    def stranded_deletion_episodes(
+        self, *, deployment_id: UUID
+    ) -> tuple[tuple[UUID, datetime], ...]:
+        """Deletion episodes whose testimony is still current (D135).
+
+        Keyed on deleted VERSIONS, not on the lineage tombstone: a watched
+        file recreated before finalization clears the lineage tombstone, but
+        the deleted versions stay deleted and their claims must still end.
+        An episode is pending while any deleted claim still has work left,
+        not only while one is current: a claim a support review already made
+        non-current can hold an open zero-support fact and an open review,
+        and a claim fact application attached after it was retired can hold
+        an open zero-support fact.
+        Each row is ``(doc_id, episode_at)`` — the newest deletion instant of
+        the versions (or lineage) carrying the stranded claims, which names
+        the episode stably across retries and anew for a later deletion.
+
+        Deployment-wide, not per cycle: the cascade re-derives from current
+        state, so a finalizer crash self-heals on the next pass.
+        """
+        with self._engine.connect() as connection:
+            return tuple(
+                (row["doc_id"], row["episode_at"])
+                for row in connection.execute(
+                    _SELECT_STRANDED_EPISODES, {"deployment_id": deployment_id}
+                ).mappings()
             )
 
     def lineage_claim_ids(
@@ -660,6 +866,8 @@ _SELECT_CONTEXT = text(
     SELECT v.deployment_id, v.doc_id, v.version_id, v.version_no,
            v.sync_cycle_id, d.versioning_mode::text AS versioning_mode,
            d.current_version_id,
+           d.deleted_at AS lineage_deleted_at,
+           v.deleted_at AS version_deleted_at,
            (SELECT cv.source_modified_at FROM document_versions cv
             WHERE cv.version_id = d.current_version_id) AS current_source_modified_at
     FROM document_versions v
@@ -1043,6 +1251,117 @@ _TOMBSTONE_LINEAGE_BY_ID = text(
     """
 )
 
+_TOMBSTONE_LINEAGE_VERSIONS = text(
+    """
+    UPDATE document_versions SET deleted_at = now()
+    WHERE doc_id = :doc_id AND deleted_at IS NULL
+    """
+)
+
+_SELECT_LINEAGE_DELETED_AT = text(
+    "SELECT deleted_at FROM documents WHERE doc_id = :doc_id"
+)
+
+LIVE_CARRIAGE_SQL = """
+    EXISTS (
+        SELECT 1
+        FROM chunks lc
+        JOIN document_versions lv
+          ON lv.version_id = lc.version_id AND lv.deleted_at IS NULL
+        JOIN documents ld
+          ON ld.doc_id = lv.doc_id AND ld.deleted_at IS NULL
+        WHERE lc.chunk_id = cl.chunk_id
+           OR lc.chunk_id IN (SELECT lcc.chunk_id FROM chunk_claims lcc
+                              WHERE lcc.claim_id = cl.claim_id)
+    )
+"""
+"""SQL predicate: claim ``cl`` is carried by a live version of a live lineage."""
+
+_SELECT_STALE_DELETED_TESTIMONY = text(
+    f"""
+    SELECT cl.claim_id, c.version_id AS from_version_id
+    FROM claims cl
+    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    WHERE cl.deployment_id = :deployment_id
+      AND cl.doc_id = :doc_id
+      AND cl.is_current_testimony
+      AND NOT {LIVE_CARRIAGE_SQL}
+    """
+)
+
+_AUTO_RESOLVE_DELETED_REVIEWS = text(
+    f"""
+    UPDATE review_queue q
+    SET status = 'auto_resolved',
+        verdict_note = 'the source document was deleted (D135)',
+        resolved_at = now(),
+        candidate = jsonb_set(
+            q.candidate,
+            '{{verdict_history}}',
+            coalesce(q.candidate -> 'verdict_history', '[]'::jsonb)
+                || jsonb_build_array(jsonb_build_object(
+                    'verdict', NULL, 'reviewer', 'deletion',
+                    'note', 'the source document was deleted (D135)')),
+            true
+        )
+    FROM claims cl
+    WHERE q.deployment_id = :deployment_id
+      AND q.item_kind = 'support_withdrawn'
+      AND q.status IN ('pending', 'deferred')
+      AND q.candidate ->> 'claim_id' = ANY(CAST(:claim_ids AS text[]))
+      AND cl.deployment_id = q.deployment_id
+      AND cl.claim_id = CAST(q.candidate ->> 'claim_id' AS uuid)
+      AND NOT {LIVE_CARRIAGE_SQL}
+    RETURNING q.review_id
+    """
+)
+
+_SELECT_LIVE_BINDING_DECISIONS = text(
+    f"""
+    SELECT decision.decision_id, decision.decided_at, mention.doc_id,
+           decision.entity_id, decision.method::text AS method,
+           decision.is_new_entity, decision.features
+    FROM resolution_decisions decision
+    JOIN mentions mention
+      ON mention.deployment_id = decision.deployment_id
+     AND mention.mention_id = decision.mention_id
+    JOIN claims cl
+      ON cl.deployment_id = mention.deployment_id
+     AND cl.claim_id = mention.claim_id
+    WHERE decision.deployment_id = :deployment_id
+      AND mention.doc_id = :doc_id
+      AND decision.features -> 'document_t0' ->> 'contract' = 'document-t0-v1'
+      AND {LIVE_CARRIAGE_SQL}
+    ORDER BY decision.decided_at, decision.decision_id
+    """
+)
+
+_INSERT_BINDING = text(
+    """
+    INSERT INTO document_entity_bindings (
+        deployment_id, doc_id, canonical_lemma, entity_id,
+        anchor_decision_id, anchor_decided_at
+    ) VALUES (
+        :deployment_id, :doc_id, :canonical_lemma, :entity_id,
+        :anchor_decision_id, :anchor_decided_at
+    )
+    """
+).bindparams(bindparam("anchor_decision_id"), bindparam("anchor_decided_at"))
+
+_SELECT_LINEAGE_DELETION_STATE = text(
+    """
+    SELECT d.deleted_at,
+           EXISTS (
+               SELECT 1 FROM claims cl
+               WHERE cl.deployment_id = d.deployment_id
+                 AND cl.doc_id = d.doc_id
+                 AND cl.is_current_testimony
+           ) AS holds_current_testimony
+    FROM documents d
+    WHERE d.deployment_id = :deployment_id AND d.doc_id = :doc_id
+    """
+)
+
 _CLEAR_DOCUMENT_BINDINGS = text(
     """
     DELETE FROM document_entity_bindings
@@ -1145,14 +1464,72 @@ _SELECT_CYCLE_LINEAGES = text(
     """
 )
 
-_SELECT_TOMBSTONES_NEEDING_CASCADE = text(
+_SELECT_STRANDED_EPISODES = text(
+    f"""
+    SELECT v.doc_id, max(coalesce(v.deleted_at, d.deleted_at)) AS episode_at
+    FROM document_versions v
+    JOIN documents d ON d.doc_id = v.doc_id
+    JOIN chunks c ON c.version_id = v.version_id
+    JOIN claims cl ON cl.chunk_id = c.chunk_id
+    WHERE v.deployment_id = :deployment_id
+      AND (v.deleted_at IS NOT NULL OR d.deleted_at IS NOT NULL)
+      AND NOT {LIVE_CARRIAGE_SQL}
+      AND (
+          cl.is_current_testimony
+          OR EXISTS (
+              SELECT 1 FROM review_queue q
+              WHERE q.deployment_id = cl.deployment_id
+                AND q.item_kind = 'support_withdrawn'
+                AND q.status IN ('pending', 'deferred')
+                AND q.candidate ->> 'claim_id' = cl.claim_id::text
+          )
+          OR EXISTS (
+              SELECT 1 FROM relation_evidence e
+              JOIN relations r ON r.relation_id = e.relation_id
+              WHERE e.claim_id = cl.claim_id
+                AND r.invalidated_at IS NULL AND r.evidence_count = 0
+                -- a fact under a live document's open review is that
+                -- review's to decide; selecting it would repeat every pass
+                AND NOT EXISTS (
+                    SELECT 1 FROM review_queue fq
+                    WHERE fq.deployment_id = r.deployment_id
+                      AND fq.item_kind = 'support_withdrawn'
+                      AND fq.status IN ('pending', 'deferred')
+                      AND fq.candidate ->> 'fact_kind' = 'relation'
+                      AND fq.candidate ->> 'fact_id' = r.relation_id::text
+                )
+          )
+          OR EXISTS (
+              SELECT 1 FROM observation_evidence e
+              JOIN observations o ON o.observation_id = e.observation_id
+              WHERE e.claim_id = cl.claim_id
+                AND o.invalidated_at IS NULL AND o.evidence_count = 0
+                -- a fact under a live document's open review is that
+                -- review's to decide; selecting it would repeat every pass
+                AND NOT EXISTS (
+                    SELECT 1 FROM review_queue fq
+                    WHERE fq.deployment_id = o.deployment_id
+                      AND fq.item_kind = 'support_withdrawn'
+                      AND fq.status IN ('pending', 'deferred')
+                      AND fq.candidate ->> 'fact_kind' = 'observation'
+                      AND fq.candidate ->> 'fact_id' = o.observation_id::text
+                )
+          )
+      )
+    GROUP BY v.doc_id
+    ORDER BY v.doc_id
     """
-    SELECT d.doc_id FROM documents d
-    WHERE d.deployment_id = :deployment_id
-      AND d.deleted_at IS NOT NULL
-      AND d.deleted_sync_cycle_id IS NOT NULL
-      AND EXISTS (SELECT 1 FROM claims cl
-                  WHERE cl.doc_id = d.doc_id AND cl.is_current_testimony)
+)
+
+_SELECT_VERSION_CLAIMS = text(
+    """
+    SELECT cl.claim_id FROM claims cl
+    JOIN chunks c ON c.chunk_id = cl.chunk_id
+    WHERE cl.deployment_id = :deployment_id AND c.version_id = :version_id
+    UNION
+    SELECT cc.claim_id FROM chunk_claims cc
+    JOIN chunks c ON c.chunk_id = cc.chunk_id
+    WHERE c.deployment_id = :deployment_id AND c.version_id = :version_id
     """
 )
 

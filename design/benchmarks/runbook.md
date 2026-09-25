@@ -53,8 +53,7 @@ Exported in the shell that invokes the CLI (values live in the host's
 
 ```
 REMEMBERSTACK_OPENROUTER_API_KEY          # all LLM + embedding traffic
-REMEMBERSTACK_API_URL=http://127.0.0.1:18000
-REMEMBERSTACK_API_TIMEOUT_SECONDS=60      # V15 transport budget
+REMEMBER_API_URL=http://127.0.0.1:18000   # the CLI's 60 s transport budget is fixed in code
 ```
 
 `run_shard.sh` sets every non-secret V15 ingest binding itself: Luna for the
@@ -98,7 +97,7 @@ Manual equivalents, when you need them:
 | Symptom | Cause | Recovery |
 | --- | --- | --- |
 | `answer` refuses: deployment lacks required pipeline/P1/live-graph/P3 capability readiness | Drain not actually complete, live graph catalog/helper health failed, or P3 published before the last ingest event | Finish the true drain, repair live graph catalog if reported, rebuild P3, then answer. P3 must follow ingest. |
-| Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api python -m rememberstack.surfaces.cli ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
+| Rows stuck in `dead_letter` | A chunk's extraction (or a relation stage) exhausted 3 attempts — usually glm non-JSON (#174) | `docker compose exec -T api remember ops replay <processing_id> --deployment <id> --attempts 3`, then wait for the drain again. In practice one replay round clears it; bound retries (the wrappers use 3 rounds) so a truly poisoned chunk stops the run loudly instead of looping. |
 | A worker reports a model different from `state.json` | A separate post-launch `docker compose up --scale` read stale ambient `.env` values and created a mixed-model fleet | Stop the invalid run. Relaunch through `run_shard.sh` only; set its `LOCOMO_*_WORKERS` variables if different replica counts are needed. The runner attests every app container before ingest and during every drain poll. |
 | Extract or normalize remains slow | Replica counts are too low for the current chunk/claim fan-out | Set `LOCOMO_EXTRACT_CLAIM_WORKERS`, `LOCOMO_NORMALIZE_RELATION_WORKERS`, `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS`, or `LOCOMO_EMBED_CLAIM_WORKERS` on the original `run_shard.sh` invocation. Never scale the benchmark with a second Compose command. |
 | run_shard refuses: "partial checkpoint; resume stages manually" | A previous attempt died mid-sample, leaving partial ingest/answer records in the run dir | If the stack matches the checkpoint, run the incomplete stage directly; `ingest` first proves the exact public live-lineage/visible-version join. If it does not match and the sample has no answer/judge records, rerun that sample in a new run directory and merge it with the old run. If any answer/judge record exists, restart every sample assigned to that run directory; merging a replacement sample would correctly fail as overlap. Never edit or force a checkpoint forward. |

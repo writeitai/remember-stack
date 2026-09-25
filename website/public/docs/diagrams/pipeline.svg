@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 560" role="img" aria-labelledby="t d">
+  <title id="t">The pipeline</title>
+  <desc id="d">A document passes through stages before it can be queried. Reading: store, convert to Markdown, find sections, cut passages, select statements worth keeping and turn them into claims, check each claim against the source. Connecting: resolve names to entities, turn claims into facts, weigh each against existing facts, and index. Then it is queryable. Nothing on the answering side calls a language model.</desc>
+  <defs>
+    <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="sphereT" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9f0e6"/><stop offset=".35" stop-color="#5cc8b6"/><stop offset="1" stop-color="#2a6f66"/></radialGradient>
+    <radialGradient id="sphereC" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffc2b5"/><stop offset=".35" stop-color="#ff7a62"/><stop offset="1" stop-color="#a8392a"/></radialGradient>
+    <radialGradient id="sphereS" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#f3e6de"/><stop offset=".4" stop-color="#c9b2a6"/><stop offset="1" stop-color="#7d665c"/></radialGradient>
+    <marker id="arrT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5cc8b6"/></marker>
+    <marker id="arrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff7a62"/></marker>
+    <marker id="arrM" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#66739c"/></marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .h { fill: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .h2 { fill: #ffffff; font-size: 17px; font-weight: 700; }
+      .k { fill: #66739c; font-size: 12px; font-weight: 600; letter-spacing: .16em; }
+      .b { fill: #d9def0; font-size: 15px; }
+      .m { fill: #9faaca; font-size: 13px; }
+      .sm { fill: #66739c; font-size: 12px; }
+      .w { fill: #ffffff; }
+      .tc { fill: #5cc8b6; }
+      .cc { fill: #ff7a62; }
+      .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      .card { fill: #101c42; stroke: #25335f; }
+      .cardT { fill: #0f2a3a; stroke: #3e9b8e; stroke-opacity: .7; }
+      .flow { stroke-dasharray: 5 7; animation: flow 1.6s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -24; } }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+      .s1 { animation: s1 14s ease-out infinite both; }
+@keyframes s1 { 0%, 6% { opacity: 0; transform: translateY(8px); } 11%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s2 { animation: s2 14s ease-out infinite both; }
+@keyframes s2 { 0%, 12% { opacity: 0; transform: translateY(8px); } 17%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s3 { animation: s3 14s ease-out infinite both; }
+@keyframes s3 { 0%, 18% { opacity: 0; transform: translateY(8px); } 23%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s4 { animation: s4 14s ease-out infinite both; }
+@keyframes s4 { 0%, 24% { opacity: 0; transform: translateY(8px); } 29%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s5 { animation: s5 14s ease-out infinite both; }
+@keyframes s5 { 0%, 30% { opacity: 0; transform: translateY(8px); } 35%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s6 { animation: s6 14s ease-out infinite both; }
+@keyframes s6 { 0%, 36% { opacity: 0; transform: translateY(8px); } 41%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s7 { animation: s7 14s ease-out infinite both; }
+@keyframes s7 { 0%, 42% { opacity: 0; transform: translateY(8px); } 47%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s8 { animation: s8 14s ease-out infinite both; }
+@keyframes s8 { 0%, 48% { opacity: 0; transform: translateY(8px); } 53%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s9 { animation: s9 14s ease-out infinite both; }
+@keyframes s9 { 0%, 54% { opacity: 0; transform: translateY(8px); } 59%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s10 { animation: s10 14s ease-out infinite both; }
+@keyframes s10 { 0%, 60% { opacity: 0; transform: translateY(8px); } 65%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      
+      .packet { animation: packet 14s linear infinite both; }
+      @keyframes packet { 0%, 4% { offset-distance: 0%; opacity: 0; } 6% { opacity: 1; } 86% { offset-distance: 100%; opacity: 1; } 90%, 100% { offset-distance: 100%; opacity: 0; } }
+
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .rm-hide { display: none; } }
+    </style>
+  </defs>
+  <rect width="1200" height="560" rx="24" fill="#0a1230"/>
+  <rect width="1200" height="560" rx="24" fill="url(#glowC)"/>
+  <rect width="1200" height="560" rx="24" fill="url(#glowT)"/>
+  <text class="k" x="60" y="62">FROM FILE TO MEMORY</text>
+  <text class="h" x="60" y="92">What happens after you send a document</text>
+  <text class="k cc" x="60" y="146" style="fill:#ff7a62">READ</text>
+  <text class="k tc" x="60" y="336" style="fill:#5cc8b6">CONNECT</text>
+  <path d="M140 210 L1060 210 C 1150 210, 1150 400, 1060 400 L140 400" fill="none" stroke="#25335f" stroke-width="2"/>
+  <path class="flow" d="M140 210 L1060 210 C 1150 210, 1150 400, 1060 400 L140 400" fill="none" stroke="#66739c" stroke-width="2" stroke-opacity=".6"/>
+  <g class="s1">
+    <rect class="card" x="60" y="170" width="160" height="80" rx="14"/>
+    <circle cx="84" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="100" y="204" style="font-size:15px">Store</text>
+    <text class="sm" x="78" y="232">raw file kept</text>
+  </g>
+  <g class="s2">
+    <rect class="card" x="244" y="170" width="160" height="80" rx="14"/>
+    <circle cx="268" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="284" y="204" style="font-size:15px">Convert</text>
+    <text class="sm" x="262" y="232">to Markdown</text>
+  </g>
+  <g class="s3">
+    <rect class="card" x="428" y="170" width="160" height="80" rx="14"/>
+    <circle cx="452" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="468" y="204" style="font-size:15px">Structure</text>
+    <text class="sm" x="446" y="232">find sections</text>
+  </g>
+  <g class="s4">
+    <rect class="card" x="612" y="170" width="160" height="80" rx="14"/>
+    <circle cx="636" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="652" y="204" style="font-size:15px">Chunk</text>
+    <text class="sm" x="630" y="232">cut passages</text>
+  </g>
+  <g class="s5">
+    <rect class="card" x="796" y="170" width="160" height="80" rx="14"/>
+    <circle cx="820" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="836" y="204" style="font-size:15px">Extract</text>
+    <text class="sm" x="814" y="232">select, rewrite</text>
+  </g>
+  <g class="s5">
+    <rect class="card" x="980" y="170" width="160" height="80" rx="14"/>
+    <circle cx="1004" cy="198" r="8" fill="url(#sphereC)"/>
+    <text class="h2" x="1020" y="204" style="font-size:15px">Ground</text>
+    <text class="sm" x="998" y="232">check vs source</text>
+  </g>
+  <g class="s6">
+    <rect class="card" x="980" y="360" width="160" height="80" rx="14"/>
+    <circle cx="1004" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="1020" y="394" style="font-size:15px">Resolve</text>
+    <text class="sm" x="998" y="422">names → entities</text>
+  </g>
+  <g class="s6">
+    <rect class="card" x="796" y="360" width="160" height="80" rx="14"/>
+    <circle cx="820" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="836" y="394" style="font-size:15px">Form facts</text>
+    <text class="sm" x="814" y="422">relations, observations</text>
+  </g>
+  <g class="s7">
+    <rect class="card" x="612" y="360" width="160" height="80" rx="14"/>
+    <circle cx="636" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="652" y="394" style="font-size:15px">Adjudicate</text>
+    <text class="sm" x="630" y="422">confirm, adjust, close</text>
+  </g>
+  <g class="s7">
+    <rect class="card" x="428" y="360" width="160" height="80" rx="14"/>
+    <circle cx="452" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="468" y="394" style="font-size:15px">Reconcile</text>
+    <text class="sm" x="446" y="422">recount support</text>
+  </g>
+  <g class="s8">
+    <rect class="card" x="244" y="360" width="160" height="80" rx="14"/>
+    <circle cx="268" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="284" y="394" style="font-size:15px">Index</text>
+    <text class="sm" x="262" y="422">search, graph</text>
+  </g>
+  <g class="s8">
+    <rect class="cardT" x="60" y="360" width="160" height="80" rx="14"/>
+    <circle cx="84" cy="388" r="8" fill="url(#sphereT)"/>
+    <text class="h2" x="100" y="394" style="font-size:15px">Queryable</text>
+    <text class="sm" x="78" y="422">readiness: ready</text>
+  </g>
+  <circle class="packet rm-hide" r="7" fill="#ffffff" style="offset-path: path('M140 210 L1060 210 C 1150 210, 1150 400, 1060 400 L140 400')"/>
+  <g class="s9">
+    <text class="m" x="60" y="492">Each stage runs as its own worker and records its result. Processing takes minutes, not milliseconds.</text>
+    <text class="m" x="60" y="516">Answering a question later runs none of this: it reads what the pipeline already wrote.</text>
+  </g>
+</svg>

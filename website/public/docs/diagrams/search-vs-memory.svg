@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="t d">
+  <title id="t">Search compared with memory</title>
+  <desc id="d">Asked who leads the billing migration, a document search returns three passages that all look equally relevant: January kickoff notes saying Ravi leads, February slides saying Ravi leads, and the June retro saying Dana now leads. A memory system returns one fact: Dana leads the billing migration since 1 June, from the June retro, with Ravi's January to June period kept as history.</desc>
+  <defs>
+    <radialGradient id="glowC" cx="30%" cy="45%" r="45%">
+      <stop offset="0" stop-color="#ee5b44" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#ee5b44" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowT" cx="72%" cy="50%" r="45%">
+      <stop offset="0" stop-color="#3e9b8e" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="sphereT" cx="35%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#b9f0e6"/>
+      <stop offset=".35" stop-color="#5cc8b6"/>
+      <stop offset="1" stop-color="#2a6f66"/>
+    </radialGradient>
+    <radialGradient id="sphereC" cx="35%" cy="30%" r="70%">
+      <stop offset="0" stop-color="#ffc2b5"/>
+      <stop offset=".35" stop-color="#ff7a62"/>
+      <stop offset="1" stop-color="#a8392a"/>
+    </radialGradient>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .h { fill: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .k { fill: #66739c; font-size: 12px; font-weight: 600; letter-spacing: .16em; }
+      .b { fill: #d9def0; font-size: 16px; }
+      .m { fill: #9faaca; font-size: 13px; }
+      .s { fill: #66739c; font-size: 13px; }
+      .q { fill: #ffffff; font-size: 18px; font-weight: 600; }
+      .fact { fill: #ffffff; font-size: 20px; font-weight: 700; }
+      .card { fill: #101c42; stroke: #25335f; }
+      .grow { transform-box: fill-box; transform-origin: left center; animation: grow 12s ease-out infinite both; }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      .travel { animation: travel 12s ease-in-out infinite both; }
+      .s1 { animation: s1 12s ease-out infinite both; }
+      @keyframes s1 { 0%, 14% { opacity: 0; transform: translateY(8px); } 20%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s2 { animation: s2 12s ease-out infinite both; }
+      @keyframes s2 { 0%, 20% { opacity: 0; transform: translateY(8px); } 26%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s3 { animation: s3 12s ease-out infinite both; }
+      @keyframes s3 { 0%, 26% { opacity: 0; transform: translateY(8px); } 32%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s4 { animation: s4 12s ease-out infinite both; }
+      @keyframes s4 { 0%, 34% { opacity: 0; transform: translateY(8px); } 40%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s5 { animation: s5 12s ease-out infinite both; }
+      @keyframes s5 { 0%, 40% { opacity: 0; transform: translateY(8px); } 46%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s6 { animation: s6 12s ease-out infinite both; }
+      @keyframes s6 { 0%, 46% { opacity: 0; transform: translateY(8px); } 52%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s7 { animation: s7 12s ease-out infinite both; }
+      @keyframes s7 { 0%, 52% { opacity: 0; transform: translateY(8px); } 58%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      .s8 { animation: s8 12s ease-out infinite both; }
+      @keyframes s8 { 0%, 58% { opacity: 0; transform: translateY(8px); } 64%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      @keyframes grow { 0%, 46% { transform: scaleX(0); } 56%, 100% { transform: scaleX(1); } }
+      @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+      @keyframes travel { 0% { opacity: 0; } 4% { opacity: 1; } 12% { opacity: 1; } 16%, 100% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+    </style>
+  </defs>
+
+  <rect width="1200" height="640" rx="24" fill="#0a1230"/>
+  <rect width="1200" height="640" rx="24" fill="url(#glowC)"/>
+  <rect width="1200" height="640" rx="24" fill="url(#glowT)"/>
+
+  <!-- the question -->
+  <g>
+    <rect x="360" y="36" width="480" height="56" rx="28" fill="#18244f" stroke="#25335f"/>
+    <circle class="pulse" cx="392" cy="64" r="8" fill="#ff7a62"/>
+    <text class="q" x="412" y="70">Who leads the billing migration?</text>
+  </g>
+  <g class="travel">
+    <path d="M540 92 C 480 130, 330 120, 300 150" fill="none" stroke="#ff7a62" stroke-width="2" stroke-dasharray="4 6"/>
+    <path d="M660 92 C 720 130, 870 120, 900 150" fill="none" stroke="#5cc8b6" stroke-width="2" stroke-dasharray="4 6"/>
+  </g>
+
+  <!-- left: search -->
+  <text class="k" x="60" y="150">SEARCH OVER DOCUMENTS</text>
+  <text class="h" x="60" y="182">Returns what sounds similar</text>
+
+  <g class="s1">
+    <rect class="card" x="60" y="210" width="480" height="84" rx="14"/>
+    <rect x="60" y="210" width="6" height="84" rx="3" fill="#ee5b44"/>
+    <text class="m" x="86" y="238">Kickoff notes · January</text>
+    <text class="b" x="86" y="268">“Ravi leads the billing migration.”</text>
+    <text class="s" x="470" y="238">0.82</text>
+  </g>
+  <g class="s2">
+    <rect class="card" x="60" y="308" width="480" height="84" rx="14"/>
+    <rect x="60" y="308" width="6" height="84" rx="3" fill="#ee5b44"/>
+    <text class="m" x="86" y="336">Slides · February</text>
+    <text class="b" x="86" y="366">“Ravi leads billing.”</text>
+    <text class="s" x="470" y="336">0.81</text>
+  </g>
+  <g class="s3">
+    <rect class="card" x="60" y="406" width="480" height="84" rx="14"/>
+    <rect x="60" y="406" width="6" height="84" rx="3" fill="#ee5b44"/>
+    <text class="m" x="86" y="434">Retro · June</text>
+    <text class="b" x="86" y="464">“Dana now leads billing.”</text>
+    <text class="s" x="470" y="434">0.80</text>
+  </g>
+  <g class="s4">
+    <text class="b" x="60" y="536" style="fill:#ff7a62">Two say Ravi, one says Dana.</text>
+    <text class="m" x="60" y="562">Nothing says which is current, so the agent guesses.</text>
+  </g>
+
+  <!-- divider -->
+  <line x1="600" y1="140" x2="600" y2="600" stroke="#25335f" stroke-dasharray="2 8"/>
+
+  <!-- right: memory -->
+  <text class="k" x="660" y="150">MEMORY SYSTEM</text>
+  <text class="h" x="660" y="182">Returns what holds now</text>
+
+  <g class="s5">
+    <rect x="660" y="210" width="480" height="140" rx="16" fill="#0f2a3a" stroke="#3e9b8e" stroke-opacity=".7"/>
+    <circle cx="698" cy="250" r="14" fill="url(#sphereT)"/>
+    <text class="fact" x="724" y="257">Dana leads the billing migration</text>
+    <text class="m" x="724" y="286">since 1 June</text>
+    <rect x="724" y="304" width="172" height="28" rx="14" fill="#18244f" stroke="#25335f"/>
+    <text class="m" x="738" y="323">source: Retro · June</text>
+  </g>
+
+  <!-- timeline -->
+  <g class="s6">
+    <text class="s" x="660" y="392">JAN</text>
+    <text class="s" x="820" y="392">JUN 1</text>
+    <text class="s" x="1098" y="392">NOW</text>
+    <line x1="660" y1="410" x2="1140" y2="410" stroke="#25335f" stroke-width="2"/>
+  </g>
+  <g class="s6">
+    <rect class="grow" x="660" y="420" width="178" height="26" rx="13" fill="#ee5b44" fill-opacity=".55"/>
+    <rect class="grow" x="842" y="420" width="298" height="26" rx="13" fill="#3e9b8e"/>
+  </g>
+  <g class="s7">
+    <text class="m" x="674" y="438" style="fill:#ffffff">Ravi</text>
+    <text class="m" x="856" y="438" style="fill:#ffffff">Dana</text>
+    <circle cx="672" cy="480" r="8" fill="url(#sphereC)"/>
+    <text class="m" x="688" y="485">Ravi led it from January to 1 June, kept as history.</text>
+  </g>
+  <g class="s8">
+    <text class="b" x="660" y="536" style="fill:#5cc8b6">One answer, with when and where it came from.</text>
+    <text class="m" x="660" y="562">The older statements stay on record, marked as history.</text>
+  </g>
+</svg>

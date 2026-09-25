@@ -1,4 +1,4 @@
-"""WP-0.4c contract tests for immutable MinIO object storage."""
+"""WP-0.4c contract tests for immutable S3 object storage."""
 
 from io import BytesIO
 
@@ -156,7 +156,7 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
 
 @pytest.mark.parametrize("value", ("/absolute", "safe/../escape"))
 def test_keys_cannot_escape_the_logical_store_root(value: str) -> None:
-    """MinIO applies the same traversal boundary as the local-FS adapter."""
+    """The S3 store applies the same traversal boundary as the local-FS adapter."""
     store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
 
     with pytest.raises(ObjectKeyEscapesRootError):

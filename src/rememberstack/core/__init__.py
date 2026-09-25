@@ -29,7 +29,6 @@ from rememberstack.core.conversion import LaneUsageRecorder
 from rememberstack.core.conversion import MarkdownPassthroughConverter
 from rememberstack.core.conversion import PASSTHROUGH_CONVERTER_VERSION
 from rememberstack.core.conversion import STOCK_CONVERSION_ROUTE_NAMES
-from rememberstack.core.conversion import stock_passthrough_routes
 from rememberstack.core.core_manifest import CORE_MANIFEST
 from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
@@ -126,7 +125,6 @@ __all__ = (
     "PASSTHROUGH_CONVERTER_VERSION",
     "STOCK_CONVERSION_ROUTE_NAMES",
     "entire_document_labeling",
-    "stock_passthrough_routes",
     "PredicateDefinition",
     "block_hash",
     "blockize",
