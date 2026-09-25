@@ -240,6 +240,9 @@ class UploadIngestor:
                 byte_size=len(upload.content),
                 raw_uri=raw_uri,
                 ingested_by=ingested_by,
+                file_name=upload.filename,
+                declared_title=upload.title,
+                source_path=upload.source_path,
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
@@ -297,6 +300,9 @@ class UploadIngestor:
             source_version_ref=source_version_ref,
             sync_cycle_id=sync_cycle_id,
             ingested_by=ingested_by,
+            file_name=upload.filename,
+            declared_title=upload.title,
+            source_path=upload.source_path,
         )
         if metering is None:
             try:
@@ -574,7 +580,8 @@ class ConvertHandler:
                 meta_uri=f"{base}/meta.json",
                 markdown_hash=markdown_hash,
                 manifest_hash=hashlib.sha256(manifest_bytes).hexdigest(),
-            )
+            ),
+            metadata=result.metadata,
         )
         return self._structure_follow_up(
             work=work, version_id=source.version_id, representation_id=representation_id

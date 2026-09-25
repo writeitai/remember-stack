@@ -731,11 +731,15 @@ class MemoryClient:
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
         ``source_kind`` and ``source_ref`` are a pair. Reusing them creates a
         new immutable version of the same document when the bytes change.
+        ``source_path`` records where the file lives at its source (a folder
+        path or URL) with the version's metadata; sending the same bytes
+        again under a new name, title or path records that name too.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -796,6 +800,7 @@ class MemoryClient:
                 source_modified_at.isoformat() if source_modified_at else None,
             ),
             ("source_version_ref", source_version_ref),
+            ("source_path", source_path),
         ):
             if value is not None:
                 params[key] = value
@@ -1131,6 +1136,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Ingest a document from a file path, string path, or raw bytes."""
         resolved_source = Path(source) if isinstance(source, str) else source
@@ -1145,6 +1151,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def ingest_file(
@@ -1159,6 +1166,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1171,6 +1179,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def __enter__(self) -> Self:

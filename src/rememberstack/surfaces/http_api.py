@@ -1429,6 +1429,17 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                description=(
+                    "Where the file lives at its source (a folder path or URL)."
+                    " Recorded with this version's metadata and observed"
+                    " names, so the document can later be found by it."
+                ),
+            ),
+        ] = None,
         principal_kind: Annotated[
             str | None,
             Header(
@@ -1507,7 +1518,11 @@ def _mount_ingest(
                 status_code=422, detail="source_modified_at must be timezone-aware UTC"
             )
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content, title=title
+            filename=filename,
+            mime=mime,
+            content=content,
+            title=title,
+            source_path=source_path,
         )
         if source_kind is None or source_ref is None:
             if (

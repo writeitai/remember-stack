@@ -8897,6 +8897,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
+| `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -8948,6 +8949,21 @@ Some settings are taken from the first ingest and kept:
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours
 were taken.
+
+### File names, titles and paths
+
+Each version records the names it was ingested under: `filename`, the
+`title` you sent (not the stem of `filename`), and `source_path`. A converter
+can add what the file itself declares, such as an HTML page's `<title>`.
+
+Sending the same bytes again under a different `filename`, `title` or
+`source_path` is still a no-op (`"created": false`), but the engine records
+the new name next to the old ones. A parameter you leave out does not count
+as a change. The document's own `title` in the response does not change: it
+stays the one set by the first ingest.
+
+No route searches documents by these names yet; see
+[What is not built yet](https://remember.dev/docs/project/not-built-yet#documents).
 
 ### Attribution
 
@@ -13506,6 +13522,7 @@ Client.ingest_file(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -13602,6 +13619,7 @@ MemoryClient.ingest(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -13621,6 +13639,7 @@ results.
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
+| `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](https://remember.dev/docs/reference/http-api/ingest#file-names-titles-and-paths). |
 
 Raises `ValueError` when:
 
@@ -16387,6 +16406,10 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
+- **Finding a document by name or metadata.** Each version records its file
+  name, title and source path, but no route, SDK method, CLI command or MCP
+  tool searches or filters documents by them; `GET /documents` pages by
+  status only.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

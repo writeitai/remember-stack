@@ -37,6 +37,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
+| `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -88,6 +89,21 @@ Some settings are taken from the first ingest and kept:
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours
 were taken.
+
+### File names, titles and paths
+
+Each version records the names it was ingested under: `filename`, the
+`title` you sent (not the stem of `filename`), and `source_path`. A converter
+can add what the file itself declares, such as an HTML page's `<title>`.
+
+Sending the same bytes again under a different `filename`, `title` or
+`source_path` is still a no-op (`"created": false`), but the engine records
+the new name next to the old ones. A parameter you leave out does not count
+as a change. The document's own `title` in the response does not change: it
+stays the one set by the first ingest.
+
+No route searches documents by these names yet; see
+[What is not built yet](/docs/project/not-built-yet#documents).
 
 ### Attribution
 

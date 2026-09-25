@@ -40,9 +40,14 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import SyntheticRootRecord
 from rememberstack.model import UploadRecord
+from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
 from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.spine.document_metadata import merge_converter_metadata_on
+from rememberstack.spine.document_metadata import observe_names_on
+from rememberstack.spine.document_metadata import record_ingest_metadata_on
+from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -111,6 +116,12 @@ class DocumentCatalog:
                 ).rowcount
                 == 1
             ):
+                refresh_family_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    content_hash=record.content_hash,
+                    mime=record.mime,
+                )
                 # The wake is a NOTIFY, delivered only when this commits.
                 connection.execute(
                     _RELEASE_PARKED_CONVERSIONS,
@@ -182,13 +193,37 @@ class DocumentCatalog:
                         "status": "ingesting" if metering is not None else "converting",
                     },
                 )
-            elif record.source_version_ref is not None:
-                connection.execute(
-                    _ADVANCE_VERSION_CURSOR,
-                    {
-                        "version_id": version_id,
-                        "source_version_ref": record.source_version_ref,
-                    },
+                record_ingest_metadata_on(
+                    connection=connection,
+                    record=record,
+                    doc_id=doc_id,
+                    version_id=version_id,
+                    mime=effective_mime,
+                )
+            else:
+                # Lock order (D134): the document_versions row, then its
+                # document_metadata row — the order conversion takes them in
+                # (version status update, then the metadata merge). The
+                # cursor update comes first; observe_names_on locks the
+                # version row itself when there is no cursor to advance.
+                if record.source_version_ref is not None:
+                    connection.execute(
+                        _ADVANCE_VERSION_CURSOR,
+                        {
+                            "version_id": version_id,
+                            "source_version_ref": record.source_version_ref,
+                        },
+                    )
+                # D134 metadata observation: identical bytes under a new
+                # file name, title or path create no version but are a name
+                # the document must be findable by.
+                observe_names_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=version_id,
+                    file_name=record.file_name,
+                    title=record.declared_title,
+                    source_path=record.source_path,
                 )
             parked = False
             if metering is None:
@@ -316,12 +351,17 @@ class DocumentCatalog:
                 _MARK_VERSION_FAILED, {"version_id": version_id, "error": error}
             )
 
-    def record_representation(self, *, record: RepresentationRecord) -> None:
+    def record_representation(
+        self, *, record: RepresentationRecord, metadata: DocumentMetadata | None = None
+    ) -> None:
         """Insert one immutable conversion output and advance the version (D65).
 
         The representation lands in ``structuring`` status; the structure stage
         completes it. The version's live-reading pointer is NOT set here — it
         swaps only on chain completion (`record_synthetic_root`), the D54 rule.
+        Metadata the converter read from the file is merged into the version's
+        D134 row in the same transaction, recorded under the converter's
+        identity as its mapping version.
         """
         with self._engine.begin() as connection:
             connection.execute(_INSERT_REPRESENTATION, record.model_dump(mode="json"))
@@ -332,6 +372,16 @@ class DocumentCatalog:
                     "deployment_id": record.deployment_id,
                 },
             )
+            if metadata is not None:
+                merge_converter_metadata_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=record.version_id,
+                    metadata=metadata,
+                    mapping_version=(
+                        f"{record.converter_name}@{record.converter_version}"
+                    ),
+                )
 
     def structure_source(self, *, representation_id: UUID) -> StructureSource:
         """Load what the structure stage needs about one representation."""
