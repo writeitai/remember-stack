@@ -88,7 +88,9 @@ Configuration mistakes that stop a container at start:
 | In the logs | Cause | Fix |
 |---|---|---|
 | A validation error that names `api_key` | `REMEMBERSTACK_OPENROUTER_API_KEY` is empty. | Set it in `.env`, then `docker compose up -d`. |
-| `setup` refuses because the deployment id, slug or name differ | `.env` no longer matches what the first `setup` recorded. | Restore the original values. See [The deployment id is permanent](/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
+| `setup` refuses with "deployment identity or mapped profile values conflict" or "this database already holds deployment …" | `.env` no longer matches what the first `setup` recorded; the message names the changed values or the recorded id. | Restore the original values. See [The deployment id is permanent](/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
+| Compose says `set REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | `.env` has no deployment id. | Generate one as in [Install](/docs/self-hosting/install#1-get-the-files). |
+| `setup` refuses because `REMEMBERSTACK_P1_EMBEDDING_MODEL` differs from the stored vectors | The embedding model changed after documents were embedded. | Set it back to the model the message names. See [Changing the embedding model](/docs/self-hosting/models#changing-the-embedding-model). |
 | "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
 | The shared secret and the bind disagree | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` describe different secrets. | See [Authentication and scopes](/docs/self-hosting/authentication). |
 | A validation error that names `API_KEY_ISSUER`, `API_KEY_TENANT_ID`, `API_SIGNING_KEYS_URL` or `API_REVOCATION_URL` | Signed keys are half configured: an issuer without its tenant id or URLs, or those without an issuer. | Set all four, or none. See [Signed keys](/docs/self-hosting/authentication#signed-keys). |
@@ -361,7 +363,7 @@ dropped; readiness shows the stage as `pending`.
 
 A `defer_reason` of `budget` (see
 [See what is waiting and why](#see-what-is-waiting-and-why)) shows it.
-Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
+Wait for the window to end, or raise `ceiling_usd` in `.env` and run
 `docker compose up -d`. See [Spend budgets](/docs/self-hosting/operating#spend-budgets).
 
 ## Empty or surprising answers

@@ -892,7 +892,8 @@ class SelfHostProfile:
                 raw_bucket=f"s3://{self._settings.raw_bucket_name}",
                 artifacts_bucket=f"s3://{self._settings.artifacts_bucket_name}",
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
-            )
+            ),
+            sole_deployment=True,
         )
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
@@ -956,6 +957,9 @@ class SelfHostProfile:
             raw.commit()
         p1_index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
+        )
+        p1_index.require_stored_embedding_model(
+            deployment_id=self._settings.deployment_id
         )
         profile_meter = SurfaceCostMeter(
             recorder=SqlSurfaceCostRecorder(
@@ -1333,7 +1337,6 @@ class SelfHostProfile:
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
-        from rememberstack.spine import SupersessionSettings
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -1405,15 +1408,13 @@ class SelfHostProfile:
                 catalog=chunks, artifact_store=self._artifact_store, params=params
             )
         if stage is PipelineStage.EMBED_CHUNK:
-            e1_settings = E1Settings.model_validate({}).model_copy(
-                update={"embedding_model": p1_settings.embedding_model}
-            )
             return EmbedChunksHandler(
                 catalog=chunks,
                 artifact_store=self._artifact_store,
                 model_provider=self._model_provider,
                 chunk_index=index,
-                settings=e1_settings,
+                settings=E1Settings.model_validate({}),
+                embedding_model=p1_settings.embedding_model,
                 params=params,
             )
         if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
@@ -1456,7 +1457,6 @@ class SelfHostProfile:
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
-            observation_settings = ObservationSettings.model_validate({})
             fact_settings = FactAdjudicationSettings()
             return AdjudicateObservationsHandler(
                 facts=facts,
@@ -1478,9 +1478,7 @@ class SelfHostProfile:
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
-                    engine=self._engine,
-                    model_provider=self._model_provider,
-                    settings=SupersessionSettings.model_validate({}),
+                    engine=self._engine, model_provider=self._model_provider
                 ),
                 profile_refresher=profile_refresher,
                 facts=facts,
@@ -1744,7 +1742,6 @@ def _model_bindings() -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline."""
     from rememberstack.spine import ObservationSettings
     from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
-    from rememberstack.workers import E1Settings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
@@ -1757,7 +1754,6 @@ def _model_bindings() -> dict[str, str]:
     skeleton_check = SkeletonCheckSettings.model_validate({})
     roles = RoleSettings.model_validate({})
     summaries = SummarySettings.model_validate({})
-    e1 = E1Settings.model_validate({})
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
@@ -1775,14 +1771,11 @@ def _model_bindings() -> dict[str, str]:
         "skeleton_check": skeleton_check.model,
         "section_role": roles.model,
         "section_summary": summaries.model,
-        "chunk_embedding": e1.embedding_model,
-        "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
         "fact_adjudication": fact_adjudication_model,
         "p1_embedding": p1.embedding_model,
-        "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
         "openrouter_embedding_provider_order": (
             ",".join(openrouter.embedding_provider_order)

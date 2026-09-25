@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Configuration",
-  description: "How a self-hosted RememberStack reads its settings, which ones you need to change, and how to set the ones compose.yaml does not pass through.",
+  description: "How a self-hosted RememberStack reads its settings, how they reach the containers, which ones you need to change, and which are fixed after the first start.",
 };
 
 # Configuration
@@ -9,8 +9,8 @@ export const metadata = {
 
 RememberStack is configured entirely through environment variables. There
 is no configuration file inside the engine. This page explains how the
-variables reach the containers, which ones matter first, and how to set
-the rest. [Configuration variables](/docs/reference/configuration) lists
+variables reach the containers, which ones matter first, and which ones
+cannot change later. [Configuration variables](/docs/reference/configuration) lists
 every variable with its default.
 
 ## How the engine reads settings
@@ -44,57 +44,24 @@ Three rules follow from this:
 
 ## What Compose passes through
 
-`compose.yaml` does not hand your whole `.env` to the containers. Each app
-service gets a fixed `environment:` list, and only variables on that list
-reach the engine. The list covers the deployment identity, storage, the
-OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret or signed keys, the graph and retrieval pools, the API
-admission limits<Cloud>, the remember.dev-only billing settings</Cloud> and Sentry.
+`compose.yaml` loads your `.env` into every engine container (`env_file`),
+so any engine variable you put in `.env` takes effect: for example
+`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`, `REMEMBERSTACK_COST_EXPORT_BIND`,
+the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
+`REMEMBERSTACK_WORK_BUDGETS`.
 
-Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
-`REMEMBERSTACK_COST_EXPORT_BIND`, the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
-`REMEMBERSTACK_WORK_BUDGETS` — has **no effect** if you only put it in
-`.env`. The reference marks which variables Compose passes.
+Each engine service also has an `environment:` list. It supplies defaults
+and three values Compose sets itself, which win over `.env`:
 
-To set the others, keep them in a separate file and add a
-`compose.override.yaml` next to `compose.yaml`. Compose merges that file
-automatically.
+| Variable | Value inside the containers |
+|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | Built from `REMEMBERSTACK_POSTGRES_USER`, `_PASSWORD` and `_DB`, pointing at the `postgres` service. |
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | `http://object-store:8333`, the bundled SeaweedFS store. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000`. In `.env` the same variable is the host port Compose publishes. |
 
-`engine.env`:
-
-```bash
-REMEMBERSTACK_OPENROUTER_ZDR=true
-REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S=5
-```
-
-`compose.override.yaml`:
-
-```yaml
-x-engine-env: &engine-env
-  env_file: [engine.env]
-
-services:
-  setup: *engine-env
-  api: *engine-env
-  worker-convert: *engine-env
-  worker-structure: *engine-env
-  worker-chunk: *engine-env
-  worker-embed-chunk: *engine-env
-  worker-extract-claims: *engine-env
-  worker-ground-claims: *engine-env
-  worker-normalize-relations: *engine-env
-  worker-adjudicate-observations: *engine-env
-  worker-adjudicate-supersession: *engine-env
-  worker-embed-claim: *engine-env
-  worker-reconcile: *engine-env
-  worker-label-relation: *engine-env
-  projections: *engine-env
-```
-
-Keep in `engine.env` only variables that `compose.yaml` does not already
-set: a value in a service's `environment:` list wins over the same variable
-from `env_file`. The later pages reuse this file; where a setting matters to
-only some services, they say which.
+A variable exported in your shell overrides `.env` only if it is on the
+`environment:` list, because Compose substitutes shell values into that
+list but reads `env_file` from the file alone. Put settings in `.env`.
 
 ## Apply a change
 
@@ -113,8 +80,7 @@ For a machine only you can reach, these settings matter:
 | Variable | Why |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](/docs/self-hosting/install#1-get-the-files). |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](/docs/self-hosting/install#1-get-the-files). Compose refuses to start without them. |
 
 Compose publishes the API on `127.0.0.1` only. To let other machines reach
 it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
@@ -128,7 +94,8 @@ To accept more than Markdown and plain text, set
 ## Settings fixed after the first start
 
 The first `setup` records these in the database, and later runs refuse to
-start if they change:
+start if they change. A database holds one deployment, so a new deployment
+id is refused too; it does not start a second, empty deployment.
 
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG`
@@ -137,8 +104,9 @@ start if they change:
 - the three bucket names, `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME`,
   `…_ARTIFACTS_BUCKET_NAME` and `…_CORPUSFS_BUCKET_NAME`
 
-The embedding model is not checked this way, but changing it has
-consequences of its own; see [Models and providers](/docs/self-hosting/models#changing-the-embedding-model).
+`setup` also refuses a new `REMEMBERSTACK_P1_EMBEDDING_MODEL` once
+anything has been embedded; see
+[Models and providers](/docs/self-hosting/models#changing-the-embedding-model).
 
 ## The client side
 

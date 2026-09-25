@@ -46,10 +46,7 @@ RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
 DEFAULT_LOCK_FILE = Path("/var/lock/rememberstack-locomo-shard.lock")
 
 MODEL_BINDING_ENVIRONMENT = {
-    "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
     "claim_extraction": "REMEMBERSTACK_E2_EXTRACT_MODEL",
-    "context_prefix": "REMEMBERSTACK_E1_PREFIX_MODEL",
-    "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
     "entity_resolution": "REMEMBERSTACK_OBS_SMALL_MODEL",
     "fact_adjudication": "REMEMBERSTACK_FACT_MODEL",
     "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",

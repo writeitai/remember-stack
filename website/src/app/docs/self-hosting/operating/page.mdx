@@ -130,16 +130,14 @@ deployment, the stage, the lane (`steady` or `backfill`), the window in
 seconds, and the ceiling:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_WORK_BUDGETS=[{"deployment_id":"<your deployment id>","stage":"extract_claims","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"},{"deployment_id":"<your deployment id>","stage":"normalize_relations","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"}]
 ```
 
 Only one budget may exist per deployment, stage and lane. Stages without a
 budget are not capped.
 
-`compose.yaml` does not pass this variable. Put it in `engine.env`
-([Configuration](/docs/self-hosting/configuration#what-compose-passes-through));
-the workers enforce it.
+Put it in `.env` and run `docker compose up -d`; the workers enforce it.
 
 Work a budget parked shows as `pending` with `defer_reason` `budget`, both
 in `remember ops inspect` and in readiness.

@@ -17,8 +17,8 @@ lists what has to be true of the machine and the accounts around it.
 You need Docker Engine with the Compose v2 plugin: the `docker compose`
 command, not the older `docker-compose` script. `compose.yaml` uses a
 top-level `name`, `depends_on` conditions such as
-`service_completed_successfully`, and profiles, which the v2 plugin
-supports.
+`service_completed_successfully`, profiles, and an optional `env_file`
+(`required: false`), which needs Compose 2.24.0 or later.
 
 Run the tokenless quickstart only on Docker Engine 28.0.0 or later
 (`docker version --format '{{.Server.Version}}'`). Compose publishes the

@@ -32,9 +32,7 @@ notification was missed.
 | `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5` | Seconds between polls when no notification arrives. |
 | `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600` | Length of one worker session in seconds; the worker then starts the next one. |
 
-These are not passed by `compose.yaml`. Set them in `engine.env` for the
-worker services ([Configuration](/docs/self-hosting/configuration#what-compose-passes-through)).
-Lowering the rate is the way to stay under a provider's rate limit; the
+Set them in `.env`. Lowering the rate is the way to stay under a provider's rate limit; the
 rate applies per process, so it multiplies with replicas.
 
 ### More replicas of a stage

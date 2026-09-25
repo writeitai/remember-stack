@@ -716,8 +716,6 @@ def test_glm_variant_swaps_only_the_ingest_generation_seats() -> None:
     }
     assert changed == {
         "claim_extraction",
-        "context_prefix",
-        "fact_label",
         "entity_resolution",
         "fact_adjudication",
         "openrouter_reasoning_effort_map",

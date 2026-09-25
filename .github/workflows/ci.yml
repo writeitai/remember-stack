@@ -227,14 +227,51 @@ jobs:
             exit 1
           fi
           cp .env.example .env
-          printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-            "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+          printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+            "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+            "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 
       - name: Validate Compose model
         run: |
           docker compose --env-file .env config --quiet
           docker compose --env-file .env config --format json | python3 -c \
             'import json,sys; ports=json.load(sys.stdin)["services"]["api"]["ports"]; assert [p["host_ip"] for p in ports] == ["127.0.0.1"], ports'
+
+      - name: Prove every .env.example variable reaches the engine
+        run: |
+          # Set every variable .env.example names, commented or not, in a
+          # scratch copy of .env, then check that Compose hands each one to
+          # every engine service. The probe value is an address because one
+          # of them (the API publish address) is interpolated into a port.
+          cp .env .env.ci-original
+          python3 - <<'PY'
+          import re
+
+          named = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", open(".env.example").read(), re.M))
+          present = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", open(".env").read(), re.M))
+          with open(".env", "a") as env:
+              env.writelines(f"{name}=127.0.0.1\n" for name in sorted(named - present))
+          PY
+          docker compose --env-file .env --profile operations --profile managed \
+            config --format json > compose-config.json
+          mv .env.ci-original .env
+          python3 - <<'PY'
+          import json
+          import re
+
+          named = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", open(".env.example").read(), re.M))
+          services = json.load(open("compose-config.json"))["services"]
+          engine = {
+              name: spec for name, spec in services.items()
+              if spec.get("image", "").startswith("ghcr.io/writeitai/remember-stack:")
+          }
+          assert {"setup", "api", "projections", "meter-receipts"} <= set(engine), sorted(engine)
+          for name, spec in engine.items():
+              missing = sorted(named - set(spec.get("environment", {})))
+              assert not missing, (name, missing)
+          print(f"{len(named)} variables reach {len(engine)} engine services")
+          PY
+          rm compose-config.json
 
       - name: Start fresh self-host deployment
         run: |
@@ -434,7 +471,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_33_0054'
+            'SELECT version_num FROM alembic_version')" = 'p9_34_0055'
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

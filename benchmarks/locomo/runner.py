@@ -449,8 +449,8 @@ def ingest_sample(
         )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
-        # The binding the E1 stage will actually use, per the deployment.
-        embedding_model = build.model_bindings.get("chunk_embedding", "")
+        # The embedding model every stage will actually use, per the deployment.
+        embedding_model = build.model_bindings.get("p1_embedding", "")
         if not embedding_model:
             raise ExecutionGuardError(
                 "the deployment did not report an embedding model binding, so the"

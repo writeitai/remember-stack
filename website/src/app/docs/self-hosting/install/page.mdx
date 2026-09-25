@@ -18,13 +18,14 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
-printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 ```
 
-The last command generates the database password and the object-store
-credentials; `.env.example` ships none, and Compose refuses to start
-without them.
+The last command generates the database password, the object-store
+credentials and the deployment id (a random UUID); `.env.example` ships
+none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -41,33 +42,26 @@ The API needs no token by default. That is safe only on Docker Engine
 
 </Callout>
 
-Docker Compose reads `.env` from the project directory and substitutes its
-values into `compose.yaml`. These variables have no default in
-`compose.yaml` and must be set:
+Docker Compose reads `.env` from the project directory, substitutes its
+values into `compose.yaml` and passes every variable in it to the engine
+containers. These variables have no default in `compose.yaml` and must be
+set:
 
 | Variable | What to put there |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Your OpenRouter API key. The placeholder lets the stack start, but every model call fails with it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | A new random UUID for this deployment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | This deployment's id, a random UUID generated in step 1. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
 | `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
 | `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
-Generate the deployment id rather than keeping the example value:
-
-```bash
-python3 -c "import uuid; print(uuid.uuid4())"
-```
-
 <Callout type="warning">
 
-Decide the deployment id, slug and name before the first start. The
-first `setup` run records them in the database, and every later `setup`
-refuses to run if they differ. A different id is a different
-deployment: tokens bound to the old id stop working and the memory
-already stored belongs to the old id. See
+Decide the slug and name before the first start, and keep the generated
+deployment id. The first `setup` run records all three in the database,
+and every later `setup` refuses to run if they differ. See
 [Upgrades and migrations](/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
 
 </Callout>

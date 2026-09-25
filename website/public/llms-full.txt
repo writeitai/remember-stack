@@ -393,15 +393,15 @@ turn on API authentication before the first start; see
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 cp .env.example .env
-printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
 docker compose up -d
 ```
 
-The `printf` line generates the database password and the object-store
-credentials; Compose refuses
-to start without them. The first start builds the PostgreSQL image and runs
+The `printf` line generates the database password, the object-store
+credentials and the deployment id; Compose refuses to start without them. The first start builds the PostgreSQL image and runs
 migrations. When `docker compose ps` shows `api` as healthy, the endpoint
 is `http://localhost:8000`. No token is needed by default, because the API
 is reachable from this machine only. To open it to others, see
@@ -6021,8 +6021,8 @@ lists what has to be true of the machine and the accounts around it.
 You need Docker Engine with the Compose v2 plugin: the `docker compose`
 command, not the older `docker-compose` script. `compose.yaml` uses a
 top-level `name`, `depends_on` conditions such as
-`service_completed_successfully`, and profiles, which the v2 plugin
-supports.
+`service_completed_successfully`, profiles, and an optional `env_file`
+(`required: false`), which needs Compose 2.24.0 or later.
 
 Run the tokenless quickstart only on Docker Engine 28.0.0 or later
 (`docker version --format '{{.Server.Version}}'`). Compose publishes the
@@ -6223,13 +6223,14 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
-printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\n' \
-  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" >> .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 ```
 
-The last command generates the database password and the object-store
-credentials; `.env.example` ships none, and Compose refuses to start
-without them.
+The last command generates the database password, the object-store
+credentials and the deployment id (a random UUID); `.env.example` ships
+none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -6244,33 +6245,26 @@ The API needs no token by default. That is safe only on Docker Engine
 28.0.0 or later; on an older engine, set a token first. See
 [Before you expose it](#before-you-expose-it).
 
-Docker Compose reads `.env` from the project directory and substitutes its
-values into `compose.yaml`. These variables have no default in
-`compose.yaml` and must be set:
+Docker Compose reads `.env` from the project directory, substitutes its
+values into `compose.yaml` and passes every variable in it to the engine
+containers. These variables have no default in `compose.yaml` and must be
+set:
 
 | Variable | What to put there |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Your OpenRouter API key. The placeholder lets the stack start, but every model call fails with it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | A new random UUID for this deployment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | This deployment's id, a random UUID generated in step 1. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
 | `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
 | `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
 | `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
-Generate the deployment id rather than keeping the example value:
-
-```bash
-python3 -c "import uuid; print(uuid.uuid4())"
-```
-
 **Warning:**
 
-Decide the deployment id, slug and name before the first start. The
-first `setup` run records them in the database, and every later `setup`
-refuses to run if they differ. A different id is a different
-deployment: tokens bound to the old id stop working and the memory
-already stored belongs to the old id. See
+Decide the slug and name before the first start, and keep the generated
+deployment id. The first `setup` run records all three in the database,
+and every later `setup` refuses to run if they differ. See
 [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
 
 ## 3. Start the stack
@@ -6424,8 +6418,8 @@ Source: https://remember.dev/docs/self-hosting/configuration
 
 RememberStack is configured entirely through environment variables. There
 is no configuration file inside the engine. This page explains how the
-variables reach the containers, which ones matter first, and how to set
-the rest. [Configuration variables](https://remember.dev/docs/reference/configuration) lists
+variables reach the containers, which ones matter first, and which ones
+cannot change later. [Configuration variables](https://remember.dev/docs/reference/configuration) lists
 every variable with its default.
 
 ## How the engine reads settings
@@ -6459,57 +6453,24 @@ Three rules follow from this:
 
 ## What Compose passes through
 
-`compose.yaml` does not hand your whole `.env` to the containers. Each app
-service gets a fixed `environment:` list, and only variables on that list
-reach the engine. The list covers the deployment identity, storage, the
-OpenRouter settings most people change, the model seats, Mistral OCR,
-authentication by shared secret or signed keys, the graph and retrieval pools, the API
-admission limits and Sentry.
+`compose.yaml` loads your `.env` into every engine container (`env_file`),
+so any engine variable you put in `.env` takes effect: for example
+`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`, `REMEMBERSTACK_COST_EXPORT_BIND`,
+the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
+`REMEMBERSTACK_WORK_BUDGETS`.
 
-Anything else — for example `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`,
-`REMEMBERSTACK_COST_EXPORT_BIND`, the worker rate settings, `REMEMBERSTACK_OPENROUTER_ZDR` or
-`REMEMBERSTACK_WORK_BUDGETS` — has **no effect** if you only put it in
-`.env`. The reference marks which variables Compose passes.
+Each engine service also has an `environment:` list. It supplies defaults
+and three values Compose sets itself, which win over `.env`:
 
-To set the others, keep them in a separate file and add a
-`compose.override.yaml` next to `compose.yaml`. Compose merges that file
-automatically.
+| Variable | Value inside the containers |
+|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | Built from `REMEMBERSTACK_POSTGRES_USER`, `_PASSWORD` and `_DB`, pointing at the `postgres` service. |
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | `http://object-store:8333`, the bundled SeaweedFS store. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000`. In `.env` the same variable is the host port Compose publishes. |
 
-`engine.env`:
-
-```bash
-REMEMBERSTACK_OPENROUTER_ZDR=true
-REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S=5
-```
-
-`compose.override.yaml`:
-
-```yaml
-x-engine-env: &engine-env
-  env_file: [engine.env]
-
-services:
-  setup: *engine-env
-  api: *engine-env
-  worker-convert: *engine-env
-  worker-structure: *engine-env
-  worker-chunk: *engine-env
-  worker-embed-chunk: *engine-env
-  worker-extract-claims: *engine-env
-  worker-ground-claims: *engine-env
-  worker-normalize-relations: *engine-env
-  worker-adjudicate-observations: *engine-env
-  worker-adjudicate-supersession: *engine-env
-  worker-embed-claim: *engine-env
-  worker-reconcile: *engine-env
-  worker-label-relation: *engine-env
-  projections: *engine-env
-```
-
-Keep in `engine.env` only variables that `compose.yaml` does not already
-set: a value in a service's `environment:` list wins over the same variable
-from `env_file`. The later pages reuse this file; where a setting matters to
-only some services, they say which.
+A variable exported in your shell overrides `.env` only if it is on the
+`environment:` list, because Compose substitutes shell values into that
+list but reads `env_file` from the file alone. Put settings in `.env`.
 
 ## Apply a change
 
@@ -6528,8 +6489,7 @@ For a machine only you can reach, these settings matter:
 | Variable | Why |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Nothing is processed without it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | Replace the example UUID with your own before the first start. |
-| `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | `.env.example` ships none; generate them as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). Compose refuses to start without them. |
 
 Compose publishes the API on `127.0.0.1` only. To let other machines reach
 it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
@@ -6543,7 +6503,8 @@ To accept more than Markdown and plain text, set
 ## Settings fixed after the first start
 
 The first `setup` records these in the database, and later runs refuse to
-start if they change:
+start if they change. A database holds one deployment, so a new deployment
+id is refused too; it does not start a second, empty deployment.
 
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`
 - `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG`
@@ -6552,8 +6513,9 @@ start if they change:
 - the three bucket names, `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME`,
   `…_ARTIFACTS_BUCKET_NAME` and `…_CORPUSFS_BUCKET_NAME`
 
-The embedding model is not checked this way, but changing it has
-consequences of its own; see [Models and providers](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model).
+`setup` also refuses a new `REMEMBERSTACK_P1_EMBEDDING_MODEL` once
+anything has been embedded; see
+[Models and providers](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model).
 
 ## The client side
 
@@ -6602,27 +6564,6 @@ under `model_bindings`, so you can check what is serving:
 ```bash
 curl http://localhost:8000/deployment
 ```
-
-### Variables that exist but are not used
-
-`compose.yaml` also passes these, with defaults. The shipped pipeline does
-not use them to choose a model; changing them changes nothing, except where
-noted:
-
-| Variable | Default | Status |
-|---|---|---|
-| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Ignored for embedding: chunks are embedded with `REMEMBERSTACK_P1_EMBEDDING_MODEL`. `GET /deployment` still reports this value as `chunk_embedding`, so keep the two equal. |
-| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | Reported as `context_prefix`; chunk context is now built without a model. |
-| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | Reported as `fact_label`; relation labels are built without a model. |
-| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | Not read by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | Not read by the shipped pipeline. |
-
-The same holds for the observation thresholds
-`REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` (0.75), `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN`
-(0.8), `REMEMBERSTACK_OBS_NOVELTY_FLOOR` (0.3), `REMEMBERSTACK_OBS_HUB_TOP_K`
-(5) and `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` (0.75).
 
 ## Fact adjudication
 
@@ -6675,18 +6616,24 @@ length. An embedding model can replace `qwen/qwen3-embedding-8b` only if it
 can return 1,536-dimension vectors on request.
 
 Each stored vector is stamped with the model that produced it, and search
-compares a query only with vectors of the current model. If you change
-`REMEMBERSTACK_P1_EMBEDDING_MODEL` on a deployment that already holds
-documents:
+compares a query only with vectors of the same model. Nothing re-embeds
+stored chunks, claims and facts, so the embedding model is fixed once
+anything has been embedded:
 
-- `setup` points the search channels at the new model and re-embeds entity
-  profiles.
-- Chunks, claims and facts embedded with the old model stay as they are
-  and drop out of semantic search. Keyword (BM25) search still finds them.
-- Nothing re-embeds them automatically.
+- Before the first document is embedded, you can change
+  `REMEMBERSTACK_P1_EMBEDDING_MODEL` freely.
+- After that, `setup` refuses to run with a different model. It exits with
+  an error that names the configured model and the stored one, and the API
+  and workers do not start. Set the variable back to the stored model.
 
-Treat the embedding model as fixed for the life of a deployment. To use a
-different one, start a new deployment and send the documents again.
+To change it before anything is embedded, stop the workers first
+(`docker compose stop`), then change the variable and run
+`docker compose up -d`. A worker still running on the old model could
+otherwise embed with it after the switch; the next `setup` would then
+refuse the new model.
+
+To use a different embedding model, start a new deployment and send the
+documents again.
 
 ## OpenRouter routing and limits
 
@@ -6698,14 +6645,14 @@ These settings apply to every call through OpenRouter.
 | `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | Comma-separated provider slugs that are the only ones allowed. A call they cannot serve fails. Cannot be combined with the order. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | Provider slugs to try first for embeddings, with fallback, for example `nebius,deepinfra,siliconflow`. |
 | `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | One provider slug that embeddings must use, with no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. Not passed by `compose.yaml`; set it through `engine.env` ([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)). |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | Restricts chat calls to zero-data-retention endpoints. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset (model default) | One of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, applied to every chat call. |
 | `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | A JSON object of model id to effort. An entry wins over the global value for that model. |
 | `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | Output allowance per chat call, reasoning included. |
-| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. Not passed by `compose.yaml`. |
-| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. Not passed by `compose.yaml`. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120` | Per-request timeout in seconds. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | How many times a chat call that gets HTTP 429 is retried, moving to the next listed provider. These retries do not count against the work item's attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30` | The longest single wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | The OpenRouter API address. |
 
 When you set a provider list or ZDR, each chat call also tells OpenRouter
 not to route to providers that collect data (`data_collection: deny`). With
@@ -6867,14 +6814,8 @@ so a retry does not repeat it.
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | Output allowance of the description call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | Run the two calls in parallel (`2`) or one after the other (`1`). |
 
-**Warning:**
-
-`compose.yaml` does not pass any `REMEMBERSTACK_IMAGE_DESCRIPTION_*`
-variable into the containers, although `.env.example` lists them.
-Putting them in `.env` has no effect. Put them in `engine.env` with the
-override file described in [Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through);
-the `api` and `worker-convert` services need them. Without the key, the
-`convert` worker refuses to start once a route names this converter.
+Set them in `.env`. Without the key, the `convert` worker refuses to start
+once a route names this converter.
 
 ## Files no route accepts
 
@@ -7278,9 +7219,7 @@ notification was missed.
 | `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5` | Seconds between polls when no notification arrives. |
 | `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600` | Length of one worker session in seconds; the worker then starts the next one. |
 
-These are not passed by `compose.yaml`. Set them in `engine.env` for the
-worker services ([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)).
-Lowering the rate is the way to stay under a provider's rate limit; the
+Set them in `.env`. Lowering the rate is the way to stay under a provider's rate limit; the
 rate applies per process, so it multiplies with replicas.
 
 ### More replicas of a stage
@@ -7557,16 +7496,14 @@ deployment, the stage, the lane (`steady` or `backfill`), the window in
 seconds, and the ceiling:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_WORK_BUDGETS=[{"deployment_id":"<your deployment id>","stage":"extract_claims","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"},{"deployment_id":"<your deployment id>","stage":"normalize_relations","lane":"steady","window_seconds":86400,"ceiling_usd":"5.00"}]
 ```
 
 Only one budget may exist per deployment, stage and lane. Stages without a
 budget are not capped.
 
-`compose.yaml` does not pass this variable. Put it in `engine.env`
-([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through));
-the workers enforce it.
+Put it in `.env` and run `docker compose up -d`; the workers enforce it.
 
 Work a budget parked shows as `pending` with `defer_reason` `budget`, both
 in `remember ops inspect` and in readiness.
@@ -7690,7 +7627,9 @@ Configuration mistakes that stop a container at start:
 | In the logs | Cause | Fix |
 |---|---|---|
 | A validation error that names `api_key` | `REMEMBERSTACK_OPENROUTER_API_KEY` is empty. | Set it in `.env`, then `docker compose up -d`. |
-| `setup` refuses because the deployment id, slug or name differ | `.env` no longer matches what the first `setup` recorded. | Restore the original values. See [The deployment id is permanent](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
+| `setup` refuses with "deployment identity or mapped profile values conflict" or "this database already holds deployment …" | `.env` no longer matches what the first `setup` recorded; the message names the changed values or the recorded id. | Restore the original values. See [The deployment id is permanent](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
+| Compose says `set REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | `.env` has no deployment id. | Generate one as in [Install](https://remember.dev/docs/self-hosting/install#1-get-the-files). |
+| `setup` refuses because `REMEMBERSTACK_P1_EMBEDDING_MODEL` differs from the stored vectors | The embedding model changed after documents were embedded. | Set it back to the model the message names. See [Changing the embedding model](https://remember.dev/docs/self-hosting/models#changing-the-embedding-model). |
 | "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
 | The shared secret and the bind disagree | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` describe different secrets. | See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication). |
 | A validation error that names `API_KEY_ISSUER`, `API_KEY_TENANT_ID`, `API_SIGNING_KEYS_URL` or `API_REVOCATION_URL` | Signed keys are half configured: an issuer without its tenant id or URLs, or those without an issuer. | Set all four, or none. See [Signed keys](https://remember.dev/docs/self-hosting/authentication#signed-keys). |
@@ -7950,7 +7889,7 @@ dropped; readiness shows the stage as `pending`.
 
 A `defer_reason` of `budget` (see
 [See what is waiting and why](#see-what-is-waiting-and-why)) shows it.
-Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
+Wait for the window to end, or raise `ceiling_usd` in `.env` and run
 `docker compose up -d`. See [Spend budgets](https://remember.dev/docs/self-hosting/operating#spend-budgets).
 
 ## Empty or surprising answers
@@ -8157,13 +8096,11 @@ from the memory API. It is off unless you give it an address and a token:
 | `REMEMBERSTACK_COST_EXPORT_BIND` | Where to listen: `host:port`, `[ipv6]:port` or `unix:/path/to/socket`. Unset means no HTTP export. |
 | `REMEMBERSTACK_COST_EXPORT_TOKEN` | The bearer token callers must send. At least 32 bytes; the API refuses to start with a shorter one once the bind is set. |
 
-`compose.yaml` does not pass either variable, although `.env.example`
-mentions them. Set them for the `api` service in `engine.env`
-([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)) and publish
-the port in `compose.override.yaml`:
+Set both in `.env`, and publish the port with a `compose.override.yaml`
+next to `compose.yaml`, which Compose merges automatically:
 
 ```bash
-# engine.env
+# .env
 REMEMBERSTACK_COST_EXPORT_BIND=0.0.0.0:8001
 REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 ```
@@ -8172,14 +8109,11 @@ REMEMBERSTACK_COST_EXPORT_TOKEN=<output of: openssl rand -hex 32>
 # compose.override.yaml
 services:
   api:
-    env_file: [engine.env]
     ports:
       - "127.0.0.1:8001:8001"
 ```
 
-If your override already has the line `api: *engine-env`, replace that line
-with the `api:` block above. The extra port is added to the API's existing
-one.
+The extra port is added to the API's existing one.
 
 The bind is an address inside the container, so it must be `0.0.0.0` for
 the published port to reach it.
@@ -8291,8 +8225,9 @@ The `setup` service runs before the API and workers every time you run
    (`alembic upgrade head`);
 2. checks that the deployment id, slug and name still match the database;
 3. installs any assured operations and example saved queries the release adds;
-4. re-publishes the search channels, re-embedding entity profiles if the
-   embedding model changed.
+4. checks that the embedding model still matches the stored vectors, then
+   re-publishes the search channels, rebuilding entity profile vectors
+   when needed.
 
 The API and the workers start only after `setup` exits successfully. If a
 migration fails, `setup` exits with an error, nothing else starts, and
@@ -8376,19 +8311,17 @@ send your documents again.
 
 `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` names the deployment: its trust
 domain. Every token is bound to it, and every stored row belongs to it.
-Changing it does not rename the deployment; it asks for a different one:
+The install step generates it once, and the first `setup` records it.
 
-- With the same slug, `setup` refuses to start: the id and slug no longer
-  match what the database records.
-- With a new slug as well, `setup` creates a second deployment in the same
-  database. The API then serves the new, empty one. The memory stored
-  under the old id is still in the database but no longer served, shared
-  secrets bound to the old id are refused with `403`, signed keys for the
-  old deployment are refused, and the cost export stops working
-  because it expects exactly one deployment.
+A database holds exactly one deployment. If the id in `.env` differs from
+the recorded one, `setup` refuses to start and names the recorded id, so
+the API and workers do not start either. Restore the recorded value. The
+same check covers the slug, the name, the default language and the bucket
+names: `setup` names the ones that changed. Change none of them after the
+first start.
 
-The same check covers the slug, the name, the default language and the
-bucket names. Change none of them after the first start.
+To start over under a new id, remove the volumes
+(`docker compose down --volumes`) and send your documents again.
 
 ## Back up
 
@@ -10811,7 +10744,7 @@ None.
 | Field | Meaning |
 |---|---|
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
-| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `chunk_embedding`, `context_prefix`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding`, `fact_label`, and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
+| `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
 | `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, and `delete_document` only when document deletion is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
@@ -15532,14 +15465,11 @@ explains how they reach the containers.
 The variables in **Client** are read by the `remember` CLI, Python client and
 MCP server on your own machine. Every other section applies to a self-hosted engine.
 
-The **Compose** column says how the shipped `compose.yaml` treats each
-engine variable:
-
-- **passed**: listed in the app services' `environment:`; set it in `.env`.
-- **set**: `compose.yaml` sets a fixed value itself.
-- **—**: not passed. Setting it in `.env` has no effect; use `engine.env`
-  and `compose.override.yaml` as described in
-  [Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through).
+The shipped `compose.yaml` hands every variable in `.env` to the engine
+containers. It sets three itself, overriding `.env`:
+`REMEMBERSTACK_DATABASE_URL`, `REMEMBERSTACK_MINIO_ENDPOINT_URL` and the
+container's `REMEMBERSTACK_SELFHOST_API_PORT`
+([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through)).
 
 Booleans accept `true`/`false` (also `1`/`0`). An empty value counts as
 unset for optional settings.
@@ -15576,187 +15506,175 @@ Read by `compose.yaml` from `.env`, not by the engine.
 
 ## Deployment and API
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_DATABASE_URL` | required | SQLAlchemy URL | set | PostgreSQL connection, `postgresql+psycopg://user:password@host:5432/db`. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | required | UUID | passed | The deployment's identity. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | `local` | string | passed | Short name. Fixed after the first start. Default Sentry environment. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | `Local memory` | string | passed | Display name. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | — | Default language of the deployment. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | — | Address the API listens on inside the container. |
-| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
-| `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Compose only | Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
-| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
-| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | passed | Browser origins allowed by CORS. |
-| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | passed | Requests per minute for the whole deployment (bursts of a quarter of it). |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | passed | Requests running at once for the whole deployment. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_DATABASE_URL` | required | SQLAlchemy URL | PostgreSQL connection, `postgresql+psycopg://user:password@host:5432/db`. Compose builds it from the `REMEMBERSTACK_POSTGRES_*` values. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | required | UUID | The deployment's identity; `.env.example` ships none, generate it at install. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | `local` | string | Short name. Fixed after the first start. Default Sentry environment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | `Local memory` | string | Display name. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_DEFAULT_LANGUAGE` | `en` | string | Default language of the deployment. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_API_HOST` | `0.0.0.0` | string | Address the API listens on inside the container. |
+| `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
+| `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Read by Compose only. Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
+| `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | Largest `POST /ingest` body; larger uploads get `413`. |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | Browser origins allowed by CORS. |
+| `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | Requests running at once for the whole deployment. |
 
 ## Storage
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | set (`http://object-store:8333`) | S3-compatible endpoint. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | passed | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
-| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | passed | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
-| `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | — | S3 region name used for signing. |
-| `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | — | Bucket for original files. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | — | Bucket for converted Markdown and artifacts. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | — | Bucket for filesystem-view snapshots. Fixed after the first start. |
-| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | — | Default `--raw-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | — | Default `--artifacts-root` for `mounts`. |
-| `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | — | Working directory created by `setup`. |
-| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | — | Where hard-forget manifests are read. |
-| `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | — | Alembic configuration used by `setup`. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_MINIO_ENDPOINT_URL` | required | URL | S3-compatible endpoint. Compose sets `http://object-store:8333`. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY` | required | secret | Object-store access key; also the bundled SeaweedFS store's admin access key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_SECRET_KEY` | required | secret | Object-store secret key; also the bundled SeaweedFS store's admin secret key. `.env.example` ships none; generate it at install. |
+| `REMEMBERSTACK_MINIO_REGION` | `us-east-1` | string | S3 region name used for signing. |
+| `REMEMBERSTACK_SELFHOST_RAW_BUCKET_NAME` | `remember-raw` | string | Bucket for original files. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_BUCKET_NAME` | `remember-artifacts` | string | Bucket for converted Markdown and artifacts. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_CORPUSFS_BUCKET_NAME` | `remember-corpusfs` | string | Bucket for filesystem-view snapshots. Fixed after the first start. |
+| `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` | unset | path | Default `--raw-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | Default `--artifacts-root` for `mounts`. |
+| `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
+| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
+| `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | Alembic configuration used by `setup`. |
 
 ## Authentication
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | passed | Shared secret with `write` scope. Setting it turns authentication on. |
-| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | passed | The shared secret's digest instead of the secret. Must match the token if both are set. |
-| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | passed | Refuse to start unless the token, the bind or the key issuer is set. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | passed | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | passed | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | passed | The issuer's project id for this deployment, matched against a key's `projects`. |
-| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | passed | Where the issuer's JWKS of Ed25519 public keys is fetched. |
-| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | passed | Where the issuer's signed revocation document for this deployment is fetched. |
-| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | passed | Seconds between fetches of the key set and the revocation document. |
-| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | passed | Maximum age of the accepted revocation document; past it every signed key is refused. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` | unset | secret | Shared secret with `write` scope. Setting it turns authentication on. |
+| `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` | unset | `<deployment-uuid>:<sha256-hex>` | The shared secret's digest instead of the secret. Must match the token if both are set. |
+| `REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH` | `false` | bool | Refuse to start unless the token, the bind or the key issuer is set. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_ISSUER` | unset | URL | The key issuer, matched exactly against `iss`. Setting it turns signed keys on and requires the tenant id and both URLs below. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID` | unset | string | The issuer's tenant id for this deployment. Keys carry `aud = org:<this>` and `org = <this>`. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID` | the deployment id | string | The issuer's project id for this deployment, matched against a key's `projects`. |
+| `REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL` | unset | http(s) URL | Where the issuer's JWKS of Ed25519 public keys is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_URL` | unset | http(s) URL | Where the issuer's signed revocation document for this deployment is fetched. |
+| `REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S` | `60` | float > 0 | Seconds between fetches of the key set and the revocation document. |
+| `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S` | `3600` | float > 0 | Maximum age of the accepted revocation document; past it every signed key is refused. |
 
 See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
 
 ## Pools and workers
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S` | `20.0` | float > 0 | — | Claims per second per worker process. |
-| `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | — | Claim burst per worker process. |
-| `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | — | Poll interval when no notification arrives. |
-| `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | — | Length of one worker session. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | passed | Connections for retrieval in the API. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a retrieval connection. |
-| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | passed | Retrievals at once. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | `4` | int 1–32 | passed | Connections for graph queries in the API. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | passed | Wait for a graph slot. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | passed | Graph queries at once. |
-| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | passed | PostgreSQL `work_mem` per graph query. |
-| `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | — | First retry delay; doubles per attempt. |
-| `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | — | Longest retry delay. |
-| `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | — | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |
-| `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | — | Chunks per embedding request. |
-| `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | — | Claims or facts per embedding request. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_WORKER_RATE_PER_S` | `20.0` | float > 0 | Claims per second per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | Claim burst per worker process. |
+| `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | Poll interval when no notification arrives. |
+| `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | Length of one worker session. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | Connections for retrieval in the API. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a retrieval connection. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | Retrievals at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` | `4` | int 1–32 | Connections for graph queries in the API. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a graph slot. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | Graph queries at once. |
+| `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
+| `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
+| `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |
+| `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | Chunks per embedding request. |
+| `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | Claims or facts per embedding request. |
 
 ## Model provider
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | passed | OpenRouter key for every model call. |
-| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | OpenRouter API address. |
-| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | — | Per-request timeout. |
-| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | passed | Output allowance per chat call, reasoning included. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred chat providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | passed | Only these chat providers, no fallback. Exclusive with the order. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | passed | Preferred embedding providers, with fallback. |
-| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | passed | The one embedding provider, no fallback. The order wins if both are set. |
-| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | — | Only zero-data-retention endpoints for chat. |
-| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | passed | Reasoning effort for every chat call. |
-| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | passed | Reasoning effort per model id; wins over the global value. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | — | Retries of a chat call after HTTP 429, outside the work attempts. |
-| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | — | Longest wait before retrying an overloaded provider. |
-| `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | passed | Debug only: keep schema-invalid model answers as files. |
-| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | passed | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
-| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | passed | TypeSafe model. |
-| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | passed | TypeSafe API address. |
-| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | passed | TypeSafe request timeout. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_OPENROUTER_API_KEY` | required | string | OpenRouter key for every model call. |
+| `REMEMBERSTACK_OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | URL | OpenRouter API address. |
+| `REMEMBERSTACK_OPENROUTER_TIMEOUT_S` | `120.0` | float > 0 | Per-request timeout. |
+| `REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS` | `32000` | int ≥ 1 | Output allowance per chat call, reasoning included. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred chat providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY` | unset | comma-separated or JSON list | Only these chat providers, no fallback. Exclusive with the order. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER` | unset | comma-separated or JSON list | Preferred embedding providers, with fallback. |
+| `REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER` | unset | string | The one embedding provider, no fallback. The order wins if both are set. |
+| `REMEMBERSTACK_OPENROUTER_ZDR` | `false` | bool | Only zero-data-retention endpoints for chat. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT` | unset | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Reasoning effort for every chat call. |
+| `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` | unset | JSON object | Reasoning effort per model id; wins over the global value. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES` | `3` | int ≥ 0 | Retries of a chat call after HTTP 429, outside the work attempts. |
+| `REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S` | `30.0` | float > 0 | Longest wait before retrying an overloaded provider. |
+| `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR` | unset | absolute path | Debug only: keep schema-invalid model answers as files. |
+| `REMEMBERSTACK_TYPESAFE_API_KEY` | unset | string | TypeSafe AI key, required with the `jev` fact engine. Also read as `TYPESAFE_AI_API_KEY`. |
+| `REMEMBERSTACK_TYPESAFE_MODEL` | `jev-latest` | string | TypeSafe model. |
+| `REMEMBERSTACK_TYPESAFE_BASE_URL` | `https://api.typesafe.ai/v1` | URL | TypeSafe API address. |
+| `REMEMBERSTACK_TYPESAFE_TIMEOUT_S` | `30.0` | float | TypeSafe request timeout. |
 
 ## Model seats
 
 See [Models and providers](https://remember.dev/docs/self-hosting/models).
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Structure fallback: section anchors when headings are unusable. |
-| `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | — | Largest prompt sent to the structure fallback. |
-| `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | — | Structure check: minimum headings per 10,000 characters. |
-| `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | — | Structure check: largest share of oversized sections. |
-| `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | — | Accepted for compatibility; not used. |
-| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Checks a proposed section outline. |
-| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Classifies section roles. |
-| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | passed | Section summaries. |
-| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Claim selection and extraction. |
-| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Relation normalisation. |
-| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Entity resolution. |
-| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Fact adjudication with the `prompt` engine. |
-| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | passed | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
-| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | passed | Below this, both the new statement and the existing fact are kept. |
-| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | passed | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
-| `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | passed | Every embedding, including search queries. |
-| `REMEMBERSTACK_E1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Reported by `GET /deployment` as `chunk_embedding`; chunks actually use the P1 model. Keep equal to it. |
-| `REMEMBERSTACK_E1_PREFIX_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
-| `REMEMBERSTACK_P1_LABEL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Reported only; not used. |
-| `REMEMBERSTACK_OBS_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_SUPERSEDE_MARGIN` | `0.8` | float 0–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_NOVELTY_FLOOR` | `0.3` | float −1–1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_OBS_HUB_TOP_K` | `5` | int ≥ 1 | — | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL` | `openai/gpt-5.6-sol` | model id | passed | Not used by the shipped pipeline. |
-| `REMEMBERSTACK_ADJUDICATOR_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | — | Not used by the shipped pipeline. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_STRUCTURER_MODEL` | `openai/gpt-5.6-luna` | model id | Structure fallback: section anchors when headings are unusable. |
+| `REMEMBERSTACK_STRUCTURER_MAX_PROMPT_CHARS` | `200000` | int ≥ 1000 | Largest prompt sent to the structure fallback. |
+| `REMEMBERSTACK_STRUCTURER_MIN_HEADING_DENSITY_PER_10K` | `0.25` | float ≥ 0 | Structure check: minimum headings per 10,000 characters. |
+| `REMEMBERSTACK_STRUCTURER_MAX_OVERSIZED_LEAF_RATIO` | `0.75` | float 0–1 | Structure check: largest share of oversized sections. |
+| `REMEMBERSTACK_STRUCTURER_MIN_BLOCKS_FOR_LLM` | `8` | int ≥ 1 | Accepted for compatibility; not used. |
+| `REMEMBERSTACK_SKELETON_CHECK_MODEL` | `z-ai/glm-4.7-flash` | model id | Checks a proposed section outline. |
+| `REMEMBERSTACK_ROLE_MODEL` | `z-ai/glm-4.7-flash` | model id | Classifies section roles. |
+| `REMEMBERSTACK_SUMMARY_MODEL` | `z-ai/glm-4.7-flash` | model id | Section summaries. |
+| `REMEMBERSTACK_E2_EXTRACT_MODEL` | `openai/gpt-5.6-luna` | model id | Claim selection and extraction. |
+| `REMEMBERSTACK_E3_NORMALIZE_MODEL` | `openai/gpt-5.6-luna` | model id | Relation normalisation. |
+| `REMEMBERSTACK_OBS_SMALL_MODEL` | `openai/gpt-5.6-luna` | model id | Entity resolution. |
+| `REMEMBERSTACK_FACT_MODEL` | `openai/gpt-5.6-luna` | model id | Fact adjudication with the `prompt` engine. |
+| `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE` | `prompt` | `prompt` or `jev` | Fact adjudication engine. Also read as `REMEMBERSTACK_FACT_ENGINE`. |
+| `REMEMBERSTACK_FACT_CONFIDENCE_FLOOR` | `0.75` | float 0–1 | Below this, both the new statement and the existing fact are kept. |
+| `REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT` | `false` | bool | Fall back to `prompt` when a `jev` call fails. Also read as `REMEMBERSTACK_TYPESAFE_FALLBACK_TO_PROMPT`. |
+| `REMEMBERSTACK_P1_EMBEDDING_MODEL` | `qwen/qwen3-embedding-8b` | model id, 1,536-dim output | Every embedding, including search queries. Fixed once anything is embedded. |
 
 ## Converters
 
 See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | passed | MIME type → converter. Replaces the default table. |
-| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | passed | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
-| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | passed | Mistral API address. |
-| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | passed | OCR model. |
-| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | float > 0 | passed | OCR request timeout. |
-| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | int > 0 | passed | Largest file sent to OCR. |
-| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | bool | passed | Keep embedded images. |
-| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` | passed | Table format. |
-| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | bool | passed | Extract headers and footers separately. |
-| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` | passed | Confidence score detail. |
-| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | bool | passed | Keep the provider response as an artifact. |
-| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | passed | Price used to record OCR cost. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | — | OpenRouter key for image descriptions; required by `image_ocr_description`. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | — | API address. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | — | Vision model; must accept image input. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | — | Request timeout. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | — | Largest image. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | — | Largest width × height. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | int > 0 | — | Largest width. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | int > 0 | — | Largest height. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | int > 0 | — | Longest description. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | int ≥ 1 | — | Output allowance of the description call. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | int 1–2 | — | OCR and description in parallel (2) or in turn (1). |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
+| `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
+| `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |
+| `REMEMBERSTACK_MISTRAL_OCR_TIMEOUT_S` | `300` | float > 0 | OCR request timeout. |
+| `REMEMBERSTACK_MISTRAL_OCR_MAX_DOCUMENT_BYTES` | `50000000` | int > 0 | Largest file sent to OCR. |
+| `REMEMBERSTACK_MISTRAL_OCR_INCLUDE_IMAGES` | `true` | bool | Keep embedded images. |
+| `REMEMBERSTACK_MISTRAL_OCR_TABLE_FORMAT` | `markdown` | `markdown` or `html` | Table format. |
+| `REMEMBERSTACK_MISTRAL_OCR_EXTRACT_HEADERS_AND_FOOTERS` | `true` | bool | Extract headers and footers separately. |
+| `REMEMBERSTACK_MISTRAL_OCR_CONFIDENCE_GRANULARITY` | `word` | `word` or `page` | Confidence score detail. |
+| `REMEMBERSTACK_MISTRAL_OCR_KEEP_PROVIDER_RESPONSE` | `true` | bool | Keep the provider response as an artifact. |
+| `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | Price used to record OCR cost. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | int > 0 | Largest width. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_HEIGHT` | `16000` | int > 0 | Largest height. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_DESCRIPTION_CHARS` | `16000` | int > 0 | Longest description. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_TOKENS` | `4096` | int ≥ 1 | Output allowance of the description call. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_LANE_CONCURRENCY` | `2` | int 1–2 | OCR and description in parallel (2) or in turn (1). |
 
 ## Operations
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | — | Cap on lists in `remember ops inspect`. |
-| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | — | Object prefix of filesystem-view snapshots. |
-| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | — | Top-level view directories of the corpus tree. |
-| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | — | Entries above which a directory is split. |
-| `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | — | Address of the HTTP cost export. Unset: off. |
-| `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | — | Bearer token for the cost export. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_OPERATIONAL_SAMPLE_LIMIT` | `20` | int 1–1000 | Cap on lists in `remember ops inspect`. |
+| `REMEMBERSTACK_P3_SNAPSHOT_PREFIX` | `corpusfs/snapshots` | string | Object prefix of filesystem-view snapshots. |
+| `REMEMBERSTACK_P3_FACETS` | `["by-source", "by-time", "by-topic"]` | JSON array | Top-level view directories of the corpus tree. |
+| `REMEMBERSTACK_P3_SHARD_THRESHOLD` | `150` | int ≥ 2 | Entries above which a directory is split. |
+| `REMEMBERSTACK_COST_EXPORT_BIND` | unset | `host:port`, `[ipv6]:port` or `unix:/path` | Address of the HTTP cost export. Unset: off. |
+| `REMEMBERSTACK_COST_EXPORT_TOKEN` | unset | secret, ≥ 32 bytes | Bearer token for the cost export. |
 
 ## Observability
 
-| Variable | Default | Type | Compose | Purpose |
-|---|---|---|---|---|
-| `REMEMBERSTACK_SENTRY_DSN` | unset | secret | passed | Sentry-protocol DSN; unset keeps error tracking off. |
-| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | deployment slug | string | passed | Environment name on events. |
-| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | float 0–1 | passed | Share of error events sent. |
-| `REMEMBERSTACK_LANGFUSE_ENABLED`, `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, `_CA_FILE`, `_RUN_TAG` | `false` / empty | | passed | Read only by the benchmark harness; no effect on the engine. |
-| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | empty | | passed | Read only by the benchmark harness; no effect on the engine. |
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SENTRY_DSN` | unset | secret | Sentry-protocol DSN; unset keeps error tracking off. |
+| `REMEMBERSTACK_SENTRY_ENVIRONMENT` | deployment slug | string | Environment name on events. |
+| `REMEMBERSTACK_SENTRY_SAMPLE_RATE` | `1.0` | float 0–1 | Share of error events sent. |
+| `REMEMBERSTACK_LANGFUSE_ENABLED`, `_HOST`, `_PUBLIC_KEY`, `_SECRET_KEY`, `_CA_FILE`, `_RUN_TAG` | `false` / empty | | Read only by the benchmark harness; no effect on the engine. |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` | empty | | Read only by the benchmark harness; no effect on the engine. |
 
 ## Knowledge plane and other unused settings
 

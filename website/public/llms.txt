@@ -47,7 +47,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 
 - [Requirements](https://remember.dev/docs/self-hosting/requirements): What you need to run RememberStack yourself — PostgreSQL 19, S3-compatible storage, Docker, a model key — and how to size disk and database connections.
 - [Install with Docker Compose](https://remember.dev/docs/self-hosting/install): Start a self-hosted RememberStack with Docker Compose, check that it is healthy, send a first document, and stop, restart or reset it.
-- [Configuration](https://remember.dev/docs/self-hosting/configuration): How a self-hosted RememberStack reads its settings, which ones you need to change, and how to set the ones compose.yaml does not pass through.
+- [Configuration](https://remember.dev/docs/self-hosting/configuration): How a self-hosted RememberStack reads its settings, how they reach the containers, which ones you need to change, and which are fixed after the first start.
 - [Models and providers](https://remember.dev/docs/self-hosting/models): Which model each pipeline step uses, how to change it, how RememberStack routes calls through OpenRouter, and what changing the embedding model does.
 - [File formats and converters](https://remember.dev/docs/self-hosting/converters): Which file types a self-hosted RememberStack accepts, how to route more types to converters, and what happens to a file no converter accepts.
 - [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication): Protect a self-hosted RememberStack API with a shared secret or signed keys, understand read, ingest and write scopes, and allow browser origins.
