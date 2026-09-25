@@ -1588,7 +1588,7 @@ def main(argv: list[str] | None = None) -> int:
                     root=args.root,
                     raw_root=args.raw_root,
                     artifacts_root=args.artifacts_root,
-                ).model_dump_json()
+                ).model_dump_json(exclude_none=True)
             )
             return 0
         if args.command == "meter-receipts":
