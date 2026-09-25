@@ -26,17 +26,23 @@ from pydantic_settings import SettingsConfigDict
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.connection import Connection
 from remember.credentials import CredentialError
 from remember.credentials import DurabilityUnconfirmed
 from remember.errors import StoredKeyRefused
 from remember.issuer import DEFAULT_ISSUER
+from remember.issuer import fetch_issuer_metadata
+from remember.issuer import same_origin
 from remember.models import ConnectorCreate
-from remember.remote_mcp import RemoteOperationMcpServer
-from remember.remote_mcp import serve_mcp_stdio
 
 
 class _InternalOpsSettings(BaseSettings):
-    """Whether ``remember ops`` is enabled (engine containers only)."""
+    """Whether ``remember ops`` is enabled.
+
+    The engine image sets it, so ``docker compose exec api remember ops`` works
+    as-is. A client install leaves it unset: ``ops`` needs the server
+    dependencies and the deployment's database, which only the engine has.
+    """
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -61,8 +67,10 @@ def main(argv: list[str] | None = None) -> int:
             subcmd = effective_argv[0]
             if subcmd == "ops" and not internal_ops:
                 print(
-                    "error: 'remember ops' is confined to internal container environments. "
-                    "For developer operations, use 'remember operations list|run'. See https://remember.dev/docs",
+                    "error: 'remember ops' runs inside the engine container, "
+                    "for example 'docker compose exec api remember ops inspect "
+                    "--deployment <id>'. From a client, use "
+                    "'remember operations list|run'.",
                     file=sys.stderr,
                 )
                 return 1
@@ -234,134 +242,84 @@ def _run_doctor(args: argparse.Namespace) -> int:
             f"[✓] Engine reachable and authenticated ({elapsed}ms, "
             f"build {info.build_revision or 'unknown'})"
         )
+        for line in _tool_version_mismatches(info.tools):
+            print(f"[!] {line}")
+            all_ok = False
     except (MemoryApiError, CredentialError, ValueError) as err:
         print(f"[!] Engine check failed: {err}")
         all_ok = False
 
     # 4. Harness configurations & syntax validation
-    import json
-    import os
-    import tomllib
-
     print("\nCoding Agent Harnesses:")
-
-    def _is_executable(cmd: str | None) -> bool:
-        if not cmd:
-            return False
-        return bool(shutil.which(cmd)) or (
-            Path(cmd).is_file() and os.access(cmd, os.X_OK)
-        )
-
-    cursor_mcp = Path.cwd() / ".cursor" / "mcp.json"
-    if cursor_mcp.is_file():
-        try:
-            cdata = json.loads(cursor_mcp.read_text(encoding="utf-8"))
-            if "mcpServers" in cdata and "remember" in cdata["mcpServers"]:
-                entry = cdata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Cursor: configured and launcher verified ({cursor_mcp})"
-                    )
-                else:
-                    print(
-                        f"[!] Cursor: launcher command '{cmd}' not found or not executable ({cursor_mcp})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Cursor: valid JSON but missing 'remember' MCP server ({cursor_mcp})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Cursor: malformed JSON in {cursor_mcp}: {err}")
-            all_ok = False
-    else:
-        print(
-            "[-] Cursor: not configured in this directory (run 'remember setup --agent cursor')"
-        )
-
-    agy_mcp = Path.cwd() / ".agents" / "mcp_config.json"
-    if agy_mcp.is_file():
-        try:
-            adata = json.loads(agy_mcp.read_text(encoding="utf-8"))
-            if "mcpServers" in adata and "remember" in adata["mcpServers"]:
-                entry = adata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Antigravity: configured and launcher verified ({agy_mcp})"
-                    )
-                else:
-                    print(
-                        f"[!] Antigravity: launcher command '{cmd}' not found or not executable ({agy_mcp})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Antigravity: valid JSON but missing 'remember' MCP server ({agy_mcp})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Antigravity: malformed JSON in {agy_mcp}: {err}")
-            all_ok = False
-    else:
-        print(
-            "[-] Antigravity: not configured in this directory (run 'remember setup --agent agy')"
-        )
-
-    codex_cfg = Path.cwd() / ".codex" / "config.toml"
-    if codex_cfg.is_file():
-        try:
-            tdata = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
-            if "mcp_servers" in tdata and "remember" in tdata["mcp_servers"]:
-                entry = tdata["mcp_servers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(f"[✓] Codex: configured and launcher verified ({codex_cfg})")
-                else:
-                    print(
-                        f"[!] Codex: launcher command '{cmd}' not found or not executable ({codex_cfg})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Codex: valid TOML but missing [mcp_servers.remember] ({codex_cfg})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Codex: malformed TOML in {codex_cfg}: {err}")
-            all_ok = False
-    else:
-        print("[-] Codex: not configured in this directory")
-
-    claude_cfg = get_claude_desktop_config_path()
-    if claude_cfg.is_file():
-        try:
-            cldata = json.loads(claude_cfg.read_text(encoding="utf-8"))
-            if "mcpServers" in cldata and "remember" in cldata["mcpServers"]:
-                entry = cldata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Claude Desktop: configured and launcher verified ({claude_cfg})"
-                    )
-                else:
-                    print(
-                        f"[!] Claude Desktop: launcher command '{cmd}' not found or not executable ({claude_cfg})"
-                    )
-                    all_ok = False
-            else:
-                print(f"[!] Claude Desktop: missing 'remember' server ({claude_cfg})")
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Claude Desktop: malformed JSON in {claude_cfg}: {err}")
-            all_ok = False
-    else:
-        print(f"[-] Claude Desktop: not detected at {claude_cfg}")
+    harness_files = (
+        (
+            "Cursor",
+            Path.cwd() / ".cursor" / "mcp.json",
+            "remember setup --agent cursor",
+        ),
+        (
+            "Antigravity",
+            Path.cwd() / ".agents" / "mcp_config.json",
+            "remember setup --agent agy",
+        ),
+        (
+            "Codex",
+            Path.cwd() / ".codex" / "config.toml",
+            "remember setup --agent codex",
+        ),
+        ("Claude Desktop", get_claude_desktop_config_path(), None),
+    )
+    for label, path, hint in harness_files:
+        ok, line = _check_harness_file(label=label, path=path, hint=hint)
+        print(line)
+        all_ok = all_ok and ok
 
     print()
     return 0 if all_ok else 1
+
+
+def _check_harness_file(
+    *, label: str, path: Path, hint: str | None
+) -> tuple[bool, str]:
+    """One doctor line for a harness file's ``remember`` entry, and whether it passes."""
+    import json
+    import os
+    import shutil
+    import tomllib
+
+    if not path.is_file():
+        if hint is None:
+            return True, f"[-] {label}: not detected at {path}"
+        return True, f"[-] {label}: not configured in this directory (run '{hint}')"
+    toml = path.suffix == ".toml"
+    try:
+        text = path.read_text(encoding="utf-8")
+        data = tomllib.loads(text) if toml else json.loads(text)
+    except (OSError, ValueError) as error:
+        kind = "TOML" if toml else "JSON"
+        return False, f"[!] {label}: malformed {kind} in {path}: {error}"
+    servers = (
+        data.get("mcp_servers" if toml else "mcpServers")
+        if isinstance(data, dict)
+        else None
+    )
+    entry = servers.get("remember") if isinstance(servers, dict) else None
+    if not isinstance(entry, dict):
+        return False, f"[!] {label}: missing 'remember' MCP server ({path})"
+    url = entry.get("url")
+    if isinstance(url, str):
+        return True, f"[✓] {label}: remote entry for {url} ({path})"
+    command = entry.get("command")
+    executable = isinstance(command, str) and (
+        bool(shutil.which(command))
+        or (Path(command).is_file() and os.access(command, os.X_OK))
+    )
+    if executable:
+        return True, f"[✓] {label}: configured and launcher verified ({path})"
+    return (
+        False,
+        f"[!] {label}: launcher command '{command}' not found or not executable ({path})",
+    )
 
 
 def _run_whoami(args: argparse.Namespace) -> int:
@@ -728,14 +686,136 @@ def _run_connectors(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tool_version_mismatches(served: dict[str, int]) -> list[str]:
+    """Catalogue tools the engine serves at another version (hidden by `remember mcp`)."""
+    from remember.mcp_tools import memory_tools
+
+    lines: list[str] = []
+    for definition in memory_tools():
+        version = served.get(definition.name)
+        if version is None or version == definition.tool_version:
+            continue
+        newer = "remember" if version > definition.tool_version else "the engine"
+        lines.append(
+            f"MCP tool {definition.name!r}: this remember has version"
+            f" {definition.tool_version}, the engine serves {version}; `remember mcp`"
+            f" leaves it out until you upgrade {newer}"
+        )
+    return lines
+
+
 def _run_mcp(args: argparse.Namespace) -> int:
-    """Expose the remote assured operations and open retrieval tools over MCP."""
+    """Serve memory tools over MCP: engine mode (stdio or HTTP) or bridge mode.
+
+    Bridge mode is chosen by a remote MCP URL (``--remote-url``,
+    ``REMEMBER_MCP_URL``, or the signed key's issuer's
+    ``remember_mcp_endpoint`` when no engine URL is given); an explicit engine
+    URL (``--api-url``, ``REMEMBER_API_URL``) always means engine mode.
+    """
+    from remember.connection import DEFAULT_API_URL
+    from remember.connection import resolve_connection
+
+    connection = resolve_connection(
+        api_key=args.api_key,
+        api_url=args.api_url,
+        project=args.project,
+        mcp_url=args.remote_url,
+    )
+    explicit_engine = connection.api_url_source in ("explicit", "environment")
+    if connection.mcp_url and explicit_engine:
+        return _usage_error(
+            "give either an engine URL (--api-url / REMEMBER_API_URL) or a remote"
+            " MCP URL (--remote-url / REMEMBER_MCP_URL), not both"
+        )
+    if args.transport == "http":
+        if connection.mcp_url:
+            return _usage_error(
+                "--transport http serves an engine; an HTTP client should connect"
+                f" to the remote MCP URL {connection.mcp_url} directly"
+            )
+        if args.api_key or args.project:
+            return _usage_error(
+                "--transport http holds no key: each caller's Authorization"
+                " header is forwarded to the engine. Drop --api-key/--project"
+            )
+        if connection.api_url is None and connection.claims is not None:
+            return _usage_error(
+                "--transport http needs the engine URL: pass --api-url or set"
+                " REMEMBER_API_URL"
+            )
+        from remember.mcp_http import serve_http
+
+        return serve_http(
+            bind=args.bind,
+            engine_url=connection.api_url or DEFAULT_API_URL,
+            read_only=bool(args.read_only),
+        )
+    remote_url = connection.mcp_url
+    if remote_url is None and not explicit_engine and connection.claims is not None:
+        with _issuer_http() as http:
+            remote_url = fetch_issuer_metadata(
+                connection.claims.iss, http=http
+            ).remember_mcp_endpoint
+    if remote_url is not None:
+        return _run_mcp_bridge(args, connection=connection, remote_url=remote_url)
+    from remember.mcp_engine import EngineMcpServer
+    from remember.mcp_engine import serve_stdio
+
     with _cli_memory_client(args) as client:
-        return serve_mcp_stdio(
-            server=RemoteOperationMcpServer(
-                client=client, read_only=bool(args.read_only)
+        return serve_stdio(
+            server=EngineMcpServer(
+                client=client, read_only=bool(args.read_only), path_ingest=True
             )
         )
+
+
+def _run_mcp_bridge(
+    args: argparse.Namespace, *, connection: Connection, remote_url: str
+) -> int:
+    """Relay stdio to ``remote_url`` with the resolved key (D136 §5.3)."""
+    from remember.mcp_bridge import McpBridge
+
+    if args.project:
+        return _usage_error(
+            "--project applies to engine mode; through a remote MCP endpoint the"
+            " agent names the project per call (the `project` tool argument)"
+        )
+    if connection.key is None:
+        return _usage_error(
+            "bridge mode needs a key: run `remember login`, or set REMEMBER_API_KEY"
+        )
+    if connection.key_source == "file":
+        issuer = (
+            connection.claims.iss
+            if connection.claims is not None
+            else (connection.stored.issuer if connection.stored else None)
+        )
+        advertised = None
+        if issuer is not None:
+            with _issuer_http() as http:
+                advertised = fetch_issuer_metadata(
+                    issuer, http=http
+                ).remember_mcp_endpoint
+        if advertised is None or not same_origin(remote_url, advertised):
+            raise StoredKeyRefused(
+                detail=(
+                    f"the stored key is not sent to {remote_url}: it goes only to"
+                    " the MCP endpoint its issuer advertises. Pass the key"
+                    " explicitly (--api-key or REMEMBER_API_KEY) to use it there"
+                )
+            )
+    _warn_if_expiring()
+    bridge = McpBridge(
+        url=remote_url,
+        key=connection.key.get_secret_value(),
+        read_only=bool(args.read_only),
+    )
+    return bridge.run()
+
+
+def _usage_error(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 2
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -883,7 +963,9 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     if include_internal_ops:
-        ops = commands.add_parser("ops", help=argparse.SUPPRESS)
+        ops = commands.add_parser(
+            "ops", help="operator commands against this deployment's database"
+        )
         ops_commands = ops.add_subparsers(dest="ops_command", required=True)
         ops_inspect = ops_commands.add_parser(
             "inspect", help="bounded pipeline, DLQ, projection, and currency report"
@@ -1097,12 +1179,28 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp = commands.add_parser(
         "mcp",
         parents=[client_flags],
-        help="serve remote retrieval tools over MCP stdio",
+        help="serve memory tools over MCP (stdio or HTTP), or bridge to a remote MCP URL",
     )
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse the ingest, pipeline-readiness and delete tools",
+        help="omit and refuse every tool that changes memory",
+    )
+    mcp.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="stdio (default) or Streamable HTTP; http is engine mode only",
+    )
+    mcp.add_argument(
+        "--bind",
+        default="127.0.0.1:8765",
+        help="loopback HOST:PORT for --transport http (default 127.0.0.1:8765)",
+    )
+    mcp.add_argument(
+        "--remote-url",
+        default=None,
+        help="relay stdio to this remote MCP URL (overrides REMEMBER_MCP_URL)",
     )
     login = commands.add_parser(
         "login", help="sign in with the device grant and store one key"
@@ -1123,7 +1221,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         action="store_const",
         const="cloud",
         default=None,
-        help="configure for Managed Cloud",
+        help="configure for remember.dev (or the --issuer); signs in first if needed",
     )
     setup.add_argument(
         "--self-hosted",
@@ -1134,7 +1232,27 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         help="configure for a self-hosted engine (default http://127.0.0.1:8000)",
     )
     setup.add_argument(
-        "--api-url", default=None, help="engine URL (self-hosted, or an override)"
+        "--api-url",
+        default=None,
+        help="the self-hosted engine URL (implies --self-hosted)",
+    )
+    setup.add_argument(
+        "--mcp-url",
+        default=None,
+        help="a self-hosted `remember mcp --transport http` URL for agents that "
+        "take remote entries (implies --self-hosted)",
+    )
+    setup.add_argument(
+        "--issuer",
+        default=None,
+        help=f"key issuer URL with --cloud (default: REMEMBER_ISSUER, else {DEFAULT_ISSUER})",
+    )
+    setup.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="no browser sign-in: agents send the key from REMEMBER_API_KEY "
+        "(default when CI is set)",
     )
     setup.add_argument(
         "--api-key",

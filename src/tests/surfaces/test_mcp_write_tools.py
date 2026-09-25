@@ -19,13 +19,14 @@ import pytest
 
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
+from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import McpMemorySettings
+from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
@@ -227,7 +228,7 @@ def _error_payload(result: dict[str, object]) -> dict[str, object]:
     assert isinstance(content, list) and content
     block = content[0]
     assert isinstance(block, dict)
-    return json.loads(str(block["text"]))
+    return json.loads(str(block["text"]))["error"]
 
 
 def _success_payload(result: dict[str, object]) -> dict[str, Any]:
@@ -451,7 +452,7 @@ def test_path_without_roots_is_rejected(tmp_path: Path) -> None:
     payload = _error_payload(result)
     assert payload["code"] == "path_not_allowed"
     assert payload["retryable"] is False
-    assert "REMEMBERSTACK_MCP_INGEST_ROOTS" in str(payload["message"])
+    assert "REMEMBERSTACK_MCP_INGEST_ROOTS" in str(payload["detail"])
     assert backend.last_ingest is None
 
 
@@ -533,7 +534,7 @@ def test_path_oversized_hits_local_resource_guard(tmp_path: Path) -> None:
     )
     payload = _error_payload(result)
     assert payload["code"] == "path_too_large"
-    assert "LOCAL RESOURCE GUARD" in str(payload["message"])
+    assert "LOCAL RESOURCE GUARD" in str(payload["detail"])
     assert backend.last_ingest is None
 
 
@@ -553,7 +554,7 @@ def test_path_oversized_uses_capability_cap_when_served(tmp_path: Path) -> None:
     )
     payload = _error_payload(result)
     assert payload["code"] == "path_too_large"
-    assert "capability" in str(payload["message"]).lower()
+    assert "capability" in str(payload["detail"]).lower()
 
 
 def test_path_embedded_nul_is_rejected(tmp_path: Path) -> None:
@@ -795,30 +796,35 @@ def test_pipeline_readiness_rejects_bad_args() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status_code", "detail", "expected_code", "retryable", "http_status"),
+    ("status_code", "detail", "expected_code", "retryable", "expected_status"),
     [
         (413, "body_too_large", "body_too_large", False, 413),
         (422, "empty_body", "empty_body", False, 422),
         (403, "dispatch_refused:cap_hit", "dispatch_refused", False, 403),
         (423, "dispatch_parked:policy", "dispatch_parked", False, 423),
         (401, "missing token", "unauthorized", False, 401),
-        (403, "wrong deployment", "forbidden", False, 403),
+        (403, "wrong deployment", "insufficient_permission", False, 403),
         (400, "bad request", "engine_client_error", False, 400),
         (502, "data_plane_upstream_error", "engine_unavailable", True, 502),
         (0, "connection reset", "transport_error", True, 0),
         (403, "spend_safety:reservation_refused", "spend_safety", False, 403),
         (402, "reservation_refused:no_budget", "spend_safety", False, 402),
         (429, "spend_cap:daily", "spend_safety", False, 429),
+        (429, "slow down", "rate_limited", True, 429),
     ],
 )
 def test_error_mapping_table(
-    status_code: int, detail: str, expected_code: str, retryable: bool, http_status: int
+    status_code: int,
+    detail: str,
+    expected_code: str,
+    retryable: bool,
+    expected_status: int,
 ) -> None:
     """Cloud and engine failures map to exact structured envelopes."""
     error = map_error(MemoryApiError(status_code=status_code, detail=detail))
     assert error.code == expected_code
     assert error.retryable is retryable
-    assert error.http_status == http_status
+    assert error.status_code == expected_status
     assert error.agent_action
     if expected_code == "dispatch_refused":
         assert error.reason_code == "cap_hit"
@@ -853,7 +859,7 @@ def test_unexpected_exception_is_internal_error_and_logged(
     payload = _error_payload(result)
     assert payload["code"] == "internal_error"
     assert payload["retryable"] is False
-    assert payload["http_status"] == 500
+    assert payload["status_code"] is None
     assert any("internal_error" in record.message for record in caplog.records)
     assert any(record.exc_info is not None for record in caplog.records)
 
@@ -953,15 +959,18 @@ def test_local_mcp_wires_write_tools_when_ports_composed() -> None:
     assert _success_payload(ready)["ready"] is True
 
 
-def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
-    """Remote server always exposes write tools and proxies ingest/readiness."""
+def _served_catalogue() -> dict[str, object]:
+    """A ``GET /deployment`` body serving every catalogue tool."""
+    return {"tools": {item.name: item.tool_version for item in memory_tools()}}
+
+
+def test_remember_mcp_lists_write_tools_first_and_ingests() -> None:
+    """Engine mode lists the served write tools and proxies ingest/readiness."""
     ingested: list[bytes] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/operations":
-            return httpx.Response(200, json=[])
-        if request.url.path == "/query/space":
-            return httpx.Response(404, json={"detail": "Not Found"})
+        if request.url.path == "/deployment":
+            return httpx.Response(200, json=_served_catalogue())
         if request.url.path == "/ingest":
             ingested.append(request.content)
             return httpx.Response(
@@ -1011,7 +1020,7 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
+    server = EngineMcpServer(client=MemoryClient(client=transport), path_ingest=True)
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
     assert names[:2] == ["ingest", "pipeline_readiness"]
 
@@ -1035,26 +1044,24 @@ def test_remote_mcp_lists_write_tools_first_and_ingests() -> None:
     assert ready_payload["versions"][0]["stages"][0]["status"] == "running"
 
 
-def test_remote_mcp_maps_cloud_body_too_large() -> None:
+def test_remember_mcp_maps_cloud_body_too_large() -> None:
     """Server-side 413 body_too_large becomes a structured non-retryable error."""
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/ingest":
             return httpx.Response(413, json={"detail": "body_too_large"})
-        if request.url.path == "/operations":
-            return httpx.Response(200, json=[])
         return httpx.Response(404, json={"detail": "Not Found"})
 
     transport = httpx.Client(
         base_url="http://memory.test", transport=httpx.MockTransport(respond)
     )
-    server = RemoteOperationMcpServer(client=MemoryClient(client=transport))
+    server = EngineMcpServer(client=MemoryClient(client=transport), path_ingest=True)
     result = server.call_tool(
         name="ingest", arguments={"text": "x", "filename": "x.md"}
     )
     payload = _error_payload(result)
     assert payload["code"] == "body_too_large"
-    assert payload["http_status"] == 413
+    assert payload["status_code"] == 413
     assert payload["retryable"] is False
 
 

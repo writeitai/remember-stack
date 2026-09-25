@@ -169,16 +169,21 @@ def same_origin(left: str | httpx.URL, right: str | httpx.URL) -> bool:
 
 
 def send_same_origin(
-    http: httpx.Client, request: httpx.Request, *, max_redirects: int = _MAX_REDIRECTS
+    http: httpx.Client,
+    request: httpx.Request,
+    *,
+    max_redirects: int = _MAX_REDIRECTS,
+    stream: bool = False,
 ) -> httpx.Response:
     """Send ``request``, following redirects only within its origin.
 
     A cross-origin redirect is an error: following it would hand the bearer
-    or the device code to another host.
+    or the device code to another host. With ``stream`` the final response's
+    body is not read; the caller closes it.
     """
     current = request
     for _ in range(max_redirects + 1):
-        response = http.send(current)
+        response = http.send(current, stream=stream)
         if not response.is_redirect:
             return response
         location = response.headers.get("location")

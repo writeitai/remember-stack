@@ -14,6 +14,8 @@ Engine URL ``base_url=``          REMEMBER_API_URL  ``api_url``       resolved f
 Project    ``project=``           REMEMBER_PROJECT  ``default_project`` the issuer's default for the key
            ``--project``
 Issuer     ``--issuer``           REMEMBER_ISSUER   ``issuer``        the key's ``iss`` claim
+MCP URL    ``--remote-url``       REMEMBER_MCP_URL  —                 the issuer's ``remember_mcp_endpoint``
+                                                                      (read by ``remember mcp``)
 ========== ====================== ================= ================= =================================
 
 :class:`EngineRoute` turns a connection into the base URL and bearer each
@@ -82,6 +84,7 @@ class _Environment(BaseSettings):
     api_url: str | None = None
     project: str | None = None
     issuer: str | None = None
+    mcp_url: str | None = None
 
 
 def environment_issuer() -> str | None:
@@ -111,6 +114,8 @@ class Connection:
     api_url_source: Source | None
     project: str | None
     issuer: str | None
+    #: The remote MCP URL for ``remember mcp`` bridge mode, when one was given.
+    mcp_url: str | None
     stored: StoredCredentials | None
     #: The key's claims when it is a signed key, read without verification.
     claims: KeyClaims | None
@@ -127,6 +132,7 @@ def resolve_connection(
     api_url: str | None = None,
     project: str | None = None,
     issuer: str | None = None,
+    mcp_url: str | None = None,
 ) -> Connection:
     """Resolve key, engine URL, project and issuer with the one precedence.
 
@@ -178,6 +184,7 @@ def resolve_connection(
         or env.issuer
         or (stored.issuer if stored else None)
         or (claims.iss if claims else None),
+        mcp_url=(mcp_url or env.mcp_url or "").strip() or None,
         stored=stored,
         claims=claims,
     )

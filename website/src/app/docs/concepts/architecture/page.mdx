@@ -18,7 +18,7 @@ deployment as the shipped `compose.yaml` runs it.
 | Piece | What it does |
 |---|---|
 | **PostgreSQL** | Holds the memory: every document and version, every claim, entity and fact, the decisions that changed them, and the queue of pipeline work. The search indexes and the graph are in the same database. |
-| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs MinIO. |
+| **Object storage** | Holds files: the original bytes you sent, the Markdown converted from them, and filesystem-view snapshots. Any S3-compatible store; Compose runs SeaweedFS. |
 | **The API** | One process that answers HTTP. Ingest stores the original and records a version; reads run against PostgreSQL. |
 | **The workers** | One process per [pipeline stage](/docs/concepts/pipeline), from `convert` to `label_relation`. Each takes work from the queue in PostgreSQL, calls models where the stage needs one, and writes its results back. |
 | **`setup`** | Runs once before the others start: database migrations, buckets, the deployment record. |

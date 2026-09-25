@@ -1023,7 +1023,7 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert "LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
-    assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna" in script
     assert "REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna" in script
     assert '[[ "$protocol" == "full-v38-glm" ]]' in script
     assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"' in script
@@ -1091,7 +1091,7 @@ def test_restore_runtime_command_unsets_parent_overrides(tmp_path: Path) -> None
         arguments=("up", "api"),
     )
 
-    assert command[:3] == ("env", "--unset", "REMEMBERSTACK_E1_EMBEDDING_MODEL")
+    assert command[:3] == ("env", "--unset", "REMEMBERSTACK_E2_EXTRACT_MODEL")
     assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" in command
     assert "REMEMBERSTACK_BUILD_REVISION" in command
     assert command[-2:] == ("up", "api")

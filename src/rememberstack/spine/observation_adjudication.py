@@ -89,17 +89,11 @@ both."""
 
 
 class ObservationSettings(BaseSettings):
-    """The observation adjudicator's ladder and gate bindings (D4/D43)."""
+    """The entity-resolution model seat (``REMEMBERSTACK_OBS_SMALL_MODEL``)."""
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_OBS_")
 
     small_model: str = Field(default="openai/gpt-5.6-luna")
-    frontier_model: str = Field(default="openai/gpt-5.6-sol")
-    embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
-    confidence_floor: float = Field(default=0.75, ge=0.0, le=1.0)
-    supersede_margin: float = Field(default=0.8, ge=0.0, le=1.0)
-    novelty_floor: float = Field(default=0.3, ge=-1.0, le=1.0)
-    hub_top_k: int = Field(default=5, ge=1)
 
 
 class ObservationAdjudicator:
@@ -110,13 +104,17 @@ class ObservationAdjudicator:
         *,
         engine: Engine,
         model_provider: ModelProviderPort,
-        settings: ObservationSettings,
+        small_model: str,
+        frontier_model: str,
+        confidence_floor: float = 0.75,
         rank_embed_cache: RankEmbedCache | None = None,
     ) -> None:
-        """Bind the adjudicator to the spine and its ladder/gate models."""
+        """Bind the diagnostic ladder: small model, then frontier below the floor."""
         self._engine = engine
         self._model_provider = model_provider
-        self._settings = settings
+        self._small_model = small_model
+        self._frontier_model = frontier_model
+        self._confidence_floor = confidence_floor
         del rank_embed_cache
 
     def add_observation(
@@ -195,7 +193,7 @@ class ObservationAdjudicator:
         )
         verdict_call = self._model_provider.generate(
             request=ModelRequest(
-                model=self._settings.small_model, prompt=prompt, temperature=0.0
+                model=self._small_model, prompt=prompt, temperature=0.0
             ),
             response_type=ObservationVerdict,
         )
@@ -206,11 +204,11 @@ class ObservationAdjudicator:
                 usage=verdict_call.usage,
             )
         verdict = verdict_call.output
-        if verdict.confidence >= self._settings.confidence_floor:
+        if verdict.confidence >= self._confidence_floor:
             return verdict, "small_model"
         frontier_call = self._model_provider.generate(
             request=ModelRequest(
-                model=self._settings.frontier_model, prompt=prompt, temperature=0.0
+                model=self._frontier_model, prompt=prompt, temperature=0.0
             ),
             response_type=ObservationVerdict,
         )

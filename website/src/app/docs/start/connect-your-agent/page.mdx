@@ -41,6 +41,22 @@ claude mcp add --transport http remember https://remember.dev/app/api/mcp
 }
 ```
 
+Or let the `remember` package write the configuration for every agent it
+finds:
+
+```bash
+pip install remember
+remember setup --cloud
+```
+
+Cursor, Claude Code and Codex get the endpoint URL and sign in through the
+browser. Claude Desktop and Antigravity, which only start local programs,
+get `remember mcp` as a bridge to the endpoint, using the key from
+`remember login` (the command runs it first if you are not signed in). On a
+machine without a browser, such as CI, add `--headless`: the agents then
+send the key from `REMEMBER_API_KEY`. No key is written into any agent's
+configuration. See [`remember setup`](/docs/reference/cli#remember-setup).
+
 Setup for other clients, the sign-in flow, and how to disconnect are
 on [Hosted MCP](/docs/cloud/hosted-mcp).
 
@@ -75,6 +91,20 @@ remember doctor
 The files `remember setup` writes, and how to write them by hand, are
 in the [MCP reference](/docs/reference/mcp).
 
+For an agent that connects to a URL rather than starting a program, run the
+server over HTTP and point the agent at `http://127.0.0.1:8765/mcp`:
+
+```bash
+remember mcp --transport http --api-url http://localhost:8000
+remember setup --mcp-url http://127.0.0.1:8765/mcp
+```
+
+Cursor, Claude Code and Codex get the URL; Claude Desktop and Antigravity
+still start `remember mcp` themselves.
+
+The HTTP server holds no key: it passes each agent's `Authorization` header
+to the engine. See [MCP tools: Over HTTP](/docs/reference/mcp#over-http).
+
 </Tab>
 </Tabs>
 
@@ -100,6 +130,11 @@ two tools that change memory (`ingest` and `delete_document`).
 
 The hosted remember.dev server exposes a smaller set; see
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.
+
+For an agent that can only start a local program, `remember mcp` with a
+remember.dev key relays to the MCP endpoint remember.dev advertises for that
+key, using the key from `remember login`. See
+[Bridge mode](/docs/reference/mcp#bridge-mode-remember-mcp-with-a-rememberdev-key).
 
 </Cloud>
 

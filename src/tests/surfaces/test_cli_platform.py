@@ -16,7 +16,13 @@ from remember.cli import main
 from remember.setup import configure_antigravity
 from remember.setup import configure_codex
 from remember.setup import configure_cursor
+from remember.setup import Entry
 from remember.setup import resolve_launcher
+
+
+def _stdio(command: str = "/usr/bin/remember", *args: str) -> Entry:
+    """A stdio engine entry, as setup writes for a self-hosted engine."""
+    return Entry(shape="stdio_engine", command=command, args=args or ("mcp",))
 
 
 def test_remember_client_import_and_alias() -> None:
@@ -39,9 +45,7 @@ def test_resolve_launcher_finds_remember_or_uvx() -> None:
 def test_setup_cursor_configuration(tmp_path: Path) -> None:
     """Cursor configuration writes .cursor/mcp.json and .cursor/rules/remember.mdc."""
     cmd, args = "/usr/local/bin/remember", ["mcp"]
-    ok = configure_cursor(
-        cwd=tmp_path, launcher_cmd=cmd, launcher_args=args, dry_run=False
-    )
+    ok = configure_cursor(cwd=tmp_path, entry=_stdio(cmd, *args), dry_run=False)
     assert ok is True
 
     mcp_file = tmp_path / ".cursor" / "mcp.json"
@@ -65,9 +69,7 @@ def test_setup_cursor_configuration(tmp_path: Path) -> None:
 def test_setup_antigravity_configuration(tmp_path: Path) -> None:
     """Antigravity configuration writes mcp_config.json and SKILL.md."""
     cmd, args = "/Users/dev/.local/bin/uvx", ["remember", "mcp"]
-    ok = configure_antigravity(
-        cwd=tmp_path, launcher_cmd=cmd, launcher_args=args, dry_run=False
-    )
+    ok = configure_antigravity(cwd=tmp_path, entry=_stdio(cmd, *args), dry_run=False)
     assert ok is True
 
     mcp_file = tmp_path / ".agents" / "mcp_config.json"
@@ -96,9 +98,7 @@ def test_setup_antigravity_configuration(tmp_path: Path) -> None:
 def test_setup_codex_configuration(tmp_path: Path) -> None:
     """Codex configuration writes .codex/config.toml."""
     cmd, args = "/usr/local/bin/remember", ["mcp"]
-    ok = configure_codex(
-        cwd=tmp_path, launcher_cmd=cmd, launcher_args=args, dry_run=False
-    )
+    ok = configure_codex(cwd=tmp_path, entry=_stdio(cmd, *args), dry_run=False)
     assert ok is True
 
     config_file = tmp_path / ".codex" / "config.toml"
@@ -126,9 +126,7 @@ def test_setup_codex_configuration_strips_legacy_plaintext_token(
     (config_dir / "config.toml").write_text(legacy_toml, encoding="utf-8")
 
     cmd, args = "/usr/local/bin/remember", ["mcp"]
-    ok = configure_codex(
-        cwd=tmp_path, launcher_cmd=cmd, launcher_args=args, dry_run=False
-    )
+    ok = configure_codex(cwd=tmp_path, entry=_stdio(cmd, *args), dry_run=False)
     assert ok is True
 
     new_content = (config_dir / "config.toml").read_text(encoding="utf-8")
@@ -139,7 +137,7 @@ def test_setup_codex_configuration_strips_legacy_plaintext_token(
 
 def test_setup_cli_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
     """CLI setup --dry-run prints plan without writing files."""
-    code = main(["setup", "--dry-run"])
+    code = main(["setup", "--self-hosted", "--dry-run", "--agent", "cursor"])
     assert code == 0
     out = capsys.readouterr().out
     assert "Mode: DRY RUN" in out
@@ -158,12 +156,32 @@ def test_doctor_cli_reports_health(capsys: pytest.CaptureFixture[str]) -> None:
 def test_ops_is_confined_to_internal_environments(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """CLI ops refuses outside internal container environments with exit 1."""
+    """Outside the engine image, ops refuses with exit 1 and says where it runs."""
     dummy_dep = "74000000-0000-0000-0000-000000000001"
     res_ops = main(["ops", "inspect", "--deployment", dummy_dep])
     assert res_ops == 1
     err_ops = capsys.readouterr().err
-    assert "remember ops' is confined to internal container environments" in err_ops
+    assert "'remember ops' runs inside the engine container" in err_ops
+    assert "docker compose exec api remember ops" in err_ops
+
+
+def test_ops_is_listed_in_help_where_it_is_enabled(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The engine image enables ops, so its help lists the command."""
+    monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    assert "operator commands against this deployment's database" in (
+        capsys.readouterr().out
+    )
+
+
+def test_engine_image_enables_ops() -> None:
+    """`docker compose exec api remember ops ...` needs no extra environment."""
+    dockerfile = (Path(__file__).parents[3] / "Dockerfile").read_text(encoding="utf-8")
+    runtime_stage = dockerfile.rsplit("\nFROM ", maxsplit=1)[1]
+    assert "REMEMBERSTACK_INTERNAL_OPS=1" in runtime_stage
 
 
 def test_query_free_text_dispatch(
@@ -306,7 +324,7 @@ def test_setup_handles_malformed_cursor_json_gracefully(
     assert exit_code == 1
 
     captured = capsys.readouterr()
-    assert "error: Existing" in captured.err
+    assert "error: Cursor: Existing" in captured.err
     assert "contains invalid JSON" in captured.err
     assert "Traceback" not in captured.err
 
@@ -334,7 +352,7 @@ def test_setup_explicit_requested_harness_failure(
     assert exit_code == 1
 
     captured = capsys.readouterr()
-    assert "error: Failed to configure Claude harness" in captured.err
+    assert "error: failed to configure Claude Code" in captured.err
 
 
 def test_setup_cursor_invalid_structure(tmp_path: Path) -> None:
@@ -348,18 +366,14 @@ def test_setup_cursor_invalid_structure(tmp_path: Path) -> None:
     with pytest.raises(
         RuntimeError, match="has invalid structure: expected JSON object at root"
     ):
-        configure_cursor(
-            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_cursor(cwd=tmp_path, entry=_stdio())
 
     # mcpServers is list
     mcp_file.write_text('{"mcpServers": []}', encoding="utf-8")
     with pytest.raises(
         RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
     ):
-        configure_cursor(
-            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_cursor(cwd=tmp_path, entry=_stdio())
 
 
 def test_setup_claude_desktop_invalid_structure(
@@ -378,18 +392,14 @@ def test_setup_claude_desktop_invalid_structure(
     with pytest.raises(
         RuntimeError, match="has invalid structure: expected JSON object at root"
     ):
-        configure_claude_desktop(
-            launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_claude_desktop(entry=_stdio())
 
     # mcpServers is list
     config_file.write_text('{"mcpServers": []}', encoding="utf-8")
     with pytest.raises(
         RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
     ):
-        configure_claude_desktop(
-            launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_claude_desktop(entry=_stdio())
 
 
 def test_setup_antigravity_invalid_structure(tmp_path: Path) -> None:
@@ -403,18 +413,14 @@ def test_setup_antigravity_invalid_structure(tmp_path: Path) -> None:
     with pytest.raises(
         RuntimeError, match="has invalid structure: expected JSON object at root"
     ):
-        configure_antigravity(
-            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_antigravity(cwd=tmp_path, entry=_stdio())
 
     # mcpServers is list
     mcp_file.write_text('{"mcpServers": []}', encoding="utf-8")
     with pytest.raises(
         RuntimeError, match="has invalid structure: 'mcpServers' must be a JSON object"
     ):
-        configure_antigravity(
-            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_antigravity(cwd=tmp_path, entry=_stdio())
 
 
 def test_setup_codex_invalid_toml(tmp_path: Path) -> None:
@@ -425,9 +431,7 @@ def test_setup_codex_invalid_toml(tmp_path: Path) -> None:
 
     config_file.write_text("this is not [ valid toml", encoding="utf-8")
     with pytest.raises(RuntimeError, match="contains invalid TOML"):
-        configure_codex(
-            cwd=tmp_path, launcher_cmd="/usr/bin/remember", launcher_args=["mcp"]
-        )
+        configure_codex(cwd=tmp_path, entry=_stdio())
 
 
 def test_malformed_credentials_cli_error_boundary(

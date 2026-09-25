@@ -108,10 +108,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
 )
 EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "chunk_embedding": "qwen/qwen3-embedding-8b",
         "claim_extraction": "openai/gpt-5.6-luna",
-        "context_prefix": "openai/gpt-5.6-luna",
-        "fact_label": "openai/gpt-5.6-luna",
         "entity_resolution": "openai/gpt-5.6-luna",
         "fact_adjudication": "openai/gpt-5.6-luna",
         "openrouter_embedding_provider": "nebius",
@@ -169,8 +166,6 @@ GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
         **EXPECTED_INGEST_MODEL_BINDINGS,
         "claim_extraction": GLM_GENERATION_MODEL,
-        "context_prefix": GLM_GENERATION_MODEL,
-        "fact_label": GLM_GENERATION_MODEL,
         "entity_resolution": GLM_GENERATION_MODEL,
         "fact_adjudication": GLM_GENERATION_MODEL,
         "openrouter_reasoning_effort_map": '{"z-ai/glm-5.3-flash": "minimal"}',
