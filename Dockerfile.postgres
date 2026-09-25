@@ -27,8 +27,12 @@ RUN set -eux; \
     apt-get install -y --reinstall --no-install-recommends ca-certificates; \
     update-ca-certificates; \
     apt-get update; \
+    # The headers must be the base image's exact server build: the archive
+    # also serves newer prereleases, and an extension compiled against their
+    # headers fails at run time (an index access method struct changes).
     apt-get install -y --no-install-recommends \
-      build-essential curl patch postgresql-server-dev-19; \
+      build-essential curl patch \
+      "postgresql-server-dev-19=${PG_VERSION}" "libpq-dev=${PG_VERSION}"; \
     curl --fail --location --show-error \
       --output /tmp/pg_textsearch.tar.gz \
       "https://github.com/timescale/pg_textsearch/archive/${PG_TEXTSEARCH_REVISION}.tar.gz"; \
