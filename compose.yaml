@@ -10,9 +10,19 @@ x-app: &app
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
   image: ghcr.io/writeitai/remember-stack:0.17.1
+  # Every variable in .env reaches the engine, so any engine setting can be
+  # set there. The environment list below adds defaults and the values
+  # Compose fixes itself (database URL, object-store endpoint, container port);
+  # those win over .env.
+  env_file:
+    - path: .env
+      required: false
+  # A worker or the API that exits is started again, so a crash does not leave
+  # its stage stalled. The one-shot services below override this.
+  restart: unless-stopped
   environment:
-    REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://${REMEMBERSTACK_POSTGRES_USER}:${REMEMBERSTACK_POSTGRES_PASSWORD}@postgres:5432/${REMEMBERSTACK_POSTGRES_DB}
-    REMEMBERSTACK_MINIO_ENDPOINT_URL: http://minio:9000
+    REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://${REMEMBERSTACK_POSTGRES_USER}:${REMEMBERSTACK_POSTGRES_PASSWORD:?set REMEMBERSTACK_POSTGRES_PASSWORD}@postgres:5432/${REMEMBERSTACK_POSTGRES_DB}
+    REMEMBERSTACK_MINIO_ENDPOINT_URL: http://object-store:8333
     REMEMBERSTACK_MINIO_ACCESS_KEY: ${REMEMBERSTACK_MINIO_ACCESS_KEY}
     REMEMBERSTACK_MINIO_SECRET_KEY: ${REMEMBERSTACK_MINIO_SECRET_KEY}
     REMEMBERSTACK_OPENROUTER_API_KEY: ${REMEMBERSTACK_OPENROUTER_API_KEY}
@@ -24,7 +34,7 @@ x-app: &app
     REMEMBERSTACK_OPENROUTER_REASONING_EFFORT: ${REMEMBERSTACK_OPENROUTER_REASONING_EFFORT:-}
     REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP: ${REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP:-}
     REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR: ${REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR:-}
-    REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID}
+    REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:?set REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME}
     REMEMBERSTACK_SELFHOST_API_PORT: "8000"
@@ -101,17 +111,10 @@ x-app: &app
     REMEMBERSTACK_SKELETON_CHECK_MODEL: ${REMEMBERSTACK_SKELETON_CHECK_MODEL:-z-ai/glm-4.7-flash}
     REMEMBERSTACK_ROLE_MODEL: ${REMEMBERSTACK_ROLE_MODEL:-z-ai/glm-4.7-flash}
     REMEMBERSTACK_SUMMARY_MODEL: ${REMEMBERSTACK_SUMMARY_MODEL:-z-ai/glm-4.7-flash}
-    REMEMBERSTACK_E1_EMBEDDING_MODEL: ${REMEMBERSTACK_E1_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-    REMEMBERSTACK_E1_PREFIX_MODEL: ${REMEMBERSTACK_E1_PREFIX_MODEL:-openai/gpt-5.6-luna}
     REMEMBERSTACK_E2_EXTRACT_MODEL: ${REMEMBERSTACK_E2_EXTRACT_MODEL:-openai/gpt-5.6-luna}
     REMEMBERSTACK_E3_NORMALIZE_MODEL: ${REMEMBERSTACK_E3_NORMALIZE_MODEL:-openai/gpt-5.6-luna}
     REMEMBERSTACK_OBS_SMALL_MODEL: ${REMEMBERSTACK_OBS_SMALL_MODEL:-openai/gpt-5.6-luna}
-    REMEMBERSTACK_OBS_FRONTIER_MODEL: ${REMEMBERSTACK_OBS_FRONTIER_MODEL:-openai/gpt-5.6-sol}
-    REMEMBERSTACK_OBS_EMBEDDING_MODEL: ${REMEMBERSTACK_OBS_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-    REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL: ${REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL:-openai/gpt-5.6-luna}
-    REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL: ${REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL:-openai/gpt-5.6-sol}
     REMEMBERSTACK_P1_EMBEDDING_MODEL: ${REMEMBERSTACK_P1_EMBEDDING_MODEL:-qwen/qwen3-embedding-8b}
-    REMEMBERSTACK_P1_LABEL_MODEL: ${REMEMBERSTACK_P1_LABEL_MODEL:-openai/gpt-5.6-luna}
     REMEMBERSTACK_FACT_MODEL: ${REMEMBERSTACK_FACT_MODEL:-openai/gpt-5.6-luna}
     REMEMBERSTACK_FACT_ADJUDICATION_ENGINE: ${REMEMBERSTACK_FACT_ADJUDICATION_ENGINE:-prompt}
     REMEMBERSTACK_FACT_CONFIDENCE_FLOOR: ${REMEMBERSTACK_FACT_CONFIDENCE_FLOOR:-0.75}
@@ -126,10 +129,12 @@ x-app: &app
 
 services:
   postgres:
+    # Pulled from the release (linux/amd64 and linux/arm64). Compose builds it
+    # from Dockerfile.postgres only when the pull fails or with --build.
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: rememberstack-postgres:19beta3
+    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1
     command:
       - postgres
       - -c
@@ -138,9 +143,14 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      # Above the stock stack's connection ceilings (API 23 + 12 workers x 16
+      # = 215), so a busy default deployment cannot run out of connections.
+      - -c
+      - max_connections=300
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${REMEMBERSTACK_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${REMEMBERSTACK_POSTGRES_PASSWORD:?set REMEMBERSTACK_POSTGRES_PASSWORD}
       POSTGRES_DB: ${REMEMBERSTACK_POSTGRES_DB}
     healthcheck:
       test:
@@ -157,29 +167,51 @@ services:
       # this mount so pg_upgrade can link across a version boundary.
       - postgres-data:/var/lib/postgresql
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
-    command: server /data --console-address :9001
+  # SeaweedFS (Apache-2.0) as the S3-compatible object store: master, volume,
+  # filer and S3 gateway in one process. The internal components listen on the
+  # container's loopback only; the authenticated S3 port is reachable on the
+  # Compose network and is not published on the host.
+  # AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY become the single admin identity
+  # and switch S3 authentication on, so both are required.
+  # The engine sets no S3 lifecycle rules, which `weed server` would store
+  # without enforcing; deletion is explicit (hard forget purges objects).
+  object-store:
+    restart: unless-stopped
+    image: chrislusf/seaweedfs:4.44@sha256:e67e8c385484120b78bff47ba5f4debbca47fbd27ed1a39f016f47e8baea615b
+    command:
+      - server
+      - -ip=127.0.0.1
+      - -ip.bind=127.0.0.1
+      - -s3
+      - -s3.ip.bind=0.0.0.0
+      - -s3.port=8333
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
+      - -master.telemetry=false
+      # Each bucket is a SeaweedFS collection that claims 7 volume slots on
+      # its first write, so the engine's three buckets need at least 21.
+      # Volumes are sparse (no preallocation) and capped at 1 GiB each.
+      - -volume.max=100
+      - -master.volumeSizeLimitMB=1024
     environment:
-      MINIO_ROOT_USER: ${REMEMBERSTACK_MINIO_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${REMEMBERSTACK_MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${REMEMBERSTACK_MINIO_ACCESS_KEY:?set REMEMBERSTACK_MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${REMEMBERSTACK_MINIO_SECRET_KEY:?set REMEMBERSTACK_MINIO_SECRET_KEY}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8333/healthz"]
       interval: 2s
       timeout: 5s
       retries: 30
-    ports:
-      - "9001:9001"
     volumes:
-      - minio-data:/data
+      - object-store-data:/data
 
   setup:
     <<: *app
     command: ["setup"]
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      object-store:
         condition: service_healthy
 
   api:
@@ -198,7 +230,9 @@ services:
       timeout: 5s
       retries: 30
     ports:
-      - "${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
+      # Loopback only unless REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS says
+      # otherwise; set a token before publishing on another address.
+      - "${REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS:-127.0.0.1}:${REMEMBERSTACK_SELFHOST_API_PORT}:8000"
 
   worker-convert:
     <<: *app
@@ -295,6 +329,7 @@ services:
   projections:
     <<: *app
     command: ["project", "--plane", "p3"]
+    restart: "no"
     profiles: ["operations"]
     depends_on:
       setup:
@@ -303,5 +338,5 @@ services:
 volumes:
   app-state:
   forget-manifests:
-  minio-data:
+  object-store-data:
   postgres-data:

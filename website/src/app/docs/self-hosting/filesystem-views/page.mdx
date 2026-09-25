@@ -24,7 +24,7 @@ docker compose --profile operations run --rm projections
 ```
 
 The `projections` service runs `project --plane p3`. It renders the whole
-tree, writes it to the `remember-corpusfs` bucket in MinIO under a new
+tree, writes it to the `remember-corpusfs` bucket in the object store under a new
 version, and marks that version as the latest. It prints a short report
 with the `snapshot_id`, the `version` and the number of `files`. Each run
 builds the tree from scratch.
@@ -34,7 +34,7 @@ by hand, when you want the view to catch up.
 
 ## Publish it to a directory
 
-`mounts` copies the latest snapshot out of MinIO into a directory:
+`mounts` copies the latest snapshot out of the object store into a directory:
 
 ```bash
 mkdir -p "$PWD/memory-views"
@@ -132,8 +132,8 @@ logged only if your mount tool logs them.
 
 `remember ops rebuild --deployment ID --snapshot-root DIR --version V`
 writes a snapshot tree straight into a directory inside the container
-instead of MinIO. It also records that snapshot as the latest, and `mounts`
-then fails to find it in MinIO. Run the `projections` service again before
+instead of the object store. It also records that snapshot as the latest, and `mounts`
+then fails to find it in the object store. Run the `projections` service again before
 the next `mounts`.
 
 ## When it refuses

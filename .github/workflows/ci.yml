@@ -219,13 +219,64 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare .env as the quickstart documents
+        run: |
+          # .env.example ships no secrets; Compose must refuse it.
+          if docker compose --env-file .env.example config --quiet; then
+            echo "Compose accepted .env.example without secrets" >&2
+            exit 1
+          fi
+          cp .env.example .env
+          printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+            "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+            "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
+
       - name: Validate Compose model
-        run: docker compose --env-file .env.example config --quiet
+        run: |
+          docker compose --env-file .env config --quiet
+          docker compose --env-file .env config --format json | python3 -c \
+            'import json,sys; ports=json.load(sys.stdin)["services"]["api"]["ports"]; assert [p["host_ip"] for p in ports] == ["127.0.0.1"], ports'
+
+      - name: Prove every .env.example variable reaches the engine
+        run: |
+          # Set every variable .env.example names, commented or not, in a
+          # scratch copy of .env, then check that Compose hands each one to
+          # every engine service. The probe value is an address because one
+          # of them (the API publish address) is interpolated into a port.
+          cp .env .env.ci-original
+          python3 - <<'PY'
+          import re
+
+          named = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", open(".env.example").read(), re.M))
+          present = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", open(".env").read(), re.M))
+          with open(".env", "a") as env:
+              env.writelines(f"{name}=127.0.0.1\n" for name in sorted(named - present))
+          PY
+          docker compose --env-file .env --profile operations --profile managed \
+            config --format json > compose-config.json
+          mv .env.ci-original .env
+          python3 - <<'PY'
+          import json
+          import re
+
+          named = set(re.findall(r"^#?\s*([A-Z][A-Z0-9_]*)=", open(".env.example").read(), re.M))
+          services = json.load(open("compose-config.json"))["services"]
+          engine = {
+              name: spec for name, spec in services.items()
+              if spec.get("image", "").startswith("ghcr.io/writeitai/remember-stack:")
+          }
+          assert {"setup", "api", "projections", "meter-receipts"} <= set(engine), sorted(engine)
+          for name, spec in engine.items():
+              missing = sorted(named - set(spec.get("environment", {})))
+              assert not missing, (name, missing)
+          print(f"{len(named)} variables reach {len(engine)} engine services")
+          PY
+          rm compose-config.json
 
       - name: Start fresh self-host deployment
         run: |
           started_at="$(date +%s)"
-          docker compose --env-file .env.example up --build --detach --wait
+          docker compose --env-file .env up --build --detach --wait
           curl --fail http://localhost:8000/operations
           served_revision="$(curl --fail --silent http://localhost:8000/deployment \
             | python3 -c 'import json,sys; print(json.load(sys.stdin)["build_revision"])')"
@@ -241,15 +292,33 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           test "$elapsed_seconds" -le "$QUICKSTART_TARGET_SECONDS"
 
-      - name: Prove MinIO conditional create
+      - name: Prove object-store round trip and conditional create
         run: |
-          docker compose --env-file .env.example exec -T api python - <<'PY'
+          docker compose --env-file .env exec -T api python - <<'PY'
+          from uuid import uuid4
+
           from rememberstack.adapters.selfhost import MinIOObjectStore, MinIOSettings
           from rememberstack.model import ObjectAlreadyExistsError, ObjectKey
+          from rememberstack.profiles.selfhost import SelfHostSettings
 
-          store = MinIOObjectStore(
-              bucket="remember-raw", settings=MinIOSettings.model_validate({})
-          )
+          profile = SelfHostSettings.model_validate({})
+          s3 = MinIOSettings.model_validate({})
+          # Each bucket is its own SeaweedFS collection and needs its own
+          # volume slots on first write; all three must accept a write.
+          for bucket in (
+              profile.raw_bucket_name,
+              profile.artifacts_bucket_name,
+              profile.corpusfs_bucket_name,
+          ):
+              store = MinIOObjectStore(bucket=bucket, settings=s3)
+              key = ObjectKey(f"ci/round-trip-{uuid4().hex}")
+              content = f"round trip {bucket}".encode()
+              store.write_bytes(key=key, content=content)
+              if store.read_bytes(key=key) != content:
+                  raise RuntimeError(f"{bucket} returned different bytes")
+              print(f"{bucket}: write and read back ok")
+
+          store = MinIOObjectStore(bucket=profile.raw_bucket_name, settings=s3)
           key = ObjectKey("ci/immutable-object")
           store.write_bytes(key=key, content=b"first")
           try:
@@ -257,13 +326,13 @@ jobs:
           except ObjectAlreadyExistsError:
               pass
           else:
-              raise RuntimeError("MinIO replaced an immutable object key")
+              raise RuntimeError("the object store replaced an immutable object key")
           PY
 
       - name: Prove the zero-cost full pipeline
         run: |
           running_services="$(
-            docker compose --env-file .env.example ps --status running --services
+            docker compose --env-file .env ps --status running --services
           )"
           for service in \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
@@ -279,7 +348,7 @@ jobs:
           )"
           version_id="$(
             printf '%s' "$ingested" |
-              docker compose --env-file .env.example exec -T api \
+              docker compose --env-file .env exec -T api \
                 python -c 'import json, sys; print(json.load(sys.stdin)["version_id"])'
           )"
           # D84/D88/D90: extract is chunk-scoped; empty input skips claim
@@ -290,7 +359,7 @@ jobs:
           # embed_claim→label→reconcile (8).
           observed=''
           for attempt in {1..60}; do
-            observed="$(docker compose --env-file .env.example exec -T postgres \
+            observed="$(docker compose --env-file .env exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc \
               "SELECT count(*), count(*) FILTER (WHERE status='succeeded'), count(DISTINCT stage) FROM processing_state WHERE target_id='$version_id'")"
             if [ "$observed" = '8|8|8' ]; then
@@ -299,10 +368,10 @@ jobs:
             sleep 1
           done
           test "$observed" = '8|8|8'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM cost_ledger')" = '0'
-          docker compose --env-file .env.example --profile operations \
+          docker compose --env-file .env --profile operations \
             run --rm projections
           readiness="$(
             curl --fail --header 'Content-Type: application/json' \
@@ -310,19 +379,19 @@ jobs:
               'http://localhost:8000/readiness'
           )"
           printf '%s' "$readiness" |
-            docker compose --env-file .env.example exec -T api python -c \
+            docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
       - name: Stage an upgrade from the prior schema
         run: |
-          docker compose --env-file .env.example stop \
+          docker compose --env-file .env stop \
             api worker-convert worker-structure worker-chunk worker-embed-chunk \
             worker-extract-claims worker-normalize-relations \
             worker-adjudicate-observations worker-adjudicate-supersession \
             worker-embed-claim worker-reconcile worker-label-relation
           # Build an empty pre-D119 fixture. Temporal/span migrations refuse
           # lossy conversion or downgrade of populated stores.
-          docker compose --env-file .env.example run --rm --no-deps -T \
+          docker compose --env-file .env run --rm --no-deps -T \
             --volume "$PWD/src/tests/database_reset.py:/tmp/database_reset.py:ro" \
             --env PYTHONPATH=/tmp --entrypoint python setup - <<'PY'
           from alembic import command
@@ -353,18 +422,18 @@ jobs:
           )
           engine.dispose()
           PY
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT version_num FROM alembic_version')" = 'p9_31_0052'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
-          docker compose --env-file .env.example rm --force setup
+          docker compose --env-file .env rm --force setup
 
       - name: Run migrations before application processes restart
         run: |
           compose_args=(
-            --env-file .env.example
+            --env-file .env
             --file compose.yaml
             --file .github/compose/upgrade-gate.yaml
           )
@@ -400,10 +469,10 @@ jobs:
           release_gate
           wait "$compose_pid"
           trap - EXIT
-          test "$(docker compose --env-file .env.example exec -T postgres \
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_34_0055'
-          test "$(docker compose --env-file .env.example exec -T postgres \
+            'SELECT version_num FROM alembic_version')" = 'p9_35_0056'
+          test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'
           running_services="$(
@@ -420,17 +489,44 @@ jobs:
 
       - name: Show service logs after failure
         if: failure()
-        run: docker compose --env-file .env.example logs --no-color
+        run: docker compose --env-file .env logs --no-color
 
       - name: Remove quickstart deployment
         if: always()
-        run: docker compose --env-file .env.example down --volumes
+        run: docker compose --env-file .env down --volumes
+
+  # The release publishes the engine image for linux/amd64 and linux/arm64.
+  # Build the arm64 half natively here, so a dependency without an arm64 build
+  # fails on its pull request rather than in the release.
+  engine-image-arm64:
+    name: Engine image (linux/arm64)
+    needs: changes
+    if: >-
+      github.event_name == 'push'
+      || needs.changes.outputs.compose == 'true'
+      || needs.changes.outputs.ci_control == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the engine image
+        run: docker build --tag remember-stack:arm64-check .
+
+      - name: The image is arm64 and its native dependencies load
+        run: |
+          test "$(docker image inspect --format '{{.Architecture}}' remember-stack:arm64-check)" = arm64
+          docker run --rm --entrypoint python remember-stack:arm64-check -c \
+            'import onnxruntime, pglast, PIL, psycopg, pyarrow; import rememberstack.profiles.selfhost; print("ok")'
+          docker run --rm --entrypoint remember remember-stack:arm64-check --version
 
   # Single always-present required check. Integration path jobs are soft.
   pr-gate:
     name: PR gate
     runs-on: ubuntu-latest
-    needs: [changes, quality, unit, contract-smoke]
+    needs: [changes, quality, unit, contract-smoke, engine-image-arm64]
     if: always()
     steps:
       - name: Require hard lanes (incl. path selector)
@@ -439,7 +535,14 @@ jobs:
           echo "quality=${{ needs.quality.result }}"
           echo "unit=${{ needs.unit.result }}"
           echo "contract-smoke=${{ needs.contract-smoke.result }}"
+          echo "engine-image-arm64=${{ needs.engine-image-arm64.result }}"
           test "${{ needs.changes.result }}" = "success"
           test "${{ needs.quality.result }}" = "success"
           test "${{ needs.unit.result }}" = "success"
           test "${{ needs.contract-smoke.result }}" = "success"
+          # Path-selected: skipped when no image input changed, but a run
+          # that happened must have passed.
+          case "${{ needs.engine-image-arm64.result }}" in
+            success|skipped) ;;
+            *) exit 1 ;;
+          esac

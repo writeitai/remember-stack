@@ -44,6 +44,62 @@ P1_HNSW_MAX_SCAN_TUPLES = 20_000
 """Reference-profile ceiling for one filtered iterative HNSW scan (D94)."""
 
 
+class EmbeddingModelChangedError(RuntimeError):
+    """Stored vectors were made by a different model than the configured one.
+
+    Search compares only vectors of the configured model, so switching models
+    on a populated deployment would silently drop every stored chunk, claim
+    and fact from semantic search. There is no re-embedding command, so setup
+    refuses the change instead.
+    """
+
+
+_OTHER_STORED_EMBEDDING_MODEL = text(
+    """
+    SELECT EXISTS (SELECT 1 FROM chunk_search WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM chunk_search WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM claims WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM claims WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM relations WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM relations WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+        OR EXISTS (SELECT 1 FROM observations WHERE deployment_id = :deployment_id
+                    AND embedding_model < :embedding_model)
+        OR EXISTS (SELECT 1 FROM observations WHERE deployment_id = :deployment_id
+                    AND embedding_model > :embedding_model)
+    """
+)
+"""Whether any stored chunk, claim or fact vector carries another model stamp.
+
+``<`` and ``>`` rather than ``<>`` or ``IS DISTINCT FROM``: each is an
+index range scan on ``(deployment_id, embedding_model)`` that stops at the
+first hit, and neither matches the NULL stamp of a row not embedded yet.
+"""
+
+
+_OTHER_STORED_EMBEDDING_MODEL_NAMES = text(
+    """
+    SELECT DISTINCT embedding_model FROM (
+      SELECT embedding_model FROM chunk_search WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM claims WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM relations WHERE deployment_id = :deployment_id
+      UNION ALL
+      SELECT embedding_model FROM observations WHERE deployment_id = :deployment_id
+    ) AS stored
+    WHERE embedding_model <> :embedding_model
+    ORDER BY embedding_model
+    """
+)
+"""The other stamps by name; read only to word the refusal."""
+
+
 class PostgresP1Index:
     """One PostgreSQL P1 adapter over normalized authority and derived indexes."""
 
@@ -119,6 +175,35 @@ class PostgresP1Index:
         )
         with self._engine.begin() as connection:
             connection.execute(statement, rows)
+
+    def require_stored_embedding_model(self, *, deployment_id: UUID) -> None:
+        """Refuse a configured model that differs from any stored vector's stamp.
+
+        Every chunk, claim and fact vector carries the model that made it.
+        Entity vectors are left out: setup rebuilds entity profiles under the
+        configured model (``entity_profile_backfill_required``); the others
+        have no rebuild. A deployment with no vectors may switch freely.
+        """
+        parameters = {
+            "deployment_id": deployment_id,
+            "embedding_model": self._embedding_model,
+        }
+        with self._engine.connect() as connection:
+            if not connection.execute(
+                _OTHER_STORED_EMBEDDING_MODEL, parameters
+            ).scalar_one():
+                return
+            stored = connection.execute(
+                _OTHER_STORED_EMBEDDING_MODEL_NAMES, parameters
+            ).scalars()
+            names = ", ".join(repr(model) for model in stored)
+        raise EmbeddingModelChangedError(
+            "REMEMBERSTACK_P1_EMBEDDING_MODEL is "
+            f"{self._embedding_model!r}, but this deployment already holds "
+            f"vectors made with {names}. Nothing re-embeds them, so semantic "
+            "search would stop finding them; set the variable back to the "
+            "stored model."
+        )
 
     def entity_profile_backfill_required(self, *, deployment_id: UUID) -> bool:
         """Whether setup must repair profiles before publishing entity semantics."""

@@ -81,14 +81,15 @@ _EMBED_BATCH_SIZE: Final = 64
 
 
 class E1Settings(BaseSettings):
-    """The E1 model bindings: per-deployment port configuration (D61/D63/D80)."""
+    """The E1 batching configuration (D61/D63/D80).
+
+    The embedding model itself is the deployment's one P1 embedding model
+    (``REMEMBERSTACK_P1_EMBEDDING_MODEL``), passed to the handler explicitly.
+    """
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E1_")
 
-    embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
     embed_batch_size: int = Field(default=_EMBED_BATCH_SIZE, ge=1, le=512)
-    # Retired: kept so old env files do not fail validation; unused on D80 path.
-    prefix_model: str = Field(default="openai/gpt-5.6-luna")
 
 
 class ChunkHandler:
@@ -164,6 +165,7 @@ class EmbedChunksHandler:
         model_provider: ModelProviderPort,
         chunk_index: ChunkIndexPort,
         settings: E1Settings,
+        embedding_model: str,
         params: ChunkerParams,
     ) -> None:
         """Bind the handler to its catalog, stores, provider, and P1 index.
@@ -176,6 +178,7 @@ class EmbedChunksHandler:
         self._model_provider = model_provider
         self._chunk_index = chunk_index
         self._settings = settings
+        self._embedding_model = embedding_model
         self._chunker_version = chunker_version(params=params)
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
@@ -198,7 +201,7 @@ class EmbedChunksHandler:
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
         policy_generation = EMBEDDING_INPUT_POLICY_VERSION
-        embedder_generation = self._settings.embedding_model
+        embedder_generation = self._embedding_model
         carry = self._catalog.carry_forward_sources(
             deployment_id=work.deployment_id,
             doc_id=source.doc_id,

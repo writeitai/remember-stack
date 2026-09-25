@@ -25,6 +25,7 @@ from remember import DocumentSearchRequest
 from remember import MemoryApiError
 from remember import MemoryClient
 from remember.cli import main as cli_main
+from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import tool
 from remember.models import current_temporal_scope
 from remember.models import DeploymentBuildInfo
@@ -32,7 +33,6 @@ from remember.models import DocumentSearchResult
 from remember.models import Envelope
 from remember.models import Freshness
 from remember.models import Grain
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.document_search import _decode_cursor
 from rememberstack.spine.document_search import _encode_cursor
@@ -195,11 +195,11 @@ def test_cli_searches_with_filters(
     assert search.requests[-1].query == "audit report"
 
 
-def test_remote_mcp_searches_even_when_read_only(
+def test_remember_mcp_searches_even_when_read_only(
     surface: tuple[MemoryClient, _Search],
 ) -> None:
     client, search = surface
-    server = RemoteOperationMcpServer(client=client, read_only=True)
+    server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
 
     result = server.call_tool(
         name="search_documents", arguments={"query": "q3", "family": ["office"], "k": 2}
@@ -241,8 +241,10 @@ def _remote_names(*, document_search: bool, read_only: bool) -> list[str]:
         build_info=build_info,
         document_search=_Search() if document_search else None,
     )
-    server = RemoteOperationMcpServer(
-        client=MemoryClient(client=TestClient(app)), read_only=read_only
+    server = EngineMcpServer(
+        client=MemoryClient(client=TestClient(app)),
+        read_only=read_only,
+        path_ingest=False,
     )
     tools = cast("list[dict[str, object]]", server.list_tools()["tools"])
     return [cast(str, entry["name"]) for entry in tools]
@@ -256,7 +258,7 @@ class _BuildInfo:
         return DeploymentBuildInfo(build_revision="abc")
 
 
-def test_remote_mcp_lists_search_documents_only_when_the_origin_serves_it() -> None:
+def test_remember_mcp_lists_search_documents_only_when_the_origin_serves_it() -> None:
     assert "search_documents" in _remote_names(document_search=True, read_only=False)
     assert "search_documents" in _remote_names(document_search=True, read_only=True)
     assert "search_documents" not in _remote_names(
@@ -264,15 +266,17 @@ def test_remote_mcp_lists_search_documents_only_when_the_origin_serves_it() -> N
     )
 
 
-def test_remote_mcp_omits_search_documents_at_a_different_tool_version() -> None:
+def test_remember_mcp_omits_search_documents_at_a_different_tool_version() -> None:
     """An origin serving another tool_version is not rendered (equal-version rule)."""
     served = tool("search_documents").tool_version
     for other in (served - 1, served + 1):
         client = MemoryClient(client=_origin_reporting(version=other))
-        names = _listed(RemoteOperationMcpServer(client=client))
+        names = _listed(EngineMcpServer(client=client, path_ingest=False))
         assert "search_documents" not in names, other
     client = MemoryClient(client=_origin_reporting(version=served))
-    assert "search_documents" in _listed(RemoteOperationMcpServer(client=client))
+    assert "search_documents" in _listed(
+        EngineMcpServer(client=client, path_ingest=False)
+    )
 
 
 def _origin_reporting(*, version: int) -> httpx.Client:
@@ -291,7 +295,7 @@ def _origin_reporting(*, version: int) -> httpx.Client:
     )
 
 
-def _listed(server: RemoteOperationMcpServer) -> list[str]:
+def _listed(server: EngineMcpServer) -> list[str]:
     tools = cast("list[dict[str, object]]", server.list_tools()["tools"])
     return [cast(str, entry["name"]) for entry in tools]
 

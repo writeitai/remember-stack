@@ -8,6 +8,7 @@ backend: the engine's in-process search port, or the typed HTTP SDK.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 import logging
 from typing import Protocol
 
@@ -73,7 +74,7 @@ def parse_search_documents_arguments(
         )
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=f"Invalid search_documents arguments: {problems}"
+                detail=f"Invalid search_documents arguments: {problems}"
             )
         ) from error
 
@@ -86,11 +87,11 @@ def handle_search_documents_tool(
         return error_result(
             ToolError(
                 code="tool_not_composed",
-                message=(
+                detail=(
                     f"MCP tool {SEARCH_DOCUMENTS_TOOL_NAME!r} is not composed on"
                     " this server (no document search port)."
                 ),
-                http_status=404,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Search content with the other tools instead; this server"
@@ -105,11 +106,10 @@ def handle_search_documents_tool(
         return error_result(error.error)
     except Exception as error:  # noqa: BLE001 — mapped at the MCP wire boundary
         if getattr(error, "status_code", None) == 400:
-            return error_result(
-                invalid_arguments(
-                    message=f"search_documents refused: {getattr(error, 'detail', error)}"
-                )
+            refusal = invalid_arguments(
+                detail=f"search_documents refused: {getattr(error, 'detail', error)}"
             )
+            return error_result(replace(refusal, status_code=400))
         mapped = map_error(error)
         if mapped.code in {"internal_error", "local_backend_error"}:
             logger.exception(

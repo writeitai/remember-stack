@@ -721,6 +721,12 @@ def build_api(
 #: The 253 characters DNS allows a hostname.
 _HOST_MAX_LENGTH = 253
 
+#: The schemes a browser origin may use here, with the port it leaves out.
+_DEFAULT_PORTS = {"https": 443, "http": 80}
+
+#: Hosts that name this machine; only these may use plain http.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 
 def _canonical_browser_origin(value: str) -> str | None:
     """The origin a browser would send for ``value``, or ``None`` if there is none.
@@ -749,7 +755,8 @@ def _canonical_browser_origin(value: str) -> str | None:
         # A malformed bracketed host such as `https://[::::]` — a verdict, not
         # an error to propagate.
         return None
-    if split.scheme != "https" or split.path or split.query or split.fragment:
+    scheme = split.scheme
+    if scheme not in _DEFAULT_PORTS or split.path or split.query or split.fragment:
         return None
     if split.username is not None or split.password is not None:
         return None
@@ -760,17 +767,22 @@ def _canonical_browser_origin(value: str) -> str | None:
         return None
     if not host or len(host) > _HOST_MAX_LENGTH or port == 0:
         return None
+    # Plain http only for the machine itself: a local app in development
+    # (`http://localhost:3000`) never leaves it, so nobody on the network can
+    # read or alter what it exchanges. Any other http origin can be.
+    if scheme == "http" and host not in _LOOPBACK_HOSTS:
+        return None
     # Browsers omit the default port from `Origin`, so `https://host:443`
     # never matches what arrives — the same silent close as a wildcard.
-    if port == 443:
+    if port == _DEFAULT_PORTS[scheme]:
         return None
     # A wildcard is the one shape worth naming: an operator who writes it
     # believes they granted a subdomain tree, and they granted nothing.
     if "*" in host:
         return None
 
-    rendered = f"[{host}]" if value.startswith("https://[") else host
-    return f"https://{rendered}" + (f":{port}" if port is not None else "")
+    rendered = f"[{host}]" if value.startswith(f"{scheme}://[") else host
+    return f"{scheme}://{rendered}" + (f":{port}" if port is not None else "")
 
 
 def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
@@ -797,9 +809,10 @@ def _install_browser_origins(*, app: FastAPI, origins: tuple[str, ...]) -> None:
     for origin in origins:
         if _canonical_browser_origin(origin) != origin:
             raise ValueError(
-                "browser origins must each be an https origin exactly as a "
-                "browser serializes it — lowercase scheme and host, optional "
-                f"port, nothing else; refusing {origin!r}"
+                "browser origins must each be an https origin (or http on "
+                "localhost, 127.0.0.1 or [::1]) exactly as a browser "
+                "serializes it — lowercase scheme and host, optional port, "
+                f"nothing else; refusing {origin!r}"
             )
     # Said out loud at startup. The validation above is deliberately small, so
     # the operator's own eyes are the last check that the list is what they

@@ -16,6 +16,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
+from pydantic import SecretStr
 import pytest
 from sqlalchemy import create_engine
 
@@ -147,16 +148,28 @@ class _NullSearch:
         return ()
 
 
-def test_require_api_auth_without_lease_url_refuses_to_start() -> None:
-    """Managed BIND-only must not boot unpaid writes."""
-    digest = digest_bearer_secret(secret=_SECRET)
+def test_managed_billing_without_lease_url_refuses_to_start() -> None:
+    """A billed deployment must not boot unpaid writes."""
     settings = SelfHostSettings(
         deployment_id=_DEPLOYMENT,
-        require_api_auth=True,
-        api_bearer_bind=f"{_DEPLOYMENT}:{digest.hex()}",
+        meter_ingest_url="https://control.example.com/meter",
+        meter_ingest_token=SecretStr("umc_mi_test-token"),
+        meter_identity_key=SecretStr("umc_mik_" + "k" * 40),
+        meter_org_id=uuid4(),
+        meter_project_id=uuid4(),
     )
     with pytest.raises(RuntimeError, match="SPEND_LEASE_URL is missing"):
         resolve_selfhost_spend_lease(settings=settings)
+
+
+def test_required_auth_without_billing_needs_no_lease() -> None:
+    """A self-hoster behind a bearer token is not billed by anyone."""
+    settings = SelfHostSettings(
+        deployment_id=_DEPLOYMENT,
+        require_api_auth=True,
+        api_bearer_token=SecretStr(_SECRET),
+    )
+    assert resolve_selfhost_spend_lease(settings=settings) is None
 
 
 def test_empty_spend_lease_url_is_unset() -> None:

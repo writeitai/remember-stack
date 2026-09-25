@@ -620,10 +620,10 @@ def test_local_mcp_strict_argument_validation(migrated: str) -> None:
     assert "version" in str(bad_version["content"]).lower()
 
 
-def test_remote_mcp_strict_argument_validation() -> None:
-    """Remote MCP-to-SDK dispatch rejects the same invalid argument shapes."""
+def test_remember_mcp_strict_argument_validation() -> None:
+    """`remember mcp` MCP-to-SDK dispatch rejects the same invalid argument shapes."""
+    from remember.mcp_engine import EngineMcpServer
     from remember.mcp_tools import validate_arguments
-    from remember.remote_mcp import RemoteOperationMcpServer
 
     class _StubClient:
         """Minimal client that only exercises open-query argument validation."""
@@ -631,13 +631,10 @@ def test_remote_mcp_strict_argument_validation() -> None:
         def call_open_query(self, *, name: str, arguments: dict[str, object]) -> object:
             return validate_arguments(name, arguments)
 
-        def list_operations(self) -> list:
-            return []
-
         def run_operation(self, **_: object) -> object:
             raise AssertionError("not used")
 
-    server = RemoteOperationMcpServer(client=_StubClient())  # type: ignore[arg-type]
+    server = EngineMcpServer(client=_StubClient(), path_ingest=False)  # type: ignore[arg-type]
     false_string = server.call_tool(
         name="describe_query_space", arguments={"include_examples": "false"}
     )
