@@ -461,7 +461,25 @@ def _resolve_anchor_level(
                 proposal=proposal, block_start=start, block_end=end, children=children
             )
         )
-    return result
+
+    # D137 next-block section absorption: a leaf section may not own only its
+    # anchor block when another section starts on the very next block (B -> B+1).
+    # Its next sibling is absorbed into it; the sibling's children are adopted.
+    absorbed: list[_AnchorNode] = []
+    i = 0
+    while i < len(result):
+        curr = result[i]
+        if not curr.children and curr.block_start == curr.block_end and i + 1 < len(result):
+            next_sibling = result[i + 1]
+            if next_sibling.block_start == curr.block_start + 1:
+                curr.block_end = next_sibling.block_end
+                curr.children = next_sibling.children
+                absorbed.append(curr)
+                i += 2
+                continue
+        absorbed.append(curr)
+        i += 1
+    return absorbed
 
 
 def _resolve_anchor(

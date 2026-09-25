@@ -21,15 +21,21 @@ from typing import Literal
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
+ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
 #: The four assured operations (D87), run through ``POST /operations/{name}``.
-OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
+ASSURED_OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
     "resolve_entity",
     "claims_and_sources_context",
     "facts_context",
     "combined_context",
+)
+#: Read operations exposed over MCP and the query surfaces.
+OPERATION_TOOL_NAMES: Final[tuple[str, ...]] = (
+    *ASSURED_OPERATION_TOOL_NAMES,
+    ADJACENT_CHUNKS_TOOL_NAME,
 )
 #: The seven open-query facade operations (open query space §3.1).
 OPEN_QUERY_TOOL_NAMES: Final[tuple[str, ...]] = (
@@ -527,6 +533,34 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=4,
         http_route="POST /operations/combined_context",
+    ),
+    ToolDefinition(
+        name=ADJACENT_CHUNKS_TOOL_NAME,
+        description=(
+            "Retrieve sibling chunks preceding and succeeding a target chunk within the"
+            " same document to expand conversational or narrative context."
+        ),
+        input_schema=_object_schema(
+            properties={
+                "chunk_id": {
+                    "type": "string",
+                    "description": "UUID of the target chunk to expand around.",
+                },
+                "window": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Number of sibling chunks to retrieve on each side (1 or 2, default 1)."
+                    ),
+                },
+            },
+            required=("chunk_id",),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /chunks/adjacent",
     ),
     ToolDefinition(
         name="query_sql",

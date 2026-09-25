@@ -18,6 +18,7 @@ import socket
 import threading
 import time
 from typing import cast
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import httpx
@@ -327,6 +328,63 @@ def test_a_403_is_insufficient_permission() -> None:
     server = EngineMcpServer(client=_engine(respond), path_ingest=True)
     error = _error(server.call_tool(name="facts_context", arguments={"query": "q"}))
     assert error["code"] == "insufficient_permission"
+
+
+def test_engine_mcp_adjacent_chunks_dispatches_successfully() -> None:
+    seen: list[httpx.Request] = []
+    chunk_id = uuid4()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_ENVELOPE)
+
+    server = EngineMcpServer(client=_engine(respond, seen=seen), path_ingest=False)
+    result = server.call_tool(
+        name="adjacent_chunks", arguments={"chunk_id": str(chunk_id), "window": 2}
+    )
+    assert result["isError"] is False
+    assert len(seen) == 1
+    assert seen[0].url.path == f"/chunks/{chunk_id}/adjacent"
+    assert seen[0].url.query.decode() == "window=2"
+    content = cast("list[dict[str, object]]", result["content"])
+    assert json.loads(str(content[0]["text"]))["grain"] == "fact"
+
+
+def test_in_process_mcp_adjacent_chunks_dispatches_successfully() -> None:
+    chunk_id = uuid4()
+    mock_surface = MagicMock()
+    mock_envelope = MagicMock()
+    mock_envelope.model_dump_json.return_value = json.dumps(_ENVELOPE)
+    mock_surface.adjacent_chunks.return_value = mock_envelope
+    mock_surface.deployment_id = uuid4()
+
+    server = OperationMcpServer(surface=mock_surface)
+    result = server.call_tool(
+        name="adjacent_chunks", arguments={"chunk_id": str(chunk_id)}
+    )
+    assert result["isError"] is False
+    mock_surface.adjacent_chunks.assert_called_once_with(
+        chunk_id=chunk_id, window=1
+    )
+    content = cast("list[dict[str, object]]", result["content"])
+    assert json.loads(str(content[0]["text"]))["grain"] == "fact"
+
+
+def test_in_process_mcp_adjacent_chunks_validates_arguments() -> None:
+    mock_surface = MagicMock()
+    server = OperationMcpServer(surface=mock_surface)
+
+    # Missing chunk_id
+    err1 = _error(server.call_tool(name="adjacent_chunks", arguments={}))
+    assert err1["code"] == "invalid_arguments"
+
+    # Out of bounds window
+    err2 = _error(
+        server.call_tool(
+            name="adjacent_chunks",
+            arguments={"chunk_id": str(uuid4()), "window": 5},
+        )
+    )
+    assert err2["code"] == "invalid_arguments"
 
 
 # ---------------------------------------------------------------------------

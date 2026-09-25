@@ -22,6 +22,7 @@ from typing import cast
 from typing import Literal
 from uuid import UUID
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
@@ -35,6 +36,7 @@ from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool
+from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from rememberstack.model import ForgetInProgressError
@@ -265,6 +267,31 @@ class OperationMcpServer:
                 return _internal_error(name=name)
             return {
                 "content": [{"type": "text", "text": json.dumps(payload, default=str)}],
+                "isError": False,
+            }
+        if name == ADJACENT_CHUNKS_TOOL_NAME:
+            adjacent_fn = getattr(self._surface, "adjacent_chunks", None)
+            if not callable(adjacent_fn):
+                return error_result(
+                    ToolError(
+                        code="tool_not_composed",
+                        detail=f"tool {name!r} is not composed on this surface.",
+                        status_code=None,
+                        retryable=False,
+                        agent_action="Use a tool from tools/list.",
+                    )
+                )
+            try:
+                args = validate_arguments(name, arguments)
+                chunk_id = cast(UUID, args["chunk_id"])
+                window = cast(int, args.get("window", 1))
+                envelope = adjacent_fn(chunk_id=chunk_id, window=window)
+            except ToolArgumentError as error:
+                return error_result(error.error)
+            except Exception:  # noqa: BLE001 — the MCP wire boundary
+                return _internal_error(name=name)
+            return {
+                "content": [{"type": "text", "text": envelope.model_dump_json()}],
                 "isError": False,
             }
         try:

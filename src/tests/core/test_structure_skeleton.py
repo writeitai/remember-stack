@@ -262,3 +262,101 @@ def test_fallback_nesting_preserves_the_snap_depth_ceiling() -> None:
     )
     assert len(sections) == 16  # root plus the D57 maximum of 15 nested nodes
     assert sections[-1].node_path.count(".") == 15
+
+
+def test_d137_single_block_leaf_absorbs_next_block_sibling() -> None:
+    """A leaf section of 1 block absorbs its next sibling when the sibling starts at B+1."""
+    source = "Turn 1\n\nTurn 2\n\nTurn 3\n"
+    blocks = blockize(document_md=source)
+    sections = resolve_fallback_skeleton(
+        proposed=(
+            FallbackAnchor(anchor="Turn 1", occurrence_index=0, children=()),
+            FallbackAnchor(anchor="Turn 2", occurrence_index=0, children=()),
+            FallbackAnchor(anchor="Turn 3", occurrence_index=0, children=()),
+        ),
+        blocks=blocks,
+        document_md=source,
+        title="Dialogue",
+    )
+    # Turn 1 (block 0) absorbs Turn 2 (block 1) -> spans blocks 0..1.
+    # Turn 3 (block 2) is the last section -> spans block 2..2.
+    assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
+        ("Turn 1", 0, 1),
+        ("Turn 3", 2, 2),
+    ]
+
+
+def test_d137_chain_of_single_block_anchors_absorbs_deterministically() -> None:
+    """Chains of single-block leaf sections absorb adjacent pairs deterministically."""
+    source = "\n\n".join(f"Turn {i}" for i in range(4))
+    blocks = blockize(document_md=source)
+    sections = resolve_fallback_skeleton(
+        proposed=tuple(
+            FallbackAnchor(anchor=f"Turn {i}", occurrence_index=0, children=())
+            for i in range(4)
+        ),
+        blocks=blocks,
+        document_md=source,
+        title="Dialogue",
+    )
+    # Turn 0 absorbs Turn 1 (0..1), Turn 2 absorbs Turn 3 (2..3)
+    assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
+        ("Turn 0", 0, 1),
+        ("Turn 2", 2, 3),
+    ]
+
+
+def test_d137_heading_parsed_documents_unaffected() -> None:
+    """Heading-parsed skeletons are structural and not modified by fallback absorption."""
+    source = "# Section 1\n\nBody 1\n\n# Section 2\n\nBody 2\n"
+    _, sections = _parse(source)
+    assert [(s.title, s.block_start, s.block_end) for s in sections[1:]] == [
+        ("Section 1", 0, 1),
+        ("Section 2", 2, 3),
+    ]
+
+
+def test_d137_session_question_answer_turns_share_section() -> None:
+    """Question turn and immediate answer turn reside in the same section for E2 context."""
+    source = (
+        "Joanna: So what's your favorite game?\n\n"
+        "Nate: Yep! I'm currently playing this awesome fantasy RPG called Xenoblade Chronicles...\n\n"
+        "Nate: It has a great story and battle system.\n\n"
+        "Joanna: Sounds fun!\n"
+    )
+    blocks = blockize(document_md=source)
+    # Simulating e0 fallback proposing anchors for Joanna's question turn (block 0)
+    # and Nate's answer turn (block 1), followed by Joanna's next turn (block 3).
+    sections = resolve_fallback_skeleton(
+        proposed=(
+            FallbackAnchor(
+                anchor="Joanna: So what's your favorite game?",
+                occurrence_index=0,
+                children=(),
+            ),
+            FallbackAnchor(
+                anchor="Nate: Yep! I'm currently playing",
+                occurrence_index=0,
+                children=(),
+            ),
+            FallbackAnchor(
+                anchor="Joanna: Sounds fun!",
+                occurrence_index=0,
+                children=(),
+            ),
+        ),
+        blocks=blocks,
+        document_md=source,
+        title="Session 27",
+    )
+    # Joanna's question turn (block 0, 1 block) absorbs Nate's turn (block 1, ending at block 2).
+    # Thus both blocks 0 and 1 (question and answer) reside in the first section!
+    body_sections = sections[1:]
+    assert len(body_sections) == 2
+    qa_section = body_sections[0]
+    assert qa_section.block_start == 0
+    assert qa_section.block_end == 2
+    assert "favorite game" in qa_section.title
+    # Blocks 0 and 1 are within qa_section's range [0, 2]
+    assert qa_section.block_start <= 0 <= qa_section.block_end
+    assert qa_section.block_start <= 1 <= qa_section.block_end
