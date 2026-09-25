@@ -398,6 +398,11 @@ The facts that were valid at `valid_at`, as the memory believed at
 `believed_at`. `max_rows` defaults to 200, hard cap 1,000. Category:
 bitemporal.
 
+Belief time selects which facts the memory held (`ingested_at` and
+`invalidated_at`). World time is tested against each fact's window as it
+stands now: a window corrected after `believed_at` is shown and filtered
+corrected.
+
 | Column | Type |
 |---|---|
 | `deployment_id` | uuid |

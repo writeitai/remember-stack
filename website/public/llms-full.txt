@@ -4710,6 +4710,9 @@ for row in believed.rows:
 ```
 
 It returns at most 200 rows by default (its third argument, up to 1,000).
+It picks the facts the memory held on the belief instant, but shows each
+with its dates as they stand today: a window corrected after that instant
+comes back corrected.
 The graph calls `graph_neighborhood` and `graph_path` take the same two
 clocks as `valid_at` and `believed_at`.
 
@@ -12414,6 +12417,11 @@ facts_as_of(valid_at timestamptz, believed_at timestamptz [, max_rows integer])
 The facts that were valid at `valid_at`, as the memory believed at
 `believed_at`. `max_rows` defaults to 200, hard cap 1,000. Category:
 bitemporal.
+
+Belief time selects which facts the memory held (`ingested_at` and
+`invalidated_at`). World time is tested against each fact's window as it
+stands now: a window corrected after `believed_at` is shown and filtered
+corrected.
 
 | Column | Type |
 |---|---|

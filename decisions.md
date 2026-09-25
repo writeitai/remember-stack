@@ -5840,6 +5840,15 @@ implementation was withdrawn as unneeded for an unreleased product
 Points to observe on real corpora are kept in
 [the watch list](plan/analysis/mutable_fact_windows_watch_list.md).
 
+**Belief-time reads (2026-09-25).** Because windows change in place, a
+belief-time read (`facts_as_of`, graph helpers with `believed_at`) selects
+facts by `ingested_at`/`invalidated_at` and shows each with its current window;
+earlier windows remain readable only in the adjudication transcript. A
+window-history table is rejected as a second write path and forget target for a
+question the transcript already answers. Assured fact operations keep answering
+current belief; they take no `believed_at`
+([design §2](plan/designs/mutable_fact_windows_design.md#2-one-chosen-window-with-honest-precision)).
+
 **Authority and delivery.** [D118 design](plan/designs/mutable_fact_windows_design.md)
 contains the full concepts, semantics, alternatives, security/recovery obligations
 and explicit supersession map for D106/D107/D110–D113. [Analysis](plan/analysis/lean_mutable_fact_windows.md)

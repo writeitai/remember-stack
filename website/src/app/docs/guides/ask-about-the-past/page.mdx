@@ -230,6 +230,9 @@ for row in believed.rows:
 ```
 
 It returns at most 200 rows by default (its third argument, up to 1,000).
+It picks the facts the memory held on the belief instant, but shows each
+with its dates as they stand today: a window corrected after that instant
+comes back corrected.
 The graph calls `graph_neighborhood` and `graph_path` take the same two
 clocks as `valid_at` and `believed_at`.
 
