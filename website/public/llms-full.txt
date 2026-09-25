@@ -2483,8 +2483,9 @@ tools.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic")` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400. |
-| Search chunks | `search_chunks(query=, k=10, channel="semantic")` | Source passages, likewise. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions. |
+| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None)` | Source passages, likewise. |
+| Search documents | `search_documents(query=, filters=, versions="current", k=20)` | Documents (files) by name, metadata and text. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
@@ -2499,6 +2500,13 @@ The graph reads take `valid_at` and `believed_at` together for a two-clock
 read (see [Time](https://remember.dev/docs/concepts/time#belief-time-and-as-of)). A graph path is returned
 whole or not at all: if any edge on it no longer holds, the path is dropped,
 because a path with a gap is a false statement about a connection.
+
+To ask about something *in* certain files, such as "Project X, from Alice's
+emails", pass the same filters `search_documents` takes as `documents`: the
+search then considers only results found in matching document versions,
+before choosing its best `k` results. A returned claim still cites the passage
+it was first extracted from, which can be another version of the same document. See
+[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
 
 See [Search](https://remember.dev/docs/reference/http-api/search),
 [Graph](https://remember.dev/docs/reference/http-api/graph) and
@@ -9986,6 +9994,37 @@ All six routes need the `read` scope. Base URL, authentication and error shapes 
 
 A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 
+### Limiting search to certain documents
+
+The `POST` forms accept a `documents` filter with the same fields as
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch):
+`family`, `authors`, `recipients`, `created_from`/`created_to`,
+`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
+filter decides which results are included:
+
+- **chunks** match when the chunk's document version matches;
+- **claims** match when at least one place the claim occurs is in a matching
+  document version. A claim that repeats across a document's versions is
+  checked against each version separately, so `authors: ["alice"]` finds the
+  claim through the version Alice wrote even if a later version names someone
+  else. The filter only decides which claims are included: each returned
+  claim looks exactly as it does without a filter, with the `chunk_id`,
+  offsets and `evidence_spans` of the passage it was first extracted from.
+
+Deleted documents and deleted versions never match. The filter is applied
+while ranking, before the `k` best are chosen, so asking for `k: 10` returns
+up to ten matching results even when better-scoring results from other
+documents exist.
+
+For "everything about Project X from emails from Alice": find the right
+Alice with `POST /documents/search` and `filters.authors`; if several people
+match, narrow to an address. Then search with
+`{"query": "Project X", "documents": {"authors": ["alice@acme.com"]}}`.
+Each returned claim was found in a version Alice wrote; its cited evidence is
+where the claim was first extracted, which can be another version of the same
+document.
+Every result cites the document it came from.
+
 ## GET /search/claims
 
 Search claims.
@@ -10042,6 +10081,7 @@ Search claims, with the query in the body.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
 
 Unknown fields are rejected.
 
@@ -10063,8 +10103,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/claims" \
   -d '{"query": "billing migration cutover date", "k": 20, "channel": "bm25"}'
 ```
 
-The `remember` Python client has no method for the `POST` form; its
-`search_claims` uses `GET`.
+The `remember` Python client's `search_claims` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /search/chunks
 
@@ -10130,7 +10170,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
   -d '{"query": "rollback plan", "k": 10}'
 ```
 
-The `remember` Python client has no method for the `POST` form.
+The `remember` Python client's `search_chunks` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /chunks/{chunk_id}/adjacent
 
@@ -12264,6 +12305,7 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only results found in matching document versions; returned claims still cite their origin. |
 
 ### AdjacentChunksRequest
 
@@ -14299,22 +14341,47 @@ print([s.title for s in cited.sources])
 
 ```python
 MemoryClient.search_claims(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
+as [`search_documents`](#search_documents); a filtered search is sent as
+`POST /search/claims`. See
+[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+hits = memory.search_claims(
+    query="Project X",
+    channel="bm25",
+    documents=DocumentSearchFilters(authors=("alice@acme.com",)),
+)
+```
 
 #### `search_chunks`
 
 ```python
 MemoryClient.search_chunks(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
-Searches source passages. Same arguments and bounds as `search_claims`.
+Searches source passages. Same arguments and bounds as `search_claims`;
+`documents` keeps passages whose document matches.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")
@@ -16738,9 +16805,11 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Document filters on search.** `search_documents` finds documents by
-  name and metadata, but the claim, chunk and fact searches and the assured
-  operations cannot yet be limited to documents matching such filters.
+- **Document filters on facts and operations.** Claim and chunk search
+  take a `documents` filter; the assured operations (`facts_context` and the
+  others), fact lookups and the SQL query functions do not yet, and there is
+  no `documents` filter over MCP because MCP has no claim or chunk search
+  tool.
 - **Metadata read from inside files.** Converters read only a document's
   title, and only where the markitdown converter reports one; no converter
   reads authors, recipients or dates from files yet.

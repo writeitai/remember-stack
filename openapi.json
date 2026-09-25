@@ -3317,6 +3317,16 @@
             "title": "Channel",
             "type": "string"
           },
+          "documents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentSearchFilters"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "k": {
             "default": 10,
             "maximum": 400.0,
@@ -5560,7 +5570,7 @@
         "summary": "Search Chunks"
       },
       "post": {
-        "description": "Search live source chunks as separately typed evidence.",
+        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134).",
         "operationId": "post_search_chunks_search_chunks_post",
         "requestBody": {
           "content": {
@@ -5673,7 +5683,7 @@
         "summary": "Search Claims"
       },
       "post": {
-        "description": "Claim search \u2014 evidence grain, never current-fact truth.",
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter.",
         "operationId": "post_search_claims_search_claims_post",
         "requestBody": {
           "content": {

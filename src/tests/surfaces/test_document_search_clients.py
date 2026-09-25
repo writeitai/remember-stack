@@ -27,8 +27,12 @@ from remember import MemoryClient
 from remember.cli import main as cli_main
 from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import tool
+from remember.models import current_temporal_scope
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentSearchResult
+from remember.models import Envelope
+from remember.models import Freshness
+from remember.models import Grain
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.document_search import _decode_cursor
 from rememberstack.spine.document_search import _encode_cursor
@@ -294,3 +298,56 @@ def _origin_reporting(*, version: int) -> httpx.Client:
 def _listed(server: EngineMcpServer) -> list[str]:
     tools = cast("list[dict[str, object]]", server.list_tools()["tools"])
     return [cast(str, entry["name"]) for entry in tools]
+
+
+class _SearchEngine:
+    """Record the search keywords the HTTP routes hand the engine."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def _answer(self, kind: str, **kwargs: object) -> Envelope:
+        self.calls.append((kind, kwargs))
+        return Envelope(
+            grain=Grain.EVIDENCE,
+            temporal_scope=current_temporal_scope(evaluated_at=_AT),
+            freshness=Freshness(pg_live_ts=_AT),
+        )
+
+    def search_claims(self, **kwargs: object) -> Envelope:
+        return self._answer("claims", **kwargs)
+
+    def search_chunks(self, **kwargs: object) -> Envelope:
+        return self._answer("chunks", **kwargs)
+
+
+def test_search_documents_filter_passes_through_sdk_and_http() -> None:
+    """D134 §4: `documents` travels in the POST body; unfiltered stays GET."""
+    engine = _SearchEngine()
+    boundary = _Boundary()
+    app = build_api(
+        engine=cast("QueryEngine", engine),
+        deployment_id=_DEPLOYMENT_ID,
+        admission=boundary,
+        readiness=boundary,
+    )
+    client = MemoryClient(client=TestClient(app))
+    filters = DocumentSearchFilters(family=("other",), authors=("alice@acme.com",))
+
+    client.search_claims(query="project x", k=7, channel="bm25", documents=filters)
+    client.search_chunks(query="project x", documents=filters)
+    client.search_claims(query="project x")
+
+    assert engine.calls[0] == (
+        "claims",
+        {
+            "deployment_id": _DEPLOYMENT_ID,
+            "query": "project x",
+            "k": 7,
+            "channel": "bm25",
+            "documents": filters,
+        },
+    )
+    assert engine.calls[1][0] == "chunks"
+    assert engine.calls[1][1]["documents"] == filters
+    assert "documents" not in engine.calls[2][1]

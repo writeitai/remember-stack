@@ -28,9 +28,11 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
-- **Document filters on search.** `search_documents` finds documents by
-  name and metadata, but the claim, chunk and fact searches and the assured
-  operations cannot yet be limited to documents matching such filters.
+- **Document filters on facts and operations.** Claim and chunk search
+  take a `documents` filter; the assured operations (`facts_context` and the
+  others), fact lookups and the SQL query functions do not yet, and there is
+  no `documents` filter over MCP because MCP has no claim or chunk search
+  tool.
 - **Metadata read from inside files.** Converters read only a document's
   title, and only where the markitdown converter reports one; no converter
   reads authors, recipients or dates from files yet.

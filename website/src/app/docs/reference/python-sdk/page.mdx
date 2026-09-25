@@ -788,22 +788,47 @@ print([s.title for s in cited.sources])
 
 ```python
 MemoryClient.search_claims(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
+as [`search_documents`](#search_documents); a filtered search is sent as
+`POST /search/claims`. See
+[Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+hits = memory.search_claims(
+    query="Project X",
+    channel="bm25",
+    documents=DocumentSearchFilters(authors=("alice@acme.com",)),
+)
+```
 
 #### `search_chunks`
 
 ```python
 MemoryClient.search_chunks(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
-Searches source passages. Same arguments and bounds as `search_claims`.
+Searches source passages. Same arguments and bounds as `search_claims`;
+`documents` keeps passages whose document matches.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")
