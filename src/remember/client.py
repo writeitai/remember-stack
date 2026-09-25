@@ -758,6 +758,8 @@ class MemoryClient:
         # from the real path name (an overridden filename does not change
         # it), and bytes take the type of the filename they are sent under.
         payload_bytes: bytes
+        if isinstance(source, str):
+            source = Path(source)  # a missing path raises FileNotFoundError
         if content is not None:
             payload_bytes = content
             if source is not None and filename is None:
@@ -768,14 +770,6 @@ class MemoryClient:
             mime = mime or infer_upload_mime(source.name)
         elif isinstance(source, bytes):
             payload_bytes = source
-        elif isinstance(source, str):
-            p = Path(source)
-            if p.is_file():
-                payload_bytes = p.read_bytes()
-                filename = filename or p.name
-                mime = mime or infer_upload_mime(p.name)
-            else:
-                raise ValueError(f"file not found: {source}")
         else:
             raise ValueError("either source or content must be provided to ingest")
 
@@ -1117,35 +1111,6 @@ class Client(MemoryClient):
         key has no issuer or the issuer advertises no account API.
         """
         return AccountApi(connection=self._connection, http=self._http)
-
-    def ingest(
-        self,
-        source: bytes | Path | str | None = None,
-        *,
-        content: bytes | None = None,
-        filename: str | None = None,
-        mime: str | None = None,
-        title: str | None = None,
-        source_kind: str | None = None,
-        source_ref: str | None = None,
-        source_modified_at: datetime | None = None,
-        versioning_mode: Literal["snapshot", "living"] = "snapshot",
-        source_version_ref: str | None = None,
-    ) -> IngestedVersion:
-        """Ingest a document from a file path, string path, or raw bytes."""
-        resolved_source = Path(source) if isinstance(source, str) else source
-        return super().ingest(
-            resolved_source,
-            content=content,
-            filename=filename,
-            mime=mime,
-            title=title,
-            source_kind=source_kind,
-            source_ref=source_ref,
-            source_modified_at=source_modified_at,
-            versioning_mode=versioning_mode,
-            source_version_ref=source_version_ref,
-        )
 
     def ingest_file(
         self,

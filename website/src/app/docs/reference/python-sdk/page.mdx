@@ -52,12 +52,14 @@ The client is synchronous. There is no async client yet
 | `ConnectorCreate` | model | [Models](#models) |
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
+| `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
+| `NegativeKind` | enum | [Result types](/docs/reference/result-types#negativekind) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
@@ -233,10 +235,7 @@ me = remember.Client(api_key="rmb_…").account.whoami()
 
 ### `Client.ingest`
 
-Same signature and behaviour as [`MemoryClient.ingest`](#ingest), with one
-difference: a `str` `source` is always treated as a file path. A path that
-does not exist raises `FileNotFoundError` (on `MemoryClient` it raises
-`ValueError`).
+Inherited unchanged from [`MemoryClient.ingest`](#ingest).
 
 ### `Client.ingest_file`
 
@@ -374,11 +373,11 @@ Raises `ValueError` when:
 - `source_modified_at`, `source_version_ref` or `versioning_mode="living"` is
   given without `source_kind`/`source_ref`;
 - `source_modified_at` is naive or not UTC;
-- a `str` path is not a file (`MemoryClient` only);
 - neither `source` nor `content` is given;
 - bytes are given without `filename`.
 
-Reading a path can raise `OSError`.
+Reading a path can raise `OSError`: `FileNotFoundError` when it does not
+exist, whether given as `Path` or `str`.
 
 Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts.
@@ -469,7 +468,7 @@ Returns which engine build and which model bindings the deployment is
 serving: `build_revision` (str), `model_bindings` (dict of str to str),
 `document_binding_generation` (str or `None`), and `tools` (dict of MCP
 memory tool name to tool version). The class is
-`remember.models.DeploymentBuildInfo`; it is not in `__all__`.
+`remember.DeploymentBuildInfo`.
 
 ```python
 info = memory.deployment_build_info()

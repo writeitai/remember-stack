@@ -233,7 +233,7 @@ def dispatch(*, server: EngineMcpServer, message: object) -> dict[str, object] |
             result: dict[str, object] = {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "rememberstack", "version": __version__},
+                "serverInfo": {"name": "remember", "version": __version__},
             }
         elif method == "ping":
             result = {}
