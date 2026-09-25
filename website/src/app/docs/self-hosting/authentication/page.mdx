@@ -316,9 +316,12 @@ comma-separated list of exact origins:
 REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.example.com
 ```
 
-- Each entry must be an `https` origin exactly as a browser sends it:
-  lowercase scheme and host, an optional port, nothing else. A malformed
-  entry, an empty entry or a trailing comma stops the API at start.
+- Each entry must be an origin exactly as a browser sends it: lowercase
+  scheme and host, an optional port, nothing else. A malformed entry, an
+  empty entry or a trailing comma stops the API at start.
+- The scheme must be `https`, except for an app on the same machine:
+  `http://localhost`, `http://127.0.0.1` and `http://[::1]`, with any port,
+  are accepted, so `http://localhost:3000` works during development.
 - Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
   headers are allowed. `DELETE` (deleting a document) still needs a token with
   `write` scope. Cookies are not allowed; the browser must send a token.

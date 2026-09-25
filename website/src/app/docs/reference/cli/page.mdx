@@ -582,13 +582,13 @@ Every one fails with `API 404` and exit status 1. Connectors are listed in
 ## Self-hosted operations: `remember ops`
 
 `remember ops` repairs and inspects a self-hosted engine's pipeline. It runs
-only inside the engine container, and only when
-`REMEMBERSTACK_INTERNAL_OPS=1` is set (`REMEMBER_INTERNAL_OPS` also works).
-Elsewhere it prints an error and exits with status 1. The help output does
-not list it.
+inside the engine container, which enables it by setting
+`REMEMBERSTACK_INTERNAL_OPS=1`. Elsewhere, including a `remember` installed
+from PyPI, it prints an error and exits with status 1, and the help output
+does not list it.
 
 ```bash
-docker compose exec -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec api \
   remember ops inspect --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"
 ```
 
@@ -704,7 +704,7 @@ it<Cloud>, and so does `remember login`</Cloud>.
 | `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
 | `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
 | `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
-| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops` inside the engine container. |
+| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops`. The engine image sets it. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](/docs/reference/mcp#ingest-from-a-path). |
 | `APPDATA` (Windows), `XDG_CONFIG_HOME` (Linux) | `setup`, `doctor` | Where Claude Desktop's configuration lives. |
 

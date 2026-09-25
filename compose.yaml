@@ -10,6 +10,9 @@ x-app: &app
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
   image: ghcr.io/writeitai/remember-stack:0.17.1
+  # A worker or the API that exits is started again, so a crash does not leave
+  # its stage stalled. The one-shot services below override this.
+  restart: unless-stopped
   environment:
     REMEMBERSTACK_DATABASE_URL: postgresql+psycopg://${REMEMBERSTACK_POSTGRES_USER}:${REMEMBERSTACK_POSTGRES_PASSWORD:?set REMEMBERSTACK_POSTGRES_PASSWORD}@postgres:5432/${REMEMBERSTACK_POSTGRES_DB}
     REMEMBERSTACK_MINIO_ENDPOINT_URL: http://object-store:8333
@@ -138,6 +141,11 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      # Above the stock stack's connection ceilings (API 23 + 12 workers x 16
+      # = 215), so a busy default deployment cannot run out of connections.
+      - -c
+      - max_connections=300
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}
       POSTGRES_PASSWORD: ${REMEMBERSTACK_POSTGRES_PASSWORD:?set REMEMBERSTACK_POSTGRES_PASSWORD}
@@ -166,6 +174,7 @@ services:
   # The engine sets no S3 lifecycle rules, which `weed server` would store
   # without enforcing; deletion is explicit (hard forget purges objects).
   object-store:
+    restart: unless-stopped
     image: chrislusf/seaweedfs:4.44@sha256:e67e8c385484120b78bff47ba5f4debbca47fbd27ed1a39f016f47e8baea615b
     command:
       - server
@@ -196,6 +205,7 @@ services:
   setup:
     <<: *app
     command: ["setup"]
+    restart: "no"
     depends_on:
       postgres:
         condition: service_healthy
@@ -317,6 +327,7 @@ services:
   projections:
     <<: *app
     command: ["project", "--plane", "p3"]
+    restart: "no"
     profiles: ["operations"]
     depends_on:
       setup:
