@@ -141,6 +141,10 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      # Above the stock stack's connection ceilings (API 23 + 12 workers x 16
+      # = 215), so a busy default deployment cannot run out of connections.
+      - -c
+      - max_connections=300
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}

@@ -58,8 +58,8 @@ Every replica holds its own database connections; see
 
 ## Database connections
 
-Each engine process has its own connection pools, and PostgreSQL in Compose
-keeps its default `max_connections` of 100. The engine does not size itself
+Each engine process has its own connection pools. Compose starts
+PostgreSQL with `max_connections=300`; the engine does not size itself
 against that limit. The ceilings per process are:
 
 | Process | Ceiling | Made of |
@@ -73,10 +73,10 @@ The general pool's size is fixed. The retrieval and graph pools follow
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 215. When
-you add replicas, keep the sum of their ceilings in mind, and when
-PostgreSQL refuses connections (`too many clients already` in the logs),
-raise its limit. The Compose `command` for PostgreSQL is one list, so an
+the sum of its ceilings. The default stack's ceilings add up to 215, within
+the limit of 300. When you add replicas or API processes, keep the sum of
+their ceilings under the limit, and when PostgreSQL refuses connections
+(`too many clients already` in the logs), raise it. The Compose `command` for PostgreSQL is one list, so an
 override repeats it whole and adds the new setting:
 
 ```yaml
@@ -92,7 +92,7 @@ services:
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
       - -c
-      - max_connections=300
+      - max_connections=600
 ```
 
 Every PostgreSQL connection takes memory on the database host, so raise the

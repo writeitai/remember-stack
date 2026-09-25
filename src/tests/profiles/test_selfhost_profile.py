@@ -160,6 +160,18 @@ def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
         assert "    restart: unless-stopped\n" in block
 
 
+def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
+    """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    limits = re.findall(r"- max_connections=(\d+)\n", compose)
+    assert len(limits) == 1
+    workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
+    api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
+    ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
+    assert ceiling == 215
+    assert int(limits[0]) >= ceiling + 50
+
+
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
     """Resolved `${VAR:-}` UUID blanks cannot crash ordinary OSS services."""
     settings = SelfHostSettings.model_validate(
