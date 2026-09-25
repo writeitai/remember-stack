@@ -37,7 +37,12 @@ from remember.models import ConnectorCreate
 
 
 class _InternalOpsSettings(BaseSettings):
-    """Whether ``remember ops`` is enabled (engine containers only)."""
+    """Whether ``remember ops`` is enabled.
+
+    The engine image sets it, so ``docker compose exec api remember ops`` works
+    as-is. A client install leaves it unset: ``ops`` needs the server
+    dependencies and the deployment's database, which only the engine has.
+    """
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -62,8 +67,10 @@ def main(argv: list[str] | None = None) -> int:
             subcmd = effective_argv[0]
             if subcmd == "ops" and not internal_ops:
                 print(
-                    "error: 'remember ops' is confined to internal container environments. "
-                    "For developer operations, use 'remember operations list|run'. See https://remember.dev/docs",
+                    "error: 'remember ops' runs inside the engine container, "
+                    "for example 'docker compose exec api remember ops inspect "
+                    "--deployment <id>'. From a client, use "
+                    "'remember operations list|run'.",
                     file=sys.stderr,
                 )
                 return 1
@@ -956,7 +963,9 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     if include_internal_ops:
-        ops = commands.add_parser("ops", help=argparse.SUPPRESS)
+        ops = commands.add_parser(
+            "ops", help="operator commands against this deployment's database"
+        )
         ops_commands = ops.add_subparsers(dest="ops_command", required=True)
         ops_inspect = ops_commands.add_parser(
             "inspect", help="bounded pipeline, DLQ, projection, and currency report"

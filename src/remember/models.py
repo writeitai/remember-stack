@@ -99,6 +99,12 @@ class PipelineStageReadiness(BaseModel):
         "missing", "pending", "running", "succeeded", "failed", "dead_letter", "skipped"
     ]
     finished_at: datetime | None = None
+    # Why waiting work waits: `no_route` (no converter for the file's type),
+    # `budget` (the spend budget is exhausted), `scheduled` (due later), or
+    # `retry_backoff` (a `failed` stage waiting for its next attempt).
+    defer_reason: Literal["scheduled", "retry_backoff", "budget", "no_route"] | None = (
+        None
+    )
 
 
 class VersionPipelineReadiness(BaseModel):

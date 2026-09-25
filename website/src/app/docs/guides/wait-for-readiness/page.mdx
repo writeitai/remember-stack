@@ -85,13 +85,16 @@ dead-lettered, and the message names them too. What to do next is under
 |---|---|
 | `ready` | `True` when every required capability is ready. |
 | `versions[]` | One entry per version: `version_id`, `ready`, and `stages[]`. |
-| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`. |
+| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`, `defer_reason`. |
 | `capabilities` | `pipeline`, `p1`, `live_graph`, `p3`, each with `required`, `ready`, `checked_at` and a `reason`. |
 | `model_bindings`, `build_revision`, `document_binding_generation` | Which code and models are serving, for your records. |
 
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
-stage has `succeeded` or been `skipped` and has a `finished_at`.
+stage has `succeeded` or been `skipped` and has a `finished_at`. A
+`pending` stage with a `defer_reason` of `no_route` or `budget` is parked:
+it will not move until an operator adds a conversion route or the spend
+budget allows more work, so waiting longer does not help.
 
 Capability reasons when not ready:
 

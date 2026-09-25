@@ -4138,13 +4138,16 @@ dead-lettered, and the message names them too. What to do next is under
 |---|---|
 | `ready` | `True` when every required capability is ready. |
 | `versions[]` | One entry per version: `version_id`, `ready`, and `stages[]`. |
-| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`. |
+| `versions[].stages[]` | `stage`, `component_version`, `status`, `finished_at`, `defer_reason`. |
 | `capabilities` | `pipeline`, `p1`, `live_graph`, `p3`, each with `required`, `ready`, `checked_at` and a `reason`. |
 | `model_bindings`, `build_revision`, `document_binding_generation` | Which code and models are serving, for your records. |
 
 A stage `status` is one of `missing`, `pending`, `running`, `succeeded`,
 `failed`, `dead_letter`, `skipped`. A version is ready when every expected
-stage has `succeeded` or been `skipped` and has a `finished_at`.
+stage has `succeeded` or been `skipped` and has a `finished_at`. A
+`pending` stage with a `defer_reason` of `no_route` or `budget` is parked:
+it will not move until an operator adds a conversion route or the spend
+budget allows more work, so waiting longer does not help.
 
 Capability reasons when not ready:
 
@@ -6152,14 +6155,51 @@ calls cost money on your OpenRouter account; see
 
 ## Sizing
 
-Nothing about hardware sizing has been measured yet: no CPU, memory, disk
-or throughput figures exist for a self-hosted deployment. The only timing
-the project checks is that a cold start on a CI runner (building images,
-migrating, and answering a first query on an empty memory) finishes within
-600 seconds.
+No hardware minimum has been measured, and the project publishes no
+throughput figures. What follows is what the configuration and schema fix,
+so you can size a machine from your own corpus.
 
-What is configured, and therefore known, are the bounds each process
-works within:
+**Where it has run.** Continuous integration starts the full stack on a
+standard GitHub-hosted Ubuntu runner, which for a public repository has
+4 CPUs and 16 GB of memory. It ingests a document and waits for every
+stage there; it does not measure speed.
+
+**What uses CPU and memory.** Most pipeline work is waiting on model calls
+to OpenRouter, so the engine's own processes are light. PostgreSQL does the
+local heavy lifting: search, graph queries and SQL queries all run in it.
+The query-side memory each of those may take is bounded (see the table
+below and [Scaling](https://remember.dev/docs/self-hosting/scaling)).
+
+**What uses disk.** Two volumes grow with the corpus:
+
+- `postgres-data` holds every chunk, claim, fact, observation and entity.
+  Each of these also carries a 1,536-dimension embedding, about 6 KB, plus
+  its share of the vector index.
+- `object-store-data` holds each uploaded file as sent, its converted
+  Markdown and other artifacts, and filesystem snapshots. The bundled store
+  is capped at about 100 GiB (see
+  [S3-compatible object storage](#s3-compatible-object-storage)).
+
+Nothing is deleted automatically; a hard forget removes a document's data.
+
+**Database connections.** PostgreSQL in Compose keeps its default
+`max_connections` of 100. Each engine process opens connections as it
+needs them, up to these ceilings:
+
+| Process | General pool | Other | Ceiling |
+|---|---|---|---|
+| `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
+| Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
+
+The ceilings of the default stack add up to 23 + 12 × 16 = 215, more than
+100. They are ceilings, not what a stack holds: pools open connections only
+on demand, and a worker runs one item at a time. Nothing caps the total,
+though, so budget against the ceilings when you add replicas or API
+processes: each worker replica can add 16 connections and each API process
+23, plus any increase in the retrieval and graph pool sizes. [Scaling](https://remember.dev/docs/self-hosting/scaling#database-connections)
+shows how to raise `max_connections`.
+
+Other configured bounds:
 
 | Bound | Default |
 |---|---|
@@ -6862,7 +6902,7 @@ After you add a route for that type and restart with `docker compose up -d`,
 release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   sh -c 'remember ops resume-no-route --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"'
 ```
 
@@ -7187,9 +7227,12 @@ comma-separated list of exact origins:
 REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS=https://app.example.com,https://admin.example.com
 ```
 
-- Each entry must be an `https` origin exactly as a browser sends it:
-  lowercase scheme and host, an optional port, nothing else. A malformed
-  entry, an empty entry or a trailing comma stops the API at start.
+- Each entry must be an origin exactly as a browser sends it: lowercase
+  scheme and host, an optional port, nothing else. A malformed entry, an
+  empty entry or a trailing comma stops the API at start.
+- The scheme must be `https`, except for an app on the same machine:
+  `http://localhost`, `http://127.0.0.1` and `http://[::1]`, with any port,
+  are accepted, so `http://localhost:3000` works during development.
 - Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
   headers are allowed. `DELETE` (deleting a document) still needs a token with
   `write` scope. Cookies are not allowed; the browser must send a token.
@@ -7219,11 +7262,12 @@ Source: https://remember.dev/docs/self-hosting/scaling
 
 # Scaling
 
-RememberStack has no measured throughput figures yet: nobody has published
-how many documents per hour, or queries per second, a given machine
-handles. What exists are explicit bounds on every process, so a busy
-deployment slows down or refuses work instead of exhausting PostgreSQL.
-This page lists those bounds and how to move them.
+RememberStack publishes no throughput figures: how many documents per hour,
+or queries per second, a machine handles depends mostly on your model
+provider and corpus. What exists are explicit bounds on every process, so a
+busy deployment slows down or refuses work. The one budget you keep
+yourself is PostgreSQL's connection limit, once you add replicas. This
+page lists those bounds and how to move them.
 
 The model provider is usually the first limit you meet. Most pipeline
 stages spend their time waiting on OpenRouter calls, and the provider's
@@ -7264,10 +7308,50 @@ The claim-heavy stages (`extract_claims`, `ground_claims`,
 `normalize_relations`, `adjudicate_observations`) make the most model calls
 per document.
 
-Every replica holds its own database connections. PostgreSQL in Compose
-keeps its default `max_connections` of 100, and the engine does not size
-itself against it. Watch for connection errors in the logs when you add
-many replicas.
+Every replica holds its own database connections; see
+[Database connections](#database-connections) before adding many.
+
+## Database connections
+
+Each engine process has its own connection pools, and PostgreSQL in Compose
+keeps its default `max_connections` of 100. The engine does not size itself
+against that limit. The ceilings per process are:
+
+| Process | Ceiling | Made of |
+|---|---|---|
+| `api` | 23 | General pool 15 (5 kept open, 10 more under load), retrieval pool 4, graph pool 4 |
+| Each `worker-…` replica | 16 | General pool 15, plus 1 connection that listens for new work |
+
+The general pool's size is fixed. The retrieval and graph pools follow
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` and
+`REMEMBERSTACK_SELFHOST_GRAPH_POOL_SIZE` (see
+[Retrieval and graph queries](#retrieval-and-graph-queries)).
+
+Pools open connections only on demand, so a running stack holds fewer than
+the sum of its ceilings. The default stack's ceilings add up to 215. When
+you add replicas, keep the sum of their ceilings in mind, and when
+PostgreSQL refuses connections (`too many clients already` in the logs),
+raise its limit. The Compose `command` for PostgreSQL is one list, so an
+override repeats it whole and adds the new setting:
+
+```yaml
+# compose.override.yaml
+services:
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
+      - -c
+      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
+      - -c
+      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
+      - -c
+      - max_connections=300
+```
+
+Every PostgreSQL connection takes memory on the database host, so raise the
+limit only as far as that machine allows.
 
 ### Embedding batches
 
@@ -7369,7 +7453,8 @@ how to see that state and act on it.
 The operator commands are part of the `remember` CLI, under
 `remember ops`. They talk to PostgreSQL directly rather than to the API, so
 they run inside the engine image, where the database settings already are.
-They are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set.
+Run them with `docker compose exec api remember ops …`; the image enables
+them, so no extra setting is needed.
 
 Read the deployment id from `.env` once per shell:
 
@@ -7380,7 +7465,7 @@ DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2
 Then run each command in the `api` container:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7399,7 +7484,7 @@ Pipe it through `python3 -m json.tool` to read it.
 ## Inspect the pipeline
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7407,7 +7492,7 @@ The report has five parts:
 
 | Field | Contents |
 |---|---|
-| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`). A large `pending` count on one stage shows where the pipeline is behind. |
+| `routes` | For each stage and lane, how many items are in each status (`pending`, `running`, `succeeded`, `failed` while waiting to retry, `dead_letter`, `skipped`), split by `defer_reason`: `no_route` or `budget` for parked work, `scheduled` for work due later, `retry_backoff` for a failure waiting to retry, `null` otherwise. A large `pending` count with no reason on one stage shows where the pipeline is behind. |
 | `dead_letters` | Items that ran out of attempts: a total, groups by stage and error class, and individual items with their `processing_id`, attempts and `last_error`. |
 | `poison_targets` | Items that dead-lettered under two or more component versions: an upgrade did not fix them. |
 | `latest_projections` | The latest filesystem snapshot, if any. |
@@ -7441,7 +7526,7 @@ Find the `processing_id` in the `dead_letters.items` of the inspect report,
 fix the cause (a key, a model, a converter route), then replay it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7461,7 +7546,7 @@ reason `no_route` rather than failed. It uses no attempts. After you add a
 route and restart with `docker compose up -d`, release it:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7492,9 +7577,8 @@ budget are not capped.
 ([Configuration](https://remember.dev/docs/self-hosting/configuration#what-compose-passes-through));
 the workers enforce it.
 
-Work a budget parked shows as `pending` in `remember ops inspect`, and with
-`defer_reason` `budget` in the diagnostic query under
-[Troubleshooting](https://remember.dev/docs/self-hosting/troubleshooting#see-what-is-waiting-and-why).
+Work a budget parked shows as `pending` with `defer_reason` `budget`, both
+in `remember ops inspect` and in readiness.
 The spend itself is in the cost ledger; read it with `remember ops
 cost-export` ([Observability](https://remember.dev/docs/self-hosting/observability#cost-export)).
 
@@ -7507,7 +7591,7 @@ or a restore leaves them missing or different,
 expects, replays the definitions if needed, and reports the result:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops graph-catalog ensure
 ```
 
@@ -7564,10 +7648,9 @@ Run the commands on this page from the directory that holds your
 ## Running operator commands
 
 Several fixes below use `remember ops`. These commands read PostgreSQL
-directly, so they run inside the `api` container, and they
-are hidden unless `REMEMBERSTACK_INTERNAL_OPS` is set there. Without it,
-`remember ops` exits with "'remember ops' is confined to internal container
-environments".
+directly, so they run inside the `api` container
+(`docker compose exec api remember ops …`). Run anywhere else, `remember ops`
+exits with "'remember ops' runs inside the engine container".
 
 Read the deployment id once per shell:
 
@@ -7575,10 +7658,10 @@ Read the deployment id once per shell:
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 ```
 
-Then pass the variable with `-e` on each command:
+Then pass it to each command:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7602,13 +7685,14 @@ this way:
 | `setup` exited with code 0 | Normal. `setup` runs once on every `up` and exits. | Nothing. |
 | `setup` exited with a non-zero code, `api` and the workers are not running | `setup` failed, and nothing that depends on it starts. | `docker compose logs setup` |
 | `api` is `health: starting` | The API is still starting. Compose checks it every 10 seconds, up to 30 times. | Wait, then check again. |
-| `api` exited or keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
-| A `worker-…` container exited | That stage has no worker. Its work waits as `pending`. | `docker compose logs worker-…` |
+| `api` keeps restarting | The API refused its configuration at start. | `docker compose logs api` |
+| A `worker-…` container keeps restarting | The worker fails at start or crashes. Its stage's work waits as `pending` meanwhile. | `docker compose logs worker-…` |
 
-No service in `compose.yaml` has a restart policy. A container that exits
-stays stopped until you run `docker compose up -d` again, and `/healthz`
-keeps answering `ok` while a worker is down: it checks the API and the
-database, not the pipeline.
+The API, the workers, PostgreSQL and the object store have the restart
+policy `unless-stopped`: Docker starts a container that exits again, until
+you stop it yourself. A container that fails at start therefore shows as
+restarting rather than exited. `/healthz` keeps answering `ok` while a
+worker is down: it checks the API and the database, not the pipeline.
 
 Configuration mistakes that stop a container at start:
 
@@ -7616,7 +7700,7 @@ Configuration mistakes that stop a container at start:
 |---|---|---|
 | A validation error that names `api_key` | `REMEMBERSTACK_OPENROUTER_API_KEY` is empty. | Set it in `.env`, then `docker compose up -d`. |
 | `setup` refuses because the deployment id, slug or name differ | `.env` no longer matches what the first `setup` recorded. | Restore the original values. See [The deployment id is permanent](https://remember.dev/docs/self-hosting/upgrades#the-deployment-id-is-permanent). |
-| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or not `https`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
+| "browser origins must each be an https origin…" | An entry in `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` is malformed, empty, or `http` on a host other than `localhost`, `127.0.0.1` or `[::1]`. | Fix the list; see [A browser app cannot reach the API](#a-browser-app-cannot-reach-the-api). |
 | The shared secret and the bind disagree | `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and `REMEMBERSTACK_SELFHOST_API_BEARER_BIND` describe different secrets. | See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication). |
 | A validation error that names `API_KEY_ISSUER`, `API_KEY_TENANT_ID`, `API_SIGNING_KEYS_URL` or `API_REVOCATION_URL` | Signed keys are half configured: an issuer without its tenant id or URLs, or those without an issuer. | Set all four, or none. See [Signed keys](https://remember.dev/docs/self-hosting/authentication#signed-keys). |
 | "no fresh revocation document; every signed credential is refused" | The API has not accepted a revocation document yet, or the accepted one is older than `REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S`. Every signed key gets `401`; the shared secret still works. | Check that the API can fetch both issuer URLs and that the issuer re-signs the document with a growing `seq`. The warnings just before it name the reason (a failed fetch, or a rejected document). |
@@ -7677,12 +7761,11 @@ API is running; the browser refused the response because the API did not
 name the page's origin.
 
 Check `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`. It is empty by default,
-which allows no origin. Each entry must be an `https` origin written
-exactly as the browser sends it: lowercase, no path, no trailing slash.
-An `http` origin such as `http://localhost:3000` is not accepted: the API
-refuses to start with it. For local development, serve the app over
-`https`, or send the API calls through your development server's proxy so
-the browser sees one origin.
+which allows no origin. Each entry must be written exactly as the browser
+sends it: lowercase, no path, no trailing slash. It must be `https`, unless
+the app runs on the same machine: `http://localhost:3000`,
+`http://127.0.0.1:5173` and `http://[::1]:8080` are accepted, and any other
+`http` origin stops the API at start.
 
 Only `GET`, `POST` and `DELETE` with the `Authorization` and `Content-Type`
 headers are allowed, and cookies are not. See
@@ -7713,8 +7796,9 @@ for version in report.versions:
 | What readiness shows | Meaning | Next |
 |---|---|---|
 | Stages `running` or `succeeded`, later ones `missing` | Still processing. | Wait. See [Processing is slow](#processing-is-slow). |
-| `convert` stays `pending` | Parked for lack of a converter, a stopped `worker-convert`, or a spend budget. | [Parked conversions](#parked-conversions) |
-| Another stage stays `pending` | Its worker is not running, or a spend budget parked it. | `docker compose ps -a`, then [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| `convert` is `pending` with `defer_reason` `no_route` | No converter for the file's type. | [Parked conversions](#parked-conversions) |
+| A stage is `pending` with `defer_reason` `budget` | A spend budget parked it. | [Work parked by a spend budget](#work-parked-by-a-spend-budget) |
+| A stage stays `pending` with no `defer_reason` | Its worker is not running. | `docker compose ps -a` |
 | `failed` | The last attempt failed and a retry is scheduled. | Watch the worker logs; a repeated failure becomes `dead_letter`. |
 | `dead_letter` | Out of attempts. Nothing retries it on its own. | [Dead letters](#dead-letters) |
 | Every stage done, `p1` or `live_graph` not ready | A deployment-wide index or graph check is failing, not your document. | [Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog) |
@@ -7725,24 +7809,19 @@ facts exist.
 
 ### See what is waiting and why
 
-Readiness and `remember ops inspect` both show parked work as `pending`
-without the reason. To see the reason, read the work table directly. This
-is a read-only diagnostic query on an internal table, and its columns can
-change between releases:
+Readiness gives each waiting stage a `defer_reason`, and the `routes` in
+`remember ops inspect` count work by stage, status and `defer_reason`, for
+the whole deployment:
 
 ```bash
-docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
-SELECT stage, status, defer_reason, count(*)
-FROM processing_state
-WHERE status IN ('pending', 'running', 'failed', 'dead_letter')
-GROUP BY stage, status, defer_reason
-ORDER BY stage, status;
-SQL
+docker compose exec -T api \
+  remember ops inspect --deployment "$DEPLOYMENT_ID"
 ```
 
 `defer_reason` is `no_route` for a file no converter accepts, `budget` for
-work a spend budget parked, and `retry_backoff` for a failure waiting to
-be retried.
+work a spend budget parked, `scheduled` for work due later, and
+`retry_backoff` for a failure waiting to be retried. Pending work with no
+reason is simply queued for its worker.
 
 ### Parked conversions
 
@@ -7758,7 +7837,7 @@ a route for the type as described in
 `docker compose up -d`, then release the parked work:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops resume-no-route --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7806,7 +7885,7 @@ in Python.
 Find what failed and why:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 ```
 
@@ -7817,7 +7896,7 @@ converter route, a file that is not UTF-8. Then give the item more
 attempts:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops replay 3f2a9c1e-8b7d-4e21-9a0f-5c6d7e8f9a0b --deployment "$DEPLOYMENT_ID"
 ```
 
@@ -7832,7 +7911,7 @@ cannot start until every chunk or claim of the version has finished the
 stage before. Check where work is piling up:
 
 ```bash
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
 docker compose logs -f --since 10m worker-extract-claims worker-normalize-relations
 ```
@@ -7881,8 +7960,8 @@ If you set `REMEMBERSTACK_WORK_BUDGETS`, a stage that reaches its ceiling
 parks its work until the budget window ends. Nothing fails and nothing is
 dropped; readiness shows the stage as `pending`.
 
-Rows with `defer_reason` `budget` in the query under
-[See what is waiting and why](#see-what-is-waiting-and-why) are the cause.
+A `defer_reason` of `budget` (see
+[See what is waiting and why](#see-what-is-waiting-and-why)) shows it.
 Wait for the window to end, or raise `ceiling_usd` in `engine.env` and run
 `docker compose up -d`. See [Spend budgets](https://remember.dev/docs/self-hosting/operating#spend-budgets).
 
@@ -8072,7 +8151,7 @@ that ledger. It contains no document text and no prompts.
 ```bash
 DEPLOYMENT_ID=$(grep '^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=' .env | cut -d= -f2)
 
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec -T api \
   remember ops cost-export --deployment "$DEPLOYMENT_ID" --limit 100
 ```
 
@@ -8377,7 +8456,7 @@ for volume in postgres-data object-store-data forget-manifests app-state; do
     alpine tar -xzf "/backup/${volume}.tar.gz" -C /target
 done
 docker compose up -d --wait
-docker compose exec -T -e REMEMBERSTACK_INTERNAL_OPS=1 api remember ops graph-catalog ensure
+docker compose exec -T api remember ops graph-catalog ensure
 ```
 
 The last command checks that the graph definitions in the restored database
@@ -8832,7 +8911,8 @@ text up to 65,536 bytes, and so on. Each group page lists them.
 
 A deployment sends no CORS headers unless it is told which browser origins may
 call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
-exact `https` origins; empty by default). For those origins it allows:
+exact `https` origins, or `http` origins on `localhost`, `127.0.0.1` or
+`[::1]`; empty by default). For those origins it allows:
 
 - methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
 - request headers `Authorization` and `Content-Type`,
@@ -8840,7 +8920,8 @@ exact `https` origins; empty by default). For those origins it allows:
 - preflight caching for 600 seconds.
 
 Wildcards are refused at startup, and so is an origin with a path, a user,
-port `443` written out, or upper-case letters.
+the default port (`443`, or `80` for `http`) written out, or upper-case
+letters.
 
 ## Routes outside the documented API
 
@@ -11903,6 +11984,7 @@ The `require` object of `POST /readiness`. All four fields are required.
 | `component_version` | string | The version of that stage's component the deployment expects. |
 | `status` | string | `missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`. |
 | `finished_at` | date-time, nullable | |
+| `defer_reason` | string, nullable | Why a `pending` or `failed` stage waits: `no_route` (no converter for the file's type), `budget` (a spend budget is used up), `scheduled` (due later), `retry_backoff` (a `failed` stage waiting for its next attempt). `null` for any other status, and for pending work that is simply queued. |
 
 `missing` means no work for that stage and component version exists yet.
 `failed` may be retried by the pipeline; `dead_letter` will not be.
@@ -14339,7 +14421,7 @@ models below are Pydantic models (frozen) unless noted.
 | `ReadinessRequirements` | The capabilities a readiness check must confirm: `pipeline`, `p1`, `live_graph`, `p3`, all required booleans. |
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
-| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`. |
+| `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
 | `ToolDescriptor` | One operation's descriptor: `name`, `description`, `input_schema`, `result_schema`, `result_contract`, `output_grain`, `answer_intent`, `mutates`, `version`, `implementation_plan_hash`. |
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |
@@ -14750,13 +14832,13 @@ Every one fails with `API 404` and exit status 1. Connectors are listed in
 ## Self-hosted operations: `remember ops`
 
 `remember ops` repairs and inspects a self-hosted engine's pipeline. It runs
-only inside the engine container, and only when
-`REMEMBERSTACK_INTERNAL_OPS=1` is set (`REMEMBER_INTERNAL_OPS` also works).
-Elsewhere it prints an error and exits with status 1. The help output does
-not list it.
+inside the engine container, which enables it by setting
+`REMEMBERSTACK_INTERNAL_OPS=1`. Elsewhere, including a `remember` installed
+from PyPI, it prints an error and exits with status 1, and the help output
+does not list it.
 
 ```bash
-docker compose exec -e REMEMBERSTACK_INTERNAL_OPS=1 api \
+docker compose exec api \
   remember ops inspect --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"
 ```
 
@@ -14842,7 +14924,7 @@ it.
 | `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
 | `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
 | `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
-| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops` inside the engine container. |
+| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops`. The engine image sets it. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](https://remember.dev/docs/reference/mcp#ingest-from-a-path). |
 | `APPDATA` (Windows), `XDG_CONFIG_HOME` (Linux) | `setup`, `doctor` | Where Claude Desktop's configuration lives. |
 
@@ -15485,7 +15567,7 @@ unset for optional settings.
 | `REMEMBER_API_KEY` | unset | secret | The API key, raw or as `Bearer …`. |
 | `REMEMBER_PROJECT` | unset | id or name | The project to use when the key covers several. |
 | `REMEMBER_CONFIG_DIR` | `$XDG_CONFIG_HOME/remember` or `~/.config/remember` | path | Where `credentials.json` lives. |
-| `REMEMBERSTACK_INTERNAL_OPS` | `false` | bool | Enables `remember ops`. It works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
+| `REMEMBERSTACK_INTERNAL_OPS` | `false`; `true` in the engine image | bool | Enables `remember ops`, which works only inside the engine image. Also read as `REMEMBER_INTERNAL_OPS`. |
 | `REMEMBERSTACK_MCP_INGEST_ROOTS` | empty | JSON array or comma-separated paths | Directories from which the local MCP server may ingest a file by path. Empty refuses path ingest. |
 | `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `268435456` | int > 0 | Largest file the local MCP server reads for path ingest. |
 | `XDG_CONFIG_HOME` | unset | path | Standard base for `REMEMBER_CONFIG_DIR` and for agent configuration that `remember setup` writes. |
@@ -15520,7 +15602,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_API_PORT` | `8000` | int 1–65535 | set / passed | Port inside the container (Compose sets `8000`). In `.env` it is the host port Compose publishes. |
 | `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS` | `127.0.0.1` | host address | Compose only | Host address Compose publishes the API port on. Set a token before changing it; see [Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines). |
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | passed | Largest `POST /ingest` body; larger uploads get `413`. |
-| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins | passed | Browser origins allowed by CORS. |
+| `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | passed | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | passed | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | passed | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | passed | Requests running at once per credential. Over it: `429` `concurrency_limited`. |

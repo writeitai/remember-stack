@@ -143,6 +143,21 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     assert 'profiles: ["managed"]' in compose
 
 
+def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
+    """A crashed worker comes back; setup and the projection job run once."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor = compose.split("\nservices:\n", maxsplit=1)[0]
+    assert "\n  restart: unless-stopped\n" in anchor
+    for one_shot in (
+        'setup:\n    <<: *app\n    command: ["setup"]\n    restart: "no"\n',
+        'projections:\n    <<: *app\n    command: ["project", "--plane", "p3"]\n'
+        '    restart: "no"\n',
+    ):
+        assert one_shot in compose
+    for dependency in ("postgres", "object-store"):
+        assert f"\n  {dependency}:\n    restart: unless-stopped\n" in compose
+
+
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
     """Resolved `${VAR:-}` UUID blanks cannot crash ordinary OSS services."""
     settings = SelfHostSettings.model_validate(

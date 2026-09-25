@@ -808,3 +808,71 @@ def test_selection_success_does_not_hide_pending_claimify(
         ).ready
         is True
     )
+
+
+def test_parked_version_stage_reports_why_it_waits(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """A conversion parked for lack of a route says so instead of plain pending."""
+    engine, version_id = ready_rows
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status='pending', finished_at=NULL,"
+                " defer_reason='no_route' WHERE target_id=:v AND stage='convert'"
+            ),
+            {"v": version_id},
+        )
+    report = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={
+            PipelineStage.CONVERT: "convert-v1",
+            PipelineStage.STRUCTURE: "struct-v1",
+        },
+        projections=ProjectionCatalog(engine=engine),
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
+    )
+    stages = {stage.stage: stage for stage in report.versions[0].stages}
+    assert stages[PipelineStage.CONVERT].status == "pending"
+    assert stages[PipelineStage.CONVERT].defer_reason == "no_route"
+    assert stages[PipelineStage.STRUCTURE].defer_reason is None
+
+
+def test_parked_chunk_stage_reports_why_it_waits(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """A chunk-derived stage carries the reason its pending chunks wait."""
+    engine, version_id = ready_rows
+    _seed_version_representation(
+        engine, version_id=version_id, chunker_version=_DEFAULT_CHUNKER_VERSION
+    )
+    with engine.begin() as connection:
+        chunk_id = connection.execute(
+            text("SELECT chunk_id FROM chunks WHERE version_id=:v"), {"v": version_id}
+        ).scalar_one()
+        connection.execute(
+            text("""
+            INSERT INTO processing_state
+              (processing_id,deployment_id,target_kind,target_id,stage,
+               component_version,content_hash,lane,status,attempts,defer_reason)
+            VALUES (:id,:d,'chunk',:chunk,'extract_claims',:component,'hash',
+                    'steady','pending',0,'budget')
+            """),
+            {
+                "id": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "chunk": chunk_id,
+                "component": _EXTRACTOR_VERSION,
+            },
+        )
+    report = PipelineReadinessCatalog(
+        engine=engine,
+        expected_components={PipelineStage.EXTRACT_CLAIMS: _EXTRACTOR_VERSION},
+        projections=ProjectionCatalog(engine=engine),
+    ).inspect(
+        deployment_id=_DEPLOYMENT_ID, version_ids=(version_id,), require=_requirements()
+    )
+    (stage,) = report.versions[0].stages
+    assert stage.status == "pending"
+    assert stage.defer_reason == "budget"
