@@ -9,8 +9,7 @@ export const metadata = {
 
 This page takes you from an empty machine to a running RememberStack that
 has read its first document. It uses the `compose.yaml` and `.env.example`
-that ship in the repository. Check [Requirements](/docs/self-hosting/requirements) first,
-in particular the note on arm64 machines.
+that ship in the repository. Check [Requirements](/docs/self-hosting/requirements) first.
 
 ## 1. Get the files
 
@@ -19,7 +18,14 @@ git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
 git checkout v0.17.1
 cp .env.example .env
+printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
+  "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
+  "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 ```
+
+The last command generates the database password, the object-store
+credentials and the deployment id (a random UUID); `.env.example` ships
+none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
 it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
@@ -28,39 +34,37 @@ one on download, so it appears as `default.env.example`.
 
 ## 2. Fill in `.env`
 
-Docker Compose reads `.env` from the project directory and substitutes its
-values into `compose.yaml`. These variables have no default in
-`compose.yaml` and must be set:
+<Callout type="warning">
+
+The API needs no token by default. That is safe only on Docker Engine
+28.0.0 or later; on an older engine, set a token first. See
+[Before you expose it](#before-you-expose-it).
+
+</Callout>
+
+Docker Compose reads `.env` from the project directory, substitutes its
+values into `compose.yaml` and passes every variable in it to the engine
+containers. These variables have no default in `compose.yaml` and must be
+set:
 
 | Variable | What to put there |
 |---|---|
 | `REMEMBERSTACK_OPENROUTER_API_KEY` | Your OpenRouter API key. The placeholder lets the stack start, but every model call fails with it. |
-| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | A new random UUID for this deployment. |
+| `REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID` | This deployment's id, a random UUID generated in step 1. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG` | A short name, such as `billing-team`. |
 | `REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME` | A display name, such as `Billing team memory`. |
-| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. |
-| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials. PostgreSQL creates them on first start. |
-| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials. MinIO requires a secret of at least 8 characters. |
-
-Generate the deployment id rather than keeping the example value:
-
-```bash
-python3 -c "import uuid; print(uuid.uuid4())"
-```
+| `REMEMBERSTACK_SELFHOST_API_PORT` | The host port for the API. `8000` in the example. Compose publishes it on `127.0.0.1` only; see [Before you expose it](#before-you-expose-it). |
+| `REMEMBERSTACK_POSTGRES_USER`, `REMEMBERSTACK_POSTGRES_PASSWORD`, `REMEMBERSTACK_POSTGRES_DB` | Database credentials; the password is generated in step 1. PostgreSQL creates them on first start. |
+| `REMEMBERSTACK_MINIO_ACCESS_KEY`, `REMEMBERSTACK_MINIO_SECRET_KEY` | Object-store credentials, generated in step 1. The bundled SeaweedFS store uses them as its only S3 identity; Compose refuses to start if either is empty. |
 
 <Callout type="warning">
 
-Decide the deployment id, slug and name before the first start. The
-first `setup` run records them in the database, and every later `setup`
-refuses to run if they differ. A different id is a different
-deployment: tokens bound to the old id stop working and the memory
-already stored belongs to the old id. See
+Decide the slug and name before the first start, and keep the generated
+deployment id. The first `setup` run records all three in the database,
+and every later `setup` refuses to run if they differ. See
 [Upgrades and migrations](/docs/self-hosting/upgrades#the-deployment-id-is-permanent).
 
 </Callout>
-
-The example passwords in `.env.example` are marked local-only. Replace them
-before the stack is reachable from anywhere but your own machine.
 
 ## 3. Start the stack
 
@@ -69,10 +73,10 @@ docker compose up -d --wait
 ```
 
 On the first run Compose builds the PostgreSQL image (it compiles the
-`pg_textsearch` extension, which takes a few minutes), pulls MinIO and the
+`pg_textsearch` extension, which takes a few minutes), pulls SeaweedFS and the
 RememberStack image, and starts everything in dependency order:
 
-1. `postgres` and `minio` start and report healthy.
+1. `postgres` and `object-store` start and report healthy.
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
@@ -85,9 +89,9 @@ RememberStack image, and starts everything in dependency order:
 | Service | Command | Role |
 |---|---|---|
 | `postgres` | `postgres` | PostgreSQL 19 beta with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
-| `minio` | `server /data` | S3-compatible storage for original files, converted Markdown and snapshots. Its web console is published on port 9001. |
+| `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
-| `api` | `api` | The HTTP API on port 8000 inside the container, published on `REMEMBERSTACK_SELFHOST_API_PORT`. |
+| `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
@@ -165,12 +169,11 @@ docker compose logs -f worker-extract-claims worker-normalize-relations
 
 <Callout type="note">
 
-Set `REMEMBER_API_URL` explicitly. The `--self-hosted` flag on
-`remember ingest` and `remember query` does not change where the
-request goes. With no URL in the environment, the CLI<Cloud> uses the
-credentials that `remember login` stored, which point at remember.dev
-if you have ever signed in there. Without stored credentials it</Cloud> falls
-back to `http://127.0.0.1:8000`.
+Set `REMEMBER_API_URL` explicitly, or run `remember setup --self-hosted`,
+which stores the address. With no address anywhere, the CLI falls back to
+`http://127.0.0.1:8000`.<Cloud> If you have signed in to remember.dev with
+`remember login`, the stored key is never sent to your engine: pass your
+engine's key in `REMEMBER_API_KEY`, or the command stops with status 2.</Cloud>
 
 </Callout>
 
@@ -190,7 +193,7 @@ Compose names volumes after the project, `rememberstack`:
 | Volume | Mounted at | Holds |
 |---|---|---|
 | `rememberstack_postgres-data` | `/var/lib/postgresql` in `postgres` | The database: every document, version, claim, fact and entity, the work queue and the cost ledger |
-| `rememberstack_minio-data` | `/data` in `minio` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
+| `rememberstack_object-store-data` | `/data` in `object-store` | Original files, converted Markdown, derived artifacts and filesystem snapshots |
 | `rememberstack_app-state` | `/var/lib/rememberstack` in the app containers | Working directories; the optional debug capture of invalid model output |
 | `rememberstack_forget-manifests` | `/var/lib/rememberstack/forget-manifests` in the app containers | Hard-forget manifests. Empty in a Compose deployment. |
 
@@ -199,11 +202,16 @@ The first two hold the memory. Back them up together; see
 
 ## Before you expose it
 
-By default the API needs no token, and Compose publishes port 8000 and the
-MinIO console on port 9001 on **every** network interface of the host, not
-only on `localhost`. Anyone who can reach those ports can read and change
-the memory. Before the machine is on a shared network, set a token and
-limit the published ports; see [Authentication and scopes](/docs/self-hosting/authentication).
+By default the API needs no token, so Compose publishes its port on
+`127.0.0.1` only: only this machine can reach it. That holds on Docker
+Engine 28.0.0 or later. On an older engine, other hosts on the same local
+network can reach a port published on `127.0.0.1`, so set
+`REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
+`REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH=true` before the first start (see
+[Requirements](/docs/self-hosting/requirements#docker-and-compose)). To serve other machines,
+set a token and then the address to publish on
+(`REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`); see
+[Opening the API to other machines](/docs/self-hosting/authentication#opening-the-api-to-other-machines).
 
 <Cloud>
 

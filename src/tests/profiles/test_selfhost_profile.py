@@ -143,6 +143,35 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     assert 'profiles: ["managed"]' in compose
 
 
+def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
+    """A crashed worker comes back; setup and the projection job run once."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor = compose.split("\nservices:\n", maxsplit=1)[0]
+    assert "\n  restart: unless-stopped\n" in anchor
+    for one_shot in (
+        'setup:\n    <<: *app\n    command: ["setup"]\n    restart: "no"\n',
+        'projections:\n    <<: *app\n    command: ["project", "--plane", "p3"]\n'
+        '    restart: "no"\n',
+    ):
+        assert one_shot in compose
+    for dependency in ("postgres", "object-store"):
+        block = compose.split(f"\n  {dependency}:\n", maxsplit=1)[1]
+        block = block.split("\n\n", maxsplit=1)[0]
+        assert "    restart: unless-stopped\n" in block
+
+
+def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
+    """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    limits = re.findall(r"- max_connections=(\d+)\n", compose)
+    assert len(limits) == 1
+    workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
+    api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
+    ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
+    assert ceiling == 215
+    assert int(limits[0]) >= ceiling + 50
+
+
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
     """Resolved `${VAR:-}` UUID blanks cannot crash ordinary OSS services."""
     settings = SelfHostSettings.model_validate(
@@ -390,3 +419,58 @@ def test_model_bindings_ignore_chat_routing_transport_settings(
         key.startswith("openrouter_chat_") or key == "openrouter_zdr"
         for key in baseline
     )
+
+
+def test_compose_hands_the_whole_env_file_to_every_engine_service() -> None:
+    """Any engine setting in .env reaches the containers, not a fixed list."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor, services = compose.split("\nservices:\n", 1)
+    assert "  env_file:\n    - path: .env\n      required: false\n" in anchor
+    engine_services = re.findall(r"\n  ([a-z0-9-]+):\n    <<: \*app\n", services)
+    assert {"setup", "api", "projections", "meter-receipts"} <= set(engine_services)
+    assert len(engine_services) == len(_SUPPORTED_WORKER_STAGES) + 4
+
+
+def test_no_shared_deployment_id_ships() -> None:
+    """Each install generates its own id; Compose refuses to start without one."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    example = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:"
+        " ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:?set"
+        " REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID}"
+    ) in compose
+    assert not re.search(r"^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=", example, re.M)
+    assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s" in example
+
+
+def test_model_bindings_report_the_embedding_model_actually_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One embedding model serves every vector, so only it is reported."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_P1_EMBEDDING_MODEL", "vendor/embedder")
+    monkeypatch.setenv("REMEMBERSTACK_E1_EMBEDDING_MODEL", "ignored/model")
+
+    bindings = _model_bindings()
+
+    assert bindings["p1_embedding"] == "vendor/embedder"
+    assert "chunk_embedding" not in bindings
+    assert "context_prefix" not in bindings
+    assert "fact_label" not in bindings
+
+
+def test_retired_model_settings_are_gone_from_compose_and_env_example() -> None:
+    """Settings nothing reads are not offered to operators."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    example = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in (
+        "REMEMBERSTACK_E1_EMBEDDING_MODEL",
+        "REMEMBERSTACK_E1_PREFIX_MODEL",
+        "REMEMBERSTACK_P1_LABEL_MODEL",
+        "REMEMBERSTACK_OBS_FRONTIER_MODEL",
+        "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
+        "REMEMBERSTACK_ADJUDICATOR_",
+    ):
+        assert name not in compose
+        assert name not in example

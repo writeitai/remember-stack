@@ -94,6 +94,8 @@ from benchmarks.locomo.retrieval import query_result_failure
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
 from rememberstack.adapters.openrouter import OpenRouterProviderError
@@ -113,8 +115,6 @@ from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 _logger = logging.getLogger(__name__)
 
@@ -449,8 +449,8 @@ def ingest_sample(
         )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
-        # The binding the E1 stage will actually use, per the deployment.
-        embedding_model = build.model_bindings.get("chunk_embedding", "")
+        # The embedding model every stage will actually use, per the deployment.
+        embedding_model = build.model_bindings.get("p1_embedding", "")
         if not embedding_model:
             raise ExecutionGuardError(
                 "the deployment did not report an embedding model binding, so the"

@@ -31,6 +31,9 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.cli import _split_operation_arg
+from remember.cli import operations_list
+from remember.cli import operations_run
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core import AssuredOperationLintError
 from rememberstack.model import AuthenticatedContext
@@ -48,9 +51,6 @@ from rememberstack.surfaces import OperationExecutor
 from rememberstack.surfaces import OperationMcpServer
 from rememberstack.surfaces import OperationSurface
 from rememberstack.surfaces import QueryEngine
-from rememberstack.surfaces.cli import _split_operation_arg
-from rememberstack.surfaces.cli import operations_list
-from rememberstack.surfaces.cli import operations_run
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
@@ -612,9 +612,7 @@ def test_the_cli_reports_an_unreachable_api_as_an_exit_code(
 ) -> None:
     """A query against an API that is not up is a controlled exit code, not a
     traceback (Codex finding)."""
-    from rememberstack.surfaces import cli
+    from remember import cli
 
-    monkeypatch.setenv(
-        "REMEMBERSTACK_API_URL", "http://127.0.0.1:9"
-    )  # nothing listening
+    monkeypatch.setenv("REMEMBER_API_URL", "http://127.0.0.1:9")  # nothing listening
     assert cli.main(["operations", "list"]) == 1

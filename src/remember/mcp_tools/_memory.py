@@ -183,11 +183,11 @@ def handle_memory_write_tool(
         return error_result(
             ToolError(
                 code="tool_not_composed",
-                message=(
+                detail=(
                     f"MCP tool {name!r} is not composed on this server"
                     " (ingest/readiness ports absent)."
                 ),
-                http_status=404,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Use remote MCP against a deployment that exposes write, or"
@@ -230,11 +230,11 @@ def handle_delete_document_tool(
         return error_result(
             ToolError(
                 code="tool_not_composed",
-                message=(
+                detail=(
                     f"MCP tool {DELETE_DOCUMENT_TOOL_NAME!r} is not composed on this"
                     " server (read-only, or no deletion port)."
                 ),
-                http_status=404,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Tell the user deletion is not available on this server; do"
@@ -255,11 +255,11 @@ def handle_delete_document_tool(
             return error_result(
                 ToolError(
                     code="document_not_found",
-                    message=(
+                    detail=(
                         f"No live document {arguments.get('doc_id')}: the id is"
                         " unknown or the document is already deleted."
                     ),
-                    http_status=404,
+                    status_code=404,
                     retryable=False,
                     agent_action=(
                         "Do not retry. Check the doc_id; if the user meant this"
@@ -273,11 +273,11 @@ def handle_delete_document_tool(
             return error_result(
                 ToolError(
                     code="forget_in_progress",
-                    message=(
+                    detail=(
                         "A hard forget is running on this deployment; nothing was"
                         " deleted."
                     ),
-                    http_status=503,
+                    status_code=503,
                     retryable=True,
                     agent_action=(
                         "Retry the same delete later with back-off; the"
@@ -303,13 +303,13 @@ def parse_delete_document_arguments(*, arguments: Mapping[str, object]) -> UUID:
     raw = arguments.get("doc_id")
     if not isinstance(raw, str) or not raw:
         raise ToolArgumentError(
-            error=invalid_arguments(message="doc_id must be a non-empty string.")
+            error=invalid_arguments(detail="doc_id must be a non-empty string.")
         )
     try:
         return UUID(raw)
     except ValueError as error:
         raise ToolArgumentError(
-            error=invalid_arguments(message="doc_id must be a UUID.")
+            error=invalid_arguments(detail="doc_id must be a UUID.")
         ) from error
 
 
@@ -347,8 +347,8 @@ def _check_body_size(*, content: bytes, capability_limit: int | None) -> None:
         raise ToolArgumentError(
             error=ToolError(
                 code="empty_body",
-                message="Ingest body is empty.",
-                http_status=422,
+                detail="Ingest body is empty.",
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Provide non-empty path / text / content_base64 content."
@@ -359,11 +359,11 @@ def _check_body_size(*, content: bytes, capability_limit: int | None) -> None:
         raise ToolArgumentError(
             error=ToolError(
                 code="body_too_large",
-                message=(
+                detail=(
                     f"Ingest body exceeds the deployment capability limit of"
                     f" {capability_limit} bytes."
                 ),
-                http_status=413,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Split or shorten the document; do not retry the same payload."
@@ -442,11 +442,11 @@ def parse_ingest_arguments(
         raise ToolArgumentError(
             error=ToolError(
                 code="invalid_arguments",
-                message=(
+                detail=(
                     "Pass exactly one of path, text, or content_base64"
                     f" (got {body_modes or 'none'})."
                 ),
-                http_status=422,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Supply exactly one body source: path, text, or content_base64."
@@ -462,7 +462,7 @@ def parse_ingest_arguments(
     if title is not None and len(title) > TITLE_MAX_LEN:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=f"title must be at most {TITLE_MAX_LEN} characters."
+                detail=f"title must be at most {TITLE_MAX_LEN} characters."
             )
         )
 
@@ -482,8 +482,8 @@ def parse_ingest_arguments(
         raise ToolArgumentError(
             error=ToolError(
                 code="source_lineage_pair",
-                message="source_kind and source_ref must be supplied together.",
-                http_status=422,
+                detail="source_kind and source_ref must be supplied together.",
+                status_code=None,
                 retryable=False,
                 agent_action=("Send both source_kind and source_ref, or neither."),
             )
@@ -496,11 +496,11 @@ def parse_ingest_arguments(
         raise ToolArgumentError(
             error=ToolError(
                 code="source_lineage_pair",
-                message=(
+                detail=(
                     "source timestamps, revisions, and living mode require"
                     " source_kind/source_ref."
                 ),
-                http_status=422,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Provide source_kind and source_ref together with lineage fields."
@@ -520,7 +520,7 @@ def parse_ingest_arguments(
         if not text:
             raise ToolArgumentError(
                 error=invalid_arguments(
-                    message="text must be non-empty when used as the body source."
+                    detail="text must be non-empty when used as the body source."
                 )
             )
         try:
@@ -529,8 +529,8 @@ def parse_ingest_arguments(
             raise ToolArgumentError(
                 error=ToolError(
                     code="encoding_error",
-                    message=f"text is not encodable as UTF-8: {error}",
-                    http_status=422,
+                    detail=f"text is not encodable as UTF-8: {error}",
+                    status_code=None,
                     retryable=False,
                     agent_action=(
                         "Remove lone surrogates / invalid code points, or send"
@@ -541,7 +541,7 @@ def parse_ingest_arguments(
         if filename is None:
             raise ToolArgumentError(
                 error=invalid_arguments(
-                    message="filename is required when text is used."
+                    detail="filename is required when text is used."
                 )
             )
         resolved_filename = filename
@@ -557,7 +557,7 @@ def parse_ingest_arguments(
         if filename is None:
             raise ToolArgumentError(
                 error=invalid_arguments(
-                    message="filename is required when content_base64 is used."
+                    detail="filename is required when content_base64 is used."
                 )
             )
         resolved_filename = filename
@@ -605,8 +605,8 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
-                message="path must not contain embedded NUL bytes.",
-                http_status=400,
+                detail="path must not contain embedded NUL bytes.",
+                status_code=None,
                 retryable=False,
                 agent_action="Pass a clean filesystem path without NUL characters.",
             )
@@ -616,14 +616,14 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
-                message=(
+                detail=(
                     "path body mode is disabled: no ingest roots are configured."
                     " Set REMEMBERSTACK_MCP_INGEST_ROOTS to a JSON array of"
                     " absolute directories the operator allows this MCP process to"
                     ' read (example: ["/var/remember/inbox"]), or send the body'
                     " as text / content_base64 instead."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Use text or content_base64, or ask the operator to configure"
@@ -640,11 +640,11 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
-                message=(
+                detail=(
                     f"Path is not readable on the MCP host filesystem: {path}"
                     f" ({error})."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Check path on the machine running the MCP server (not the"
@@ -657,12 +657,12 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_not_allowed",
-                message=(
+                detail=(
                     f"Resolved path {str(resolved)!r} is outside the configured"
                     " REMEMBERSTACK_MCP_INGEST_ROOTS allowlist (symlink escape and"
                     " absolute paths outside roots are rejected)."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Place the file under an allowlisted root, or use"
@@ -684,11 +684,11 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
-                message=(
+                detail=(
                     f"Path is not readable on the MCP host filesystem: {path}"
                     f" ({error})."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Check path on the machine running the MCP server (not the"
@@ -700,11 +700,11 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_not_regular_file",
-                message=(
+                detail=(
                     f"Path is not a regular file (directories, FIFOs, devices, and"
                     f" special files are rejected): {path}."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Point path at a regular file, or send text/content_base64."
@@ -715,7 +715,7 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_too_large",
-                message=(
+                detail=(
                     f"Path file is {pre_stat.st_size} bytes, which exceeds"
                     f" the read cap of {read_cap} bytes"
                     + (
@@ -728,7 +728,7 @@ def _resolve_path_body(
                         )
                     )
                 ),
-                http_status=413,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Split the file, raise the local resource guard only if"
@@ -745,11 +745,11 @@ def _resolve_path_body(
                 raise ToolArgumentError(
                     error=ToolError(
                         code="path_too_large",
-                        message=(
+                        detail=(
                             f"Path file is {file_stat.st_size} bytes, which exceeds"
                             f" the read cap of {read_cap} bytes."
                         ),
-                        http_status=413,
+                        status_code=None,
                         retryable=False,
                         agent_action=(
                             "Split the file or raise the configured read cap."
@@ -763,11 +763,11 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
-                message=(
+                detail=(
                     f"Path is not readable on the MCP host filesystem: {path}"
                     f" ({error})."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Check path on the machine running the MCP server (not the"
@@ -780,10 +780,10 @@ def _resolve_path_body(
         raise ToolArgumentError(
             error=ToolError(
                 code="path_too_large",
-                message=(
+                detail=(
                     f"Path file exceeded the read cap of {read_cap} bytes during read."
                 ),
-                http_status=413,
+                status_code=None,
                 retryable=False,
                 agent_action="Split the file or raise the configured read cap.",
             )
@@ -793,7 +793,7 @@ def _resolve_path_body(
     if not resolved_filename:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="filename could not be inferred from path; pass filename."
+                detail="filename could not be inferred from path; pass filename."
             )
         )
     # MIME matches the SDK: guess from the real target path name, not an
@@ -823,8 +823,8 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
         raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
-                message=f"Path handle cannot be fstat'd: {path}.",
-                http_status=400,
+                detail=f"Path handle cannot be fstat'd: {path}.",
+                status_code=None,
                 retryable=False,
                 agent_action="Pass a regular filesystem file path.",
             )
@@ -834,8 +834,8 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
         raise ToolArgumentError(
             error=ToolError(
                 code="path_unreadable",
-                message=f"Path handle fileno is not an int: {path}.",
-                http_status=400,
+                detail=f"Path handle fileno is not an int: {path}.",
+                status_code=None,
                 retryable=False,
                 agent_action="Pass a regular filesystem file path.",
             )
@@ -845,11 +845,11 @@ def _fstat_regular_file(*, handle: object, path: str) -> os.stat_result:
         raise ToolArgumentError(
             error=ToolError(
                 code="path_not_regular_file",
-                message=(
+                detail=(
                     f"Path is not a regular file (directories, FIFOs, devices, and"
                     f" special files are rejected): {path}."
                 ),
-                http_status=400,
+                status_code=None,
                 retryable=False,
                 agent_action=(
                     "Point path at a regular file, or send text/content_base64."
@@ -864,7 +864,7 @@ def _decode_base64(value: str) -> bytes:
     if value.startswith("data:"):
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=("content_base64 must be raw standard base64, not a data: URL.")
+                detail=("content_base64 must be raw standard base64, not a data: URL.")
             )
         )
     try:
@@ -872,7 +872,7 @@ def _decode_base64(value: str) -> bytes:
     except (ValueError, binascii.Error) as error:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="content_base64 is not valid standard base64."
+                detail="content_base64 is not valid standard base64."
             )
         ) from error
 
@@ -886,13 +886,13 @@ def parse_pipeline_readiness_arguments(
     if not isinstance(raw_ids, list) or not raw_ids:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="version_ids must be a non-empty array of UUID strings."
+                detail="version_ids must be a non-empty array of UUID strings."
             )
         )
     if len(raw_ids) > VERSION_IDS_MAX:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=(f"version_ids must contain at most {VERSION_IDS_MAX} entries.")
+                detail=(f"version_ids must contain at most {VERSION_IDS_MAX} entries.")
             )
         )
     version_ids: list[UUID] = []
@@ -900,7 +900,7 @@ def parse_pipeline_readiness_arguments(
         if not isinstance(item, str) or not item.strip():
             raise ToolArgumentError(
                 error=invalid_arguments(
-                    message=f"version_ids[{index}] must be a non-empty string."
+                    detail=f"version_ids[{index}] must be a non-empty string."
                 )
             )
         try:
@@ -908,7 +908,7 @@ def parse_pipeline_readiness_arguments(
         except ValueError as error:
             raise ToolArgumentError(
                 error=invalid_arguments(
-                    message=f"version_ids[{index}] is not a valid UUID: {item!r}."
+                    detail=f"version_ids[{index}] is not a valid UUID: {item!r}."
                 )
             ) from error
     raw_require = arguments.get("require")
@@ -917,7 +917,7 @@ def parse_pipeline_readiness_arguments(
     except ValidationError as error:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=(
+                detail=(
                     "require must contain exactly the Boolean keys pipeline, p1,"
                     " live_graph, and p3."
                 )
@@ -934,7 +934,7 @@ def _parse_versioning_mode(value: object) -> Literal["snapshot", "living"]:
         return value  # type: ignore[return-value]
     raise ToolArgumentError(
         error=invalid_arguments(
-            message="versioning_mode must be 'snapshot' or 'living'."
+            detail="versioning_mode must be 'snapshot' or 'living'."
         )
     )
 
@@ -946,7 +946,7 @@ def _parse_source_modified_at(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="source_modified_at must be an ISO-8601 timestamp string."
+                detail="source_modified_at must be an ISO-8601 timestamp string."
             )
         )
     try:
@@ -954,13 +954,13 @@ def _parse_source_modified_at(value: object) -> datetime | None:
     except ValueError as error:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="source_modified_at must be a valid ISO-8601 timestamp."
+                detail="source_modified_at must be a valid ISO-8601 timestamp."
             )
         ) from error
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise ToolArgumentError(
             error=invalid_arguments(
-                message="source_modified_at must be timezone-aware UTC."
+                detail="source_modified_at must be timezone-aware UTC."
             )
         )
     return parsed.astimezone(timezone.utc)
@@ -1041,7 +1041,7 @@ def reject_unknown_keys(*, arguments: Mapping[str, object], allowed: set[str]) -
     if unknown:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=f"Unknown argument keys: {', '.join(unknown)}."
+                detail=f"Unknown argument keys: {', '.join(unknown)}."
             )
         )
 
@@ -1055,16 +1055,16 @@ def _optional_nonempty_string(
     value = arguments[key]
     if not isinstance(value, str):
         raise ToolArgumentError(
-            error=invalid_arguments(message=f"{key} must be a string.")
+            error=invalid_arguments(detail=f"{key} must be a string.")
         )
     if not value:
         raise ToolArgumentError(
-            error=invalid_arguments(message=f"{key} must be non-empty when set.")
+            error=invalid_arguments(detail=f"{key} must be non-empty when set.")
         )
     if max_length is not None and len(value) > max_length:
         raise ToolArgumentError(
             error=invalid_arguments(
-                message=f"{key} must be at most {max_length} characters."
+                detail=f"{key} must be at most {max_length} characters."
             )
         )
     return value
@@ -1077,6 +1077,6 @@ def _optional_string(arguments: Mapping[str, object], *, key: str) -> str | None
     value = arguments[key]
     if not isinstance(value, str):
         raise ToolArgumentError(
-            error=invalid_arguments(message=f"{key} must be a string.")
+            error=invalid_arguments(detail=f"{key} must be a string.")
         )
     return value

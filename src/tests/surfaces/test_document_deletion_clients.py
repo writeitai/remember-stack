@@ -23,14 +23,15 @@ from remember import DocumentDeletion
 from remember import DocumentPage
 from remember import MemoryApiError
 from remember import MemoryClient
+from remember.cli import main as cli_main
+from remember.mcp_engine import EngineMcpServer
+from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPERATION_TOOL_NAMES
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.model import DocumentNotFoundError
 from rememberstack.model import DocumentSummary
 from rememberstack.model import DocumentVersionSummary
 from rememberstack.model import ForgetInProgressError
 from rememberstack.surfaces import build_api
-from rememberstack.surfaces import cli_main
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.mcp import OperationMcpServer
 
@@ -186,8 +187,8 @@ def test_cli_lists_and_deletes_documents(
 ) -> None:
     """`remember documents list|delete` print JSON; a repeat delete exits 1."""
     client, deletion, inventory = surface
-    monkeypatch.setenv("REMEMBERSTACK_CONFIG_DIR", str(tmp_path / "cli-config"))
-    monkeypatch.setattr(MemoryClient, "from_settings", classmethod(lambda _cls: client))
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "cli-config"))
+    monkeypatch.setattr("remember.cli._cli_memory_client", lambda _args: client)
 
     assert cli_main(["documents", "list", "--status", "ready", "--limit", "5"]) == 0
     listed = json.loads(capsys.readouterr().out)
@@ -206,16 +207,15 @@ def test_cli_lists_and_deletes_documents(
 def _payload(result: dict[str, object]) -> dict[str, object]:
     """Decode the single JSON text block of an MCP tool result."""
     content = cast("list[dict[str, str]]", result["content"])
-    return json.loads(content[0]["text"])
+    decoded = json.loads(content[0]["text"])
+    return decoded["error"] if result["isError"] else decoded
 
 
-def _remote(
-    *, client: MemoryClient, read_only: bool = False
-) -> RemoteOperationMcpServer:
-    return RemoteOperationMcpServer(client=client, read_only=read_only)
+def _remote(*, client: MemoryClient, read_only: bool = False) -> EngineMcpServer:
+    return EngineMcpServer(client=client, read_only=read_only, path_ingest=True)
 
 
-def test_remote_mcp_deletes_and_maps_absence(
+def test_remember_mcp_deletes_and_maps_absence(
     surface: tuple[MemoryClient, _Deletion, _Inventory],
 ) -> None:
     """The tool returns the typed counts, then a non-retryable not-found."""
@@ -243,13 +243,14 @@ def test_remote_mcp_deletes_and_maps_absence(
     assert _payload(extra)["code"] == "invalid_arguments"
 
 
-def test_read_only_remote_mcp_neither_offers_nor_runs_deletion() -> None:
+def test_read_only_remember_mcp_neither_offers_nor_runs_deletion() -> None:
     """`--read-only` removes every write tool, deletion included."""
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.method == "DELETE":
             raise AssertionError("a read-only server must never delete")
-        return httpx.Response(404, json={"detail": "Not Found"})
+        served = {item.name: item.tool_version for item in memory_tools()}
+        return httpx.Response(200, json={"tools": served})
 
     client = MemoryClient(
         client=httpx.Client(
@@ -262,7 +263,7 @@ def test_read_only_remote_mcp_neither_offers_nor_runs_deletion() -> None:
     assert "delete_document" not in names
     refused = server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
     assert refused["isError"] is True
-    assert _payload(refused)["code"] == "tool_not_composed"
+    assert _payload(refused)["code"] == "read_only"
 
 
 class _StubSurface:
@@ -320,10 +321,10 @@ def test_local_mcp_reports_a_forget_as_retryable() -> None:
     )
     assert error["code"] == "forget_in_progress"
     assert error["retryable"] is True
-    assert error["http_status"] == 503
+    assert error["status_code"] == 503
 
 
-def test_remote_mcp_reports_a_forget_as_retryable() -> None:
+def test_remember_mcp_reports_a_forget_as_retryable() -> None:
     """The route's 503 forget_in_progress maps to the same tool error."""
 
     def respond(request: httpx.Request) -> httpx.Response:

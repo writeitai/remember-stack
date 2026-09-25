@@ -84,8 +84,13 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
         "https://evil.example.com@app.example.com",
         # Browsers lowercase the scheme and host before sending.
         "HTTPS://App.Example.com",
-        # Not a secure origin.
+        # Not a secure origin, and not this machine.
         "http://app.example.com",
+        "http://192.168.1.20:3000",
+        "http://localhost.example.com:3000",
+        # Upper case, and the default http port written out.
+        "http://LOCALHOST:3000",
+        "http://localhost:80",
         # Not an origin at all.
         "*",
         "null",
@@ -154,6 +159,11 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
         # that refuses real origins is worse than one that admits a name DNS
         # will simply fail to resolve.
         "https://xn--fa-hia.de",
+        # A local app in development, served over plain http on this machine.
+        "http://localhost:3000",
+        "http://localhost",
+        "http://127.0.0.1:5173",
+        "http://[::1]:8080",
     ],
 )
 def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:

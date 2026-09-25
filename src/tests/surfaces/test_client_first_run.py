@@ -18,9 +18,6 @@ from remember import MemoryClient
 from remember import PipelineDeadLettered
 from remember import PipelineReadinessReport
 import remember.client as client_module
-from remember.credentials import ControlPlaneCredentials
-from remember.credentials import CredentialFile
-from remember.credentials import DEFAULT_CONTROL_PLANE_URL
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import McpMemorySettings
 from remember.mime import infer_upload_mime
@@ -397,47 +394,3 @@ def test_wait_times_out_without_overshooting(monkeypatch: pytest.MonkeyPatch) ->
         client.wait_for_readiness([_VERSION], timeout=40, poll_interval=15)
     assert len(bodies) == 4
     assert clock["now"] == 40.0
-
-
-# --- G12: the control-plane default resolves -------------------------------
-
-
-def test_every_control_plane_default_is_the_app_api() -> None:
-    """One constant; the old api.remember.dev host has no DNS record."""
-    assert DEFAULT_CONTROL_PLANE_URL == "https://remember.dev/app/api"
-    assert CredentialFile(version=1).token_host == DEFAULT_CONTROL_PLANE_URL
-    from pydantic import SecretStr
-
-    control = ControlPlaneCredentials(access_token=SecretStr("umc_cp_x"))
-    assert control.url == DEFAULT_CONTROL_PLANE_URL
-
-
-def test_cloud_client_defaults_to_the_app_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    """CloudClient talks to the same control-plane base by default."""
-    seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen.append(str(request.url))
-        return httpx.Response(200, json=[])
-
-    monkeypatch.delenv("REMEMBER_CLOUD_URL", raising=False)
-    cloud = client_module.CloudClient(
-        token="umc_cp_x", org_id="org", transport=httpx.MockTransport(handler)
-    )
-    assert cloud.deployments() == []
-    assert seen == ["https://remember.dev/app/api/v1/orgs/org/deployments"]
-
-
-def test_login_resolves_the_app_api_without_token_host(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`remember login` needs no --token-host for remember.dev."""
-    from remember.cli import _resolved_token_host
-
-    for name in (
-        "REMEMBER_CONTROL_PLANE_URL",
-        "REMEMBER_TOKEN_HOST",
-        "REMEMBERSTACK_TOKEN_HOST",
-    ):
-        monkeypatch.delenv(name, raising=False)
-    assert _resolved_token_host(explicit=None) == "https://remember.dev/app/api"

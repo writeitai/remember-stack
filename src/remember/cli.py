@@ -14,49 +14,66 @@ from importlib import import_module
 import json
 from pathlib import Path
 import sys
-from typing import Any
-from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 from uuid import UUID
 
 import httpx
+from pydantic import AliasChoices
+from pydantic import Field
 from pydantic import JsonValue
-from pydantic import SecretStr
+from pydantic_settings import BaseSettings
+from pydantic_settings import SettingsConfigDict
 
 from remember import __version__
 from remember.client import MemoryApiError
 from remember.client import MemoryClient
+from remember.connection import Connection
 from remember.credentials import CredentialError
-from remember.credentials import DEFAULT_CONTROL_PLANE_URL
+from remember.credentials import DurabilityUnconfirmed
+from remember.errors import StoredKeyRefused
+from remember.issuer import DEFAULT_ISSUER
+from remember.issuer import fetch_issuer_metadata
+from remember.issuer import same_origin
 from remember.models import ConnectorCreate
-from remember.remote_mcp import RemoteOperationMcpServer
-from remember.remote_mcp import serve_mcp_stdio
 
-if TYPE_CHECKING:
-    from remember.credentials import CredentialFile
+
+class _InternalOpsSettings(BaseSettings):
+    """Whether ``remember ops`` is enabled.
+
+    The engine image sets it, so ``docker compose exec api remember ops`` works
+    as-is. A client install leaves it unset: ``ops`` needs the server
+    dependencies and the deployment's database, which only the engine has.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    internal_ops: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "REMEMBERSTACK_INTERNAL_OPS", "REMEMBER_INTERNAL_OPS"
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     """The ``remember`` entry point; returns the process exit code."""
     from pydantic import ValidationError
 
-    from remember.credentials import CliClientEnv
-
     parser: argparse.ArgumentParser | None = None
     try:
-        _warn_if_revocation_outstanding()
+        _settle_journal()
         effective_argv = list(sys.argv[1:] if argv is None else argv)
+        internal_ops = _InternalOpsSettings.model_validate({}).internal_ops
         if effective_argv:
             subcmd = effective_argv[0]
-            if subcmd == "ops":
-                env = CliClientEnv.model_validate({})
-                if not env.internal_ops:
-                    print(
-                        "error: 'remember ops' is confined to internal container environments. "
-                        "For developer operations, use 'remember operations list|run'. See https://remember.dev/docs",
-                        file=sys.stderr,
-                    )
-                    return 1
+            if subcmd == "ops" and not internal_ops:
+                print(
+                    "error: 'remember ops' runs inside the engine container, "
+                    "for example 'docker compose exec api remember ops inspect "
+                    "--deployment <id>'. From a client, use "
+                    "'remember operations list|run'.",
+                    file=sys.stderr,
+                )
+                return 1
             if subcmd == "query":
                 known_query_subcmds = {
                     "text",
@@ -76,42 +93,29 @@ def main(argv: list[str] | None = None) -> int:
                 if not has_subcmd and not has_help:
                     effective_argv.insert(1, "text")
 
-        env = CliClientEnv.model_validate({})
-        parser = _build_parser(include_internal_ops=env.internal_ops)
+        parser = _build_parser(include_internal_ops=internal_ops)
         args = parser.parse_args(effective_argv)
 
-        if args.command == "setup":
-            return _run_setup(args)
-        if args.command == "doctor":
-            return _run_doctor(args)
-        if args.command == "whoami":
-            return _run_whoami(args)
-        if args.command in ("balance", "billing"):
-            return _run_balance(args)
-        if args.command == "projects":
-            return _run_projects(args)
-        if args.command == "switch":
-            return _run_switch(args)
-        if args.command == "members":
-            return _run_members(args)
-        if args.command == "ops":
-            return _run_ops(args)
-        if args.command == "operations":
-            return _run_operations(args)
-        if args.command == "query":
-            return _run_query(args)
-        if args.command == "ingest":
-            return _run_ingest(args)
-        if args.command == "documents":
-            return _run_documents(args)
-        if args.command == "connectors":
-            return _run_connectors(args)
-        if args.command == "mcp":
-            return _run_mcp(args)
-        if args.command == "login":
-            return _run_login(args)
-        if args.command == "logout":
-            return _run_logout(args)
+        handlers = {
+            "setup": _run_setup,
+            "doctor": _run_doctor,
+            "whoami": _run_whoami,
+            "switch": _run_switch,
+            "ops": _run_ops,
+            "operations": _run_operations,
+            "query": _run_query,
+            "ingest": _run_ingest,
+            "documents": _run_documents,
+            "connectors": _run_connectors,
+            "mcp": _run_mcp,
+            "login": _run_login,
+            "logout": _run_logout,
+        }
+        handler = handlers.get(args.command)
+        if handler is not None:
+            return handler(args)
+    except KeyboardInterrupt:
+        return 130
     except ValidationError as error:
         errors = error.errors()
         if errors:
@@ -125,12 +129,17 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"error: Invalid environment configuration: {error}", file=sys.stderr)
         return 1
+    except StoredKeyRefused as error:
+        print(f"error: {error.detail}", file=sys.stderr)
+        return 2
     except (
         MemoryApiError,
         CredentialError,
+        DurabilityUnconfirmed,
         httpx.InvalidURL,
         httpx.RequestError,
         ValueError,
+        OSError,
     ) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -139,87 +148,27 @@ def main(argv: list[str] | None = None) -> int:
     return 2
 
 
-def _get_active_endpoint(args: argparse.Namespace) -> str:
-    """Return the currently configured or stored data-plane endpoint URL."""
-    from remember.credentials import CliClientEnv
-    from remember.credentials import load_credentials
+def _issuer_http() -> httpx.Client:
+    """The HTTP client for issuer calls: no automatic redirects (same-origin only)."""
+    return httpx.Client(timeout=30.0, follow_redirects=False)
+
+
+def _settle_journal() -> None:
+    """Retry journalled revocations at CLI start (D136 §8.4).
+
+    Costs nothing unless a previous login left a replaced key unrevoked.
+    """
+    from remember.credentials import credential_lock
+    from remember.credentials import load_pending_revocations
+    from remember.login import retry_journal
 
     try:
-        stored = load_credentials()
-    except CredentialError:
-        stored = None
-
-    env = CliClientEnv.model_validate({})
-    api_url = (
-        getattr(args, "api_url", None)
-        or env.api_url
-        or (stored.active_data_plane_url if stored else None)
-    )
-    return api_url or "http://localhost:8000"
-
-
-def _self_hosted_notice(args: argparse.Namespace) -> str:
-    """Format an informative notice explaining self-hosted engine boundaries."""
-    url = _get_active_endpoint(args)
-    return (
-        f"Note: You are connected to a self-hosted engine ({url}). "
-        "Projects, team members, and billing are cloud-managed services on remember.dev."
-    )
-
-
-def _is_local_host(url: str | None) -> bool:
-    if not url:
-        return False
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return (
-        host in ("localhost", "127.0.0.1", "0.0.0.0", "::1")
-        or host.endswith(".local")
-        or (parsed.port == 8000 and not host.endswith("remember.dev"))
-    )
-
-
-def _is_cloud_host(url: str | None) -> bool:
-    if not url:
-        return False
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return host == "remember.dev" or host.endswith(".remember.dev")
-
-
-def _is_self_hosted(args: argparse.Namespace) -> bool:
-    """True when explicitly flagged or pointing at a self-hosted instance without cloud credentials."""
-    if getattr(args, "self_hosted", False):
-        return True
-    from remember.credentials import CliClientEnv
-    from remember.credentials import load_credentials
-
-    try:
-        stored = load_credentials()
-    except CredentialError:
-        stored = None
-
-    env = CliClientEnv.model_validate({})
-    explicit_target = getattr(args, "api_url", None) or env.api_url
-    if explicit_target:
-        return _is_local_host(explicit_target)
-
-    if stored is not None:
-        if stored.control_plane is not None:
-            return False
-        active_url = stored.active_data_plane_url or stored.api_url
-        if _is_local_host(active_url):
-            return True
-        if _is_cloud_host(active_url) or _is_cloud_host(stored.token_host):
-            return False
-        if (
-            active_url
-            and stored.token_host
-            and active_url.rstrip("/") == stored.token_host.rstrip("/")
-        ):
-            return True
-
-    return False
+        if not load_pending_revocations().entries:
+            return
+        with credential_lock(), _issuer_http() as http:
+            retry_journal(http=http)
+    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
+        print(f"warning: {error}", file=sys.stderr)
 
 
 def _run_setup(args: argparse.Namespace) -> int:
@@ -238,7 +187,6 @@ def _run_doctor(args: argparse.Namespace) -> int:
     import shutil
     import time
 
-    from remember.credentials import CliClientEnv
     from remember.credentials import credentials_path
     from remember.credentials import load_credentials
     from remember.setup import get_claude_desktop_config_path
@@ -263,541 +211,131 @@ def _run_doctor(args: argparse.Namespace) -> int:
 
     # 2. Stored credentials
     cred_file = credentials_path()
-    stored = None
     try:
         stored = load_credentials()
-    except Exception as err:
-        print(f"[!] Credential file unreadable at {cred_file}: {err}")
+    except CredentialError as err:
+        print(f"[!] {err}")
+        stored = None
         all_ok = False
-
-    active_token: str | None = None
-    active_proj: str | None = None
-    if stored is not None:
-        import os
-
-        perms_ok = True
-        if os.name == "posix" and cred_file.is_file():
-            mode = cred_file.stat().st_mode & 0o777
-            if mode != 0o600:
-                print(f"[!] Permissions on {cred_file} are {oct(mode)} (expected 0600)")
-                perms_ok = False
-        if perms_ok:
-            print(f"[✓] Configuration: {cred_file} (0600)")
-        else:
-            print(f"[!] Configuration: {cred_file} (insecure file mode)")
-
-        if stored.control_plane and stored.control_plane.email:
-            print(
-                f"    Identity: {stored.control_plane.email} (org: {stored.control_plane.org_id})"
-            )
-        active_proj = stored.active_project_id or (
-            str(stored.deployment_id) if stored.deployment_id else "default"
-        )
-        print(f"    Active Project: {active_proj}")
-        active_token = stored.get_active_project_token()
-        if stored.expires_at:
-            print(f"    Expires: {stored.expires_at.isoformat()}")
-    else:
+    if stored is None:
+        print(f"[-] No stored credentials at {cred_file}")
+    elif stored.issuer:
+        expires = stored.expires_at.isoformat() if stored.expires_at else "unknown"
         print(
-            f"[-] No stored credentials at {cred_file}. Run 'remember login' for cloud access."
+            f"[✓] Signed in to {stored.issuer} (key {stored.key_id}, expires {expires})"
         )
+    else:
+        print(f"[✓] Self-hosted engine stored: {stored.api_url}")
 
-    # 3. Data plane connectivity & authentication
-    explicit_token = getattr(args, "token", None) or getattr(
-        args, "api_authorization", None
-    )
-    api_url = getattr(args, "api_url", None)
-    if not api_url:
-        api_url = CliClientEnv.model_validate({}).api_url
-    if not api_url and stored:
-        api_url = stored.active_data_plane_url or stored.api_url
-    if not api_url:
-        api_url = "http://127.0.0.1:8000"
-
-    # Strictly verify scheme and origin before attaching ambient data-plane token
-    token_for_request: str | None = None
-    if explicit_token:
-        token_for_request = explicit_token
-    elif active_token and stored:
-        stored_url = stored.active_data_plane_url or stored.api_url
-        if stored_url:
-            target_parsed = urlparse(api_url)
-            stored_parsed = urlparse(stored_url)
-            if (
-                target_parsed.scheme == stored_parsed.scheme
-                and target_parsed.netloc == stored_parsed.netloc
-            ):
-                token_for_request = active_token
-
-    print(f"Checking data plane at {api_url}...")
-    headers = (
-        {"Authorization": f"Bearer {token_for_request}"} if token_for_request else {}
-    )
+    # 3. Engine connectivity and authentication, resolved like every command
     try:
-        start_t = time.perf_counter()
-        with httpx.Client(base_url=api_url, timeout=5.0) as client:
-            resp = client.get("/deployment", headers=headers)
+        with MemoryClient(
+            api_key=getattr(args, "api_key", None),
+            base_url=getattr(args, "api_url", None),
+            project=getattr(args, "project", None),
+            timeout=5.0,
+        ) as client:
+            start_t = time.perf_counter()
+            info = client.deployment_build_info()
             elapsed = int((time.perf_counter() - start_t) * 1000)
-            if resp.status_code == 200:
-                print(f"[✓] Data plane reachable ({elapsed}ms, HTTP 200 OK)")
-                if token_for_request:
-                    print(f"[✓] Authentication: Valid session (project: {active_proj})")
-                elif active_token:
-                    print(
-                        "[-] Authentication: Ambient token omitted (target origin does not match stored project URL)"
-                    )
-            elif resp.status_code in (401, 403):
-                print(
-                    f"[!] Authentication failed: HTTP {resp.status_code} (token invalid or missing scope)"
-                )
-                all_ok = False
-            else:
-                resp_health = client.get("/healthz")
-                if resp_health.status_code == 200:
-                    print(
-                        f"[✓] Data plane reachable ({elapsed}ms, unauthenticated healthz OK)"
-                    )
-                else:
-                    print(f"[!] Data plane answered HTTP {resp.status_code}")
-                    all_ok = False
-    except Exception as err:
-        print(f"[!] Data plane unreachable: {err}")
-        if "127.0.0.1" in api_url or "localhost" in api_url:
-            print(
-                "    (Self-hosted engine is not running locally. Start it with docker compose up)"
-            )
+        print(
+            f"[✓] Engine reachable and authenticated ({elapsed}ms, "
+            f"build {info.build_revision or 'unknown'})"
+        )
+        for line in _tool_version_mismatches(info.tools):
+            print(f"[!] {line}")
+            all_ok = False
+    except (MemoryApiError, CredentialError, ValueError) as err:
+        print(f"[!] Engine check failed: {err}")
         all_ok = False
 
     # 4. Harness configurations & syntax validation
-    import json
-    import os
-    import tomllib
-
     print("\nCoding Agent Harnesses:")
-
-    def _is_executable(cmd: str | None) -> bool:
-        if not cmd:
-            return False
-        return bool(shutil.which(cmd)) or (
-            Path(cmd).is_file() and os.access(cmd, os.X_OK)
-        )
-
-    cursor_mcp = Path.cwd() / ".cursor" / "mcp.json"
-    if cursor_mcp.is_file():
-        try:
-            cdata = json.loads(cursor_mcp.read_text(encoding="utf-8"))
-            if "mcpServers" in cdata and "remember" in cdata["mcpServers"]:
-                entry = cdata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Cursor: configured and launcher verified ({cursor_mcp})"
-                    )
-                else:
-                    print(
-                        f"[!] Cursor: launcher command '{cmd}' not found or not executable ({cursor_mcp})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Cursor: valid JSON but missing 'remember' MCP server ({cursor_mcp})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Cursor: malformed JSON in {cursor_mcp}: {err}")
-            all_ok = False
-    else:
-        print(
-            "[-] Cursor: not configured in this directory (run 'remember setup --agent cursor')"
-        )
-
-    agy_mcp = Path.cwd() / ".agents" / "mcp_config.json"
-    if agy_mcp.is_file():
-        try:
-            adata = json.loads(agy_mcp.read_text(encoding="utf-8"))
-            if "mcpServers" in adata and "remember" in adata["mcpServers"]:
-                entry = adata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Antigravity: configured and launcher verified ({agy_mcp})"
-                    )
-                else:
-                    print(
-                        f"[!] Antigravity: launcher command '{cmd}' not found or not executable ({agy_mcp})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Antigravity: valid JSON but missing 'remember' MCP server ({agy_mcp})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Antigravity: malformed JSON in {agy_mcp}: {err}")
-            all_ok = False
-    else:
-        print(
-            "[-] Antigravity: not configured in this directory (run 'remember setup --agent agy')"
-        )
-
-    codex_cfg = Path.cwd() / ".codex" / "config.toml"
-    if codex_cfg.is_file():
-        try:
-            tdata = tomllib.loads(codex_cfg.read_text(encoding="utf-8"))
-            if "mcp_servers" in tdata and "remember" in tdata["mcp_servers"]:
-                entry = tdata["mcp_servers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(f"[✓] Codex: configured and launcher verified ({codex_cfg})")
-                else:
-                    print(
-                        f"[!] Codex: launcher command '{cmd}' not found or not executable ({codex_cfg})"
-                    )
-                    all_ok = False
-            else:
-                print(
-                    f"[!] Codex: valid TOML but missing [mcp_servers.remember] ({codex_cfg})"
-                )
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Codex: malformed TOML in {codex_cfg}: {err}")
-            all_ok = False
-    else:
-        print("[-] Codex: not configured in this directory")
-
-    claude_cfg = get_claude_desktop_config_path()
-    if claude_cfg.is_file():
-        try:
-            cldata = json.loads(claude_cfg.read_text(encoding="utf-8"))
-            if "mcpServers" in cldata and "remember" in cldata["mcpServers"]:
-                entry = cldata["mcpServers"]["remember"]
-                cmd = entry.get("command") if isinstance(entry, dict) else None
-                if _is_executable(cmd):
-                    print(
-                        f"[✓] Claude Desktop: configured and launcher verified ({claude_cfg})"
-                    )
-                else:
-                    print(
-                        f"[!] Claude Desktop: launcher command '{cmd}' not found or not executable ({claude_cfg})"
-                    )
-                    all_ok = False
-            else:
-                print(f"[!] Claude Desktop: missing 'remember' server ({claude_cfg})")
-                all_ok = False
-        except Exception as err:
-            print(f"[!] Claude Desktop: malformed JSON in {claude_cfg}: {err}")
-            all_ok = False
-    else:
-        print(f"[-] Claude Desktop: not detected at {claude_cfg}")
+    harness_files = (
+        (
+            "Cursor",
+            Path.cwd() / ".cursor" / "mcp.json",
+            "remember setup --agent cursor",
+        ),
+        (
+            "Antigravity",
+            Path.cwd() / ".agents" / "mcp_config.json",
+            "remember setup --agent agy",
+        ),
+        (
+            "Codex",
+            Path.cwd() / ".codex" / "config.toml",
+            "remember setup --agent codex",
+        ),
+        ("Claude Desktop", get_claude_desktop_config_path(), None),
+    )
+    for label, path, hint in harness_files:
+        ok, line = _check_harness_file(label=label, path=path, hint=hint)
+        print(line)
+        all_ok = all_ok and ok
 
     print()
     return 0 if all_ok else 1
 
 
-def _run_whoami(args: argparse.Namespace) -> int:
-    """Display authenticated identity, organization, and current project (D108)."""
-    if _is_self_hosted(args):
-        endpoint = _get_active_endpoint(args)
-        print("Identity: self-hosted (local)")
-        print(f"Endpoint: {endpoint}")
-        print(_self_hosted_notice(args))
-        return 0
+def _check_harness_file(
+    *, label: str, path: Path, hint: str | None
+) -> tuple[bool, str]:
+    """One doctor line for a harness file's ``remember`` entry, and whether it passes."""
+    import json
+    import os
+    import shutil
+    import tomllib
 
-    from remember.credentials import load_credentials
-
-    stored = load_credentials()
-    if stored is None:
-        print(
-            "Not logged in. Run 'remember login' to authenticate with Remember Cloud."
-        )
-        return 1
-
-    if stored.control_plane is not None:
-        print(f"User ID: {stored.control_plane.user_id or 'unknown'}")
-        if stored.control_plane.email:
-            print(f"Email: {stored.control_plane.email}")
-        print(f"Organization ID: {stored.control_plane.org_id or 'unknown'}")
-    elif stored.org_id is not None:
-        print(f"Organization ID: {stored.org_id}")
-
-    active_proj = stored.active_project_id or (
-        str(stored.deployment_id) if stored.deployment_id else "default"
-    )
-    print(f"Active Project: {active_proj}")
-    endpoint = stored.active_data_plane_url or stored.api_url
-    print(f"Data Plane: {endpoint}")
-    return 0
-
-
-def _run_balance(args: argparse.Namespace) -> int:
-    """Fetch current credit balance and subscription status (D108)."""
-    if _is_self_hosted(args):
-        print(
-            f"error: Credit balance and subscription billing are cloud-managed services on remember.dev.\n{_self_hosted_notice(args)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    from remember.credentials import load_credentials
-
-    stored = load_credentials()
-    if (
-        stored is None
-        or stored.control_plane is None
-        or stored.control_plane.access_token is None
-    ):
-        print(
-            "error: Balance inspection requires an organization control-plane credential.\n"
-            "View real-time credit balance and manage subscriptions in the web console: https://remember.dev/app/billing",
-            file=sys.stderr,
-        )
-        return 1
-
-    control_plane_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
-    token = stored.control_plane.access_token.get_secret_value()
-    org_id = (
-        stored.control_plane.org_id
-        if stored.control_plane and stored.control_plane.org_id
-        else stored.org_id
-    )
-    endpoint = f"/v1/orgs/{org_id}/billing/status" if org_id else "/v1/billing/balance"
+    if not path.is_file():
+        if hint is None:
+            return True, f"[-] {label}: not detected at {path}"
+        return True, f"[-] {label}: not configured in this directory (run '{hint}')"
+    toml = path.suffix == ".toml"
     try:
-        with httpx.Client(base_url=control_plane_url, timeout=10.0) as client:
-            resp = client.get(endpoint, headers={"Authorization": f"Bearer {token}"})
-            if resp.status_code == 200:
-                data = resp.json()
-                balance = data.get("balance_credits", data.get("balance", "€0.00"))
-                status = data.get("billing_state", data.get("status", "Active"))
-                print(f"Current balance: €{balance} [{status}]")
-                return 0
-            else:
-                print(
-                    f"error: Control plane returned HTTP {resp.status_code}: {resp.text}",
-                    file=sys.stderr,
-                )
-                return 1
-    except Exception as exc:
-        print(
-            f"error: Failed to reach control plane at {control_plane_url}: {exc}",
-            file=sys.stderr,
-        )
-        return 1
+        text = path.read_text(encoding="utf-8")
+        data = tomllib.loads(text) if toml else json.loads(text)
+    except (OSError, ValueError) as error:
+        kind = "TOML" if toml else "JSON"
+        return False, f"[!] {label}: malformed {kind} in {path}: {error}"
+    servers = (
+        data.get("mcp_servers" if toml else "mcpServers")
+        if isinstance(data, dict)
+        else None
+    )
+    entry = servers.get("remember") if isinstance(servers, dict) else None
+    if not isinstance(entry, dict):
+        return False, f"[!] {label}: missing 'remember' MCP server ({path})"
+    url = entry.get("url")
+    if isinstance(url, str):
+        return True, f"[✓] {label}: remote entry for {url} ({path})"
+    command = entry.get("command")
+    executable = isinstance(command, str) and (
+        bool(shutil.which(command))
+        or (Path(command).is_file() and os.access(command, os.X_OK))
+    )
+    if executable:
+        return True, f"[✓] {label}: configured and launcher verified ({path})"
+    return (
+        False,
+        f"[!] {label}: launcher command '{command}' not found or not executable ({path})",
+    )
 
 
-def _run_projects(args: argparse.Namespace) -> int:
-    """Manage tenant projects in the active organization (D108)."""
-    if _is_self_hosted(args):
-        if args.projects_command == "list":
-            print(f"{'PROJECT ID':<36} {'NAME':<20} {'STATUS':<10} {'ACTIVE'}")
-            print(f"{'local':<36} {'self-hosted':<20} {'ready':<10} *")
-            print()
-            print(
-                "Note: Self-hosted engine operates in a single local project namespace.\n"
-                "Connect to Remember Cloud for multi-project tenant management: remember login"
-            )
-            return 0
-        if args.projects_command == "create":
-            print(
-                f"error: Multi-tenant project provisioning is not supported on a self-hosted engine.\n{_self_hosted_notice(args)}",
-                file=sys.stderr,
-            )
-            return 1
-        print(
-            f"error: Projects management is not supported in self-hosted mode.\n{_self_hosted_notice(args)}",
-            file=sys.stderr,
-        )
-        return 1
+def _run_whoami(args: argparse.Namespace) -> int:
+    """Print the stored key's claims (never calls the engine)."""
+    from remember.login import whoami
 
-    from remember.credentials import load_credentials
-
-    stored = load_credentials()
-
-    if args.projects_command == "list":
-        if stored is None:
-            print(
-                "error: Not authenticated. Run 'remember login' to authenticate with Remember Cloud.",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"{'PROJECT ID':<36} {'NAME':<20} {'STATUS':<10} {'ACTIVE'}")
-
-        cp_attempted = False
-        cp_failed = False
-        cp_fail_reason = ""
-        # D108 / D56: If control plane credentials exist, query live deployments from control plane
-        if stored.control_plane and stored.control_plane.access_token:
-            cp_attempted = True
-            cp_url = stored.control_plane.url or DEFAULT_CONTROL_PLANE_URL
-            token = stored.control_plane.access_token.get_secret_value()
-            org_id = stored.control_plane.org_id or stored.org_id
-            endpoint = f"/v1/orgs/{org_id}/deployments" if org_id else "/v1/deployments"
-            try:
-                with httpx.Client(base_url=cp_url, timeout=5.0) as client:
-                    resp = client.get(
-                        endpoint, headers={"Authorization": f"Bearer {token}"}
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        items: list[Any] = []
-                        if isinstance(data, list):
-                            items = data
-                        elif isinstance(data, dict):
-                            raw_items = (
-                                data.get("deployments") or data.get("projects") or []
-                            )
-                            if isinstance(raw_items, list):
-                                items = raw_items
-                        for item in items:
-                            pid = str(
-                                item.get("project_id")
-                                or item.get("id")
-                                or item.get("deployment_id")
-                                or ""
-                            )
-                            name = str(item.get("name") or item.get("label") or pid[:8])
-                            state = str(
-                                item.get("state") or item.get("status") or "ready"
-                            )
-                            is_act = "*" if pid == stored.active_project_id else " "
-                            print(f"{pid:<36} {name:<20} {state:<10} {is_act}")
-                        return 0
-                    else:
-                        cp_failed = True
-                        cp_fail_reason = f"HTTP {resp.status_code}"
-            except Exception as exc:
-                cp_failed = True
-                cp_fail_reason = str(exc)
-
-        if stored.projects:
-            for pid, p in stored.projects.items():
-                active_marker = "*" if pid == stored.active_project_id else " "
-                print(f"{pid:<36} {p.name:<20} {'ready':<10} {active_marker}")
-        elif stored.deployment_id:
-            active_marker = "*"
-            name = stored.label or "default"
-            print(
-                f"{str(stored.deployment_id):<36} {name:<20} {'ready':<10} {active_marker}"
-            )
-        if cp_failed:
-            print(
-                f"\nWarning: Could not fetch live projects from control plane ({cp_fail_reason}); showing locally cached projects.",
-                file=sys.stderr,
-            )
-        elif not cp_attempted:
-            print()
-            print(
-                "Note: Showing locally cached projects. For live organization discovery, run: remember login --control-plane"
-            )
-        return 0
-
-    if args.projects_command == "create":
-        name = args.name
-        print(
-            f"error: Project pods cannot be provisioned via the CLI data-plane session.\n"
-            f"Administrative provisioning and pod sizing take place in the web console:\n"
-            f"  https://remember.dev/app/projects\n\n"
-            f"After creating project '{name}' in the console, authenticate and link it locally:\n"
-            f"  remember login",
-            file=sys.stderr,
-        )
-        return 1
-
-    return 0
+    with _issuer_http() as http:
+        return whoami(http=http)
 
 
 def _run_switch(args: argparse.Namespace) -> int:
-    """Switch the default active project in local configuration (D108)."""
-    if _is_self_hosted(args):
-        print(
-            f"error: Project switching is not applicable to a self-hosted engine.\n{_self_hosted_notice(args)}",
-            file=sys.stderr,
-        )
-        return 1
+    """Set the stored default project after resolving it once."""
+    from remember.login import switch
 
-    from remember.credentials import load_credentials
-    from remember.credentials import write_credentials
-
-    stored = load_credentials()
-    if stored is None:
-        print(
-            "Not logged in. Run 'remember login' to authenticate with Remember Cloud."
-        )
-        return 1
-
-    target = args.project
-    found_id = None
-    if stored.projects:
-        for pid, p in stored.projects.items():
-            if pid == target or p.name == target:
-                found_id = pid
-                break
-    if found_id is None:
-        if target == str(stored.deployment_id) or target == stored.label:
-            found_id = str(stored.deployment_id)
-    if found_id is None:
-        print(
-            f"error: project '{target}' not found. Run 'remember projects list' to view available projects.",
-            file=sys.stderr,
-        )
-        return 1
-
-    updates: dict[str, object] = {"active_project_id": found_id}
-    if stored.projects and found_id in stored.projects:
-        p = stored.projects[found_id]
-        updates["api_url"] = p.data_plane_url
-        updates["access_token"] = p.data_plane_token
-        updates["label"] = p.name
-        if p.deployment_id is not None:
-            updates["deployment_id"] = p.deployment_id
-        else:
-            try:
-                updates["deployment_id"] = UUID(found_id)
-            except (ValueError, AttributeError):
-                pass
-        if p.token_host is not None:
-            updates["token_host"] = p.token_host
-        if p.token_id is not None:
-            updates["token_id"] = p.token_id
-        else:
-            from uuid import uuid4
-
-            updates["token_id"] = uuid4()
-        updates["expires_at"] = p.expires_at
-
-    new_stored = stored.model_copy(update=updates)
-    write_credentials(credential=new_stored)
-    print(f"[✓] Switched active project to '{target}' ({found_id})")
-    return 0
-
-
-def _run_members(args: argparse.Namespace) -> int:
-    """Manage team organization seats (D108)."""
-    if _is_self_hosted(args):
-        print(
-            f"error: Team member and seat administration are cloud-managed services on remember.dev.\n{_self_hosted_notice(args)}",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.members_command == "list":
-        print(
-            "error: Organization team members and access roles require web console administration.\n"
-            "Manage team members in the web console: https://remember.dev/app/team",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.members_command == "invite":
-        raw_role = getattr(args, "role", "member") or "member"
-        role_name = raw_role.lower()
-        print(
-            f"error: Team seat invitations cannot be dispatched via the CLI data-plane session.\n"
-            f"Please visit the web console to invite {args.email} ({role_name}):\n"
-            f"  https://remember.dev/app/team",
-            file=sys.stderr,
-        )
-        return 1
-
+    with _issuer_http() as http:
+        switch(project=args.project, http=http)
     return 0
 
 
@@ -1148,14 +686,136 @@ def _run_connectors(args: argparse.Namespace) -> int:
     return 0
 
 
+def _tool_version_mismatches(served: dict[str, int]) -> list[str]:
+    """Catalogue tools the engine serves at another version (hidden by `remember mcp`)."""
+    from remember.mcp_tools import memory_tools
+
+    lines: list[str] = []
+    for definition in memory_tools():
+        version = served.get(definition.name)
+        if version is None or version == definition.tool_version:
+            continue
+        newer = "remember" if version > definition.tool_version else "the engine"
+        lines.append(
+            f"MCP tool {definition.name!r}: this remember has version"
+            f" {definition.tool_version}, the engine serves {version}; `remember mcp`"
+            f" leaves it out until you upgrade {newer}"
+        )
+    return lines
+
+
 def _run_mcp(args: argparse.Namespace) -> int:
-    """Expose the remote assured operations and open retrieval tools over MCP."""
+    """Serve memory tools over MCP: engine mode (stdio or HTTP) or bridge mode.
+
+    Bridge mode is chosen by a remote MCP URL (``--remote-url``,
+    ``REMEMBER_MCP_URL``, or the signed key's issuer's
+    ``remember_mcp_endpoint`` when no engine URL is given); an explicit engine
+    URL (``--api-url``, ``REMEMBER_API_URL``) always means engine mode.
+    """
+    from remember.connection import DEFAULT_API_URL
+    from remember.connection import resolve_connection
+
+    connection = resolve_connection(
+        api_key=args.api_key,
+        api_url=args.api_url,
+        project=args.project,
+        mcp_url=args.remote_url,
+    )
+    explicit_engine = connection.api_url_source in ("explicit", "environment")
+    if connection.mcp_url and explicit_engine:
+        return _usage_error(
+            "give either an engine URL (--api-url / REMEMBER_API_URL) or a remote"
+            " MCP URL (--remote-url / REMEMBER_MCP_URL), not both"
+        )
+    if args.transport == "http":
+        if connection.mcp_url:
+            return _usage_error(
+                "--transport http serves an engine; an HTTP client should connect"
+                f" to the remote MCP URL {connection.mcp_url} directly"
+            )
+        if args.api_key or args.project:
+            return _usage_error(
+                "--transport http holds no key: each caller's Authorization"
+                " header is forwarded to the engine. Drop --api-key/--project"
+            )
+        if connection.api_url is None and connection.claims is not None:
+            return _usage_error(
+                "--transport http needs the engine URL: pass --api-url or set"
+                " REMEMBER_API_URL"
+            )
+        from remember.mcp_http import serve_http
+
+        return serve_http(
+            bind=args.bind,
+            engine_url=connection.api_url or DEFAULT_API_URL,
+            read_only=bool(args.read_only),
+        )
+    remote_url = connection.mcp_url
+    if remote_url is None and not explicit_engine and connection.claims is not None:
+        with _issuer_http() as http:
+            remote_url = fetch_issuer_metadata(
+                connection.claims.iss, http=http
+            ).remember_mcp_endpoint
+    if remote_url is not None:
+        return _run_mcp_bridge(args, connection=connection, remote_url=remote_url)
+    from remember.mcp_engine import EngineMcpServer
+    from remember.mcp_engine import serve_stdio
+
     with _cli_memory_client(args) as client:
-        return serve_mcp_stdio(
-            server=RemoteOperationMcpServer(
-                client=client, read_only=bool(args.read_only)
+        return serve_stdio(
+            server=EngineMcpServer(
+                client=client, read_only=bool(args.read_only), path_ingest=True
             )
         )
+
+
+def _run_mcp_bridge(
+    args: argparse.Namespace, *, connection: Connection, remote_url: str
+) -> int:
+    """Relay stdio to ``remote_url`` with the resolved key (D136 §5.3)."""
+    from remember.mcp_bridge import McpBridge
+
+    if args.project:
+        return _usage_error(
+            "--project applies to engine mode; through a remote MCP endpoint the"
+            " agent names the project per call (the `project` tool argument)"
+        )
+    if connection.key is None:
+        return _usage_error(
+            "bridge mode needs a key: run `remember login`, or set REMEMBER_API_KEY"
+        )
+    if connection.key_source == "file":
+        issuer = (
+            connection.claims.iss
+            if connection.claims is not None
+            else (connection.stored.issuer if connection.stored else None)
+        )
+        advertised = None
+        if issuer is not None:
+            with _issuer_http() as http:
+                advertised = fetch_issuer_metadata(
+                    issuer, http=http
+                ).remember_mcp_endpoint
+        if advertised is None or not same_origin(remote_url, advertised):
+            raise StoredKeyRefused(
+                detail=(
+                    f"the stored key is not sent to {remote_url}: it goes only to"
+                    " the MCP endpoint its issuer advertises. Pass the key"
+                    " explicitly (--api-key or REMEMBER_API_KEY) to use it there"
+                )
+            )
+    _warn_if_expiring()
+    bridge = McpBridge(
+        url=remote_url,
+        key=connection.key.get_secret_value(),
+        read_only=bool(args.read_only),
+    )
+    return bridge.run()
+
+
+def _usage_error(message: str) -> int:
+    print(f"error: {message}", file=sys.stderr)
+    return 2
 
 
 def operations_list(*, client: httpx.Client) -> int:
@@ -1188,770 +848,75 @@ def operations_run(*, client: httpx.Client, name: str, arg_pairs: list[str]) -> 
 
 
 def _cli_memory_client(args: argparse.Namespace) -> MemoryClient:
-    """Resolve CLI credentials: flags, then env, then the file, then SDK defaults.
-
-    ``MemoryClient.from_settings`` is used when nothing CLI-specific is set so
-    existing tests that patch that factory keep working.
-    """
-    from remember.credentials import authorization_header
-    from remember.credentials import CliClientEnv
-    from remember.credentials import CredentialError
-    from remember.credentials import load_credentials
-
-    flag_url = getattr(args, "api_url", None)
-    flag_token = getattr(args, "token", None)
-    env = CliClientEnv.model_validate({})
-    need_file = (flag_url is None and env.api_url is None) or (
-        flag_token is None and env.api_authorization is None
-    )
-    stored = None
-    if need_file:
-        try:
-            stored = load_credentials()
-        except CredentialError as error:
-            raise MemoryApiError(status_code=0, detail=str(error)) from error
-        if stored is not None:
-            _warn_if_expiring(credential=stored)
-    if (
-        flag_url is None
-        and flag_token is None
-        and env.api_url is None
-        and env.api_authorization is None
-        and stored is None
-    ):
-        return MemoryClient.from_settings()
-
-    from urllib.parse import urlparse
-
-    explicit_target = flag_url or (env.api_url if env.api_url is not None else None)
-    api_url = explicit_target or (
-        stored.active_data_plane_url if stored is not None else None
-    )
-    raw_token = flag_token
-    if raw_token is None and env.api_authorization is not None:
-        raw_token = env.api_authorization.get_secret_value()
-    if raw_token is None and stored is not None:
-        if explicit_target is None:
-            active_tok = stored.active_data_plane_token or stored.access_token
-            if active_tok is not None:
-                raw_token = active_tok.get_secret_value()
-        else:
-            target_parsed = urlparse(explicit_target)
-            stored_url = stored.active_data_plane_url or stored.api_url
-            stored_parsed = urlparse(stored_url) if stored_url else None
-            if (
-                stored_parsed
-                and target_parsed.scheme == stored_parsed.scheme
-                and target_parsed.netloc == stored_parsed.netloc
-            ):
-                active_tok = stored.active_data_plane_token or stored.access_token
-                if active_tok is not None:
-                    raw_token = active_tok.get_secret_value()
+    """The memory client for a command: flags, then environment, then the file."""
+    _warn_if_expiring()
     return MemoryClient(
-        base_url=api_url,
-        authorization=authorization_header(token=raw_token) if raw_token else None,
+        api_key=getattr(args, "api_key", None),
+        base_url=getattr(args, "api_url", None),
+        project=getattr(args, "project", None),
     )
 
 
-#: How long before a stored credential lapses the CLI starts saying so.
-#:
-#: A machine credential lives in configuration a human edits rarely, so the
-#: warning has to arrive far enough ahead that replacing it can be scheduled
-#: rather than done in a hurry — but not so far ahead that it becomes noise
-#: the operator learns to scroll past.
+#: How long before a stored key lapses the CLI starts saying so.
 _EXPIRY_WARNING_WINDOW = timedelta(days=30)
 
 
-def _warn_if_expiring(*, credential: CredentialFile) -> None:
-    """Say on stderr when the stored credential is close to, or past, its end.
+def _warn_if_expiring() -> None:
+    """Say on stderr when the stored key is close to, or past, its expiry."""
+    from remember.credentials import load_credentials
 
-    Written to stderr, never stdout: these commands print machine-readable
-    output that a script parses, and a warning in that stream would corrupt it.
-
-    A credential with no recorded expiry says nothing — the field is absent for
-    credentials issued before expiry existed, and silence is the honest answer
-    when we do not know.
-    """
-    if credential.expires_at is None:
+    try:
+        stored = load_credentials()
+    except CredentialError:
         return
-    expires_at = credential.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=UTC)
-    remaining = expires_at - datetime.now(tz=UTC)
+    if stored is None or stored.expires_at is None:
+        return
+    remaining = stored.expires_at - datetime.now(tz=UTC)
     if remaining <= timedelta(0):
         print(
-            f"warning: this credential expired on {expires_at.isoformat()}; "
+            f"warning: the stored key expired on {stored.expires_at.isoformat()}; "
             "run `remember login` to replace it",
             file=sys.stderr,
         )
-        return
-    if remaining <= _EXPIRY_WARNING_WINDOW:
+    elif remaining <= _EXPIRY_WARNING_WINDOW:
         print(
-            f"warning: this credential expires on {expires_at.isoformat()} "
+            f"warning: the stored key expires on {stored.expires_at.isoformat()} "
             f"({remaining.days}d); run `remember login` to replace it",
             file=sys.stderr,
         )
 
 
-def _warn_if_revocation_outstanding() -> None:
-    """Say that a superseded credential is still live, without calling out.
-
-    Ordinary commands do not retry the revoke: a query should not make an
-    unrelated network call to a token host the user did not ask about. Staying
-    silent about a live credential nobody is tracking would be worse than the
-    noise.
-    """
-    from remember.credentials import CredentialError
-    from remember.credentials import load_pending_revocations
-
-    try:
-        journal = load_pending_revocations()
-    except CredentialError as error:
-        print(f"warning: {error}", file=sys.stderr)
-        return
-    for pending in journal.entries:
-        print(
-            f"warning: a superseded credential (token_id {pending.token_id}) is "
-            "still live; run `remember login` or `remember logout` to retire it",
-            file=sys.stderr,
-        )
-
-
-def _resolved_token_host(
-    *, explicit: str | None, stored_host: str | None = None
-) -> str:
-    """Resolve flag, env, stored host, then the remember.dev control plane.
-
-    The token host is never derived from the query API URL.
-    """
-    from remember.credentials import TokenHostSettings
-    from remember.device_login import normalize_token_host
-
-    settings = TokenHostSettings.model_validate({})
-    host = explicit or settings.token_host or stored_host or DEFAULT_CONTROL_PLANE_URL
-    return normalize_token_host(token_host=host)
-
-
 def _run_login(args: argparse.Namespace) -> int:
-    """Device-grant login; writes the owner-only credential file.
-
-    Held under the credential lock end to end, so two concurrent logins cannot
-    each mint a replacement and overwrite the other's file — which would leave
-    one live credential with nothing on disk naming it.
-    """
-    from remember.credentials import credential_lock
-    from remember.credentials import CredentialError
-    from remember.credentials import DurabilityUnconfirmed
+    """RFC 8628 device login against the issuer; stores one key."""
+    from remember.connection import resolve_connection
+    from remember.issuer import IssuerError
+    from remember.login import login
 
     try:
-        with credential_lock():
-            return _login_locked(args)
-    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
-        # A lock we cannot take, a disk we cannot write, a sync we cannot
-        # confirm: all refusals, none of them crashes. These arise outside the
-        # login body — in the lock itself and in journal recovery — so the
-        # body's own catch never sees them, and the user got a traceback.
-        print(f"error: {error}", file=sys.stderr)
+        issuer = resolve_connection(issuer=args.issuer).issuer
+    except (CredentialError, ValueError):
+        # An unreadable file is what `remember login` replaces.
+        from remember.connection import environment_issuer
+
+        issuer = args.issuer or environment_issuer()
+    issuer = issuer or DEFAULT_ISSUER
+    try:
+        with _issuer_http() as http:
+            stored = login(issuer=issuer, http=http)
+    except IssuerError as error:
+        print(f"error: {error.detail}", file=sys.stderr)
         return 1
-
-
-def _login_locked(args: argparse.Namespace) -> int:
-    """The login itself, with the credential lock already held."""
-    from remember.credentials import append_pending_revocation
-    from remember.credentials import assert_revocation_capacity
-    from remember.credentials import CliClientEnv
-    from remember.credentials import credential_origin
-    from remember.credentials import CredentialError
-    from remember.credentials import drop_pending_revocation
-    from remember.credentials import DurabilityUnconfirmed
-    from remember.credentials import load_credentials
-    from remember.credentials import PendingRevocation
-    from remember.credentials import write_credentials
-    from remember.device_login import authorize_device
-    from remember.device_login import credential_from_token
-    from remember.device_login import DeviceGrantError
-    from remember.device_login import poll_device_token
-
-    # Login binds a newly minted deployment credential. Only the explicit flag
-    # may override that deployment's advertised host; a process-wide API URL
-    # can legitimately point at some other deployment.
-    api_url = args.api_url
-    try:
-        token_host = _resolved_token_host(explicit=args.token_host)
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
-    # Anything a previous run failed to retire is retried first, while its
-    # secret is still on disk and before this run writes its own journal entry.
-    _retry_pending_revocation()
-    try:
-        # Before minting, not after: a journal with no room left would otherwise
-        # be discovered when there is already a live credential to record.
-        assert_revocation_capacity()
-    except CredentialError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    existing = None
-    try:
-        existing = load_credentials()
-    except CredentialError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    try:
-        with httpx.Client(
-            base_url=token_host, timeout=30.0, follow_redirects=False
-        ) as client:
-            audience = getattr(args, "audience", "deployment")
-            granted = authorize_device(client=client, audience=audience)
-            print(f"verification_uri: {granted.verification_uri}")
-            print(f"verification_uri_complete: {granted.verification_uri_complete}")
-            print(f"user_code: {granted.user_code}")
-
-            def record(minted: object) -> None:
-                """Write the credential down the instant it exists.
-
-                Called from inside ``poll_device_token``, before the value is
-                visible here, because the boundary between that function
-                returning and this frame's next statement cannot be guarded —
-                an interrupt landing there left a live credential with nothing
-                naming it and no cleanup possible.
-
-                The entry is removed once the credential is adopted, so the
-                journal describes only credentials that still need retiring.
-
-                **If the record cannot be written, the credential is given back
-                here rather than left live.** This is the last point at which
-                anything knows the secret and can act on it: an interrupt or an
-                IO failure inside this function used to escape with the mint
-                untracked, and there was no later opportunity to notice.
-
-                The ``try`` is the **first** statement, and the attributes are
-                read inside it as arguments to the call it protects. Reading
-                them beforehand put three more bytecode boundaries outside the
-                protected region, and an interrupt at any of them escaped.
-                """
-                try:
-                    append_pending_revocation(
-                        pending=PendingRevocation(
-                            version=1,
-                            token_host=token_host,
-                            access_token=minted.access_token,  # type: ignore[attr-defined]
-                            token_id=minted.token_id,  # type: ignore[attr-defined]
-                        )
-                    )
-                except BaseException:
-                    # The handler's first statement, for the same reason.
-                    _withdraw_or_warn(token_host=token_host, minted=minted)
-                    raise
-
-            def orphaned(payload: object) -> None:
-                """Withdraw a credential that never became a usable one.
-
-                A ``200`` means the token host issued something, whatever
-                happened next — a body that would not parse, a validation
-                failure, an interrupt while recording. The raw body is the only
-                place its secret still exists, so this is the last chance to
-                give it back.
-                """
-                secret = (payload or {}).get("access_token")  # type: ignore[union-attr]
-                if not isinstance(secret, str) or not secret:
-                    return
-                if _revoke_now(token_host=token_host, secret=SecretStr(secret)):
-                    return
-                print(
-                    "warning: the token host issued a credential this login "
-                    "could not use or withdraw; revoke it in the console",
-                    file=sys.stderr,
-                )
-
-            token = poll_device_token(
-                client=client,
-                device_code=granted.device_code.get_secret_value(),
-                interval=granted.interval,
-                expires_in=granted.expires_in,
-                on_minted=record,
-                on_orphan=orphaned,
-            )
-            # From here the control plane has issued, so the **whole**
-            # adoption phase is guarded rather than each call in it: a Ctrl-C
-            # lands wherever it lands, and guarding the calls left the gaps
-            # between them — an interrupt after converting the response and
-            # before journalling produced a live bearer with no file, no
-            # journal entry, and no attempt to withdraw it.
-            # The new credential is already journalled by `record` above, so
-            # nothing below can lose it. What remains is to adopt it and, on
-            # success, take it back out of the journal — it is the current
-            # credential now, not one awaiting revocation.
-            predecessor_to_revoke: PendingRevocation | None = None
-            try:
-                try:
-                    credential = credential_from_token(
-                        token=token,
-                        api_url=api_url,
-                        token_host=token_host,
-                        existing=existing,
-                    )
-                except DeviceGrantError:
-                    # The poll already journalled the minted bearer. Retire it
-                    # now when possible; if the host cannot confirm that, the
-                    # journal keeps the only secret needed for a later retry.
-                    _retry_pending_revocation()
-                    raise
-                if existing is not None:
-                    is_cp_token = (
-                        getattr(token, "token_prefix", "") == "umc_cp"
-                        or getattr(token, "deployment_id", None) is None
-                    )
-                    if is_cp_token:
-                        if (
-                            existing.control_plane
-                            and existing.control_plane.access_token
-                        ):
-                            predecessor_to_revoke = PendingRevocation(
-                                version=1,
-                                token_host=existing.control_plane.url
-                                or existing.token_host,
-                                access_token=existing.control_plane.access_token,
-                                token_id=existing.control_plane.token_id
-                                or existing.token_id,
-                            )
-                    else:
-                        target_key = credential.active_project_id or (
-                            str(credential.deployment_id)
-                            if credential.deployment_id
-                            else None
-                        )
-                        if (
-                            target_key
-                            and existing.projects
-                            and target_key in existing.projects
-                        ):
-                            old_p = existing.projects[target_key]
-                            predecessor_to_revoke = PendingRevocation(
-                                version=1,
-                                token_host=old_p.token_host or existing.token_host,
-                                access_token=old_p.data_plane_token,
-                                token_id=old_p.token_id or existing.token_id,
-                            )
-                        elif (
-                            credential.deployment_id is not None
-                            and existing.deployment_id == credential.deployment_id
-                        ):
-                            predecessor_to_revoke = PendingRevocation(
-                                version=1,
-                                token_host=existing.token_host,
-                                access_token=existing.access_token,
-                                token_id=existing.token_id,
-                            )
-
-                if predecessor_to_revoke is not None:
-                    # Written before the file is overwritten, because
-                    # overwriting it destroys the only copy of the
-                    # predecessor's secret. A crash after this point leaves a
-                    # record of what still needs revoking; a crash before it
-                    # leaves the old credential intact and in use.
-                    append_pending_revocation(pending=predecessor_to_revoke)
-                # Three outcomes, and exactly the rule recovery follows:
-                #
-                #   confirmed      → the rename is durable; drop the record.
-                #   unconfirmable  → this filesystem can never tell us, so
-                #                    retrying achieves nothing and holding the
-                #                    record would occupy a slot forever. Drop
-                #                    it, and say the guarantee is weaker.
-                #   raised         → a real failure; keep the record and let
-                #                    the next command re-attempt the sync.
-                resolved = False
-                try:
-                    if not write_credentials(credential=credential):
-                        print(
-                            "warning: this filesystem cannot confirm that the "
-                            "credential file's rename is durable; a crash "
-                            "could lose it while the credential stays live",
-                            file=sys.stderr,
-                        )
-                    resolved = True
-                except DurabilityUnconfirmed as error:
-                    # The file *is* written and names the new credential, so
-                    # unwinding would revoke something the machine is using.
-                    # Only the record's fate differs.
-                    print(f"warning: {error}", file=sys.stderr)
-                if resolved:
-                    drop_pending_revocation(
-                        identity=(
-                            credential_origin(token_host=token_host),
-                            token.token_id,
-                        )
-                    )
-            except BaseException:
-                # Unless the hostname-refusal path above already retired the
-                # mint, its journal entry stays: the credential exists at the
-                # token host and the next login or logout will retire it.
-                # Nothing here has to succeed for that to hold.
-                raise
-    except KeyboardInterrupt:
-        return 130
-    except DeviceGrantError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return error.exit_code
-    except (
-        httpx.HTTPError,
-        CredentialError,
-        ValueError,
-        OSError,
-        DurabilityUnconfirmed,
-    ) as error:
-        # OSError included deliberately: a disk that cannot be written to
-        # during login is a failed login, not a crash. The credential has
-        # already been withdrawn or recorded by the time we get here.
-        print(f"error: login failed: {error}", file=sys.stderr)
-        return 1
-    else:
-        # The predecessor is revoked only now, with the replacement already on
-        # disk. Revoking first would mean a login interrupted at the browser
-        # step — a closed tab, an expired user code — leaves the machine with no
-        # credential at all, having destroyed the working one to make room.
-        if predecessor_to_revoke is not None:
-            _retry_pending_revocation()
-        is_cp_token = (
-            getattr(token, "token_prefix", "") == "umc_cp"
-            or getattr(token, "deployment_id", None) is None
-        )
-        if is_cp_token:
-            org_id = (
-                credential.control_plane.org_id if credential.control_plane else None
-            )
-            print("[✓] Authenticated with Remember Cloud organization control plane.")
-            if org_id:
-                print(f"org_id: {org_id}")
-            print(f"token_host: {credential.token_host}")
-            print("Run 'remember projects list' to view organization deployments.")
-        else:
-            print("[✓] Authenticated with Remember Cloud.")
-            if credential.deployment_id:
-                print(f"deployment_id: {credential.deployment_id}")
-            if credential.active_project_id:
-                print(f"active_project: {credential.active_project_id}")
-            print(f"token_prefix: {credential.token_prefix}")
-            print(f"token_host: {credential.token_host}")
-            print(f"api_url: {credential.api_url}")
-            if credential.expires_at is not None:
-                print(f"expires_at: {credential.expires_at.isoformat()}")
-            env_api_url = CliClientEnv.model_validate({}).api_url
-            if env_api_url and env_api_url != credential.api_url:
-                print(
-                    f"warning: REMEMBERSTACK_API_URL={env_api_url} overrides the "
-                    f"stored api_url {credential.api_url} for other commands; "
-                    "unset it to use this deployment",
-                    file=sys.stderr,
-                )
-        return 0
-
-
-def _withdraw_or_warn(*, token_host: str, minted: object) -> None:
-    """Give a credential back, and say so loudly when that fails.
-
-    The failure handler's first statement, so as little as possible sits
-    between something going wrong and the attempt to undo it.
-    """
-    secret = getattr(minted, "access_token", None)
-    if secret is not None and _revoke_now(token_host=token_host, secret=secret):
-        return
-    print(
-        "warning: a credential was minted but could neither be recorded nor "
-        f"withdrawn (token_id {getattr(minted, 'token_id', 'unknown')}); "
-        "revoke it in the console",
-        file=sys.stderr,
-    )
-
-
-def _revoke_now(*, token_host: str, secret: object) -> bool:
-    """Best-effort immediate revoke. True only when the host confirmed it."""
-    from remember.device_login import revoke_self
-
-    try:
-        with httpx.Client(
-            base_url=token_host,
-            timeout=_RECOVERY_TIMEOUT_SECONDS,
-            follow_redirects=False,
-        ) as client:
-            status = revoke_self(
-                client=client,
-                access_token=secret.get_secret_value(),  # type: ignore[attr-defined]
-            )
-    except BaseException:
-        return False
-    return _revoke_confirmed(status=status)
-
-
-def _retry_pending_revocation() -> None:
-    """Finish retiring a superseded credential, and say so when it cannot be.
-
-    Never fails the caller. The replacement is already written and working; a
-    predecessor left active is one credential too many, which is worth a loud
-    warning and a retry on the next login or logout, but is not worth telling
-    someone their login failed when it did not.
-
-    **Only a 2xx clears the journal, and a 401 besides.** The self-revoke route
-    answers 200 for the first revoke and for an idempotent repeat, so a 2xx is
-    genuine confirmation; a 401 means the token host no longer resolves that
-    bearer, which is the outcome we wanted by another name. Everything else —
-    a 404, which may mean the route is simply absent rather than the credential
-    gone; a 5xx; no response at all — confirms nothing, so the entry stays and
-    is retried.
-    """
-    from remember.credentials import confirm_credentials_durable
-    from remember.credentials import credential_origin
-    from remember.credentials import CredentialError
-    from remember.credentials import drop_pending_revocation
-    from remember.credentials import DurabilityUnconfirmed
-    from remember.credentials import load_credentials
-    from remember.credentials import load_pending_revocations
-    from remember.device_login import normalize_token_host
-    from remember.device_login import revoke_self
-
-    try:
-        journal = load_pending_revocations()
-    except CredentialError as error:
-        print(f"warning: {error}", file=sys.stderr)
-        return
-    if not journal.entries:
-        return
-    try:
-        current = load_credentials()
-    except CredentialError:
-        # The credential file cannot be read, so we cannot tell whether an
-        # entry names the credential still in use. Revoking blind could take
-        # away the only working one; say so and change nothing.
-        print(
-            "warning: credentials are unreadable, so outstanding revocations "
-            "were left alone",
-            file=sys.stderr,
-        )
-        return
-    active_identities: set[tuple[str, UUID | None]] = set()
-    if current is not None:
-        if current.token_id is not None:
-            active_identities.add(
-                (credential_origin(token_host=current.token_host), current.token_id)
-            )
-        if current.control_plane and current.control_plane.token_id is not None:
-            active_identities.add(
-                (
-                    credential_origin(
-                        token_host=current.control_plane.url or current.token_host
-                    ),
-                    current.control_plane.token_id,
-                )
-            )
-        if current.projects:
-            for p in current.projects.values():
-                if p.token_id is not None:
-                    host = p.token_host or current.token_host
-                    active_identities.add(
-                        (credential_origin(token_host=host), p.token_id)
-                    )
-
-    for pending in journal.entries:
-        if pending.identity in active_identities:
-            # A crash between writing the journal and writing the replacement
-            # leaves both naming the same credential. Revoking it here would
-            # destroy the only credential on this machine — so the entry is
-            # dropped instead: what it describes never happened.
-            #
-            # Reading `current` back proves the file is *visible*, which is
-            # not the same as its directory entry being on disk — a power loss
-            # can still lose the rename while every read here succeeds. So the
-            # sync is re-attempted, and only its success justifies forgetting
-            # the record. If it still cannot be confirmed the entry stays, and
-            # the next command tries again.
-            try:
-                confirmed = confirm_credentials_durable()
-            except DurabilityUnconfirmed:
-                # A real IO failure: the write may not have landed, so the
-                # record stays and the next command tries again.
-                continue
-            if not confirmed:
-                # This filesystem cannot sync a directory, so no amount of
-                # retrying will ever confirm anything and holding the record
-                # forever would achieve nothing but occupying a slot. Dropped,
-                # with the weaker guarantee said out loud rather than implied.
-                print(
-                    "warning: this filesystem cannot confirm that the "
-                    "credential file's rename is durable; a crash could lose "
-                    f"it while credential {pending.token_id} stays live",
-                    file=sys.stderr,
-                )
-            drop_pending_revocation(identity=pending.identity)
-            continue
-        try:
-            host = normalize_token_host(token_host=pending.token_host)
-            with httpx.Client(
-                base_url=host,
-                # Short, unlike an interactive request: this runs under the
-                # credential lock, and a handful of black-holed entries at the
-                # interactive timeout would hold a login up for minutes.
-                timeout=_RECOVERY_TIMEOUT_SECONDS,
-                follow_redirects=False,
-            ) as client:
-                sec = pending.access_token.get_secret_value()
-                p = (
-                    "/v1/control-tokens/self"
-                    if sec.startswith("umc_cp_")
-                    else "/v1/api-tokens/self"
-                )
-                status = revoke_self(client=client, access_token=sec, path=p)
-        except (ValueError, httpx.InvalidURL):
-            # A journal entry naming an unusable host can never be retried, and
-            # letting it raise would block every later entry behind it. Say so
-            # and move on; the entry stays, so the record is not lost.
-            print(
-                "warning: a superseded credential names an unusable token host "
-                f"(token_id {pending.token_id}); revoke it in the console",
-                file=sys.stderr,
-            )
-            continue
-        except httpx.HTTPError:
-            status = 0
-        if _revoke_confirmed(status=status):
-            drop_pending_revocation(identity=pending.identity)
-            continue
-        print(
-            "warning: a superseded credential is still live and could not be "
-            f"revoked (token_id {pending.token_id}, "
-            f"HTTP {status or 'no response'}); the next `remember login` or "
-            "`logout` will retry, or revoke it in the console",
-            file=sys.stderr,
-        )
-
-
-#: How long one journal retry may take. Deliberately short: recovery runs
-#: under the credential lock, so a slow entry delays the login behind it.
-_RECOVERY_TIMEOUT_SECONDS = 5.0
-
-
-def _revoke_confirmed(*, status: int) -> bool:
-    """True only when the token host actually said the credential is gone.
-
-    The self-revoke route answers 2xx for the first revoke and for an
-    idempotent repeat, and 401 when it no longer resolves that bearer — which
-    is the same outcome by another name. Everything else confirms nothing: a
-    404 may mean the route is absent rather than the credential retired, and a
-    5xx or a dropped connection means we simply do not know.
-    """
-    return (200 <= status < 300) or status == 401
+    expires = stored.expires_at.isoformat() if stored.expires_at else "unknown"
+    print(f"Signed in to {stored.issuer}. Key {stored.key_id or ''} expires {expires}.")
+    return 0
 
 
 def _run_logout(args: argparse.Namespace) -> int:
-    """Revoke the stored bearer, then unlink the file."""
-    from remember.credentials import credential_lock
-    from remember.credentials import CredentialError
-    from remember.credentials import DurabilityUnconfirmed
+    """Revoke the stored key at its issuer, then remove the file."""
+    from remember.login import logout
 
-    try:
-        with credential_lock():
-            _retry_pending_revocation()
-            return _logout_existing(token_host=args.token_host, allow_stored_host=True)
-    except (CredentialError, DurabilityUnconfirmed, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-
-
-def _logout_existing(*, token_host: str | None, allow_stored_host: bool) -> int:
-    """Revoke-then-unlink using stored bearers. Keep the file on 5xx."""
-    from remember.credentials import CredentialError
-    from remember.credentials import load_credentials
-    from remember.credentials import unlink_credentials
-    from remember.device_login import revoke_self
-
-    try:
-        stored = load_credentials()
-    except CredentialError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    if stored is None:
-        return 0
-    try:
-        host = _resolved_token_host(
-            explicit=token_host,
-            stored_host=stored.token_host if allow_stored_host else None,
-        )
-    except ValueError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 2
-
-    def _is_local_host(u: str | None) -> bool:
-        if not u:
-            return True
-        try:
-            parsed = urlparse(u)
-            hn = parsed.hostname or ""
-            return hn in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or hn.endswith(
-                ".local"
-            )
-        except Exception:
-            return False
-
-    tokens_to_revoke: list[tuple[str, str, str]] = []
-    seen_tokens: set[str] = set()
-
-    def _add_token(h: str, sec: str, path: str) -> None:
-        if sec and sec not in seen_tokens and not _is_local_host(h):
-            seen_tokens.add(sec)
-            tokens_to_revoke.append((h, sec, path))
-
-    # Primary token: only revoke remotely if host is not local and token is a cloud token
-    if not _is_local_host(host) and not _is_local_host(stored.api_url):
-        sec = stored.access_token.get_secret_value()
-        p = (
-            "/v1/control-tokens/self"
-            if sec.startswith("umc_cp_")
-            else "/v1/api-tokens/self"
-        )
-        _add_token(host, sec, p)
-
-    # Projects: each project must only be revoked on its own token_host, and only if not local
-    if stored.projects:
-        for p in stored.projects.values():
-            p_host = getattr(p, "token_host", None) or host
-            if not _is_local_host(p_host) and not _is_local_host(p.data_plane_url):
-                if p.data_plane_token and p.data_plane_token.get_secret_value():
-                    p_sec = p.data_plane_token.get_secret_value()
-                    p_path = (
-                        "/v1/control-tokens/self"
-                        if p_sec.startswith("umc_cp_")
-                        else "/v1/api-tokens/self"
-                    )
-                    _add_token(p_host, p_sec, p_path)
-
-    # Control plane:
-    if stored.control_plane and stored.control_plane.access_token:
-        cp_host = stored.control_plane.url or host
-        if not _is_local_host(cp_host):
-            _add_token(
-                cp_host,
-                stored.control_plane.access_token.get_secret_value(),
-                "/v1/control-tokens/self",
-            )
-
-    failed = False
-    for h, sec, p in tokens_to_revoke:
-        with httpx.Client(base_url=h, timeout=30.0, follow_redirects=False) as client:
-            status = revoke_self(client=client, access_token=sec, path=p)
-        if not _revoke_confirmed(status=status):
-            print(
-                f"error: revoke not confirmed (HTTP {status or 'no response'}); file kept",
-                file=sys.stderr,
-            )
-            failed = True
-            break
-    if failed:
-        return 1
-    try:
-        unlink_credentials()
-    except CredentialError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    return 0
+    with _issuer_http() as http:
+        return logout(http=http)
 
 
 def _split_arg(pair: str) -> tuple[str, str]:
@@ -1981,29 +946,26 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
     commands = parser.add_subparsers(dest="command")
     client_flags = argparse.ArgumentParser(add_help=False)
-    client_flags.add_argument("--api-url", "--url", dest="api_url", default=None)
-    client_flags.add_argument("--token", default=None)
     client_flags.add_argument(
-        "--self-hosted",
-        action="store_true",
-        default=False,
-        help="operate against local self-hosted instance (http://localhost:8000)",
+        "--api-url",
+        default=None,
+        help="engine URL (overrides REMEMBER_API_URL and the stored file)",
     )
-
-    child_client_flags = argparse.ArgumentParser(add_help=False)
-    child_client_flags.add_argument(
-        "--api-url", "--url", dest="api_url", default=argparse.SUPPRESS
+    client_flags.add_argument(
+        "--api-key",
+        default=None,
+        help="API key (overrides REMEMBER_API_KEY and the stored file)",
     )
-    child_client_flags.add_argument("--token", default=argparse.SUPPRESS)
-    child_client_flags.add_argument(
-        "--self-hosted",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="operate against local self-hosted instance (http://localhost:8000)",
+    client_flags.add_argument(
+        "--project",
+        default=None,
+        help="project id or name for a signed key (overrides REMEMBER_PROJECT)",
     )
 
     if include_internal_ops:
-        ops = commands.add_parser("ops", help=argparse.SUPPRESS)
+        ops = commands.add_parser(
+            "ops", help="operator commands against this deployment's database"
+        )
         ops_commands = ops.add_subparsers(dest="ops_command", required=True)
         ops_inspect = ops_commands.add_parser(
             "inspect", help="bounded pipeline, DLQ, projection, and currency report"
@@ -2217,43 +1179,38 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     mcp = commands.add_parser(
         "mcp",
         parents=[client_flags],
-        help="serve remote retrieval tools over MCP stdio",
+        help="serve memory tools over MCP (stdio or HTTP), or bridge to a remote MCP URL",
     )
     mcp.add_argument(
         "--read-only",
         action="store_true",
-        help="omit and refuse the ingest, pipeline-readiness and delete tools",
+        help="omit and refuse every tool that changes memory",
     )
-    login = commands.add_parser("login", help="device-grant login to a token host")
-    login.add_argument(
-        "--token-host",
+    mcp.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help="stdio (default) or Streamable HTTP; http is engine mode only",
+    )
+    mcp.add_argument(
+        "--bind",
+        default="127.0.0.1:8765",
+        help="loopback HOST:PORT for --transport http (default 127.0.0.1:8765)",
+    )
+    mcp.add_argument(
+        "--remote-url",
         default=None,
-        help=f"control-plane base URL (default {DEFAULT_CONTROL_PLANE_URL})",
+        help="relay stdio to this remote MCP URL (overrides REMEMBER_MCP_URL)",
     )
-    login.add_argument("--api-url", default=None)
-    login.add_argument(
-        "--audience",
-        choices=["deployment", "control"],
-        default="deployment",
-        help="credential audience: 'deployment' (default, memory data plane access) or 'control' (organisation control plane status)",
+    login = commands.add_parser(
+        "login", help="sign in with the device grant and store one key"
     )
     login.add_argument(
-        "--control-plane",
-        "--control",
-        dest="audience",
-        action="store_const",
-        const="control",
-        help="shorthand for --audience control",
-    )
-    logout = commands.add_parser("logout", help="revoke the stored bearer and unlink")
-    logout.add_argument(
-        "--token-host",
+        "--issuer",
         default=None,
-        help=(
-            "control-plane base URL (default: the stored host, else"
-            f" {DEFAULT_CONTROL_PLANE_URL})"
-        ),
+        help=f"key issuer URL (default: REMEMBER_ISSUER, else {DEFAULT_ISSUER})",
     )
+    commands.add_parser("logout", help="revoke the stored key and remove it")
 
     setup = commands.add_parser(
         "setup", help="bootstrap AI coding harnesses for Remember"
@@ -2264,7 +1221,7 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         action="store_const",
         const="cloud",
         default=None,
-        help="configure for Managed Cloud",
+        help="configure for remember.dev (or the --issuer); signs in first if needed",
     )
     setup.add_argument(
         "--self-hosted",
@@ -2272,13 +1229,35 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         action="store_const",
         const="self_hosted",
         default=None,
-        help="configure for local engine (http://localhost:8000)",
+        help="configure for a self-hosted engine (default http://127.0.0.1:8000)",
     )
-    setup.add_argument("--url", default=None, help="explicit data-plane URL override")
     setup.add_argument(
-        "--token",
+        "--api-url",
         default=None,
-        help="explicit token override (ambient login preferred)",
+        help="the self-hosted engine URL (implies --self-hosted)",
+    )
+    setup.add_argument(
+        "--mcp-url",
+        default=None,
+        help="a self-hosted `remember mcp --transport http` URL for agents that "
+        "take remote entries (implies --self-hosted)",
+    )
+    setup.add_argument(
+        "--issuer",
+        default=None,
+        help=f"key issuer URL with --cloud (default: REMEMBER_ISSUER, else {DEFAULT_ISSUER})",
+    )
+    setup.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="no browser sign-in: agents send the key from REMEMBER_API_KEY "
+        "(default when CI is set)",
+    )
+    setup.add_argument(
+        "--api-key",
+        default=None,
+        help="the self-hosted engine's key, stored in the owner-only credential file",
     )
     setup.add_argument(
         "--agent",
@@ -2307,57 +1286,13 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     )
 
     commands.add_parser(
-        "whoami",
-        parents=[client_flags],
-        help="display authenticated identity and active project",
+        "whoami", help="show the stored key's issuer, projects, permissions and expiry"
     )
-
-    commands.add_parser(
-        "balance",
-        parents=[client_flags],
-        help="display current credit balance and subscription status",
-    )
-
-    commands.add_parser(
-        "billing",
-        parents=[client_flags],
-        help="display current credit balance and subscription status",
-    )
-
-    projects = commands.add_parser(
-        "projects", parents=[client_flags], help="manage tenant projects"
-    )
-    projects_sub = projects.add_subparsers(dest="projects_command", required=True)
-    projects_sub.add_parser(
-        "list", parents=[child_client_flags], help="list projects in your organization"
-    )
-    create_proj = projects_sub.add_parser(
-        "create", parents=[child_client_flags], help="create a new project"
-    )
-    create_proj.add_argument("name", help="project name")
 
     switch = commands.add_parser(
-        "switch",
-        parents=[client_flags],
-        help="switch active project in local configuration",
+        "switch", help="set the default project for the stored key"
     )
-    switch.add_argument("project", help="project name or ID")
-
-    members = commands.add_parser(
-        "members", parents=[client_flags], help="manage organization team members"
-    )
-    members_sub = members.add_subparsers(dest="members_command", required=True)
-    members_sub.add_parser("list", parents=[child_client_flags], help="list members")
-    invite_mem = members_sub.add_parser(
-        "invite", parents=[child_client_flags], help="invite a member by email"
-    )
-    invite_mem.add_argument("email", help="email address to invite")
-    invite_mem.add_argument(
-        "--role",
-        default="member",
-        choices=["member", "owner", "MEMBER", "OWNER"],
-        help="role for invited member: member or owner (default: member)",
-    )
+    switch.add_argument("project", help="project id or name")
 
     return parser
 
@@ -2369,89 +1304,6 @@ def rememberstack_main(argv: list[str] | None = None) -> int:
         file=sys.stderr,
     )
     return main(argv)
-
-
-def main_status(argv: list[str] | None = None) -> int:
-    """Legacy remember-status entry point: reports cloud deployment, billing, and spend."""
-    from remember.client import CloudClient
-    from remember.errors import CloudError
-    from remember.errors import RateLimited
-    from remember.errors import Unauthenticated
-
-    parser = argparse.ArgumentParser(
-        prog="remember-status",
-        description=(
-            "Report a remember.dev organisation's deployment, billing, and "
-            "spend state. Reads REMEMBER_CLOUD_TOKEN and REMEMBER_CLOUD_ORG."
-        ),
-    )
-    parser.add_argument("--org", default=None, help="organisation id")
-    parser.add_argument("--url", default=None, help="control-plane base URL")
-    parser.add_argument(
-        "--quiet", action="store_true", help="print nothing; use the exit status only"
-    )
-    args = parser.parse_args(argv)
-
-    try:
-        overrides: dict[str, str] = {}
-        if args.org:
-            overrides["org_id"] = args.org
-        if args.url:
-            overrides["base_url"] = args.url
-        with CloudClient.from_env(**overrides) as cloud:
-            deployment = cloud.deployment()
-            billing = cloud.billing_status()
-            gate = (
-                cloud.spend_gate(deployment_id=deployment.id)
-                if deployment is not None
-                else None
-            )
-
-            if not args.quiet:
-                if deployment is None:
-                    print(
-                        f"{'deployment':<11} {'none':<10} no deployment provisioned yet"
-                    )
-                else:
-                    print(f"{'deployment':<11} {deployment.state:<10} {deployment.id}")
-                    endpoint_state = (
-                        "live" if deployment.hostname_live else "not serving"
-                    )
-                    print(
-                        f"{'endpoint':<11} {endpoint_state:<10} {deployment.hostname or 'unknown'}"
-                    )
-                balance = f"balance {billing.balance}" if billing.balance else ""
-                print(f"{'billing':<11} {billing.state:<10} {balance}".rstrip())
-                if gate is not None:
-                    print(
-                        f"{'spend':<11} {gate.decision:<10} {gate.reason_code or ''}".rstrip()
-                    )
-
-            ready = (
-                deployment is not None
-                and deployment.is_ready
-                and billing.can_spend
-                and (gate is None or gate.allows_work)
-            )
-            return 0 if ready else 1
-    except ValueError as error:
-        print(f"remember-status: {error}", file=sys.stderr)
-        return 2
-    except Unauthenticated as error:
-        print(
-            f"remember-status: credential rejected ({error}). "
-            "Mint a fresh control-plane token with "
-            "POST /v1/orgs/<org>/control-tokens while signed in.",
-            file=sys.stderr,
-        )
-        return 2
-    except RateLimited as error:
-        wait = f" retry in {error.retry_after:.0f}s" if error.retry_after else ""
-        print(f"remember-status: rate limited{wait}", file=sys.stderr)
-        return 2
-    except CloudError as error:
-        print(f"remember-status: {error}", file=sys.stderr)
-        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised via the entry point

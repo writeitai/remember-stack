@@ -56,7 +56,7 @@ await the owner-provided stack conventions (roadmap §3).
 |---|---|---|
 | **The GitHub repository** | contributors, evaluators | source + the `plan/` design corpus (itself a differentiator: the architecture rationale ships with the code) |
 | **The PyPI package `remember`** — import **`remember`**, CLI **`remember`** (canonical home **`remember.dev`**; D108) | **agent harnesses and their operators** — positioned as *the client* | the **client surface** (§2): typed SDK, CLI, MCP server (including the public `remember.mcp_tools` catalogue, D136). Dependencies are `httpx`, `pydantic`, `pydantic-settings` only; it carries no server code and no server extras. The retired `rememberstack` PyPI name is an archived forwarder (D108) |
-| **One container image + compose profile** (`ghcr.io/writeitai/remember-stack`, published on **GHCR** — same org as the repo, no second registry account) | self-hosters, CI, benchmarks, cloud fleets | the only distribution of the engine (workers, spine, adapters, connectors, the K compile driver): one shared image runs `api`, `worker`, or one-shot `setup` commands; `docker compose up` brings up the **self-host profile**: Postgres + MinIO + api + worker(s). API and workers execute the same package and dependency set, so separate images would duplicate publication without creating an isolation boundary. The ten-minute quickstart is a release-gating, CI-tested artifact — an infrastructure-shaped OSS that cannot be *tried* quickly dies |
+| **One container image + compose profile** (`ghcr.io/writeitai/remember-stack`, published on **GHCR** — same org as the repo, no second registry account) | self-hosters, CI, benchmarks, cloud fleets | the only distribution of the engine (workers, spine, adapters, connectors, the K compile driver): one shared image runs `api`, `worker`, or one-shot `setup` commands; `docker compose up` brings up the **self-host profile**: Postgres + SeaweedFS (S3-compatible object store) + api + worker(s). API and workers execute the same package and dependency set, so separate images would duplicate publication without creating an isolation boundary. The ten-minute quickstart is a release-gating, CI-tested artifact — an infrastructure-shaped OSS that cannot be *tried* quickly dies |
 
 Client and engine are separate artifacts built from one repository: `pip install remember`
 (or `uvx remember`) is "connect your agent to a memory deployment," because the designed
@@ -194,7 +194,7 @@ rememberstack/
   spine/       # the Postgres access layer — the ONLY place SQL lives (repositories per aggregate)
   ports/       # seven D61 substrate Protocols + D74's narrow intent/purge capabilities
   adapters/
-    selfhost/  # MinIO/S3 object store, the pg-queue shell (§3), local-dir mount publisher,
+    selfhost/  # S3-compatible object store, the pg-queue shell (§3), local-dir mount publisher,
                # plain git remote, BYO model keys, OTLP telemetry, API-key auth
     gcp/       # GCS, the Cloud Tasks shell, gcsfuse publication, hosted repo, configured
                # providers, managed telemetry
@@ -228,9 +228,9 @@ ports and published extension points, keeping it portable off GCP too.
 ## 5. Deployment profiles
 
 - **Self-host profile** (the compose file, shipped + CI-tested): `postgres` (the spine + the
-  queue + the DLQ — one stateful service), `minio` (object store), `api`, `worker` (×N),
+  queue + the DLQ — one stateful service), `object-store` (SeaweedFS, S3-compatible), `api`, `worker` (×N),
   optional `k-driver`. Mounts publish to a local directory tree. Dev loop: `docker compose up
-  postgres minio` + run api/worker from source; pure-logic work needs no containers at all
+  postgres object-store` + run api/worker from source; pure-logic work needs no containers at all
   (`adapters/testing`).
 - **Reference adapters** (GCP — the substrate implementations the cloud consumes): Cloud Run/
   Cloud Tasks and GCS/gcsfuse adapters ship and are contract-tested here per D61. Production

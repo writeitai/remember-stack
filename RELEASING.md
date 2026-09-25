@@ -20,7 +20,7 @@ The one-time owner setup is complete:
    ```
 
    Under D108, the canonical PyPI distribution is `remember` (providing the `remember` CLI launcher
-   and the `remember` Python client package with backward-compatible `Client` and `CloudClient` shims),
+   and the `remember` Python client package),
    published from this repository starting with `v0.17.0`. The container image package is `ghcr.io/writeitai/remember-stack`.
 3. The GitHub environment `pypi` requires an owner review, so a tag cannot publish to PyPI without
    explicit approval.
@@ -86,9 +86,10 @@ Never move an existing release tag.
 
 The workflow validates the tag, runs the release test suite, builds the wheel and source
 distribution, and publishes `remember==0.17.0` plus
-`ghcr.io/writeitai/remember-stack:0.17.0` and the multi-architecture PostgreSQL
-foundation. It creates the GitHub release only after both registries accept
-their artifacts and the PostgreSQL manifest proves amd64 plus arm64 digests.
+`ghcr.io/writeitai/remember-stack:0.17.0` and the PostgreSQL foundation, both
+for linux/amd64 and linux/arm64. It creates the GitHub release only after both
+registries accept their artifacts and both image manifests prove amd64 plus
+arm64 digests.
 
 PyPI and GHCR do not support an atomic cross-registry transaction. Never reuse a published
 version after a partial failure: fix the cause, complete the missing publish when safe, or cut the

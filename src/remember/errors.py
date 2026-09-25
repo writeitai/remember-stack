@@ -1,13 +1,8 @@
-"""Failures a control-plane call can produce, typed so a caller can branch.
+"""Typed failures of the remember client.
 
-D41 binds one error envelope for machine traffic:
-
-    {"detail": {"code": …, "message": …, "retryable": bool, "request_id": …}}
-
-Clients branch on ``code``, never on ``message`` — the message is operator-safe
-prose and explicitly non-authoritative. These exceptions carry the code through
-so a caller can do the same, and expose ``retryable`` rather than making every
-caller re-derive it from a status number.
+Every failure a memory or account call can produce is a :class:`MemoryApiError`
+(or a subclass), so one ``except`` covers them all; the subclasses exist for the
+cases a caller branches on.
 """
 
 from __future__ import annotations
@@ -19,71 +14,12 @@ if TYPE_CHECKING:
     from remember.models import PipelineReadinessReport
 
 
-class CloudError(Exception):
-    """Base for every control-plane failure.
-
-    Carries the D41 envelope fields when the server sent them. A response that
-    is not shaped like the envelope still produces one of these — with
-    ``code=None`` — so a caller never has to handle two failure shapes.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int | None = None,
-        code: str | None = None,
-        retryable: bool = False,
-        request_id: str | None = None,
-    ) -> None:
-        """Bind the envelope fields that were present."""
-        super().__init__(message)
-        self.status_code = status_code
-        self.code = code
-        self.retryable = retryable
-        self.request_id = request_id
-
-    def __str__(self) -> str:
-        """Include the request id, because support will ask for it."""
-        base = super().__str__()
-        return f"{base} (request_id={self.request_id})" if self.request_id else base
-
-
-class Unauthenticated(CloudError):
-    """No credential, or one the server will not accept (401).
-
-    Also raised for a revoked or expired credential, and for one whose
-    membership has ended — from a client's point of view these are the same
-    situation: sign in again and mint a fresh credential.
-    """
-
-
-class NotPermitted(CloudError):
-    """Authenticated, but this credential may not do this (403).
-
-    Distinct from :class:`Unauthenticated` because retrying will not help and a
-    fresh credential of the same profile will not either — the profile itself
-    does not permit the call, or the credential belongs to a different
-    organisation.
-    """
-
-
-class RateLimited(CloudError):
-    """Admission refused the call (429).
-
-    ``retry_after`` is the server's own advice in seconds when it gave any.
-    """
-
-    def __init__(
-        self, message: str, *, retry_after: float | None = None, **kwargs: object
-    ) -> None:
-        """Bind the retry hint alongside the envelope fields."""
-        super().__init__(message, **kwargs)  # type: ignore[arg-type]
-        self.retry_after = retry_after
-
-
 class MemoryApiError(RuntimeError):
-    """The memory API returned an error response or network failed."""
+    """The memory API returned an error response or the network failed.
+
+    ``status_code`` is ``0`` when no HTTP response was received. ``code`` is the
+    machine-readable error code when the server sent one.
+    """
 
     def __init__(
         self,
@@ -93,7 +29,6 @@ class MemoryApiError(RuntimeError):
         detail: str | None = None,
         code: str | None = None,
         response: object | None = None,
-        retry_after: float | None = None,
     ) -> None:
         eff_detail = detail if detail is not None else (message or "")
         msg = (
@@ -106,9 +41,50 @@ class MemoryApiError(RuntimeError):
         self.detail = eff_detail
         self.code = code
         self.response = response
-        #: Seconds from ``Retry-After`` on a ``429`` admission refusal
-        #: (``rate_limited`` / ``concurrency_limited``), when the server sent it.
+
+
+class RateLimited(MemoryApiError):
+    """The engine's direct-path admission refused the call (``429``).
+
+    ``code`` is ``rate_limited`` or ``concurrency_limited``; ``retry_after`` is
+    the server's ``Retry-After`` in seconds when it sent one. The client does
+    not retry by itself.
+    """
+
+    def __init__(
+        self, *, detail: str, code: str | None, retry_after: float | None
+    ) -> None:
+        """Bind the admission code and the server's retry hint."""
+        super().__init__(status_code=429, detail=detail, code=code)
         self.retry_after = retry_after
+
+
+class ProjectResolutionError(MemoryApiError):
+    """A signed key's project could not be resolved to a deployment.
+
+    Raised for an unknown project, a project the key does not cover, an
+    unusable answer, or an issuer that cannot be reached. A signed key never
+    falls back to a local engine.
+    """
+
+
+class StoredKeyRefused(MemoryApiError):
+    """The stored key may not be sent to the requested destination.
+
+    A key read from the credential file goes only to its issuer, to the
+    issuer-resolved deployment, or to the engine URL recorded beside it. A
+    different destination needs a key supplied explicitly (argument or
+    ``REMEMBER_API_KEY``).
+    """
+
+
+class AccountApiUnavailable(MemoryApiError):
+    """``client.account`` has no account API to call.
+
+    The key has no issuer (a self-hosted shared secret), or the issuer's
+    metadata names no ``remember_account_endpoint``. Memory calls are
+    unaffected.
+    """
 
 
 class ConnectorNotFoundError(Exception):

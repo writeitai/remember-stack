@@ -446,10 +446,16 @@ def resolve_selfhost_api_auth(
 
     signed = _resolve_signed_auth(settings=settings, trust=trust)
 
-    if settings.require_api_auth and not bind_text and signed is None:
+    if (
+        settings.require_api_auth
+        and bind_text is None
+        and token_value is None
+        and signed is None
+    ):
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but neither "
-            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND nor "
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but none of "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN, "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND or "
             "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set"
         )
     if bind_text is None and token_value is None:
@@ -545,10 +551,12 @@ def _compose(
 def resolve_selfhost_spend_lease(
     *, settings: SelfHostSettings
 ) -> ControlPlaneSpendLease | None:
-    """Return the D46 lease adapter, or None for unpaid-open OSS quickstart.
+    """Return the D46 lease adapter, or None when this deployment is not billed.
 
-    ``require_api_auth`` without a well-formed lease URL refuses to start so a
-    managed BIND-only process cannot serve unpaid writes.
+    Managed billing (the metering settings) without a lease URL refuses to
+    start, so a billed deployment cannot serve unpaid writes. Authentication
+    alone does not need a lease: a self-hosted API behind a bearer token is
+    not billed by anyone.
     """
 
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
@@ -556,9 +564,9 @@ def resolve_selfhost_spend_lease(
     )
 
     url = settings.spend_lease_url
-    if settings.require_api_auth and not url:
+    if settings.meter_ingest_url is not None and not url:
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
+            "managed billing (REMEMBERSTACK_SELFHOST_METER_*) is set but "
             "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL is missing"
         )
     if not url:
@@ -884,7 +892,8 @@ class SelfHostProfile:
                 raw_bucket=f"s3://{self._settings.raw_bucket_name}",
                 artifacts_bucket=f"s3://{self._settings.artifacts_bucket_name}",
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
-            )
+            ),
+            sole_deployment=True,
         )
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
@@ -948,6 +957,9 @@ class SelfHostProfile:
             raw.commit()
         p1_index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
+        )
+        p1_index.require_stored_embedding_model(
+            deployment_id=self._settings.deployment_id
         )
         profile_meter = SurfaceCostMeter(
             recorder=SqlSurfaceCostRecorder(
@@ -1325,7 +1337,6 @@ class SelfHostProfile:
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
-        from rememberstack.spine import SupersessionSettings
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -1397,15 +1408,13 @@ class SelfHostProfile:
                 catalog=chunks, artifact_store=self._artifact_store, params=params
             )
         if stage is PipelineStage.EMBED_CHUNK:
-            e1_settings = E1Settings.model_validate({}).model_copy(
-                update={"embedding_model": p1_settings.embedding_model}
-            )
             return EmbedChunksHandler(
                 catalog=chunks,
                 artifact_store=self._artifact_store,
                 model_provider=self._model_provider,
                 chunk_index=index,
-                settings=e1_settings,
+                settings=E1Settings.model_validate({}),
+                embedding_model=p1_settings.embedding_model,
                 params=params,
             )
         if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
@@ -1448,7 +1457,6 @@ class SelfHostProfile:
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
-            observation_settings = ObservationSettings.model_validate({})
             fact_settings = FactAdjudicationSettings()
             return AdjudicateObservationsHandler(
                 facts=facts,
@@ -1470,9 +1478,7 @@ class SelfHostProfile:
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
-                    engine=self._engine,
-                    model_provider=self._model_provider,
-                    settings=SupersessionSettings.model_validate({}),
+                    engine=self._engine, model_provider=self._model_provider
                 ),
                 profile_refresher=profile_refresher,
                 facts=facts,
@@ -1736,7 +1742,6 @@ def _model_bindings() -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline."""
     from rememberstack.spine import ObservationSettings
     from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
-    from rememberstack.workers import E1Settings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
@@ -1749,7 +1754,6 @@ def _model_bindings() -> dict[str, str]:
     skeleton_check = SkeletonCheckSettings.model_validate({})
     roles = RoleSettings.model_validate({})
     summaries = SummarySettings.model_validate({})
-    e1 = E1Settings.model_validate({})
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
@@ -1767,14 +1771,11 @@ def _model_bindings() -> dict[str, str]:
         "skeleton_check": skeleton_check.model,
         "section_role": roles.model,
         "section_summary": summaries.model,
-        "chunk_embedding": e1.embedding_model,
-        "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
         "fact_adjudication": fact_adjudication_model,
         "p1_embedding": p1.embedding_model,
-        "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
         "openrouter_embedding_provider_order": (
             ",".join(openrouter.embedding_provider_order)

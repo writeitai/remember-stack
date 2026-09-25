@@ -20,8 +20,8 @@ https://remember.dev/app/api
 ```
 
 Every path on this page is relative to it, for example
-`https://remember.dev/app/api/v1/orgs`. This is also the default base URL
-of `remember.CloudClient` and the token host to pass to `remember login`.
+`https://remember.dev/app/api/v1/orgs`. This is the account API that
+[`client.account`](/docs/reference/python-sdk#clientaccount) calls.
 
 ## Authentication
 
@@ -156,7 +156,8 @@ that it never expires.
 
 ## Device login
 
-These routes implement `remember login` (OAuth 2.0 device authorization).
+These routes implement the OAuth 2.0 device authorization flow for
+deployment and control-plane tokens.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -229,8 +230,8 @@ These describe remember.dev's provider-cost safeguard, not your credits.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/settings` | session member | `diagnostics_opt_out`, `onboarding_state`, `alpha_terms_version` |
-| `PUT` | `/v1/orgs/{org_id}/settings` | session owner | Body any of `diagnostics_opt_out`, `onboarding_state`, `alpha_terms_version` (≤64) |
+| `GET` | `/v1/orgs/{org_id}/settings` | session member | `onboarding_state`, `alpha_terms_version` |
+| `PUT` | `/v1/orgs/{org_id}/settings` | session owner | Body any of `onboarding_state`, `alpha_terms_version` (≤64) |
 | `GET` | `/v1/orgs/{org_id}/onboarding` | session member | Same as settings |
 | `PUT` | `/v1/orgs/{org_id}/onboarding` | session owner | Same as settings |
 

@@ -96,57 +96,39 @@ curl -s -X DELETE https://remember.dev/app/api/v1/api-tokens/self \
   -H "Authorization: Bearer umc_dp_..."
 ```
 
-That is what `remember logout` does.
-
 ## `remember login`
 
-`remember login` gets a deployment API token onto a machine without you
-copying it. It uses a device authorization flow: the terminal shows a code,
-you approve it in a browser where you are signed in, and the token is
-written to a credential file on that machine.
+`remember login` gets one API key onto a machine without you copying it. It
+uses the standard device authorization flow: the terminal shows a code, you
+approve it in a browser where you are signed in, and the key is written to a
+credential file on that machine.
 
 ```bash
 remember login
 ```
 
-The terminal prints a `verification_uri` (`https://remember.dev/app/device`),
-a link that already contains the code, and a `user_code`. Open the link,
-check that the code on the page matches the terminal, choose the
-organisation and the project's deployment, and approve.
+The CLI reads remember.dev's OAuth metadata
+(`https://remember.dev/.well-known/oauth-authorization-server`) and uses the
+device authorization, token and revocation endpoints it names. Pass
+`--issuer` or set `REMEMBER_ISSUER` to sign in to another issuer.
 
-The CLI requests the token from `https://remember.dev/app/api` unless you
-pass `--token-host` or set `REMEMBER_TOKEN_HOST` or
-`REMEMBER_CONTROL_PLANE_URL`.
+Open the link the terminal prints, check that the code on the page matches,
+choose the projects and permissions the key gets, and approve.
 
 What to expect:
 
-- **Only owners can approve** a deployment login, because the result reads
-  and writes memory. A member cannot approve it.
-- **The code expires after 15 minutes.** The CLI polls every 5 seconds and
-  slows down if asked.
-- **The token is an ordinary deployment API token.** It appears in
-  **Settings → API Tokens**, counts toward the limit of 20, and expires
-  after 365 days.
-- **The deployment must be serving.** If it is not live yet, the login
-  stops with a message saying so; run it again once the project is ready.
-- **Logging in again for the same deployment replaces the old token.** The
-  CLI revokes the previous one after the new one is safely on disk.
+- **One key.** The key names the projects it covers, not their addresses.
+  Each command asks remember.dev which address serves the project and then
+  talks to that address directly. Choose a default project with
+  `remember switch <project>`, or pass `--project` to a command.
+- **The CLI slows down when asked** and never waits more than 30 seconds
+  between checks. Ctrl-C stops it and writes nothing.
+- **Logging in again replaces the stored key.** The old key is recorded
+  first, the new one is stored, and only then is the old one revoked. If the
+  revocation cannot be confirmed, the next `remember` command retries it.
 
-`remember logout` revokes every token stored in the credential file and
-deletes the file. If the revocation fails with a server error, the file is
-kept so you can retry.
-
-### Log in for organisation status
-
-```bash
-remember login --control-plane
-```
-
-This asks for a **control-plane token** instead (`--control` and
-`--audience control` mean the same). Any member of the organisation can
-approve it, and the approval page says it is read-only. The CLI stores it
-next to any deployment token, and `remember balance` and
-`remember projects list` use it.
+`remember logout` revokes the stored key and deletes the file. If the
+revocation is not confirmed, the file is kept so you can retry.
 
 ## Control-plane tokens
 
@@ -168,7 +150,7 @@ authority is the smaller of the profile and the holder's current
 membership, checked on every request: a token stops working when its
 holder is no longer an active member.
 
-Get one with `remember login --control-plane`, or while signed in:
+Get one while signed in:
 
 ```bash
 curl -s -X POST "https://remember.dev/app/api/v1/orgs/$ORG_ID/control-tokens" \
@@ -184,32 +166,7 @@ curl -s -X POST "https://remember.dev/app/api/v1/orgs/$ORG_ID/control-tokens" \
 - **List and revoke** with `GET` and `DELETE /v1/orgs/{org_id}/control-tokens`.
 
 The console does not show control-plane tokens under **Settings**; they are
-managed through the API and `remember login --control-plane`.
-
-### Use it from Python
-
-`remember.CloudClient` reads status with a control-plane token. It reads
-`REMEMBER_CLOUD_TOKEN`, `REMEMBER_CLOUD_ORG` and, optionally,
-`REMEMBER_CLOUD_URL` (default `https://remember.dev/app/api`):
-
-```python
-from remember import CloudClient
-
-with CloudClient.from_env() as cloud:
-    status = cloud.billing_status()
-    deployment = cloud.deployment()
-    print(status.state, status.balance)
-    if deployment is not None:
-        print(deployment.state, deployment.hostname)
-```
-
-The `remember-status` command prints the same summary and exits `0` when
-the deployment is ready, billing can spend and the spend gate allows work,
-`1` otherwise and `2` on an error:
-
-```bash
-REMEMBER_CLOUD_TOKEN=umc_cp_... REMEMBER_CLOUD_ORG=<org-id> remember-status
-```
+managed through the API.
 
 ## Browser sign-in
 
@@ -237,35 +194,25 @@ their own.
 1. the directory in `REMEMBER_CONFIG_DIR`, if set;
 2. otherwise `$XDG_CONFIG_HOME/remember/`, or `~/.config/remember/`.
 
-If no file exists there but one exists in the older `rememberstack`
-directory beside it, the CLI uses that one.
-
 The file is created with mode `0600` in a `0700` directory. The CLI refuses
 to read it if it is readable by group or others, or if it is a symbolic
-link.
+link. It holds one key, its id and expiry, and your default project. The
+format is in the [CLI reference](/docs/reference/cli#credential-file).
 
-The file can hold several projects, one of them active, plus a
-control-plane token. `remember switch <project>` changes the active one;
-`remember whoami` shows what is active.
+### Which key the CLI and the Python client use
 
-### Which credential the CLI uses
+The CLI and the Python client choose the same way, setting by setting:
 
-For each request the CLI takes the endpoint and the token from the first
-place that has them:
+1. flags (`--api-key`, `--api-url`, `--project`) or `remember.Client`
+   arguments (`api_key`, `base_url`, `project`);
+2. environment: `REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`;
+3. the credential file.
 
-1. `--url` / `--api-url` and `--token` flags;
-2. environment: `REMEMBER_DATA_PLANE_URL`, `REMEMBER_API_URL` or
-   `REMEMBERSTACK_API_URL` for the endpoint, and `REMEMBER_TOKEN`,
-   `REMEMBER_API_AUTHORIZATION` or `REMEMBERSTACK_API_AUTHORIZATION` for the
-   token;
-3. the credential file's active project.
-
-When you point the CLI at a different host with a flag or variable, it does
-not send the stored token there.
-
-The Python client does not read the credential file. Give it the endpoint
-and token through `REMEMBER_API_URL` and `REMEMBER_API_KEY`, or pass them to
-`remember.Client`. See the [Python SDK reference](/docs/reference/python-sdk).
+A key from the credential file is sent only to remember.dev and to the
+project addresses remember.dev returns for it. When you point a command at
+another address with a flag or variable, the stored key is not sent there;
+pass a key explicitly instead. See the
+[Python SDK reference](/docs/reference/python-sdk#connecting).
 
 ## Keep tokens safe
 

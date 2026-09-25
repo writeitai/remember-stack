@@ -20,6 +20,7 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from remember.client import MemoryClient
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import tool
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
@@ -29,7 +30,6 @@ from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.sdk import MemoryClient
 
 PRIMITIVE_TOOL_NAMES: Final = (
     "resolve",

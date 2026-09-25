@@ -43,12 +43,14 @@ from benchmarks.locomo.retrieval import p3_tool_catalog
 from benchmarks.locomo.retrieval import P3Mount
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
+from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.models import ContextBundleV2
 from remember.models import Envelope
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAuditError
 from rememberstack.adapters import CodexSubscriptionInfrastructureError
 from rememberstack.adapters import CodexSubscriptionModelProvider
@@ -59,8 +61,6 @@ from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 AblationProfile = Literal["codex-p3", "codex-p3-mcp", "mcp", "mcp-p3"]
 AuditStatus = Literal["not_required", "pending", "clean", "invalid"]
@@ -76,15 +76,7 @@ _MCP_SERVER: Final = "rememberstack_locomo"
 _MAX_ACTIONS_PER_QUESTION: Final = 8
 _MAX_AGENT_CALLS_PER_QUESTION: Final = 9
 _ANSWER_RETRY_BUDGET: Final = 2
-_MCP_ENV_VARS: Final = (
-    "REMEMBER_DATA_PLANE_URL",
-    "REMEMBER_API_URL",
-    "REMEMBERSTACK_API_URL",
-    "REMEMBER_API_KEY",
-    "REMEMBER_TOKEN",
-    "REMEMBER_API_AUTHORIZATION",
-    "REMEMBERSTACK_API_AUTHORIZATION",
-)
+_MCP_ENV_VARS: Final = ("REMEMBER_API_URL", "REMEMBER_API_KEY")
 _MCP_CONTENT_TOOLS: Final = frozenset(
     {
         "claims_and_sources_context",
@@ -284,7 +276,7 @@ class AblationSummary(_FrozenModel):
 class _McpAnswerClient:
     """Decode the real OSS MCP server into the existing answer-loop seam."""
 
-    def __init__(self, *, server: RemoteOperationMcpServer) -> None:
+    def __init__(self, *, server: EngineMcpServer) -> None:
         self._server = server
 
     def run_operation(
@@ -395,7 +387,7 @@ def run_retrieval_ablation(
 
     needs_mcp = profile in {"codex-p3-mcp", "mcp", "mcp-p3"}
     needs_p3 = profile in {"codex-p3", "codex-p3-mcp", "mcp-p3"}
-    server: RemoteOperationMcpServer | None = None
+    server: EngineMcpServer | None = None
     mcp_tools: tuple[ToolDescriptor, ...] = ()
     if needs_mcp:
         if client is None:
@@ -407,7 +399,7 @@ def run_retrieval_ablation(
             checkpointed=checkpointed,
             client=client,
         )
-        server = RemoteOperationMcpServer(client=client, read_only=True)
+        server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
         mcp_tools = _mcp_catalog(server=server)
 
     mount: P3Mount | None = None
@@ -765,7 +757,7 @@ def _run_answers(
     context: _SourceContext,
     profile: AblationProfile,
     mount: P3Mount | None,
-    server: RemoteOperationMcpServer | None,
+    server: EngineMcpServer | None,
     mcp_tools: tuple[ToolDescriptor, ...],
     answer_provider: ModelProviderPort | None,
     max_agent_calls: int,
@@ -1157,7 +1149,7 @@ def _summarize(
     )
 
 
-def _mcp_catalog(*, server: RemoteOperationMcpServer) -> tuple[ToolDescriptor, ...]:
+def _mcp_catalog(*, server: EngineMcpServer) -> tuple[ToolDescriptor, ...]:
     """Validate and adapt the read-only server's exact model-visible catalog."""
     payload = server.list_tools()
     raw_tools = payload.get("tools")

@@ -87,16 +87,14 @@ Each project has its own OpenRouter key with its own spending limit.
 
 ## Diagnostics
 
-Diagnostics are on by default. When a deployment reports problems for
-remember.dev to investigate, those diagnostics can include the text of
-model inputs and outputs. Error reports and logs are kept without content.
+remember.dev collects no diagnostics from your deployment: no traces,
+logs, metrics or error reports. There is no diagnostics setting, because
+there is nothing to switch off.
 
-You can opt out for your organisation under
-**Settings → Privacy & diagnostics**. Opting out is an owner setting.
-
-Diagnostics are held on an observability host that remember.dev runs.
-Diagnostics with content are deleted after 30 days; logs and error reports
-after 90 days.
+remember.dev's own control plane (the console, the account API and hosted
+MCP) keeps logs and error reports. Error reports are stripped to an allowlist
+of fields: identifiers, timings and error types. They carry no request
+bodies and none of your documents, questions or memory.
 
 ## Records of what happened
 
@@ -115,7 +113,7 @@ happened on your account, ask [support](/docs/cloud/support).
 remember.dev does not yet have a way for you to grant support staff
 time-limited access to your deployment, and the console has no support
 access to approve. Support works from what you tell them in a support
-record, from the account records above, and from diagnostics.
+record, and from the account records above.
 
 ## Token hygiene
 
@@ -127,7 +125,7 @@ record, from the account records above, and from diagnostics.
 - Rotate tokens before they expire; the console and the CLI warn you.
 - If a token leaks, revoke it first under **Settings → API Tokens**, then
   mint a replacement.
-- `remember logout` revokes the tokens on a machine you are giving up.
+- `remember logout` revokes the key stored on a machine you are giving up.
 
 Details are in [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
 
