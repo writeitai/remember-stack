@@ -151,6 +151,8 @@ never trigger anything** — all K/E triggering originates from writes).
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
 | `hydrate` | ids, depth: record \| evidence \| sources \| bytes, locator? | the §2 confirmation hop + progressive deepening: record → evidence rows + claims → documents → GCS handles. At `depth=bytes` an optional **source locator** (D65) scopes the fetch to a time interval / region, returning a seekable, codec-aware segment (§7 — unmounted parity for media) | S5, S59, all |
 | `source_open` | version_id, representation_id?, locator?, accept? | **the look-at-it operation** (D115, `media_design.md` §4a): an `evidence`-grain envelope that *delivers* the source in the client's perceptual content channels — image, audio, or keyframes-plus-audio, never a bare link — with a `content_manifest[]` pairing each content block to its role, hash, `original`/`agent_rendition` origin, transforms, locator, and untrusted label. Shares `hydrate depth=bytes`'s serving path, resolution, and authorization; a separate name because "let me look at it" is a different agent intent from record deepening. A locator returns overview **plus** high-detail region or interval; absent, an image returns itself while a recording returns its preview material only (an excerpt nobody asked for is a claim about what mattered). `accept` declares consumable MIME types because no protocol declares them; an empty intersection with the served set is a typed `boundary` (§5) | S5, S59 |
+| `search_documents` | query?, filters? (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids), k → documents | **find files** (D134, `document_metadata_and_search_design.md` §3): matches every observed file name, title and source path by trigram/BM25 on `document_names` and content by the document's best `chunk_search` hit, fused by rank; results are documents judged by their current version (or any live version with `versions: all`); filters on the general document metadata. Each result carries the document, version, general metadata, overview, status, and access handles (P3 path, `source_open`, `data_query`). Several people matching one name are listed, not guessed | — |
+| `data_query` | version_id, representation_id?, sql, params? | **the compute-over-this-file operation** (D133, `format_conversion_design.md` §4.6): one read-only SQL statement over a profiled data file's normalized tables, run in DuckDB inside an isolated, resource-capped worker process; returns an `evidence`-grain envelope carrying its own `DataQueryResult/v1` (typed columns, rows, `truncated`, statement hash, and the version, representation and tables read) — not the PostgreSQL-bound open-query `QueryResult/v1`. Runs only where the platform can sandbox the worker without network; otherwise a typed `boundary`. Shares `hydrate depth=bytes`'s authorization and audit. Rows are what memory deliberately does *not* ingest from structured data; this is how an agent answers an aggregation over them. A document without query assets returns a typed `boundary` (§5) | — |
 | `transcript` | relation \| observation \| entity \| k_page → its decision history (recent-first bound; see amendment below) | adjudications, resolution decisions, compile provenance — the audit trail as a first-class query ("why do we believe…") | S8, S32, S35 |
 | `delta` | since T, scope?, kinds? → changed evidence / pages | the change feed as a query (new / capped / invalidated / recompiled) | S13, S14, S30 |
 | `pages_about` | entity \| key → K pages (+ freshness/flags) | **the K routing index read backwards**: the rule-key inverted index built for write-side routing doubles as the reader's discovery index — which pages exist about X, mechanically | S31, S45 |
@@ -188,6 +190,15 @@ one configured current attestation; it carries no copied generation/filter scala
 **Claim-channel filters (D80 decision):** claim rows **do not** carry message filter copies.
 Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
 location facts). Do not invent per-claim scalar inheritance in the first implementation.
+
+**Document filters (D134).** `search` accepts a `documents` filter over the general document
+metadata (family, authors, recipients, created/modified ranges, language, thread, explicit
+`doc_ids`). Chunks match by their document version; claims when a live occurrence
+(`chunk_claims`) lies in a matching version — for inclusion this refines the origin-chunk join
+above, because a claim reused across versions (D56) has one occurrence per version; the returned
+claim evidence is still its origin; relations and observations when at least one live supporting claim comes from a
+matching document, with returned evidence limited to those claims. The filter is applied inside
+the ranked statement, before the top-k cut. `document_metadata_and_search_design.md` §4.
 
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs
@@ -415,7 +426,8 @@ provenance records, association intact:
   `derivation_kind` (asr | acoustic_events | vlm_description | ocr | shot_notes | …) and
   **`evidence_mode`**:
   `source_expression` (a fallible rendering of speech/symbols present in the source — a
-  transcript sentence, OCR'd text), `model_observation` (the model's account of what the
+  transcript sentence, OCR'd text), `computed` (a deterministic library's derivation from
+  source values — a row count, a date span; D133), `model_observation` (the model's account of what the
   source *shows* — "the image shows a red valve"), or `model_interpretation` (the model's
   reading *into* the source — "the speaker sounds hesitant"). Inherited deterministically
   from the converter's mode-homogeneous labeled ranges (a claim spanning modes takes the
@@ -480,10 +492,11 @@ originals are reachable deliberately (S56, S59).
 open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders the full
 shared catalogue (`remember.mcp_tools`, D136): the four platform-owned assured descriptors as
 the only *intent* tools, and as infrastructure the write and readiness tools, the seven
-open-query tools, and `source_open` — the one §3 primitive
-MCP exposes directly, because its whole purpose (D115) is to be *found and chosen* by an agent
-that has just been handed a source handle, and a primitive an agent cannot discover cannot be
-the answer to "let me look at it"; reusable patterns remain discoverable `examples.*` saved
+open-query tools, and `source_open`, `data_query` and `search_documents` — the three §3
+primitives MCP exposes directly, because each answers an intent an agent must be able to *find
+and choose* (D115: "let me look at it"; D133: "compute over this file"; D134: "find the file"),
+and a primitive an agent cannot discover cannot be the answer to any of them; reusable patterns
+remain discoverable `examples.*` saved
 queries rather than becoming tools. CLI mirrors the API 1:1 (agents shell out);
 the API is the one place authorization is enforced for query-engine reads (§9). The clean target
 uses `GET /operations`, `POST /operations/{name}`, SDK
@@ -598,6 +611,11 @@ aggregation is **not** an interactive capability (an unbounded GROUP BY over 10�
 denial-of-service against the spine); the escape hatch is the batch surface. Cross-entity
 numeric range scans over observation *values* remain a stated `boundary` (S29) — the D43
 price, revisited only if a structured value column is ever added.
+
+This rule governs aggregation over the **spine**. `data_query` (D133, §3) is general SQL
+over **one document's own normalized tables**, not the spine: it runs in an isolated worker
+process with its own time, memory and disk limits, so an expensive query exhausts only its
+own budget and never the shared database.
 
 **The batch surface (S53).** `scan` streams filtered exports (relations of a scope, claims of
 a doc-set, the delta feed) under a separate resource pool and no interactive latency promise.
