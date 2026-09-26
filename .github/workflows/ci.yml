@@ -428,6 +428,9 @@ jobs:
               | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
           }
 
+          # Created by this user before rclone mounts it, as backup.sh does;
+          # Docker would create a missing ./backup owned by root.
+          mkdir backup
           state_before="$(state)"
           sql_before="$(sql_count)"
           objects > objects-before.md5
