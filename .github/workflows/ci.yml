@@ -382,6 +382,78 @@ jobs:
             docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
+      - name: Back up, restore and roll back with the upgrades page's scripts
+        run: |
+          # Runs backup.sh, restore.sh and rollback.sh exactly as
+          # website/src/app/docs/self-hosting/upgrades/page.mdx prints them.
+          python3 - website/src/app/docs/self-hosting/upgrades/page.mdx <<'PY'
+          import re, sys
+          text = open(sys.argv[1]).read()
+          scripts = re.findall(r"```bash\n(#!/usr/bin/env bash\n# (\w+\.sh):.*?)```", text, re.S)
+          assert sorted(name for _, name in scripts) == ["backup.sh", "restore.sh", "rollback.sh"], scripts
+          for body, name in scripts:
+              open(name, "w").write(body)
+          PY
+          psql_count() {
+            docker compose --env-file .env exec -T postgres \
+              psql -U rememberstack -d rememberstack -Atc "$1"
+          }
+          state() {
+            psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)'
+          }
+          # Through the restricted SQL role: proves its grants and password.
+          sql_count() {
+            curl --fail --silent \
+              --header 'Content-Type: application/json' \
+              --data '{"sql":"SELECT count(*) AS n FROM documents_live","parameters":[],"max_rows":1}' \
+              http://localhost:8000/query/sql \
+              | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["termination_reason"] == "completed", r; print(r["rows"][0][0])'
+          }
+          # MD5 of the bytes of every object, read from the object store.
+          objects() {
+            docker compose --env-file .env --profile backup run --rm -T rclone \
+              md5sum --download store: | sort
+          }
+          check_restored() {
+            test "$(state)" = "$state_before"
+            test "$(sql_count)" = "$sql_before"
+            # Every object saved before the backup came back byte for byte.
+            objects > objects-after.md5
+            test -z "$(comm -23 objects-before.md5 objects-after.md5)"
+            # The database-level grant narrowing came back with the dump.
+            test "$(psql_count "SELECT has_database_privilege('public', current_database(), 'CONNECT')")" = 'f'
+            # The filesystem snapshot the database points at came back.
+            docker compose --env-file .env run --rm --no-deps -T api mounts --root /tmp/views
+            docker compose --env-file .env exec -T api remember ops graph-catalog ensure \
+              | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
+          }
+
+          # Created by this user before rclone mounts it, as backup.sh does;
+          # Docker would create a missing ./backup owned by root.
+          mkdir backup
+          state_before="$(state)"
+          sql_before="$(sql_count)"
+          objects > objects-before.md5
+          for bucket in remember-raw remember-artifacts remember-corpusfs; do
+            grep -q "  $bucket/" objects-before.md5
+          done
+
+          bash backup.sh > backup.out
+          backup_dir="$(tail -n 1 backup.out)"
+          test -s "$backup_dir/database.dump"
+          test -z "$(find backup -maxdepth 1 -name '.partial-*')"
+
+          bash restore.sh "${backup_dir#backup/}" > restore.out
+          aside="$(tail -n 1 restore.out)"
+          aside="${aside#previous data: }"
+          test -s "$aside/postgres-data.tar"
+          check_restored
+
+          bash rollback.sh "${aside#backup/}"
+          check_restored
+          sudo rm -rf backup backup.sh restore.sh rollback.sh backup.out restore.out \
+            objects-before.md5 objects-after.md5
+
       - name: Stage an upgrade from the prior schema
         run: |
           docker compose --env-file .env stop \

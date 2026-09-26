@@ -330,6 +330,25 @@ services:
       setup:
         condition: service_completed_successfully
 
+  # Copies the object-store buckets to and from ./backup (profile backup only;
+  # see the backup section of the self-hosting upgrades page). "store:" is the
+  # bundled object store; "store:" with no bucket name means every bucket.
+  rclone:
+    image: rclone/rclone:1.75.1@sha256:45401ad7410db1d67ffdb58e19059ad20b0d8e0285a60e38bbec55cc1019c7a5
+    profiles: ["backup"]
+    restart: "no"
+    environment:
+      RCLONE_CONFIG_STORE_TYPE: s3
+      RCLONE_CONFIG_STORE_PROVIDER: SeaweedFS
+      RCLONE_CONFIG_STORE_ENDPOINT: http://object-store:8333
+      RCLONE_CONFIG_STORE_ACCESS_KEY_ID: ${REMEMBERSTACK_MINIO_ACCESS_KEY:?set REMEMBERSTACK_MINIO_ACCESS_KEY}
+      RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY: ${REMEMBERSTACK_MINIO_SECRET_KEY:?set REMEMBERSTACK_MINIO_SECRET_KEY}
+    depends_on:
+      object-store:
+        condition: service_healthy
+    volumes:
+      - ./backup:/backup
+
 volumes:
   app-state:
   forget-manifests:

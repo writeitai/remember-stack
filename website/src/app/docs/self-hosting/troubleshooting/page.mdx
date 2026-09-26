@@ -446,8 +446,8 @@ workers do not start.
 
 `docker compose logs setup` shows the message. To continue:
 
-1. If you may want to go back, take a backup of the old volumes first, as
-   described in [Back up](/docs/self-hosting/upgrades#back-up), while the old release is
+1. If you may want to go back, take a backup first, as described in
+   [Back up](/docs/self-hosting/upgrades#back-up), while the old release is
    still checked out.
 2. Remove the old data: `docker compose down -v`. This deletes the memory.
 3. Start the new release: `docker compose up -d --wait`.

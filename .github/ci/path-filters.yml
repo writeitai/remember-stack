@@ -55,6 +55,8 @@ compose:
   - '.env.example'
   - 'src/rememberstack/profiles/**'
   - 'src/rememberstack/adapters/selfhost/**'
+  # backup.sh, restore.sh and rollback.sh run from this page
+  - 'website/src/app/docs/self-hosting/upgrades/page.mdx'
   - 'pyproject.toml'
   - 'uv.lock'
 

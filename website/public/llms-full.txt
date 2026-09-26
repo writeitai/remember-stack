@@ -8043,8 +8043,8 @@ workers do not start.
 
 `docker compose logs setup` shows the message. To continue:
 
-1. If you may want to go back, take a backup of the old volumes first, as
-   described in [Back up](https://remember.dev/docs/self-hosting/upgrades#back-up), while the old release is
+1. If you may want to go back, take a backup first, as described in
+   [Back up](https://remember.dev/docs/self-hosting/upgrades#back-up), while the old release is
    still checked out.
 2. Remove the old data: `docker compose down -v`. This deletes the memory.
 3. Start the new release: `docker compose up -d --wait`.
@@ -8273,7 +8273,7 @@ Source: https://remember.dev/docs/self-hosting/upgrades
 
 A self-hosted deployment is yours to upgrade and to back up. This page
 covers how releases are published, what happens to the database on an
-upgrade, the order to do it in, and how to take a backup you can restore.
+upgrade, the order to do it in, and how to back up and restore.
 
 ## Releases and image tags
 
@@ -8310,7 +8310,8 @@ release, restore a backup taken before the upgrade.
 
 Upgrading does not reprocess documents already in the memory. They keep
 what the earlier release extracted from them; new documents are processed
-by the new code.
+by the new code. There is no command that processes stored documents
+again.
 
 **Some releases cannot convert existing data:**
 
@@ -8370,13 +8371,17 @@ documents again. Keep your source files for this reason. See
 
 RememberStack runs on a PostgreSQL 19 beta (`19beta3` at v0.17.0). A
 PostgreSQL prerelease does not promise that its data directory opens under
-the next prerelease or the final release. The project has not published a
-procedure for moving a deployment's data across such a change.
+the next prerelease or the final release, so the `postgres-data` volume
+cannot be carried across such a change. When a release changes the
+PostgreSQL image, move the database with a backup and restore:
 
-If a release changes the PostgreSQL image, its release notes are the place
-to look. Without instructions there, move the data with a logical dump and
-restore (below) into a new PostgreSQL volume, or start a new deployment and
-send your documents again.
+1. With the **old** release still checked out, [back up](#back-up).
+2. Check out the new release, as in [Upgrade step by step](#upgrade-step-by-step).
+3. [Restore](#restore) the backup. `restore.sh` sets the old volumes
+   aside, restores into new ones, and `setup` migrates the restored
+   database to the new release. To roll back, check out the old release
+   again before you run `rollback.sh`: only the old PostgreSQL image opens
+   the old data.
 
 ## The deployment id is permanent
 
@@ -8396,87 +8401,172 @@ To start over under a new id, remove the volumes
 
 ## Back up
 
-Backups are your responsibility. RememberStack does not schedule them, and
-the project does not test a restore procedure. What follows is grounded in
-how the Compose deployment stores its data.
+Backups are your responsibility; RememberStack does not schedule them. The
+project's CI runs the three scripts on this page as they are written here:
+it backs up a deployment that has processed a document, restores it,
+checks that the documents, the pipeline state, SQL queries, the filesystem
+views and the bytes of every stored object came back, and then rolls the
+restore back.
 
-A deployment's state lives in four Docker volumes:
+A deployment's state is the PostgreSQL database and the object store.
+The database and the object store refer to each other, so the backup
+stops the API and the workers while it copies them. Each backup is a
+directory `backup/<UTC time>/` next to `compose.yaml`:
 
-| Volume | Must be backed up |
+| File | Contents |
 |---|---|
-| `rememberstack_postgres-data` | Yes: the database |
-| `rememberstack_object-store-data` | Yes: original files and derived artifacts |
-| `rememberstack_forget-manifests` | Yes, with the others: hard-forget manifests |
-| `rememberstack_app-state` | Optional: working directories and debug captures |
+| `roles.sql` | The PostgreSQL roles. The migrations create restricted roles for SQL queries, and roles belong to the PostgreSQL server, not to the database, so `pg_dump` does not include them. Passwords are left out; `setup` sets them again. |
+| `database.dump` | The database, from `pg_dump`. |
+| `objects/` | Every object-store bucket: original files, converted artifacts and filesystem-view snapshots. |
+| `objects.md5` | The MD5 of every object in `objects/`, one line per object. |
 
-Filesystem-view snapshots in the object store can be rebuilt; everything else in the
-first three volumes cannot. The database and the object store refer to
-each other, so back them up at the same moment.
+The script writes into `backup/.partial-<UTC time>/` and stops at the
+first failing command. It checks that `pg_restore` can read the dump and
+that every object read back from the object store matches `objects.md5`.
+Only then does it rename the directory to `backup/<UTC time>/` and start
+the stack again. A directory without `.partial-` is a checked backup, and
+a failed run never touches an earlier backup. If the script stops, the
+stack stays stopped: read the error, delete the `.partial-` directory
+(`sudo rm -rf backup/.partial-<UTC time>`) and
+start the stack with `docker compose up -d --wait`.
 
-### A cold backup of the volumes
-
-The simplest consistent backup stops the stack and copies the volumes:
+Save this as `backup.sh` next to `compose.yaml` and `.env`, and run it
+there with `bash backup.sh`. The `rclone` service in `compose.yaml`
+([rclone](https://rclone.org), profile `backup`) copies the buckets.
 
 ```bash
+#!/usr/bin/env bash
+# backup.sh: back up this deployment into backup/<UTC time>/
+set -euo pipefail
+name="$(date -u +%Y%m%dT%H%M%SZ)"
+partial="backup/.partial-$name"
+rclone() { docker compose --profile backup run --rm -T rclone "$@"; }
+
 docker compose stop
-mkdir -p backup
-for volume in postgres-data object-store-data forget-manifests app-state; do
-  docker run --rm \
-    -v "rememberstack_${volume}:/source:ro" \
-    -v "$PWD/backup:/backup" \
-    alpine tar -czf "/backup/${volume}.tar.gz" -C /source .
-done
-docker compose start
+docker compose up -d --wait postgres object-store
+mkdir -p "$partial"
+docker compose exec -T postgres sh -c \
+  'pg_dumpall -U "$POSTGRES_USER" --roles-only --no-role-passwords' > "$partial/roles.sql"
+docker compose exec -T postgres sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > "$partial/database.dump"
+docker compose exec -T postgres pg_restore --list < "$partial/database.dump" > /dev/null
+rclone sync store: "/$partial/objects"
+rclone md5sum "/$partial/objects" --output-file "/$partial/objects.md5"
+rclone checksum md5 --download "/$partial/objects.md5" store:
+mv "$partial" "backup/$name"
+docker compose up -d --wait
+echo "backup/$name"
 ```
 
-Keep the `backup/` directory and your `.env` together: a restore needs the
-same deployment id and the same database and object-store credentials.
+`rclone` runs as root in its container, so the files under `objects/`
+belong to root. Keep `backup/` together with your `.env`: a restore needs
+the same deployment id and the same database and object-store
+credentials. Copy both somewhere off the machine.
 
-To restore it into an empty stack on the same or another machine, with the
-same `.env`:
+## Restore
+
+Restore on the same or another machine, with the same `.env` and the
+same release that took the backup (or a newer one: `setup` migrates
+forward). Put the backup directory under `backup/` next to `compose.yaml`
+and run `bash restore.sh <UTC time>`, for example
+`bash restore.sh 20260926T120000Z`.
+
+The script stops at the first failing command, and in order it:
+
+1. checks the backup before it touches the deployment: `pg_restore` can
+   read the dump and every file in `objects/` matches `objects.md5`;
+2. stops the stack and sets the current data aside: it copies the
+   `postgres-data` and `object-store-data` volumes into
+   `backup/before-restore-<UTC time>/` and only then removes the volumes
+   (on a new machine the copies are empty);
+3. restores the roles, the database and the objects into new volumes, and
+   checks every object read back from the object store against
+   `objects.md5`;
+4. starts everything. `setup` applies any newer migrations and sets the
+   query role's password again, and the last command checks that the
+   graph definitions in the restored database match this release
+   ([Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog)).
+
+Setting the data aside needs free disk space about the size of the two
+volumes.
 
 ```bash
-docker compose down -v          # deletes the current volumes
-docker compose create           # creates empty volumes and containers
-for volume in postgres-data object-store-data forget-manifests app-state; do
-  docker run --rm \
-    -v "rememberstack_${volume}:/target" \
-    -v "$PWD/backup:/backup:ro" \
-    alpine tar -xzf "/backup/${volume}.tar.gz" -C /target
-done
+#!/usr/bin/env bash
+# restore.sh: restore backup/<name>/, setting the current data aside
+set -euo pipefail
+backup="backup/$1"
+aside="backup/before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+rclone() { docker compose --profile backup run --rm -T rclone "$@"; }
+volume_tar() { docker compose run --rm --no-deps -T --user root --entrypoint tar "$@"; }
+
+test -s "$backup/roles.sql"
+docker compose run --rm --no-deps -T postgres pg_restore --list < "$backup/database.dump" > /dev/null
+docker compose --profile backup run --rm --no-deps -T rclone \
+  checksum md5 "/$backup/objects.md5" "/$backup/objects"
+
+docker compose down
+mkdir "$aside"
+volume_tar postgres -cf - -C /var/lib/postgresql . > "$aside/postgres-data.tar"
+volume_tar object-store -cf - -C /data . > "$aside/object-store-data.tar"
+docker compose down --volumes
+
+docker compose up -d --wait postgres object-store
+docker compose exec -T postgres sh -c \
+  'grep -v "^CREATE ROLE $POSTGRES_USER;$" | psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres' < "$backup/roles.sql"
+docker compose exec -T postgres sh -c \
+  'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d postgres --create --exit-on-error' < "$backup/database.dump"
+rclone copy "/$backup/objects" store:
+rclone checksum md5 --download "/$backup/objects.md5" store:
+
 docker compose up -d --wait
 docker compose exec -T api remember ops graph-catalog ensure
+echo "previous data: $aside"
 ```
 
-The last command checks that the graph definitions in the restored database
-match this release ([Operating the pipeline](https://remember.dev/docs/self-hosting/operating#the-graph-catalog)).
+The roles step skips the role that runs PostgreSQL, which the new server
+already has. The database step replaces the empty database the new
+server created with the backup, including the database's own
+permissions.
 
-### A logical backup
+Check the restored memory, for example with
+`curl http://localhost:8000/deployment` and a search you know the answer
+to. When it is right, delete the set-aside copy:
+`rm -rf backup/before-restore-<UTC time>`.
 
-`pg_dump` backs up the database while it runs:
+Documents keep what the release that processed them extracted. Restoring
+into a newer release does not process them again.
+
+The `app-state` volume holds only working directories and debug captures
+and is not part of a backup. A restore empties it.
+
+### Roll back a restore
+
+If a restore fails or the restored memory is wrong, put the set-aside data
+back with `bash rollback.sh before-restore-<UTC time>`. Run it with the
+release that ran before the restore.
 
 ```bash
-docker compose exec -T postgres \
-  pg_dump -U rememberstack -d rememberstack --format=custom > rememberstack.dump
-docker compose exec -T postgres \
-  pg_dumpall -U rememberstack --roles-only > roles.sql
-```
+#!/usr/bin/env bash
+# rollback.sh: put backup/before-restore-<time>/ back into the volumes
+set -euo pipefail
+aside="backup/$1"
+volume_tar() { docker compose run --rm --no-deps -T --user root --entrypoint tar "$@"; }
 
-Use your own user and database names from `.env`. The second file matters:
-the migrations create a separate, restricted PostgreSQL role for SQL
-queries, and roles are not part of `pg_dump`. Copy the object-store buckets
-(`remember-raw`, `remember-artifacts`, `remember-corpusfs`) at the same
-time with an S3 tool such as `rclone sync`. Restoring a logical backup means
-creating the roles, restoring the dump into an empty database with
-`pg_restore`, copying the buckets back, and running `setup`; the project
-has not tested this path.
+test -s "$aside/postgres-data.tar"
+test -s "$aside/object-store-data.tar"
+docker compose down --volumes
+volume_tar postgres -xf - -C /var/lib/postgresql < "$aside/postgres-data.tar"
+volume_tar object-store -xf - -C /data < "$aside/object-store-data.tar"
+docker compose up -d --wait
+```
 
 ### Hard-forget manifests
 
 The `forget-manifests` volume holds the list of documents that were
 permanently removed, so a restore can remove them again from an older
 backup. A deployment started from `compose.yaml` has no command that
-creates such manifests. If the volume does hold manifests for your
+creates such manifests, so the volume is empty and the backup above leaves
+it out. If the volume does hold manifests for your
 deployment, the API refuses to start: honouring them needs a recovery
 procedure the Compose deployment does not include.
 
