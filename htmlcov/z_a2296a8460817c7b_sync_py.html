@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="index.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-09-25 10:32 +0000
+            created at 2026-09-26 10:13 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -240,16 +240,17 @@
     <p class="run run2"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">                <span class="nam">filename</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">filename</span> <span class="key">or</span> <span class="nam">item</span><span class="op">.</span><span class="nam">source_ref</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">                <span class="nam">mime</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">mime</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">                <span class="nam">content</span><span class="op">=</span><span class="nam">content</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">            <span class="nam">versioning_mode</span><span class="op">=</span><span class="nam">versioning_mode</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">            <span class="nam">source_modified_at</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">modified_at</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">            <span class="nam">source_version_ref</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">revision</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">            <span class="nam">sync_cycle_id</span><span class="op">=</span><span class="nam">cycle_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">            <span class="nam">lane</span><span class="op">=</span><span class="nam">self</span><span class="op">.</span><span class="nam">_settings</span><span class="op">.</span><span class="nam">lane</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="key">if</span> <span class="nam">result</span><span class="op">.</span><span class="nam">created</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">            <span class="key">return</span> <span class="op">(</span><span class="str">&quot;ingested&quot;</span><span class="op">,</span> <span class="nam">result</span><span class="op">.</span><span class="nam">version_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">        <span class="key">return</span> <span class="op">(</span><span class="str">&quot;unchanged&quot;</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>  <span class="com"># content-hash no-op (revision churn, same bytes)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">                <span class="nam">source_path</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">source_path</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">            <span class="nam">versioning_mode</span><span class="op">=</span><span class="nam">versioning_mode</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">            <span class="nam">source_modified_at</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">modified_at</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">            <span class="nam">source_version_ref</span><span class="op">=</span><span class="nam">item</span><span class="op">.</span><span class="nam">revision</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">            <span class="nam">sync_cycle_id</span><span class="op">=</span><span class="nam">cycle_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">            <span class="nam">lane</span><span class="op">=</span><span class="nam">self</span><span class="op">.</span><span class="nam">_settings</span><span class="op">.</span><span class="nam">lane</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">        <span class="key">if</span> <span class="nam">result</span><span class="op">.</span><span class="nam">created</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">            <span class="key">return</span> <span class="op">(</span><span class="str">&quot;ingested&quot;</span><span class="op">,</span> <span class="nam">result</span><span class="op">.</span><span class="nam">version_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">        <span class="key">return</span> <span class="op">(</span><span class="str">&quot;unchanged&quot;</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>  <span class="com"># content-hash no-op (revision churn, same bytes)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -259,7 +260,7 @@
             <a class="nav" href="index.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.16.1">coverage.py v7.16.1</a>,
-            created at 2026-09-25 10:32 +0000
+            created at 2026-09-26 10:13 +0000
         </p>
     </div>
 </footer>
