@@ -1,15 +1,15 @@
 export const metadata = {
   title: "Pricing and credits",
-  description: "How remember.dev charges for an active project, for text it processes and for data it stores, how prepaid credits and holds work, and what is never charged.",
+  description: "How remember.dev charges for an active project, for text it processes, for data it stores and for reads, how prepaid credits and holds work, and what is never charged.",
 };
 
 # Pricing and credits
 
 <AppliesTo products={["remember.dev"]} />
 
-remember.dev is prepaid. You buy credits, and three things draw on them:
-keeping a project running, processing text you send, and storing what the
-memory holds. Asking the memory questions is not charged.
+remember.dev is prepaid. You buy credits, and four things draw on them:
+keeping a project running, processing text you send, storing what the
+memory holds, and reading it.
 
 ## Credits
 
@@ -26,7 +26,7 @@ Your organisation's first purchase also activates its Default project; see
 additional project is activated with its own purchase, and those credits go
 into the same balance.
 
-## The three charges
+## The four charges
 
 <Callout type="note" title="Provisional rates">
 
@@ -94,13 +94,35 @@ upgrades, or anything remember.dev keeps for its own operations.
 If a day's measurement is missing, that day is not charged. remember.dev
 never estimates a storage charge.
 
+### Reads
+
+**Twice the embedding cost of the read** (provisional).
+
+A read that searches by meaning turns your question into an embedding, and
+the embedding provider reports what that call cost. remember.dev charges
+twice that cost, converted from US dollars to credits at the exchange rate
+recorded in the rate version: in `dev-eur-2026-09-v4`, 1.752696 credits per
+US dollar of provider cost (2 × 0.876348, the ECB reference rate of 23
+September 2026). A read that makes no embedding call, such as a SQL query,
+costs nothing.
+
+Every memory read counts: searches, the assured operations, graph queries,
+SQL queries, the document list and the other read routes, whether they come
+from the SDK, the CLI, plain HTTP or [hosted MCP](/docs/cloud/hosted-mcp). The
+amounts are fractions of a cent, so a read places no hold. It is admitted
+while the balance is above zero and the caps have room, and charged when it
+completes, rounded down to 0.000001 credit. The charge never takes the
+balance below zero or a cap over its limit: whatever would exceed them is
+not charged. Each charged read is one read-charge entry in the ledger.
+
+When the balance reaches zero or a cap is reached, reads stop; see
+[Spend caps and auto top-up](/docs/cloud/spend-controls#what-stops-when-money-or-a-cap-runs-out).
+
 ## What is not charged
 
-- **Reading.** Searches, assured operations, graph queries, SQL queries,
-  readiness checks and document listings cost nothing. They are limited
-  only by the deployment's capacity and remember.dev's provider-cost
-  safeguards.
-- **Access.** API, CLI and MCP use, tokens, and team members.
+- **Service status.** Readiness checks, deployment information and
+  `/healthz`.
+- **Access.** API keys, MCP connections, account tools, and team members.
 - **Failed processing.** If a document version fails, the hold for it is
   released in full.
 - **Sending the same content again.** Re-ingesting a document whose content
@@ -108,11 +130,13 @@ never estimates a storage charge.
   process and nothing to charge.
 - **How the work is done.** Model tokens, retries, processing time and the
   number of claims or relations produced are remember.dev's costs, not
-  meters.
+  meters. Reads are the one charge based on a provider's cost, because a
+  read has no quantity of your own to price.
 
 ## Holds: how the balance moves
 
-Before remember.dev does chargeable work, it places a **hold**: it takes the
+Before remember.dev processes text, keeps a project running or stores new
+data, it places a **hold**: it takes the
 most the work can cost from your available balance. When the work is done
 it charges the exact amount, which is never more than the hold, and returns
 the difference. If the work fails or is cancelled, the whole hold comes
@@ -123,7 +147,8 @@ when it finishes. Open holds already count against the balance you see;
 do not subtract them again.
 
 If the balance cannot cover a hold, the work does not start. Nothing runs
-on debt, and your balance cannot go below zero.
+on debt, and your balance cannot go below zero. Reads take no hold; they are
+charged as they complete, as described above.
 
 ## Statements and receipts
 
@@ -152,8 +177,8 @@ The rate card is public:
 curl -s https://remember.dev/app/api/v1/pricing/rates
 ```
 
-The response lists each charge with its unit and rate in credits, and
-states that ordinary retrieval is included. Until prices are published it
+The response lists each charge with its unit and rate in credits,
+including the `read` line. Until prices are published it
 answers `404` with `pricing_not_published`; the provisional rates are the
 ones on this page. A new rate applies from the
 time it takes effect; it never changes a charge already made.

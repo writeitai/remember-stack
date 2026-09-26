@@ -16,8 +16,8 @@ speaks on standard input and output (the agent starts it), or over HTTP
 
 <Cloud>
 
-remember.dev also runs a hosted server, at `https://remember.dev/app/api/mcp`;
-the agent signs in through the browser. The tables in
+remember.dev also runs a hosted server, at `https://remember.dev/mcp`; the
+agent signs in through the browser or sends an API key. The tables in
 [Side by side](#side-by-side) show how the two differ.
 
 </Cloud>
@@ -725,71 +725,35 @@ files; see [CLI](/docs/reference/cli#remember-doctor).
 ## The hosted server on remember.dev
 
 ```text
-https://remember.dev/app/api/mcp
+https://remember.dev/mcp
 ```
 
-You add this URL to your agent. On first use the agent opens a browser; you
-sign in to remember.dev and pick one project. The agent then works with that
-project until you connect again. No token goes into the agent's
-configuration. Setup per client: [Hosted MCP](/docs/cloud/hosted-mcp).
+You add this URL to your agent. The agent either opens a browser, where you
+sign in to remember.dev and choose the projects and permissions it gets, or
+sends an API key as `Authorization: Bearer rmb_…`. Setup per client, the
+account tools, limits and errors: [Hosted MCP](/docs/cloud/hosted-mcp).
 
-How sign-in works, for clients that need the details:
-
-| Item | Value |
-|---|---|
-| Transport | HTTP `POST` of one JSON-RPC message to the URL; the answer is one JSON body. |
-| Authorization | OAuth 2.1 authorization code with PKCE (`S256` only). |
-| Discovery | `https://remember.dev/app/api/.well-known/oauth-protected-resource` and `https://remember.dev/app/api/.well-known/oauth-authorization-server`. An unauthenticated request gets `401` with a `WWW-Authenticate` header pointing at the first. |
-| Client registration | Dynamic, at `https://remember.dev/app/api/oauth/register`. Redirect URIs must be `https`, or `http` on `localhost`/`127.0.0.1`. |
-| Scope | `remember.mcp` |
-| Access token | Valid for 1 hour. |
-| Refresh token | Valid for 30 days. |
-| Project choice | A consent page lists the projects of every organisation you are an active member of; you pick one. |
-
-The hosted server lists six tools:
-
-| Tool | What it does | Arguments |
-|---|---|---|
-| `ingest` | Stores a note in the chosen project. | Only `text` and `filename` are used. `filename` defaults to `note.md`; the note is always stored as `text/markdown`. Other `ingest` arguments are ignored. |
-| `pipeline_readiness` | Checks processing, as above. | `version_ids`, `require`, as above. |
-| `resolve_entity` | As above. | As above. |
-| `testimony_context` | The project engine's claims-and-sources operation. | Passed unchanged to the engine. |
-| `fact_context` | The project engine's facts operation. | Passed unchanged to the engine. |
-| `answer_context` | The project engine's combined operation. | Passed unchanged to the engine. |
-
-The last three tools carry the operation names of engine v0.16.0, which
-remember.dev runs today. On v0.17.0 these operations are named
-`claims_and_sources_context`, `facts_context` and `combined_context`. See
-[What remember.dev serves](/docs/cloud/compatibility).
-
-The hosted server publishes no input schemas: each tool accepts any object.
-It does not answer `ping`.
+The hosted server serves the memory tools of this package's catalogue,
+unchanged, at the engine version remember.dev runs. It adds a `project`
+argument to every memory tool, which it resolves and removes before calling
+that project's deployment, and it adds account tools that exist only on
+remember.dev.
 
 ## Side by side
 
 | | `remember mcp` | Hosted server |
 |---|---|---|
 | Runs | On your machine, started by the agent | On remember.dev |
-| Works with | A self-hosted engine or a remember.dev project | remember.dev projects |
-| Transport | stdio, one JSON-RPC message per line; or HTTP with `--transport http` | HTTP `POST`, one JSON-RPC message per request |
-| Protocol version answered | `2025-11-25` | `2025-11-25` |
-| Sign-in | Key from flags, environment or the credential file | OAuth in the browser; you pick a project |
-| Where the key lives | Credential file (`remember login`) or `REMEMBER_API_KEY` | With the agent's OAuth client; access 1 hour, refresh 30 days |
-| Configure with | `remember setup` | The agent's "add remote MCP server" setting |
-| `ingest` bodies | `text`, `content_base64`, `path` | `text` only, stored as Markdown |
-| `ingest` source identity (`source_kind`, `source_ref`, `versioning_mode`, …) | Yes | No |
-| `pipeline_readiness` | Yes | Yes |
-| `delete_document` | Yes | Not yet |
-| Assured operations | The four, when the deployment serves them at the same version | `resolve_entity`, `testimony_context`, `fact_context`, `answer_context` (v0.16.0 names) |
-| SQL query tools | Seven, when the deployment serves the query space | Not yet |
-| Input schemas | Full JSON Schemas | None (any object) |
-| Read-only mode | `--read-only` | No |
-| Tool errors | A tool result with `isError: true` and a JSON error object | A failed call returns an HTTP error instead of a tool result |
-| Tool count | Up to 15 | 6 |
-
-remember.dev serves SQL queries over the query space to every project; the
-hosted MCP server does not expose the seven SQL query tools yet. Until it
-does, an agent that needs them can use `remember mcp` with the project's
-token.
+| Works with | A self-hosted engine or a remember.dev project | Every remember.dev project the connection or key covers |
+| Transport | stdio, one JSON-RPC message per line; or HTTP with `--transport http` | Streamable HTTP: `POST`, one JSON-RPC message per request, no session |
+| Protocol version answered | `2025-11-25` | The requested one of `2025-11-25`, `2025-06-18`, `2025-03-26`; otherwise `2025-11-25` |
+| Sign-in | Key from flags, environment or the credential file | OAuth in the browser (PKCE, dynamic registration, consent page), or an API key in the header |
+| Configure with | `remember setup` | `remember setup --cloud`, or the agent's "add remote MCP server" setting |
+| Memory tools | The catalogue of the installed package | The catalogue of the engine version remember.dev runs |
+| `project` argument | Refused (`project_routing_unavailable`) | On every memory tool |
+| `ingest` bodies | `text`, `content_base64`, `path` | `text`, `content_base64` |
+| Account tools | None | Eleven: projects, keys, members, balance and billing links |
+| Read-only mode | `--read-only` | Grant only `memory:read` (and `account:read`) at sign-in or on the key |
+| Tool errors | A tool result with `isError: true` and a JSON error object | The same |
 
 </Cloud>

@@ -120,11 +120,12 @@ carry are in [Signed keys](/docs/self-hosting/authentication#signed-keys).
 
 <Cloud>
 
-remember.dev issues three more:
+remember.dev issues these signed keys:
 
 | Credential | Where it comes from | Scope it carries |
 |---|---|---|
-| Deployment API token, `umc_dp_…` (remember.dev) | Console, Settings → API Tokens. A signed credential the deployment verifies with published public keys. | `write` |
+| API key, `rmb_…` | Console (Settings → API keys) or `remember login`. Covers one, several or all projects of an organisation. | `write` with `memory:write`, `read` with only `memory:read` |
+| Hosted MCP call credential | Signed by remember.dev for one tool call on `https://remember.dev/mcp`; lives 5 minutes. | `read`, or `ingest` for the `ingest` tool, or `write` for `delete_document` |
 | Browser read credential (remember.dev console) | Issued to the console for a signed-in member; lives 10 minutes. | `read` |
 | Browser ingest credential (remember.dev console) | Issued to the console for one upload; lives 3 minutes. | `ingest` |
 

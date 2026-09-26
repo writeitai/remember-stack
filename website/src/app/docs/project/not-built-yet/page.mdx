@@ -61,18 +61,12 @@ absent from the current release; nothing here has a date.
 
 ## Hosted MCP on remember.dev
 
-- **SQL query tools.** The hosted MCP server does not offer the seven SQL
-  query tools yet, although remember.dev serves SQL queries; use
-  `remember mcp` with a project token for them.
-- **Source identity on ingest.** The hosted `ingest` tool stores plain notes
-  only; it does not accept `source_kind`, `source_ref`, living documents or
-  binary files.
-- **Deleting a document.** The hosted server has no `delete_document` tool;
-  use `remember mcp` with a project token, the SDK or the CLI.
-- **Adjacent chunks.** The hosted server has no `adjacent_chunks` tool;
-  use `remember mcp` with a project token, the SDK or the CLI.
-- **Tool schemas and structured errors.** The hosted tools publish no input
-  schemas, and a failed call does not come back as a readable tool error.
+- **Newer tools.** The hosted server serves the tools of the engine version
+  remember.dev runs (v0.17.2), which has no `search_documents` or
+  `adjacent_chunks` tool. See
+  [What remember.dev serves](/docs/cloud/compatibility).
+- **Files by path.** The hosted `ingest` tool takes `text` or
+  `content_base64`, not `path`; it has no access to your files.
 
 </Cloud>
 
@@ -86,16 +80,13 @@ absent from the current release; nothing here has a date.
 
 ## remember.dev account
 
-- **Sign-in with one key.** `remember login`, `remember switch`, project
-  resolution for a key and `client.account` need remember.dev to publish
-  OAuth metadata with a device-authorization, project and account endpoint.
-  remember.dev does not publish them yet, so these fail with an error naming
-  the metadata URL. Until then, use a deployment API token from the console
-  with `REMEMBER_API_URL` and `REMEMBER_API_KEY`.
-- **Control-plane tokens in the console.** The console has no page to create
-  a control-plane token; create one through the account API
-  ([Tokens and sign-in](/docs/cloud/tokens-and-sign-in#control-plane-tokens)).
 - **Projects, members and balance from the CLI.** The CLI has no commands
-  for them; use the console.
+  for them; use the console or the account tools of
+  [hosted MCP](/docs/cloud/hosted-mcp#account-tools).
+- **Removing members and changing roles in the console.** The console and
+  the REST API cannot remove a member; the `remove_member` tool of hosted
+  MCP can. Nothing changes a role yet.
+- **Service keys.** Every API key acts for a person, so a key used by CI
+  stops working when that person leaves the organisation.
 
 </Cloud>

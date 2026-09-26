@@ -21,9 +21,9 @@ about who operates it, not about how well it remembers.
 | **File formats** | Markdown, plain text, HTML, Word, PowerPoint and Excel by default; PDFs and images once you configure an OCR converter | UTF-8 Markdown and plain text, up to 10,000,000 bytes per document |
 | **Model inference for the pipeline** | Your own OpenRouter account, plus a Mistral key for PDFs and images | Included in the processing charge |
 | **Endpoint** | Wherever you run it | `https://<deployment-id>.dp.remember.dev`, over TLS, straight to your deployment |
-| **Access for agents** | You configure bearer or signed-token authentication | API tokens from the console, `remember login`, and hosted MCP with browser sign-in |
+| **Access for agents** | You configure bearer or signed-token authentication | One API key from the console or `remember login`, and hosted MCP at `https://remember.dev/mcp` with browser sign-in or the key |
 | **Upgrades** | You pull the new image and run migrations | Handled for you |
-| **Cost** | Your infrastructure and your model usage | Prepaid credits for an active project, processed text and stored data. Reading is not charged. See [Pricing](/docs/cloud/pricing). |
+| **Cost** | Your infrastructure and your model usage | Prepaid credits for an active project, processed text, stored data and reads (twice their embedding cost). See [Pricing](/docs/cloud/pricing). |
 | **Surfaces** | Everything in this documentation | See [What remember.dev serves](/docs/cloud/compatibility) |
 | **Help** | GitHub issues | Support in the console |
 
@@ -61,7 +61,7 @@ piece.
 ## Switching later
 
 The client, the operations and the results are the same on both, so your
-code does not change when you switch. Only the endpoint and the token do.
+code does not change when you switch. Only the endpoint and the key do.
 
 Your stored memory does not move between them. remember.dev has no export,
 and there is no import. Moving means sending your source documents again to

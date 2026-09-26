@@ -22,12 +22,14 @@ with either.</Cloud>
 <Tab cloud label="remember.dev">
 
 1. Sign in at [remember.dev/app](https://remember.dev/app).
-2. Open **Settings → API Tokens** and create a token.
-3. Copy the token (it starts with `umc_dp_` and is shown once) and the
-   endpoint, `https://<deployment-id>.dp.remember.dev`.
+2. Open **Settings → API keys** and create a key. The defaults (your
+   projects; read, write and account read) are what this page needs.
+3. Copy the key. It starts with `rmb_` and is shown once.
 
-Only organisation owners can create tokens. See
-[Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+Any member can create a key for the projects they can use. Instead of
+copying a key, you can also run `remember login` after installing the
+client (step 2); it stores a key on this machine. See
+[API keys and sign-in](/docs/cloud/tokens-and-sign-in).
 
 </Tab>
 
@@ -78,11 +80,13 @@ The current release is
 <Tab cloud label="remember.dev">
 
 ```bash
-export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
-export REMEMBER_API_KEY=umc_dp_...
+export REMEMBER_API_KEY=rmb_...
 ```
 
-The Python client and the `remember` CLI both read these.
+The Python client and the `remember` CLI both read it, and ask
+remember.dev for your default project's address. Set `REMEMBER_PROJECT`
+to use another project the key covers. After `remember login` you need
+neither variable.
 
 </Tab>
 
