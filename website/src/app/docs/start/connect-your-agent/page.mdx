@@ -18,17 +18,17 @@ works.
 <Tab cloud label="remember.dev">
 
 remember.dev hosts an MCP server for you. You add one URL; the agent
-opens a browser, you sign in, and you pick the project it may use. No
-token goes into the agent's configuration.
+opens a browser, you sign in, and you choose the projects and permissions
+it gets. No key goes into the agent's configuration.
 
 ```
-https://remember.dev/app/api/mcp
+https://remember.dev/mcp
 ```
 
 **Claude Code**
 
 ```bash
-claude mcp add --transport http remember https://remember.dev/app/api/mcp
+claude mcp add --transport http remember https://remember.dev/mcp
 ```
 
 **Cursor**: add to `.cursor/mcp.json` in your project:
@@ -36,7 +36,7 @@ claude mcp add --transport http remember https://remember.dev/app/api/mcp
 ```json
 {
   "mcpServers": {
-    "remember": { "url": "https://remember.dev/app/api/mcp" }
+    "remember": { "url": "https://remember.dev/mcp" }
   }
 }
 ```
@@ -57,8 +57,8 @@ machine without a browser, such as CI, add `--headless`: the agents then
 send the key from `REMEMBER_API_KEY`. No key is written into any agent's
 configuration. See [`remember setup`](/docs/reference/cli#remember-setup).
 
-Setup for other clients, the sign-in flow, and how to disconnect are
-on [Hosted MCP](/docs/cloud/hosted-mcp).
+Setup for other clients, signing in with an API key instead, the account
+tools, and how to disconnect are on [Hosted MCP](/docs/cloud/hosted-mcp).
 
 </Tab>
 
@@ -130,7 +130,10 @@ two tools that change memory (`ingest` and `delete_document`).
 
 <Cloud>
 
-The hosted remember.dev server exposes a smaller set; see
+The hosted remember.dev server exposes the tools of the engine version
+remember.dev runs, which does not have `search_documents` or
+`adjacent_chunks` yet, plus account tools for projects, keys and balance.
+Every tool there takes a `project` argument. See
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.
 
 For an agent that can only start a local program, `remember mcp` with a

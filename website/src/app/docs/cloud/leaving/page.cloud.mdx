@@ -51,7 +51,7 @@ curl -s \
 | Request | `requested` | The cancel window starts; `read_export_window_ends_at` says when it ends |
 | Stop work | `ingest_stopped` | The project's hostname stops answering. No new processing |
 | Stop compute | `compute_stopped` | The deployment is disabled and the active-project charge stops |
-| Revoke access | `access_revoked` | Every token for the deployment is revoked, pending logins expire, and project memberships end |
+| Revoke access | `access_revoked` | Every API key that lists the project is revoked, MCP connections lose the project (one left with no project ends), and project memberships end. Keys covering all projects keep working for the others |
 | Delete storage | `storage_deleted` | The project's stored files and artifacts are deleted, with a deletion proof recorded as `deletion_evidence_ref` |
 | Complete | `completed` | Offboarding is finished. The project is then archived (`project_archived`) and its slot is free |
 
@@ -70,7 +70,7 @@ downloading anything.
 During the window:
 
 - your data is kept;
-- tokens are not revoked and storage is not deleted;
+- keys are not revoked and storage is not deleted;
 - the project may already be stopped, so it may not answer requests.
 
 To cancel, write to [support](/docs/cloud/support) from an owner's account before

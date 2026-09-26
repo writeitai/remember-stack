@@ -45,9 +45,11 @@ Problems are traced by identifiers, not by descriptions. Include:
 - the request: method and path, for example `POST /ingest`;
 - the full error response body and status code;
 - for a document, the `version_id` from the ingest response;
-- for a token problem, the token's label or ID, never the secret.
+- for a key problem, the key's name or ID, never the secret;
+- for a hosted MCP problem, the client's name as **Settings → Connections**
+  shows it, the tool and the time of the call.
 
-Never send a token secret, a password or a document you would not want
+Never send an API key, a password or a document you would not want
 stored in a support system.
 
 ## What support can do
