@@ -149,6 +149,24 @@ Bytes sent again after the document was [deleted](#deleting-a-document)
 also create a new version (`created=true`), and it is processed from the
 start.
 
+## Finding a document
+
+Every version records the names it was stored under: its file name, the
+title the caller declared, and the source path. Sending the same bytes again
+under another name creates no version, but the new name is recorded next to
+the old ones. `search_documents` (`POST /documents/search`,
+`MemoryClient.search_documents`, `remember documents search`, or the
+`search_documents` MCP tool) finds documents by any of those names, even
+partial or misspelled, by their text, and by general metadata: format
+family, authors, recipients, dates, language and thread.
+
+Each result is a document judged by one version, its current one by
+default, and it reports that version's status, so a file still being
+processed can already be found by name. Say Ravi uploaded
+`billing-migration-draft.md` and later sent the same file as
+`billing-migration.md`: searching for either name finds the one document.
+See [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
 ## Deleting a document
 
 Deleting a document removes it from the memory: every version of it, in one

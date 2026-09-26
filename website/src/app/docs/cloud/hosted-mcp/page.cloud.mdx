@@ -1,60 +1,56 @@
 export const metadata = {
   title: "Hosted MCP",
-  description: "Connect a coding agent to one remember.dev project over MCP with a browser sign-in instead of an API token, and what the hosted server offers.",
+  description: "Connect a coding agent to remember.dev at https://remember.dev/mcp, with a browser sign-in or an API key, and use the memory and account tools it serves.",
 };
 
 # Hosted MCP
 
 <AppliesTo products={["remember.dev"]} />
 
-Hosted MCP lets a coding agent store and recall memory in one of your
-projects without ever holding an API token. You add one URL to the agent,
-sign in once in the browser, and pick the project. The agent gets a
-short-lived token that works only through this server and only for that
-project.
+remember.dev serves MCP (Model Context Protocol) at one URL:
 
 ```text
-https://remember.dev/app/api/mcp
+https://remember.dev/mcp
 ```
 
-If you would rather run the MCP server on your own machine with a
-deployment API token, use `remember mcp` instead; see
-[Connect your coding agent](/docs/start/connect-your-agent) and the
-[MCP tools reference](/docs/reference/mcp).
+One connection reaches every project you choose, and it offers two kinds of
+tools: the memory tools of the `remember` package, which work on a project's
+memory, and account tools, which answer questions about the organisation,
+its projects, keys and money.
 
-## How connecting works
+An agent authenticates in one of two ways:
 
-1. You add the URL to your agent.
-2. The agent's first request is refused with `401` and a pointer to
-   remember.dev's sign-in metadata.
-3. The agent registers itself with remember.dev and opens your browser.
-4. You sign in to remember.dev, if you are not already.
-5. A page titled **Connect _agent name_** lists the projects you can
-   connect. You pick one and choose **Connect**.
-6. The browser hands a one-time code back to the agent, which exchanges it
-   for an access token and a refresh token.
-
-The flow is standard OAuth 2.1 with PKCE (`S256`) and dynamic client
-registration. Your password and your session never reach the agent.
-
-The page lists every project that has a deployment in each organisation you
-belong to, shown as the organisation name and the project's hostname. One
-connection is one project. To use two projects, add the server twice under
-different names and pick a different project each time.
+- **Browser sign-in.** The agent opens remember.dev in your browser, you sign
+  in and approve it, and the agent receives tokens that work only at this
+  URL. Nothing secret goes into the agent's configuration.
+- **An API key** in the `Authorization` header, for machines without a
+  browser such as CI jobs and sandboxes. See
+  [API keys and sign-in](/docs/cloud/tokens-and-sign-in).
 
 ## Set up your agent
 
-These are each client's usual steps for a remote MCP server that signs in
-with OAuth. The exact screens depend on your client's version.
+The quickest way is to let the `remember` package write the entry for every
+agent it finds:
+
+```bash
+pip install remember
+remember setup --cloud
+```
+
+Cursor, Claude Code and Codex get the URL and sign in through the browser.
+Claude Desktop and Antigravity, which start only local programs, get
+`remember mcp` as a bridge to the URL, using the key from `remember login`.
+See [`remember setup`](/docs/reference/cli#remember-setup).
+
+To add the server by hand:
 
 ### Claude Code
 
 ```bash
-claude mcp add --transport http remember https://remember.dev/app/api/mcp
+claude mcp add --transport http remember https://remember.dev/mcp
 ```
 
-Start Claude Code, run `/mcp`, choose `remember` and authenticate. Your
-browser opens at the remember.dev connect page.
+Start Claude Code, run `/mcp`, choose `remember` and authenticate.
 
 ### Cursor
 
@@ -65,7 +61,7 @@ Add the server to `.cursor/mcp.json` in your repository, or to
 {
   "mcpServers": {
     "remember": {
-      "url": "https://remember.dev/app/api/mcp"
+      "url": "https://remember.dev/mcp"
     }
   }
 }
@@ -79,7 +75,7 @@ Add the server to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.remember]
-url = "https://remember.dev/app/api/mcp"
+url = "https://remember.dev/mcp"
 ```
 
 Then sign in:
@@ -91,97 +87,260 @@ codex mcp login remember
 ### Claude Desktop
 
 Open **Settings → Connectors**, choose **Add custom connector**, and enter
-`https://remember.dev/app/api/mcp` as the URL. Claude Desktop opens the
+`https://remember.dev/mcp` as the URL. Claude Desktop opens the
 remember.dev sign-in when you connect.
 
-<Callout type="note">
+### Without a browser
 
-Do not paste a deployment API token into an agent's settings or chat.
-Hosted MCP exists so that you do not have to.
+Create an API key under **Settings → API keys** and put it in the agent's
+environment as `REMEMBER_API_KEY`. Then either run
+`remember setup --cloud --headless`, or configure the header yourself. For
+Cursor:
 
-</Callout>
+```json
+{
+  "mcpServers": {
+    "remember": {
+      "url": "https://remember.dev/mcp",
+      "headers": { "Authorization": "Bearer ${env:REMEMBER_API_KEY}" }
+    }
+  }
+}
+```
 
-## Tools
+For Codex, add `bearer_token_env_var = "REMEMBER_API_KEY"` to the
+`[mcp_servers.remember]` table. Any other client sends
+`Authorization: Bearer rmb_…` on every request:
 
-The hosted server offers six tools. They run against the project you
-connected. The engine version remember.dev currently runs uses the
-operation names below; see [What remember.dev serves](/docs/cloud/compatibility) for
-how they map to the names used elsewhere in these docs.
+```bash
+curl -s https://remember.dev/mcp \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}'
+```
 
-| Tool | What it does | Deployment request |
+Keep the key in the environment or a secret store. Do not write it into a
+configuration file that is committed, and do not paste it into an agent's
+chat.
+
+## Signing in
+
+1. The agent's first request is refused with `401` and a pointer to
+   remember.dev's sign-in metadata.
+2. The agent registers itself with remember.dev and opens your browser.
+3. You sign in to remember.dev, if you are not already.
+4. The consent page shows what the agent asks for, and you choose what it
+   gets.
+5. The browser hands a one-time code back to the agent, which exchanges it
+   for an access token and a refresh token.
+
+The flow is OAuth 2.1 with PKCE (`S256`) and dynamic client registration.
+Your password and your browser session never reach the agent.
+
+The consent page shows:
+
+- **the client's name and where it sends you back.** The return address is
+  shown prominently, with a warning when it is on your own machine
+  (`localhost`), because any local program can claim such an address;
+- **the organisation**, with a choice if you belong to several;
+- **projects:** all projects you can access, or a selection. Only projects
+  with a running deployment are offered;
+- **the default project**, used when a tool call names none;
+- **permissions:** the ones the agent asked for, out of `memory:read`,
+  `memory:write`, `account:read` and `account:manage`. The first three are
+  checked by default; `account:manage` never is. The connection gets
+  exactly what you leave checked;
+- a note that content sent through the connection passes through
+  remember.dev and Cloudflare (see [Data handling](#data-handling)).
+
+If you check `account:manage`, the page also says that API keys the agent
+creates through this connection are revoked when the connection ends.
+
+A connection acts for you and never with more authority than you have. If
+your role or project assignments shrink, so does what the connection can do,
+from its next request.
+
+| Item | Lifetime |
+|---|---|
+| Consent page | 15 minutes; start again from the agent if it expires |
+| One-time code | 5 minutes, used once |
+| Access token | 1 hour |
+| Refresh token | Replaced on every refresh. Presenting a used refresh token again ends the whole connection |
+| Connection | Ends 30 days after its last refresh, or 180 days after you approved it, whichever comes first |
+| Client registration | Removed after 30 days without use |
+
+## Connections
+
+**Settings → Connections** lists the agents connected by browser sign-in,
+with their projects, permissions, when they connected, when they were last
+used and when they expire. Owners see every connection in the organisation;
+members see their own. **Disconnect** ends a connection: its tokens stop
+working at once, and every API key created through it is revoked.
+
+A connection also ends, or shrinks, when:
+
+- you are removed from the organisation, or your account is deleted: it
+  ends;
+- you are removed from a project, or the project is closed: the connection
+  loses that project, and a connection left with no project ends. If it was
+  the default project, the connection has no default afterwards;
+- the organisation is closed: it ends.
+
+Signing out of the console does not end connections.
+
+## Projects
+
+Every memory tool takes an optional `project` argument: a project's id, its
+slug, or its exact name (not case-sensitive) when no other project has that
+name. Without it, the call uses the default project chosen at sign-in or
+stored with the key. A connection or key that covers exactly one project and
+has no default uses that project.
+
+A project that is unknown, ambiguous, not covered by the connection or key,
+or without a running deployment gives a tool error that lists the projects
+the credential covers.
+
+## Memory tools
+
+The memory tools are the tool catalogue of the `remember` package, taken
+unchanged: names, descriptions, input schemas and annotations. remember.dev
+serves the catalogue of the engine version its deployments run (see
+[What remember.dev serves](/docs/cloud/compatibility)); today that is
+v0.17.2:
+
+| Tool | Permission |
+|---|---|
+| `ingest` | `memory:write` |
+| `delete_document` | `memory:write` |
+| `pipeline_readiness` | `memory:read` |
+| `resolve_entity`, `facts_context`, `claims_and_sources_context`, `combined_context` | `memory:read` |
+| `query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query` | `memory:read` |
+
+Each tool is described in the [MCP tools reference](/docs/reference/mcp).
+Differences on remember.dev:
+
+- `ingest` takes `text` or `content_base64`, not `path`: the hosted server
+  has no files of yours to read. The document must still be UTF-8 Markdown
+  or plain text; see [Limits](/docs/cloud/limits#ingest).
+- `tools/list` leaves out the tools whose permission the connection or key
+  does not hold. With no `memory:` permission, it lists no memory tools.
+- The tool runs against the project's own deployment, with the same limits
+  and [spend controls](/docs/cloud/spend-controls) as a direct request.
+  Reads are charged; see [Pricing](/docs/cloud/pricing).
+
+For each call remember.dev signs a separate credential for that one
+deployment: valid for 5 minutes and carrying only the permission the tool
+needs (`ingest` gets an upload-only credential). Your key or access token is
+never sent to the deployment.
+
+## Account tools
+
+Account tools exist only on remember.dev. They carry MCP annotations, so a
+client can tell the ones that change something (`create_project`,
+`create_api_key`, `revoke_api_key`, `invite_member`, `remove_member`) from
+the ones that only read.
+
+| Tool | Permission | Arguments | What it does |
+|---|---|---|---|
+| `whoami` | `account:read` | none | Who the credential acts for: the person, the organisation, the role, and the credential's kind, permissions, projects, default project and expiry |
+| `list_projects` | `account:read` | none | Projects you can see, with state, hostname, whether this credential covers each, and which is the default |
+| `project_status` | `account:read` | `project` (optional) | Activation state (`awaiting_payment`, `provisioning`, `active`, `parked`, `failed`, `archived`), the deployment, and the next step when there is one. It does not touch the memory |
+| `balance_and_usage` | `account:read` | `period` (optional: `current` or `previous` UTC month) | Owners: balance, monthly cap, spend this period, and spend and usage per project. Members: usage of their projects only, with `balance: null` and `reason: "owner_only"` |
+| `get_billing_links` | `account:read` | none | Console links for buying credits, setting the monthly cap, auto top-up and statements |
+| `create_project` | `account:manage`, owners only | `name` | Creates an unpaid project and returns its activation Checkout link. The project is activated when a person completes the payment. Repeating the call with the same name through the same connection or key returns the same project and link |
+| `list_api_keys` | `account:manage` | none | Live keys: your own, or every key in the organisation for an owner. Each names the key or connection that created it, if any |
+| `create_api_key` | `account:manage` | `name`, and optional `projects`, `permissions`, `expires_in_days` (7, 30, 90, 180 or 365) | Creates a key and returns its secret once. Defaults: the credential's projects, and its permissions without `account:manage` |
+| `revoke_api_key` | `account:manage` | `key_id` | Revokes a key, and every key created from it. Members revoke their own keys; owners any key in the organisation |
+| `invite_member` | `account:manage`, owners only | `email`, `role` (optional: `MEMBER`, the default, or `OWNER`) | Sends an invitation email. An invitation assigns no projects; assign them after the person joins |
+| `remove_member` | `account:manage`, owners only | `user_id` or `email` | Removes a person from the organisation: their project access, their keys and their connections, with every key created from those. The last owner cannot be removed |
+
+`tools/list` shows an account tool only when the credential holds its
+permission, and hides the three owner-only tools from members. Calling a
+tool without its permission is refused with `403` (below); a member calling
+an owner-only tool gets the tool error `owner_only`.
+
+A key that `create_api_key` makes stays inside the credential that made it:
+
+- its projects and permissions are within the creating key's or
+  connection's;
+- **through a key**, it cannot outlive that key; asking for a longer life is
+  refused with `key.outlives_parent`. It is revoked when that key is
+  revoked;
+- **through a connection**, its expiry is capped at the connection's
+  current expiry, and it is revoked when the connection ends for any
+  reason.
+
+Create keys meant to last in the console instead.
+
+### Money
+
+No tool buys credits, pays an activation, changes a cap or turns on auto
+top-up. `create_project` returns a Checkout link and `balance_and_usage`
+and `get_billing_links` return console links; a person opens them.
+
+## Protocol
+
+| Item | Value |
+|---|---|
+| Transport | Streamable HTTP: `POST` of one JSON-RPC message; the answer is one JSON body. `GET` and `DELETE` answer `405` |
+| Sessions | None. The server is stateless and issues no `MCP-Session-Id`; send the credential on every request |
+| Protocol versions | `2025-11-25`, `2025-06-18`, `2025-03-26`. `initialize` echoes a supported version you ask for, otherwise answers `2025-11-25` |
+| Methods | `initialize`, `ping`, `tools/list`, `tools/call`, `notifications/initialized` |
+| `MCP-Protocol-Version` header | Optional; a value other than the versions above is refused with `400` |
+| `Origin` header | Refused with `403` unless absent or `https://remember.dev` |
+| Discovery | `https://remember.dev/.well-known/oauth-protected-resource/mcp` and `https://remember.dev/.well-known/oauth-authorization-server` |
+| Scopes | `memory:read`, `memory:write`, `account:read`, `account:manage`. A client that asks for none gets the first three offered |
+| Redirect addresses | `https`, `http` on a loopback address (any port), or an app's own scheme such as `cursor://` |
+
+An unauthenticated request gets `401` with
+`WWW-Authenticate: Bearer resource_metadata="https://remember.dev/.well-known/oauth-protected-resource/mcp", scope="memory:read memory:write account:read"`.
+
+### Errors
+
+- **A tool that fails** returns a tool result with `isError: true` and a
+  JSON error object carrying a stable `code`, as `remember mcp` does. A
+  deployment's own errors keep the engine's code.
+- **A request refused before any tool runs** (`401`, `403`, `409` while
+  your account is being deleted, `413`, `429`, `503`) is a JSON-RPC error
+  with the code in `error.data.code`.
+- **A tool outside the credential's permissions** is refused with `403` and
+  `WWW-Authenticate: Bearer error="insufficient_scope", scope="<permission>"`,
+  so a client can ask you to approve more.
+
+### Limits
+
+| Limit | Value | Refusal |
 |---|---|---|
-| `ingest` | Stores a piece of text as a Markdown document | `POST /ingest` |
-| `pipeline_readiness` | Reports whether ingested versions are processed and queryable | `POST /readiness` |
-| `resolve_entity` | Finds the entity a name refers to | `POST /operations/resolve_entity` |
-| `testimony_context` | Returns what sources said, with the passages they said it in | `POST /operations/testimony_context` |
-| `fact_context` | Returns the facts currently held true, with their evidence | `POST /operations/fact_context` |
-| `answer_context` | Returns both of the above side by side for answering a question | `POST /operations/answer_context` |
+| Requests per key or connection | 120 per minute | `429` with `Retry-After` |
+| Calls in progress per key or connection | 8 | `429` |
+| Requests per organisation, across all credentials | 1,200 per minute | `429` |
+| Request body | 32 MiB plus 64 KiB | `413`, before anything is sent to the deployment |
+| Tool call duration | 90 seconds | tool error `timeout` |
+| Client registrations | 20 per hour per address | `429` |
+| Requests with an invalid or revoked credential | 20 per 15 minutes per address | `429` |
 
-`ingest` takes `text` and an optional `filename` (default `note.md`). The
-text is sent to the deployment as a Markdown document. It does not take a
-file path, a MIME type or source identifiers; to ingest files, use the CLI
-or the Python client.
+## Revocation
 
-The other five tools pass their arguments through unchanged as the JSON
-body of the deployment request, so they take the same arguments as those
-routes. See [Assured operations](/docs/reference/assured-operations) and
-[Ingest, readiness, documents](/docs/reference/http-api/ingest).
+remember.dev checks the key or connection on every request, so a revoked
+key or a disconnected agent is refused from its next request.
 
-The tool list advertises each tool with a one-line description and an open
-argument schema; agents learn the arguments from these docs, not from the
-tool list.
+## Data handling
 
-Each result comes back as one text item containing the deployment's JSON
-response.
+On this path, and only on this path, your content (the text you ingest and
+the results you read) passes through Cloudflare, which terminates TLS for
+`remember.dev`, and through remember.dev's account service on its way to and
+from your project's deployment. The SDK, the CLI and plain HTTP requests go
+to the deployment directly and do not.
 
-Hosted MCP does not yet offer the SQL query tools that `remember mcp` adds
-when a deployment serves SQL queries. Use `remember mcp` with a deployment
-API token, or the HTTP API, for those.
-
-## What the agent can do
-
-- **Read tools** work for any member of the organisation that owns the
-  project.
-- **`ingest`** works for owners and for members assigned to the project.
-- Every call is made to your project's own deployment with a fresh
-  credential that lasts 10 minutes (reads) or 3 minutes (ingest). Your
-  deployment applies its usual checks, including the
-  [spend controls](/docs/cloud/spend-controls).
-- The request and the response pass through remember.dev's account API on
-  the way. remember.dev does not store the text of either.
-
-If the project's deployment is not serving, for example because it is
-blocked for funding, tool calls fail.
-
-## Token lifetimes
-
-| Token | Lifetime | Notes |
-|---|---|---|
-| Access token | 1 hour | Presented on every MCP request |
-| Refresh token | 30 days | Replaced on every refresh; a used refresh token stops working |
-| Connect page | 15 minutes | Start again from the agent if it expires |
-| One-time code | 5 minutes | Used once |
-
-As long as the agent refreshes at least once every 30 days, it stays
-connected without another browser sign-in.
-
-## Disconnect
-
-Remove the server from the agent's configuration, or use the agent's own
-sign-out for the server. The agent's tokens then stop being used.
-
-remember.dev has no screen yet for listing or revoking an agent's
-connection. What still limits a connection you did not remove:
-
-- each tool call checks your membership at the time of the call, so if you
-  leave the organisation, every tool stops working at once;
-- if the project is closed, the tools stop working;
-- the refresh token expires 30 days after its last use.
-
-Signing out of the console does not disconnect agents.
+remember.dev keeps none of it. Tool arguments and results are not written
+to a database, logs, traces, error reports or audit records. For each call
+it records the tool, the project, the outcome, the duration and the sizes
+of the request and the response, never their content. See
+[Data handling and security](/docs/cloud/data-and-security).
 
 ## Related
 
-- [Tokens and sign-in](/docs/cloud/tokens-and-sign-in)
+- [API keys and sign-in](/docs/cloud/tokens-and-sign-in)
 - [MCP tools reference](/docs/reference/mcp)
+- [Connect your coding agent](/docs/start/connect-your-agent)
 - [Data handling and security](/docs/cloud/data-and-security)

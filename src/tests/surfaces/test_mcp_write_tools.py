@@ -20,6 +20,7 @@ import pytest
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from remember.mcp_engine import EngineMcpServer
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import McpMemorySettings
@@ -893,12 +894,12 @@ def test_tool_not_composed_when_backend_absent() -> None:
 
 
 def test_local_mcp_omits_write_tools_without_ports() -> None:
-    """O2: operation-only local MCP lists the four operations and no write tools."""
+    """O2: operation-only local MCP lists the operations, adjacent_chunks, and no write tools."""
     server = OperationMcpServer(
         surface=_StubOperationSurface()  # type: ignore[arg-type]
     )
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == list(OPERATION_TOOL_NAMES)
+    assert names == [*OPERATION_TOOL_NAMES, ADJACENT_CHUNKS_TOOL_NAME]
     result = server.call_tool(
         name="ingest", arguments={"text": "x", "filename": "a.md"}
     )

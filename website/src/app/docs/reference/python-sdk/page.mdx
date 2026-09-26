@@ -252,6 +252,7 @@ Client.ingest_file(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -293,6 +294,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
@@ -348,6 +350,7 @@ MemoryClient.ingest(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -367,6 +370,7 @@ results.
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
+| `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](/docs/reference/http-api/ingest#file-names-titles-and-paths). |
 
 Raises `ValueError` when:
 
@@ -504,6 +508,45 @@ while True:
     if page.cursor is None:
         break
     cursor = page.cursor
+```
+
+#### `search_documents`
+
+```python
+MemoryClient.search_documents(
+    query: str | None = None,
+    *,
+    filters: DocumentSearchFilters | None = None,
+    versions: Literal["current", "all"] = "current",
+    k: int = 20,
+    cursor: str | None = None,
+) -> DocumentSearchPage
+```
+
+Finds documents by the names they were stored under, their general metadata
+and their text, and returns a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage).
+`filters` is a
+[`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters)
+(`from remember import DocumentSearchFilters`): `family`, `authors`,
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
+and `doc_ids`. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
+`query`, a date without a timezone, or `k` outside 1 to 200 raises
+`pydantic.ValidationError` before any request. A malformed cursor raises
+`MemoryApiError` with `status_code` 400. What matches, and how, is in
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("audit report")
+emails = memory.search_documents(
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+)
+if len(emails.people_matched) > 1:
+    print("several people matched:", emails.people_matched)
 ```
 
 #### `delete_document`
@@ -745,22 +788,47 @@ print([s.title for s in cited.sources])
 
 ```python
 MemoryClient.search_claims(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
+as [`search_documents`](#search_documents); a filtered search is sent as
+`POST /search/claims`. See
+[Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+hits = memory.search_claims(
+    query="Project X",
+    channel="bm25",
+    documents=DocumentSearchFilters(authors=("alice@acme.com",)),
+)
+```
 
 #### `search_chunks`
 
 ```python
 MemoryClient.search_chunks(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
-Searches source passages. Same arguments and bounds as `search_claims`.
+Searches source passages. Same arguments and bounds as `search_claims`;
+`documents` keeps passages whose document matches.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")

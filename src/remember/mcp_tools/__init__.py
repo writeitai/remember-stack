@@ -13,6 +13,7 @@ the base ``remember`` install.
 
 from __future__ import annotations
 
+from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import memory_tools
@@ -23,8 +24,11 @@ from remember.mcp_tools._definitions import Permission
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
+from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
+from remember.mcp_tools._documents import DocumentSearchBackend
+from remember.mcp_tools._documents import handle_search_documents_tool
 from remember.mcp_tools._errors import error_result
 from remember.mcp_tools._errors import invalid_arguments
 from remember.mcp_tools._errors import map_error
@@ -39,6 +43,7 @@ from remember.mcp_tools._query import validate_saved_query_identifier
 from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
+    "ADJACENT_CHUNKS_TOOL_NAME",
     "DELETE_DOCUMENT_TOOL_NAME",
     "INGEST_TOOL_NAME",
     "MEMORY_WRITE_TOOL_NAMES",
@@ -46,7 +51,9 @@ __all__ = (
     "OPERATION_TOOL_NAMES",
     "PIPELINE_READINESS_TOOL_NAME",
     "PROJECT_ARGUMENT",
+    "SEARCH_DOCUMENTS_TOOL_NAME",
     "DocumentDeleteBackend",
+    "DocumentSearchBackend",
     "McpMemorySettings",
     "MemoryWriteBackend",
     "Permission",
@@ -57,6 +64,7 @@ __all__ = (
     "handle_delete_document_tool",
     "invalid_arguments",
     "handle_memory_write_tool",
+    "handle_search_documents_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",

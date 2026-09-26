@@ -57,8 +57,9 @@ Every replica holds its own database connections; see
 ## Database connections
 
 Each engine process has its own connection pools. Compose starts
-PostgreSQL with `max_connections=300`; the engine does not size itself
-against that limit. The ceilings per process are:
+PostgreSQL with `max_connections` set from
+`REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` (default `300`); the engine does not
+size itself against that limit. The ceilings per process are:
 
 | Process | Ceiling | Made of |
 |---|---|---|
@@ -71,26 +72,15 @@ The general pool's size is fixed. The retrieval and graph pools follow
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 215, within
-the limit of 300. When you add replicas or API processes, keep the sum of
-their ceilings under the limit, and when PostgreSQL refuses connections
-(`too many clients already` in the logs), raise it. The Compose `command` for PostgreSQL is one list, so an
-override repeats it whole and adds the new setting:
+the sum of its ceilings. The default stack's ceilings add up to 215 (23 +
+12 × 16), within the default limit of 300. When you add replicas or API
+processes, keep the sum of their ceilings under the limit, and when
+PostgreSQL refuses connections (`too many clients already` in the logs),
+raise it in `.env` and restart PostgreSQL:
 
-```yaml
-# compose.override.yaml
-services:
-  postgres:
-    command:
-      - postgres
-      - -c
-      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
-      - -c
-      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
-      - -c
-      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
-      - -c
-      - max_connections=600
+```bash
+echo 'REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS=600' >> .env
+docker compose up -d postgres
 ```
 
 Every PostgreSQL connection takes memory on the database host, so raise the
@@ -132,23 +122,26 @@ PostgreSQL's memory allows: each running graph query may use up to
 
 ## API admission limits
 
-The API counts every request (except `GET /healthz`) against a rate and a
-number running at once, per credential and for the whole deployment. Over a
-limit it answers `429` with `Retry-After`.
+Optional, and off by default: the API does not limit the request rate or the
+number of requests running at once until you set one of these in `.env`.
+Each set limit counts every request (except `GET /healthz`) per credential or
+for the whole deployment; over it the API answers `429` with `Retry-After`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | Requests per minute per signed credential, in bursts of up to a quarter of it |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | Requests running at once per signed credential |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | Requests per minute for the deployment, in bursts of up to a quarter of it |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | Requests running at once for the deployment |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | unset (no limit) | Requests per minute per signed credential, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | unset (no limit) | Requests running at once per signed credential |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | unset (no limit) | Requests per minute for the deployment, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | unset (no limit) | Requests running at once for the deployment |
 
-`compose.yaml` passes all four. The shared secret, and every caller when
-authentication is off, meets the deployment limits only. A script that
-ingests many files in parallel should keep its concurrency under the
-in-flight limit and wait `Retry-After` on a `429`; the `remember` client does
-not retry by itself. The counters live in the API process, so running more
-API processes multiplies the effective limits. See
+`0` also means no limit. Set them when a deployment is shared by callers you
+do not control and one of them could crowd out the rest. The shared secret,
+and every caller when authentication is off, meets the deployment limits
+only. With limits set, a script that ingests many files in parallel should
+keep its concurrency under the in-flight limit and wait `Retry-After` on a
+`429`; the `remember` client does not retry by itself. The counters live in
+the API process, so running more API processes multiplies the effective
+limits. See
 [Admission limits](/docs/reference/http-api#admission-limits).
 
 ## SQL queries

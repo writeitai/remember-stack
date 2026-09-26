@@ -1,104 +1,189 @@
 export const metadata = {
-  title: "Tokens and sign-in",
-  description: "The credentials remember.dev issues, what each one can do, how long it lives, how to get it without copying secrets, and how to revoke it.",
+  title: "API keys and sign-in",
+  description: "The one remember.dev API key: what it covers, what it may do, how to create, use and revoke it, how remember login stores it, and how agents and the browser sign in.",
 };
 
-# Tokens and sign-in
+# API keys and sign-in
 
 <AppliesTo products={["remember.dev"]} />
 
-remember.dev has one credential for memory and a few for everything around
-it. Most of the time you need only the first.
+remember.dev has one credential for everything a program does: the
+**API key**. The same key works with the Python SDK, the `remember` CLI,
+plain HTTP requests to your project's deployment, the account API, and
+[hosted MCP](/docs/cloud/hosted-mcp). People sign in to the console in the
+browser, and agents can connect to hosted MCP by browser sign-in instead of
+holding a key.
 
 | Credential | Looks like | Reaches | Who gets it | Lifetime |
 |---|---|---|---|---|
-| Deployment API token | `umc_dp_…` | One project's deployment: ingest, search, operations, graph, SQL queries | Owners | 365 days by default |
-| Control-plane token | `umc_cp_…` | Read-only organisation status: deployments, balance, ledger, statements, spend gate | Any member | 90 days by default |
+| API key | `rmb_…` | The deployments of the projects it covers, the account API, and `https://remember.dev/mcp` | Any member, for themselves | 90 days by default; 7, 30, 90, 180 or 365 |
+| MCP connection | tokens held by your agent | `https://remember.dev/mcp` only | Any member who approves an agent | Access token 1 hour, refreshed; the connection lasts at most 180 days |
 | Browser session | cookie | The console and the account API | Anyone who signs in | Until you sign out |
-| Hosted MCP token | issued to your agent | One project, through [hosted MCP](/docs/cloud/hosted-mcp) | Any member who connects an agent | 1 hour, refreshed |
 
-## Deployment API tokens
+## The API key
 
-A deployment API token is the credential your code, the `remember` CLI and
-a local `remember mcp` server present to your project's deployment. It
-authenticates to one deployment only, and it can read and write that
-memory.
+An API key is a signed token. remember.dev and each deployment it covers
+check the signature themselves, so your code talks to the deployment
+directly with the key; no request is relayed through remember.dev. Every key
+belongs to one organisation and acts for the person who created it.
 
-Send it as a bearer token to the deployment's hostname:
+A key records, when it is created:
+
+- **Projects.** Either all projects you can access, or a selection of 1 to
+  20 projects. For an owner, "all projects" means every project in the
+  organisation, including ones created later. For a member it means the
+  projects they are assigned to at that moment; projects assigned later are
+  not added.
+- **Permissions.** Any of the four below. A new key has `memory:read`,
+  `memory:write` and `account:read` unless you change them; `account:manage`
+  is added only when you choose it.
+- **A default project**, used when a request names none. It is stored
+  beside the key at remember.dev, not in the key.
+- **A lifetime.** Every key expires. To keep access, create a new key
+  before the old one expires.
+
+The projects and permissions cannot be changed afterwards. To change them,
+create a new key and revoke the old one.
+
+| Permission | Allows |
+|---|---|
+| `memory:read` | Every read of a project's memory: search, the assured operations, the graph, SQL queries, the document list, readiness |
+| `memory:write` | Ingest and deleting documents. It includes reading, so choosing it also adds `memory:read` |
+| `account:read` | Who am I, projects and their status, usage and billing links; for owners also the balance, ledger and statements |
+| `account:manage` | Create, list and revoke keys; through [hosted MCP](/docs/cloud/hosted-mcp#account-tools), also create projects and invite or remove members (owners only) |
+
+A key never has more authority than its person has now. If you lose a
+project assignment or leave the organisation, your keys lose that access
+with you, whatever they say.
+
+## Create a key in the console
+
+1. Open **Settings → API keys** and choose to create a key.
+2. Name it after where it will live, for example `ravi-laptop` or
+   `ci-ingest`.
+3. Choose the projects, the default project, the permissions and when it
+   expires.
+4. Copy the secret.
+
+The secret is shown once, with ready-to-copy forms for the environment
+variable, the Python SDK, the MCP header and curl. remember.dev stores only
+a hash of it and cannot show it again. If you lose it, create a new key and
+revoke the old one.
+
+The list shows each key's name, projects, permissions, when it was created
+and last used, and when it expires; keys that expire soon are marked.
+Owners see and can revoke every key in the organisation; members see and
+revoke their own.
+
+## Use a key
+
+Put the key in the environment. The SDK and the CLI find the project's
+address themselves:
 
 ```bash
-export REMEMBER_API_URL=https://<deployment-id>.dp.remember.dev
-export REMEMBER_API_KEY=umc_dp_...
+export REMEMBER_API_KEY=rmb_...
+export REMEMBER_PROJECT=docs    # optional: another project the key covers
 ```
 
+```python
+import remember
+
+memory = remember.Client(api_key="rmb_…")                  # the default project
+docs = remember.Client(api_key="rmb_…", project="docs")   # another covered project
+```
+
+The key names projects, not addresses. The client asks remember.dev which
+address serves the project, then talks to that address directly with the
+same key. With plain HTTP, do the same yourself:
+
 ```bash
+curl -s "https://remember.dev/app/api/v1/keys/self/project?project=docs" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+# {"project": "…", "name": "docs", "api_url": "https://<deployment-id>.dp.remember.dev"}
+
 curl -s https://<deployment-id>.dp.remember.dev/deployment \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
-The token has no person behind it: it belongs to the organisation, and the
-deployment records requests made with it as coming from that token, not
-from whoever minted it.
+`project` takes a project id, slug or name; without it you get the key's
+default project. Any valid key can ask, including one with only memory
+permissions.
 
-### Mint a token in the console
+## Keys created by programs
 
-1. Sign in as an owner and open **Settings → API Tokens**.
-2. Enter a label that says where the token will live, for example
-   `ravi-laptop` or `ci-ingest`.
-3. Choose **Mint token** and copy the secret.
+A key with `account:manage` can create more keys, through
+`POST /v1/orgs/{org_id}/keys` or the `create_api_key` MCP tool. Such a key:
 
-The secret is shown once. remember.dev stores only a hash of it and cannot
-show it again. If you lose it, mint a new one and revoke the old one.
+- covers at most the projects, and holds at most the permissions, of the
+  key or connection that created it; by default it gets the same projects
+  and permissions without `account:manage`;
+- cannot outlive the key that created it;
+- is revoked when the key that created it is revoked.
 
-The mint response also carries the deployment's hostname as
-`data_plane_hostname`, so a script that mints through the API knows where to
-send requests.
+A key created through an [MCP connection](/docs/cloud/hosted-mcp#account-tools)
+expires no later than the connection and is revoked when the connection
+ends. Create keys that should last in the console.
 
-The list shows each token's label, identifier, when it was last used and
-when it expires. Only owners can mint, list or revoke tokens.
+## Revoke a key
 
-### Limits
+Choose **Revoke** next to the key in **Settings → API keys**. Every key it
+created is revoked with it.
 
-- **Lifetime:** 365 days from minting. The console warns before a token
-  expires; so does the `remember` CLI, starting 30 days ahead.
-- **At most 20 live tokens per deployment.** Minting a 21st is refused
-  with `409`. Revoke one first, or replace one in the same step (below).
-- **At most 60 mints per hour** per member per organisation. More returns
-  `429`.
-
-### Rotate a token
-
-Mint the replacement before you revoke the old token, so nothing breaks in
-between. Through the API you can do both in one step by naming the token
-being replaced; that step is allowed even when the deployment already holds
-20 tokens:
+A key can also revoke itself, without a browser session:
 
 ```bash
-curl -s -X POST \
-  "https://remember.dev/app/api/v1/orgs/$ORG_ID/deployments/$DEPLOYMENT_ID/api-tokens" \
-  -H "Content-Type: application/json" \
-  --cookie "__session=..." \
-  -d '{"label": "ci-ingest-2026-10", "replaces_token_id": "<old token id>"}'
+curl -s -X DELETE https://remember.dev/app/api/v1/keys/self \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
-If `replaced_predecessor` in the response is `false`, the new token works
-but the old one is still live; revoke it.
+Repeating the request is harmless. `POST /oauth/revoke` with the form field
+`token=<the key>` does the same (RFC 7009).
 
-### Revoke a token
+When a revoked key stops working:
 
-Choose **Revoke** next to the token in **Settings → API Tokens**. The
-deployment refuses the token from then on.
+- **At remember.dev** (the account API and hosted MCP): on its next
+  request.
+- **At a deployment**, on requests that reserve spend (ingest and every
+  memory read): within about a second, because the deployment asks
+  remember.dev before the work starts.
+- **At a deployment**, on the few requests that reserve none (such as
+  readiness, deployment information and deleting a document): when the
+  deployment next fetches remember.dev's revocation list, which it does
+  about once a minute. If it cannot reach remember.dev, a revoked key keeps
+  working there for at most one hour; a deployment that has had no fresh
+  list for an hour refuses every key until it gets one.
 
-A token can also revoke itself, without a browser session:
+Keys are also revoked for you:
 
-```bash
-curl -s -X DELETE https://remember.dev/app/api/v1/api-tokens/self \
-  -H "Authorization: Bearer umc_dp_..."
-```
+| Event | Keys revoked |
+|---|---|
+| You are removed from a project | Your keys that list that project |
+| A project is closed | Every key that lists that project |
+| You are removed from the organisation | All your keys in it |
+| Your account is deleted | All your keys, in every organisation |
+| The organisation is closed | Every key in it |
+
+A key covering all projects is not revoked when one project is closed; it
+keeps working for the others.
+
+## Limits
+
+| Limit | Value | Refusal |
+|---|---|---|
+| Key name | 1 to 100 characters | `422` |
+| Projects listed in one key | 1 to 20 | `422`, `key.invalid_projects` |
+| Keys created | 60 per hour, per person per organisation | `429`, `key.mint_rate_limited` |
+| Live keys | 50 per person per organisation; 1,000 per organisation | `409`, `key.too_many_active` |
+| Account API requests | 60 per minute per key | `429`, `key.rate_limited`, with `Retry-After` |
+| Self-revocation | 30 per 5 minutes per key | `429` |
+| Requests with an invalid or revoked key | 20 per 15 minutes per address | `429`, `key.too_many_failures` |
+
+A deployment also limits each key's request rate; see
+[Limits](/docs/cloud/limits#reading).
 
 ## `remember login`
 
-`remember login` gets one API key onto a machine without you copying it. It
+`remember login` gets an API key onto a machine without you copying it. It
 uses the standard device authorization flow: the terminal shows a code, you
 approve it in a browser where you are signed in, and the key is written to a
 credential file on that machine.
@@ -112,15 +197,15 @@ The CLI reads remember.dev's OAuth metadata
 device authorization, token and revocation endpoints it names. Pass
 `--issuer` or set `REMEMBER_ISSUER` to sign in to another issuer.
 
-Open the link the terminal prints, check that the code on the page matches,
-choose the projects and permissions the key gets, and approve.
+Open the link the terminal prints and check that the code on the page
+matches. The page offers the same choices as the console: organisation,
+projects, default project, permissions and lifetime, with the same defaults.
+Any member can approve a login for themselves.
 
 What to expect:
 
-- **One key.** The key names the projects it covers, not their addresses.
-  Each command asks remember.dev which address serves the project and then
-  talks to that address directly. Choose a default project with
-  `remember switch <project>`, or pass `--project` to a command.
+- **One key.** Choose a default project with `remember switch <project>`, or
+  pass `--project` to a command.
 - **The CLI slows down when asked** and never waits more than 30 seconds
   between checks. Ctrl-C stops it and writes nothing.
 - **Logging in again replaces the stored key.** The old key is recorded
@@ -130,43 +215,13 @@ What to expect:
 `remember logout` revokes the stored key and deletes the file. If the
 revocation is not confirmed, the file is kept so you can retry.
 
-## Control-plane tokens
+## MCP connections
 
-A control-plane token (`umc_cp_…`) lets a script or agent read an
-organisation's status without a browser session. Its profile, `status:read`,
-allows exactly these requests and nothing else:
-
-- `GET /v1/orgs/{org_id}` and `GET /v1/orgs/{org_id}/deployments`
-- `GET /v1/organisations/{org_id}/deployments/{deployment_id}`
-- `GET /v1/orgs/{org_id}/billing/status`, `…/billing/ledger`,
-  `…/billing/statements`, `…/billing/statements/{statement_id}`,
-  `…/billing/grants`, `…/billing/purchase-options`, `…/billing/auto-top-up`
-- `GET /v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate` and
-  `…/spend-safety/usage`
-- `DELETE /v1/control-tokens/self`, to revoke itself
-
-It cannot read or write memory, spend money or change settings. Its
-authority is the smaller of the profile and the holder's current
-membership, checked on every request: a token stops working when its
-holder is no longer an active member.
-
-Get one while signed in:
-
-```bash
-curl -s -X POST "https://remember.dev/app/api/v1/orgs/$ORG_ID/control-tokens" \
-  -H "Content-Type: application/json" \
-  --cookie "__session=..." \
-  -d '{"label": "status-dashboard", "expires_in_days": 30}'
-```
-
-- **Lifetime:** 90 days by default; `expires_in_days` accepts 1 to 180.
-- **Minting** needs a browser session, and is limited to 20 per member per
-  organisation per hour.
-- **The secret** is in the mint response once.
-- **List and revoke** with `GET` and `DELETE /v1/orgs/{org_id}/control-tokens`.
-
-The console does not show control-plane tokens under **Settings**; they are
-managed through the API.
+An agent connected to [hosted MCP](/docs/cloud/hosted-mcp) by browser sign-in
+holds no API key. You approve it on a consent page with the same project and
+permission choices as a key, and it receives tokens that work only at
+`https://remember.dev/mcp`. **Settings → Connections** lists these
+connections and disconnects them.
 
 ## Browser sign-in
 
@@ -179,7 +234,8 @@ You sign in to the console at `https://remember.dev/app` with:
 - **Google.** Sign in with a Google account.
 
 The session is an HTTP-only cookie. **Settings → Security → Log out** signs
-out and ends your sessions on every device.
+out and ends your sessions on every device. It does not end MCP
+connections or revoke API keys.
 
 When the console shows your memory, it asks the account API for a
 short-lived, read-only credential for that one deployment (10 minutes; 3
@@ -214,14 +270,16 @@ another address with a flag or variable, the stored key is not sent there;
 pass a key explicitly instead. See the
 [Python SDK reference](/docs/reference/python-sdk#connecting).
 
-## Keep tokens safe
+## Keep keys safe
 
-- Put a token in an environment variable or a secret store, never in code
-  or a committed file.
-- Mint one token per machine or job, with a label that names it, so you can
-  revoke one without breaking the others.
-- Do not paste a token into an agent's chat. Connect agents with
-  [hosted MCP](/docs/cloud/hosted-mcp), which never shows them a token.
-- If a token leaks, revoke it first, then mint a replacement.
+- Put a key in an environment variable or a secret store, never in code or
+  a committed file.
+- Create one key per machine or job, named after it, covering only the
+  projects and permissions it needs, so you can revoke one without breaking
+  the others.
+- Do not paste a key into an agent's chat. Connect agents with
+  [hosted MCP](/docs/cloud/hosted-mcp) and browser sign-in, or give a headless
+  agent the key through its environment.
+- If a key leaks, revoke it first, then create a replacement.
 
 More in [Data handling and security](/docs/cloud/data-and-security).

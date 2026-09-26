@@ -108,5 +108,5 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
    * Register `adjacent_chunks` in `_primitive_tool_descriptors()` with properties `chunk_id` (uuid) and `window` (int, default 1, 1..2), expanding the catalog from 21 to 22 tools.
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
-2. **Top-level MCP Scope Boundary (D50, D83, D87):**
-   * Raw primitives do not mint top-level MCP tools. The four platform-owned assured operations are the only MCP intent tools; the rest of the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)) is infrastructure (`ingest`, `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools), and `adjacent_chunks` is not among them.
+2. **Top-level MCP Scope Boundary (D50, D83, D87, amended by D137):**
+   * Under D137, `adjacent_chunks` is a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` to ensure complete client parity across HTTP API, Python SDK, CLI, and MCP.

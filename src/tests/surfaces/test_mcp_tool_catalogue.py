@@ -6,6 +6,8 @@ the source of the assured-operation registry's agent-facing fields.
 
 from __future__ import annotations
 
+from datetime import datetime
+from datetime import UTC
 import subprocess
 import sys
 from unittest.mock import MagicMock
@@ -15,6 +17,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 import pytest
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
@@ -23,6 +26,8 @@ from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import validate_arguments
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
@@ -65,7 +70,9 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "ingest",
         "pipeline_readiness",
         "delete_document",
+        "search_documents",
         *OPERATION_TOOL_NAMES,
+        ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
     ]
     assert len(set(names)) == len(names)
@@ -141,10 +148,12 @@ def test_permission_matches_the_scope_the_engine_requires() -> None:
     """A tool's declared permission is what the perimeter demands of its route."""
     for definition in memory_tools():
         method, path = definition.http_route.split(" ", 1)
-        concrete = path.replace("{doc_id}", str(uuid4())).replace(
-            "{namespace}", "examples"
+        concrete = (
+            path.replace("{doc_id}", str(uuid4()))
+            .replace("{chunk_id}", str(uuid4()))
+            .replace("{namespace}", "examples")
+            .replace("{name}", "top_entities")
         )
-        concrete = concrete.replace("{name}", "top_entities")
         scope = required_scope(method=method, path=concrete)
         if scope is None:
             scope = operation_scope(mutates=definition.mutates)
@@ -171,11 +180,30 @@ def test_operations_registry_fields_are_generated_from_the_catalogue() -> None:
 
 
 def test_validate_arguments_parses_every_family() -> None:
-    """One entry point validates write, deletion, query and operation calls."""
+    """One entry point validates write, deletion, query, adjacent chunks, and operation calls."""
     doc_id = uuid4()
     assert validate_arguments("delete_document", {"doc_id": str(doc_id)}) == {
         "doc_id": doc_id
     }
+    chunk_id = uuid4()
+    assert validate_arguments(
+        ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id)}
+    ) == {"chunk_id": chunk_id, "window": 1}
+    assert validate_arguments(
+        ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "window": 2}
+    ) == {"chunk_id": chunk_id, "window": 2}
+    with pytest.raises(ToolArgumentError, match="Missing required arguments: chunk_id"):
+        validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {})
+    with pytest.raises(ToolArgumentError, match="chunk_id is not a valid UUID"):
+        validate_arguments(ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": "not-a-uuid"})
+    with pytest.raises(ToolArgumentError, match="window must be between 1 and 2"):
+        validate_arguments(
+            ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "window": 3}
+        )
+    with pytest.raises(ToolArgumentError, match="Unknown argument keys: project"):
+        validate_arguments(
+            ADJACENT_CHUNKS_TOOL_NAME, {"chunk_id": str(chunk_id), "project": "p"}
+        )
     ingest = validate_arguments("ingest", {"text": "hi", "filename": "a.md"})
     assert ingest["content"] == b"hi"
     assert ingest["mime"] == "text/markdown"
@@ -256,14 +284,27 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         ingest=MagicMock(),
         pipeline_readiness=MagicMock(),
         deletion=MagicMock(),
+        document_search=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
     }
 
     operations_only = _deployment_tools(surface=surface)
-    assert set(operations_only) == set(OPERATION_TOOL_NAMES)
+    assert set(operations_only) == {*OPERATION_TOOL_NAMES, ADJACENT_CHUNKS_TOOL_NAME}
     assert operations_only["facts_context"] == tool("facts_context").tool_version
+    assert (
+        operations_only[ADJACENT_CHUNKS_TOOL_NAME]
+        == tool(ADJACENT_CHUNKS_TOOL_NAME).tool_version
+    )
+
+
+def test_read_only_mode_preserves_adjacent_chunks() -> None:
+    """Read-only MCP mode preserves read tools including adjacent_chunks."""
+    read_only_tools = _render(read_only=True)
+    assert ADJACENT_CHUNKS_TOOL_NAME in read_only_tools
+    assert "ingest" not in read_only_tools
+    assert "delete_document" not in read_only_tools
 
 
 def test_catalogue_imports_without_the_engine() -> None:
@@ -274,3 +315,64 @@ def test_catalogue_imports_without_the_engine() -> None:
         "assert not loaded, loaded\n"
     )
     subprocess.run([sys.executable, "-c", probe], check=True)
+
+
+def test_search_documents_arguments_become_one_request() -> None:
+    """Flat tool arguments split into the request and its filters."""
+    parsed = validate_arguments(
+        "search_documents",
+        {
+            "query": "q3 sales",
+            "family": ["office"],
+            "authors": ["alice@acme.com"],
+            "created_from": "2025-01-01T00:00:00Z",
+            "versions": "all",
+            "k": 5,
+        },
+    )
+    request = parsed["request"]
+    assert isinstance(request, DocumentSearchRequest)
+    assert request.query == "q3 sales"
+    assert request.filters.family == ("office",)
+    assert request.filters.authors == ("alice@acme.com",)
+    assert request.filters.created_from == datetime(2025, 1, 1, tzinfo=UTC)
+    assert request.versions == "all"
+    assert request.k == 5
+    with pytest.raises(ToolArgumentError, match="Unknown argument keys: title"):
+        validate_arguments("search_documents", {"title": "x"})
+    with pytest.raises(ToolArgumentError, match="cursor pages filter-only"):
+        validate_arguments("search_documents", {"query": "x", "cursor": "abc"})
+    with pytest.raises(ToolArgumentError, match="created_from"):
+        validate_arguments("search_documents", {"created_from": "2025-01-01T00:00:00"})
+
+
+def test_engine_mcp_offers_search_documents_only_when_composed() -> None:
+    """The engine lists and answers search_documents through its port."""
+    surface = MagicMock()
+    surface.deployment_id = _DEPLOYMENT
+    without = OperationMcpServer(surface=surface)
+    names = [entry["name"] for entry in without.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert "search_documents" not in names
+    refused = without.call_tool(name="search_documents", arguments={})
+    assert refused["isError"] is True
+    assert "tool_not_composed" in str(refused["content"])
+
+    search = MagicMock()
+    search.search_documents.return_value = DocumentSearchPage(
+        documents=(), as_of=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+    server = OperationMcpServer(surface=surface, document_search=search)
+    names = [entry["name"] for entry in server.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert names[0] == "search_documents"
+    result = server.call_tool(
+        name="search_documents", arguments={"query": "report", "k": 3}
+    )
+    assert result["isError"] is False
+    call = search.search_documents.call_args.kwargs
+    assert call["deployment_id"] == _DEPLOYMENT
+    assert call["request"] == DocumentSearchRequest(query="report", k=3)
+
+    search.search_documents.side_effect = ValueError("cursor is malformed")
+    bad = server.call_tool(name="search_documents", arguments={"cursor": "zz"})
+    assert bad["isError"] is True
+    assert "cursor is malformed" in str(bad["content"])

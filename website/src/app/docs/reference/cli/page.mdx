@@ -7,7 +7,7 @@ export const metadata = {
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-This page describes the `remember` CLI (v0.17.1), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.17.2), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents<Cloud>. It also signs you in to remember.dev</Cloud>. It
@@ -194,6 +194,13 @@ readiness command. See [Wait until a document is queryable](/docs/guides/wait-fo
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
                         [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
+                          [--recipient NAME_OR_ADDRESS]...
+                          [--created-from T] [--created-to T]
+                          [--modified-from T] [--modified-to T]
+                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--versions {current,all}] [--limit N] [--cursor CURSOR]
+                          [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -205,6 +212,20 @@ documents whose newest version has that status.
 
 ```bash
 remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`search` finds documents by name, metadata and text and prints a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage) as
+JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
+several; any listed value matches. Dates are ISO 8601 with a timezone, for
+example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+```bash
+remember documents search "q3 sales" --family office | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
 ```
 
 `delete` removes one document, every version of it, from the memory and

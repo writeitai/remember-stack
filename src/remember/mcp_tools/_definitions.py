@@ -21,6 +21,8 @@ from typing import Literal
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
+SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
+ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -162,6 +164,76 @@ _DELETE_DOCUMENT_DESCRIPTION: Final = (
     " observations_closed. A document_not_found error means the id is unknown or"
     " the document is already deleted: do not retry it."
 )
+
+_SEARCH_DOCUMENTS_DESCRIPTION: Final = (
+    "Find files: documents by name, metadata and content. Use it when the user"
+    ' names or describes a file ("find Q3_sales_2025.xlsx", "the audit'
+    ' report from last spring", "emails from Alice") rather than asking'
+    " about its content. query matches every name a document was stored under"
+    " (file name, title, source path; old names too after a rename; partial and"
+    " misspelled names work) and its text. Filters narrow by family (text,"
+    " markdown, html, pdf, image, audio, video, office, other), authors,"
+    ' recipients (a name or an address; "alice" matches "Alice Novak"),'
+    " created/modified date ranges, language, thread_ref and doc_ids. Each"
+    ' result is a document judged by its current version (versions="all"'
+    " searches every live version and returns the newest match); it carries"
+    " doc_id, version_id, file_name, title, family, processing status, authors,"
+    " recipients, dates, p3_path (documents/<doc_id> in the corpus filesystem"
+    " view, where one is published) and a short overview when one exists."
+    " When a people"
+    " filter matches several different people, people_matched lists each with"
+    " a document count: narrow the filter (for example by address) instead of"
+    " guessing. Without query, results are newest first and cursor pages them."
+)
+
+_DATE_TIME: Final[dict[str, object]] = {
+    "type": "string",
+    "format": "date-time",
+    "description": "An ISO 8601 instant with a timezone, inclusive.",
+}
+
+_STRING_LIST: Final[dict[str, object]] = {
+    "type": "array",
+    "items": {"type": "string", "minLength": 1},
+}
+
+_SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "description": "Words from the file's name, title, path or text.",
+        },
+        "family": {**_STRING_LIST, "description": "Keep these format families."},
+        "authors": {**_STRING_LIST, "description": "Any of these authors."},
+        "recipients": {**_STRING_LIST, "description": "Any of these recipients."},
+        "created_from": _DATE_TIME,
+        "created_to": _DATE_TIME,
+        "modified_from": _DATE_TIME,
+        "modified_to": _DATE_TIME,
+        "language": {"type": "string", "minLength": 1},
+        "thread_ref": {"type": "string", "minLength": 1},
+        "doc_ids": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "description": "Only these documents (UUIDs).",
+        },
+        "versions": {
+            "type": "string",
+            "enum": ["current", "all"],
+            "description": "current (default) or all live versions.",
+        },
+        "k": {"type": "integer", "minimum": 1, "maximum": 200},
+        "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The previous page's cursor; only without query.",
+        },
+    },
+}
 
 _DELETE_DOCUMENT_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
@@ -448,6 +520,14 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         destructive=True,
     ),
     ToolDefinition(
+        name=SEARCH_DOCUMENTS_TOOL_NAME,
+        description=_SEARCH_DOCUMENTS_DESCRIPTION,
+        input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /documents/search",
+    ),
+    ToolDefinition(
         name="resolve_entity",
         description=(
             "Resolve a name to ranked current survivor candidates; never silently guess."
@@ -527,6 +607,34 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=4,
         http_route="POST /operations/combined_context",
+    ),
+    ToolDefinition(
+        name=ADJACENT_CHUNKS_TOOL_NAME,
+        description=(
+            "Retrieve neighbouring chunks preceding and succeeding a target chunk within the"
+            " same document to expand conversational or narrative context."
+        ),
+        input_schema=_object_schema(
+            properties={
+                "chunk_id": {
+                    "type": "string",
+                    "description": "UUID of the target chunk to expand around.",
+                },
+                "window": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 2,
+                    "description": (
+                        "Number of neighbouring chunks to retrieve on each side (1 or 2, default 1)."
+                    ),
+                },
+            },
+            required=("chunk_id",),
+        ),
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /chunks/{chunk_id}/adjacent",
     ),
     ToolDefinition(
         name="query_sql",

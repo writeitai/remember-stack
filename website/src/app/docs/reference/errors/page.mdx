@@ -66,7 +66,7 @@ seconds. `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
-| `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](/docs/reference/http-api#admission-limits)). | Wait the `Retry-After` seconds, then retry. |
+| `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](/docs/reference/http-api#admission-limits), off unless configured). | Wait the `Retry-After` seconds, then retry. |
 | `429` | `{"code": "concurrency_limited", …}` | Too many requests of the credential or the deployment are running at once. | Wait for your other requests to finish (`Retry-After` is `1`), then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. | Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
@@ -267,11 +267,11 @@ seconds between polls.
 | redirect to another host | Stops: `refusing a cross-origin redirect`. |
 
 Every failure exits with status 1 and leaves the stored key unchanged;
-Ctrl-C exits with status 130. See [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+Ctrl-C exits with status 130. See [API keys and sign-in](/docs/cloud/tokens-and-sign-in).
 
 ## remember.dev account API errors
 
-The remember.dev account API (organisations, projects, billing, tokens) uses
+The remember.dev account API (organisations, projects, billing, API keys) uses
 one error envelope:
 
 ```json
