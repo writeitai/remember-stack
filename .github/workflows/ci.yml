@@ -382,13 +382,24 @@ jobs:
             docker compose --env-file .env exec -T api python -c \
               'import json, sys; report = json.load(sys.stdin); assert report["ready"]; assert all(item["ready"] for item in report["versions"]); assert all(item["ready"] for item in report["capabilities"].values())'
 
-      - name: Back up, destroy and restore as the upgrades page documents
+      - name: Back up, restore and roll back with the upgrades page's scripts
         run: |
-          # The commands between the markers are the ones on
-          # website/src/app/docs/self-hosting/upgrades/page.mdx; keep them equal.
+          # Runs backup.sh, restore.sh and rollback.sh exactly as
+          # website/src/app/docs/self-hosting/upgrades/page.mdx prints them.
+          python3 - website/src/app/docs/self-hosting/upgrades/page.mdx <<'PY'
+          import re, sys
+          text = open(sys.argv[1]).read()
+          scripts = re.findall(r"```bash\n(#!/usr/bin/env bash\n# (\w+\.sh):.*?)```", text, re.S)
+          assert sorted(name for _, name in scripts) == ["backup.sh", "restore.sh", "rollback.sh"], scripts
+          for body, name in scripts:
+              open(name, "w").write(body)
+          PY
           psql_count() {
             docker compose --env-file .env exec -T postgres \
               psql -U rememberstack -d rememberstack -Atc "$1"
+          }
+          state() {
+            psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)'
           }
           # Through the restricted SQL role: proves its grants and password.
           sql_count() {
@@ -398,45 +409,47 @@ jobs:
               http://localhost:8000/query/sql \
               | python3 -c 'import json,sys; r=json.load(sys.stdin); assert r["termination_reason"] == "completed", r; print(r["rows"][0][0])'
           }
-          before="$(psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)')"
+          # MD5 of the bytes of every object, read from the object store.
+          objects() {
+            docker compose --env-file .env --profile backup run --rm -T rclone \
+              md5sum --download store: | sort
+          }
+          check_restored() {
+            test "$(state)" = "$state_before"
+            test "$(sql_count)" = "$sql_before"
+            # Every object saved before the backup came back byte for byte.
+            objects > objects-after.md5
+            test -z "$(comm -23 objects-before.md5 objects-after.md5)"
+            # The database-level grant narrowing came back with the dump.
+            test "$(psql_count "SELECT has_database_privilege('public', current_database(), 'CONNECT')")" = 'f'
+            # The filesystem snapshot the database points at came back.
+            docker compose --env-file .env run --rm --no-deps -T api mounts --root /tmp/views
+            docker compose --env-file .env exec -T api remember ops graph-catalog ensure \
+              | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
+          }
+
+          state_before="$(state)"
           sql_before="$(sql_count)"
+          objects > objects-before.md5
+          for bucket in remember-raw remember-artifacts remember-corpusfs; do
+            grep -q "  $bucket/" objects-before.md5
+          done
 
-          # --- back up
-          docker compose stop
-          docker compose up -d --wait postgres object-store
-          mkdir -p backup
-          docker compose exec -T postgres sh -c \
-            'pg_dumpall -U "$POSTGRES_USER" --roles-only --no-role-passwords' > backup/roles.sql
-          docker compose exec -T postgres sh -c \
-            'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom' > backup/database.dump
-          docker compose --profile backup run --rm -T rclone sync store: /backup/objects
-          docker compose up -d --wait
-          # --- end back up
+          bash backup.sh > backup.out
+          backup_dir="$(tail -n 1 backup.out)"
+          test -s "$backup_dir/database.dump"
+          test -z "$(find backup -maxdepth 1 -name '.partial-*')"
 
-          test -s backup/database.dump
-          find backup/objects -type f | grep -q .
-          docker compose --env-file .env down --volumes
+          bash restore.sh "${backup_dir#backup/}" > restore.out
+          aside="$(tail -n 1 restore.out)"
+          aside="${aside#previous data: }"
+          test -s "$aside/postgres-data.tar"
+          check_restored
 
-          # --- restore
-          docker compose up -d --wait postgres object-store
-          docker compose exec -T postgres sh -c \
-            'grep -v "^CREATE ROLE $POSTGRES_USER;$" | psql -v ON_ERROR_STOP=1 -q -U "$POSTGRES_USER" -d postgres' < backup/roles.sql
-          docker compose exec -T postgres sh -c \
-            'dropdb -U "$POSTGRES_USER" --force "$POSTGRES_DB" && pg_restore -U "$POSTGRES_USER" -d postgres --create --exit-on-error' < backup/database.dump
-          docker compose --profile backup run --rm -T rclone copy /backup/objects store:
-          docker compose up -d --wait
-          # --- end restore
-
-          after="$(psql_count 'SELECT (SELECT count(*) FROM document_versions), (SELECT count(*) FROM processing_state), (SELECT version_num FROM alembic_version)')"
-          test "$before" = "$after"
-          test "$(sql_count)" = "$sql_before"
-          # The database-level grant narrowing came back with the dump.
-          test "$(psql_count "SELECT has_database_privilege('public', current_database(), 'CONNECT')")" = 'f'
-          # The filesystem snapshot the database points at came back with the objects.
-          docker compose --env-file .env run --rm --no-deps -T api mounts --root /tmp/views
-          docker compose --env-file .env exec -T api remember ops graph-catalog ensure \
-            | python3 -c 'import json,sys; assert json.load(sys.stdin)["ready"]'
-          sudo rm -rf backup
+          bash rollback.sh "${aside#backup/}"
+          check_restored
+          sudo rm -rf backup backup.sh restore.sh rollback.sh backup.out restore.out \
+            objects-before.md5 objects-after.md5
 
       - name: Stage an upgrade from the prior schema
         run: |
