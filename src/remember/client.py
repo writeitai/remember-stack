@@ -51,12 +51,16 @@ from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
 from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import SearchRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
@@ -507,8 +511,27 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search source claims; the returned envelope remains evidence grain."""
+        """Search source claims; the returned envelope remains evidence grain.
+
+        ``documents`` (D134) keeps only claims found in a document version
+        matching the filters ``search_documents`` takes; each returned claim
+        still cites its origin. The filter travels in a body,
+        so a filtered search uses ``POST /search/claims``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/claims",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/claims",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -525,8 +548,26 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source passages as separately typed evidence."""
+        """Search live source passages as separately typed evidence.
+
+        ``documents`` (D134) keeps only chunks whose document version matches
+        the filters ``search_documents`` takes. The filter travels in a body,
+        so a filtered search uses ``POST /search/chunks``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/chunks",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/chunks",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -731,11 +772,15 @@ class MemoryClient:
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
         ``source_kind`` and ``source_ref`` are a pair. Reusing them creates a
         new immutable version of the same document when the bytes change.
+        ``source_path`` records where the file lives at its source (a folder
+        path or URL) with the version's metadata; sending the same bytes
+        again under a new name, title or path records that name too.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -796,6 +841,7 @@ class MemoryClient:
                 source_modified_at.isoformat() if source_modified_at else None,
             ),
             ("source_version_ref", source_version_ref),
+            ("source_path", source_path),
         ):
             if value is not None:
                 params[key] = value
@@ -833,6 +879,49 @@ class MemoryClient:
             DocumentPage,
             self._json("GET", "/documents", params=params),
             endpoint="GET /documents",
+        )
+
+    def search_documents(
+        self,
+        query: str | None = None,
+        *,
+        filters: DocumentSearchFilters | None = None,
+        versions: Literal["current", "all"] = "current",
+        k: int = 20,
+        cursor: str | None = None,
+    ) -> DocumentSearchPage:
+        """Find documents by name, general metadata and content (D134).
+
+        ``query`` matches every name a document was stored under (file name,
+        title, source path, old names after a rename; partial and misspelled
+        names too) and its text. ``filters`` narrow by family, authors,
+        recipients, date ranges, language, thread and doc ids. Without a
+        ``query`` results are newest first and ``cursor`` pages them; with one
+        they are ranked and not paged. Invalid combinations raise
+        ``pydantic.ValidationError`` before any request is sent.
+        """
+        return self.search_documents_request(
+            request=DocumentSearchRequest(
+                query=query,
+                filters=filters if filters is not None else DocumentSearchFilters(),
+                versions=versions,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def search_documents_request(
+        self, *, request: DocumentSearchRequest
+    ) -> DocumentSearchPage:
+        """Send one prepared :class:`DocumentSearchRequest` (``POST /documents/search``)."""
+        return _validated(
+            DocumentSearchPage,
+            self._json(
+                "POST",
+                "/documents/search",
+                json_body=request.model_dump(mode="json", exclude_defaults=True),
+            ),
+            endpoint="POST /documents/search",
         )
 
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
@@ -1131,6 +1220,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Ingest a document from a file path, string path, or raw bytes."""
         resolved_source = Path(source) if isinstance(source, str) else source
@@ -1145,6 +1235,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def ingest_file(
@@ -1159,6 +1250,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1171,6 +1263,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def __enter__(self) -> Self:

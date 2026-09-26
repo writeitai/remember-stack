@@ -57,11 +57,13 @@ from starlette.types import Receive
 from starlette.types import Scope
 from starlette.types import Send
 
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import tool
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
@@ -96,6 +98,9 @@ from rememberstack.model import SpendLeaseUnavailable
 from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.model.client import DocumentSearchFilters
+from rememberstack.model.client import DocumentSearchPage
+from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -237,6 +242,14 @@ class PipelineReadinessPort(Protocol):
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
     ) -> PipelineReadinessReport: ...
+
+
+class DocumentSearchPort(Protocol):
+    """Find documents by name, general metadata and content (D134)."""
+
+    def search_documents(
+        self, *, deployment_id: UUID, request: DocumentSearchRequest
+    ) -> DocumentSearchPage: ...
 
 
 class DocumentInventoryPort(Protocol):
@@ -410,6 +423,7 @@ def build_api(
     connectors: ConnectorManagementPort | None = None,
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
+    document_search: DocumentSearchPort | None = None,
     deletion: DocumentDeletionPort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
@@ -422,7 +436,8 @@ def build_api(
     `surface` adds registry-rendered operations; `open_query` adds the §3.1 open
     query routes; `ingest` exposes the E0 write gate; `connectors` manages
     deployment-side connector configuration; `deletion` adds
-    `DELETE /documents/{doc_id}` (D135); `auth` gates every request
+    `DELETE /documents/{doc_id}` (D135); `document_search` adds
+    `POST /documents/search` (D134); `auth` gates every request
     on one perimeter credential; `direct_admission` enforces the per-credential
     and per-deployment rate and in-flight limits after authentication and
     before the spend lease and routing (D136 §7.6); and `spend_lease` holds
@@ -573,22 +588,32 @@ def build_api(
     # for existing clients, which reach the deployment over a private path.
     @app.post("/search/claims", response_model=Envelope)
     def post_search_claims(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Claim search — evidence grain, never current-fact truth."""
+        """Claim search — evidence grain, never current-fact truth.
+
+        ``documents`` keeps claims with a live occurrence in a matching
+        document (D134); the returned evidence is the claim's origin, as
+        without a filter.
+        """
         return engine.search_claims(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.post("/search/chunks", response_model=Envelope)
     def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
-        """Search live source chunks as separately typed evidence."""
+        """Search live source chunks as separately typed evidence.
+
+        ``documents`` keeps chunks whose document version matches (D134).
+        """
         return engine.search_chunks(
             deployment_id=deployment_id,
             query=body.query,
             k=body.k,
             channel=body.channel,
+            **_documents_scope(body),
         )
 
     @app.get("/chunks/{chunk_id}/adjacent", response_model=Envelope)
@@ -644,6 +669,10 @@ def build_api(
         _mount_document_inventory(
             app=app, documents=documents, deployment_id=deployment_id
         )
+    if document_search is not None:
+        _mount_document_search(
+            app=app, search=document_search, deployment_id=deployment_id
+        )
     if deletion is not None:
         _mount_document_deletion(
             app=app, deletion=deletion, deployment_id=deployment_id
@@ -661,6 +690,7 @@ def build_api(
                 ingest=ingest is not None,
                 pipeline_readiness=pipeline_readiness is not None,
                 deletion=deletion is not None,
+                document_search=document_search is not None,
             ),
         )
 
@@ -822,6 +852,7 @@ def _served_tools(
     ingest: bool,
     pipeline_readiness: bool,
     deletion: bool,
+    document_search: bool,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -836,8 +867,11 @@ def _served_tools(
         names.append(PIPELINE_READINESS_TOOL_NAME)
     if deletion:
         names.append(DELETE_DOCUMENT_TOOL_NAME)
+    if document_search:
+        names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
+        names.append(ADJACENT_CHUNKS_TOOL_NAME)
     if open_query:
         names.extend(OPEN_QUERY_TOOL_NAMES)
     return {name: tool(name).tool_version for name in names}
@@ -1215,6 +1249,38 @@ def _mount_document_inventory(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+def _documents_scope(body: SearchRequest) -> dict[str, DocumentSearchFilters]:
+    """The D134 ``documents`` keyword, only when the request carries one."""
+    return {} if body.documents is None else {"documents": body.documents}
+
+
+def _mount_document_search(
+    *, app: FastAPI, search: DocumentSearchPort, deployment_id: UUID
+) -> None:
+    """Expose ``search_documents`` (D134): find files. A read."""
+
+    @app.post(
+        "/documents/search",
+        response_model=DocumentSearchPage,
+        responses={400: {"description": "cursor is malformed"}},
+    )
+    def search_documents(
+        body: Annotated[DocumentSearchRequest, Body()],
+    ) -> DocumentSearchPage:
+        """Find documents by observed name, general metadata and content.
+
+        Each result is a document judged by one version: its current version
+        by default, or with ``versions: all`` the newest live version that
+        matches. With a ``query`` results are ranked and not paged; with
+        filters only they are ordered by declared creation date and paged by
+        ``cursor``, which pins the first call's as-of instant.
+        """
+        try:
+            return search.search_documents(deployment_id=deployment_id, request=body)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
 def _mount_document_deletion(
     *, app: FastAPI, deletion: DocumentDeletionPort, deployment_id: UUID
 ) -> None:
@@ -1427,6 +1493,17 @@ def _mount_ingest(
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                description=(
+                    "Where the file lives at its source (a folder path or URL)."
+                    " Recorded with this version's metadata and observed"
+                    " names, so the document can later be found by it."
+                ),
+            ),
+        ] = None,
         principal_kind: Annotated[
             str | None,
             Header(
@@ -1505,7 +1582,11 @@ def _mount_ingest(
                 status_code=422, detail="source_modified_at must be timezone-aware UTC"
             )
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content, title=title
+            filename=filename,
+            mime=mime,
+            content=content,
+            title=title,
+            source_path=source_path,
         )
         if source_kind is None or source_ref is None:
             if (
@@ -1846,6 +1927,7 @@ _READ_ROUTES: Final = frozenset(
         ("GET", "/query/space/search"),
         ("GET", "/query/saved"),
         ("GET", "/documents"),
+        ("POST", "/documents/search"),
     }
 )
 

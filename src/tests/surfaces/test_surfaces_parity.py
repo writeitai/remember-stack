@@ -80,6 +80,7 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         """Never called."""
         return ()
@@ -277,7 +278,8 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
         "facts_context",
         "combined_context",
     }
-    assert mcp_names == registry_names == expected
+    assert mcp_names - {"adjacent_chunks"} == registry_names == expected
+    assert "adjacent_chunks" in mcp_names
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
     tool = next(t for t in tools if t["name"] == "resolve_entity")

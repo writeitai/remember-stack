@@ -7,10 +7,11 @@ export const metadata = {
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-Four routes cover the write side of memory. `POST /ingest` adds one file.
+Five routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
-document first. `DELETE /documents/{doc_id}` removes a document from the
+document first. `POST /documents/search` finds documents by name, metadata
+and text. `DELETE /documents/{doc_id}` removes a document from the
 memory.
 
 Base URL, authentication and error shapes are described in
@@ -37,6 +38,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
+| `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -88,6 +90,21 @@ Some settings are taken from the first ingest and kept:
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours
 were taken.
+
+### File names, titles and paths
+
+Each version records the names it was ingested under: `filename`, the
+`title` you sent (not the stem of `filename`), and `source_path`. A converter
+can add what the file itself declares, such as an HTML page's `<title>`.
+
+Sending the same bytes again under a different `filename`, `title` or
+`source_path` is still a no-op (`"created": false`), but the engine records
+the new name next to the old ones. A parameter you leave out does not count
+as a change. The document's own `title` in the response does not change: it
+stays the one set by the first ingest.
+
+[`POST /documents/search`](#post-documentssearch) finds a document by any of
+these names.
 
 ### Attribution
 
@@ -379,6 +396,158 @@ for document in page.documents:
 ```
 
 `remember documents list` prints the same page as JSON.
+
+## POST /documents/search
+
+Find documents by the names they were stored under, by their general
+metadata, and by their text.
+
+**Scope:** `read`.<Cloud> **Spend hold (remember.dev):** `search`.</Cloud>
+
+### Request body
+
+A [`DocumentSearchRequest`](/docs/reference/result-types#documentsearchrequest):
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string | no | | 1 to 4,096 characters. Words from the file name, title, source path or text. |
+| `filters` | object | no | `{}` | See below. Every filter you give must hold. |
+| `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
+| `k` | integer | no | `20` | 1 to 200 results. |
+| `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
+
+`filters`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `family` | array of strings | The document's format family: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office` or `other`. Any listed family matches. |
+| `authors` | array of strings | A name or an address. Any listed term matches. |
+| `recipients` | array of strings | The same, for recipients. |
+| `created_from`, `created_to` | date-time with timezone | The date the document declares it was created or sent, inclusive. A document that declares no date does not match a range. |
+| `modified_from`, `modified_to` | date-time with timezone | The declared last-modified date, inclusive. |
+| `language` | string | Exact match. |
+| `thread_ref` | string | The conversation or thread key, exact match. |
+| `doc_ids` | array of UUIDs | Only these documents. |
+
+Unknown fields are rejected (`422`).
+
+### What matches
+
+**Documents, judged by one version.** Each result is a document. With
+`versions: current` and a `query`, a document is judged by its current
+version, or, while it has none yet because its first upload is still
+processing, by its newest version. Without a `query` (paged results), it is
+judged by its newest version that had arrived when the search started (see
+[Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
+newest version that did, with the others in `other_matching_version_ids`.
+Filters and names always use the returned version's own metadata. Deleted
+documents and deleted versions never match.
+
+Each result's `p3_path` is the document's stable path in the
+[filesystem view](/docs/self-hosting/filesystem-views), relative to its root:
+`documents/<doc_id>`. It exists there only when the deployment publishes the
+filesystem view; `source_path` is where the file came from instead.
+
+**`query`** matches every name the version was stored under: the
+`filename`, `title` and `source_path` of the ingest that created it, and of
+each later ingest of the same bytes under another name (see
+[File names, titles and paths](#file-names-titles-and-paths)). So a renamed
+file is found by its new and old names, and a partial or misspelled name
+still finds it. It also matches the document's text, by its best-matching
+passage. Names (matched by whole words and by similar spelling) and text are two
+equal channels combined by rank; each document counts once per channel, by
+its best match. `matched_by` says which matched.
+Text matching is by words; there is no semantic matching on this route.
+
+**People.** A term matches a person when it equals their address, or when
+its words appear whole in their name, ignoring case and accents: `alice`
+matches "Alice Novák" but `ali` does not. Metadata such as authors comes
+from the format's converter. Today the only value read from inside a file is
+the title the markitdown converter reports (an HTML page's `<title>`, for
+example), so authors and recipients are empty, and a newly ingested version's only
+date is `modified_at`, from the `source_modified_at` you sent with it. When a people filter
+is given, `people_matched` lists each distinct person it matched, with the
+number of matching documents, so you can narrow an ambiguous filter (for
+example to an address) instead of guessing.
+
+### Order and paging
+
+With `query`, results are ranked, and there is no next page: `cursor` is
+`null`. Raise `k` for more.
+
+Without `query`, results are every document the filters match, newest first
+by when the judged version was ingested, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `cursor` back for the next page. The
+first page fixes an instant, returned as `as_of`, and every later page judges
+each document by its newest version ingested by then. A document added, a
+version promoted to current, or a date filled in by processing while you
+page therefore neither moves nor repeats a row. Start a new search to see
+what arrived since.
+
+### Response
+
+`200` with a [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
+
+```json
+{
+  "documents": [
+    {
+      "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "version_no": 1,
+      "status": "ready",
+      "lineage_title": "Q3_sales_2025",
+      "file_name": "Q3_sales_2025.xlsx",
+      "title": null,
+      "source_path": "finance/2025",
+      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "family": "office",
+      "created_at": null,
+      "modified_at": null,
+      "language": null,
+      "thread_ref": null,
+      "authors": [],
+      "recipients": [],
+      "extra": {},
+      "overview": "Quarterly sales by region …",
+      "other_matching_version_ids": [],
+      "matched_by": ["name"],
+      "score": 0.0328
+    }
+  ],
+  "cursor": null,
+  "as_of": "2026-09-24T10:12:03.117Z",
+  "people_matched": []
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | `cursor is malformed` | The cursor does not parse. |
+| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, or `cursor` together with `query`. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/search" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "q3 sales", "filters": {"family": ["office"]}, "k": 5}'
+```
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("office",)))
+for result in page.documents:
+    print(result.doc_id, result.file_name, result.matched_by)
+```
+
+`remember documents search "q3 sales" --family office` prints the same page
+as JSON.
 
 ## DELETE /documents/\{doc_id\}
 

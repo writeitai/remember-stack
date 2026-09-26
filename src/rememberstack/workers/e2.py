@@ -21,6 +21,7 @@ from enum import StrEnum
 import hashlib
 import json
 import logging
+from pathlib import PurePosixPath
 import re
 from typing import Final
 from uuid import UUID
@@ -31,6 +32,7 @@ from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
 from rememberstack.core import blocks_from_sidecar
+from rememberstack.core.document_metadata import normalize_name
 from rememberstack.core.selection_references import CardDiagnostic
 from rememberstack.core.selection_references import claimify_input_hash
 from rememberstack.core.selection_references import GroundedCard
@@ -286,6 +288,28 @@ For each claim return:
 - entailment_self_verdict: whether the source and permitted context actually
   support the whole claim, rather than merely containing the same words.
 - is_attributed: whether the claim records someone's statement or stance.
+- own_document_name: null, except for a claim about the document itself (see
+  SELF-REFERENCES below).
+
+SELF-REFERENCES NAME THE DOCUMENT. Only when the document itself is the
+referent of the assertion — the passage refers to its own document ("this
+report", "the attached spreadsheet", "this document", "this file") and the
+claim is about that document ("this report summarizes…", "the workbook
+covers…") — write the document's name in place of the bare reference: its
+DOCUMENT HEADER title, or its header file name when the title is untitled.
+For example, with header file Audit_2025.pdf, "This report summarizes the 2025
+audit findings" becomes claim_text="The report Audit_2025.pdf summarizes the
+2025 audit findings",
+added_context=[{{text: "Audit_2025.pdf", source_kind: header}}],
+own_document_name="Audit_2025.pdf"; with header file
+Q3_sales_2025.xlsx, "The workbook covers EU revenue by region" becomes "The
+workbook Q3_sales_2025.xlsx covers EU revenue by region". Set
+own_document_name to exactly the name text you wrote, copied from the header,
+and write it only once in the claim. An overview or profile passage that
+states ordinary facts is not about the document: "Q3 revenue was €4.2M" stays
+"Q3 revenue was €4.2M", with no document name and own_document_name null.
+Never add the document's name to any other claim: a claim whose referent is
+not the document itself keeps own_document_name null.
 
 SECTION SUMMARIES help with orientation only. They cannot supply evidence,
 missing names or added_context. Source reporting time is when the source spoke;
@@ -931,9 +955,35 @@ class ExtractClaimsHandler:
                         )
                     )
                     continue
+                result, own_name_drop = _own_document_name_span(
+                    record=result,
+                    candidate=candidate,
+                    source=source,
+                    document_md=document_md,
+                )
+                if own_name_drop is not None:
+                    _logger.info(
+                        "own_document_name %r dropped (%s) on chunk %s",
+                        candidate.own_document_name,
+                        own_name_drop.value,
+                        chunk.chunk_id,
+                    )
                 claims.append(result)
-                if result.added_context:
-                    decisions.append(_edit_decision(source=source, record=result))
+                own_name_returned = (
+                    result.own_document_name_start is not None
+                    or own_name_drop is not None
+                )
+                if result.added_context or own_name_returned:
+                    decisions.append(
+                        _edit_decision(
+                            source=source,
+                            record=result,
+                            own_document_name=candidate.own_document_name
+                            if own_name_returned
+                            else None,
+                            own_document_name_drop=own_name_drop,
+                        )
+                    )
             for keep, had_return in zip(keeps, keep_had_return, strict=True):
                 if not had_return:
                     decisions.append(
@@ -1233,6 +1283,82 @@ def _grounded_claim(
         claim_valid_until=valid_until,
         claim_valid_precision=valid_precision,
         claim_valid_kind=valid_kind,
+    )
+
+
+class OwnDocumentNameDrop(StrEnum):
+    """Why the gate dropped a returned ``own_document_name`` (D134)."""
+
+    NOT_A_DOCUMENT_NAME = "not_a_document_name"
+    NOT_EXACTLY_ONCE = "not_exactly_once_in_claim"
+    IN_SOURCE_SPAN = "in_source_span"
+
+
+def _own_document_name_span(
+    *,
+    record: ClaimRecord,
+    candidate: CandidateClaim,
+    source: ChunkSource,
+    document_md: str,
+) -> tuple[ClaimRecord, OwnDocumentNameDrop | None]:
+    """Keep Claimify's ``own_document_name`` only when it is safely the header's.
+
+    The name must equal one of the document's names from the header (title,
+    file name, or file name without its extension, compared after the D134
+    name normalization), occur exactly once in ``claim_text`` as a whole
+    (word-bounded: "Report" inside "Reporting" does not count), and not occur
+    as a whole in any source text the claim cites — its origin span and every
+    D119 evidence span — otherwise the passage itself spoke that name and it
+    is not a self-reference the extractor inserted. Single words may overlap:
+    "this report" in a document titled "Annual Report" is accepted. A kept
+    name records the ``[start, end)`` range of its one whole-name match; a
+    dropped one leaves the claim unchanged and returns why.
+    """
+    name = candidate.own_document_name
+    if name is None or not name.strip():
+        return record, None
+    normalized = normalize_name(value=name)
+    if normalized is None or normalized not in _document_names(source=source):
+        return record, OwnDocumentNameDrop.NOT_A_DOCUMENT_NAME
+    matches = list(_whole_text_pattern(text=name).finditer(record.claim_text))
+    if len(matches) != 1:
+        return record, OwnDocumentNameDrop.NOT_EXACTLY_ONCE
+    whole_name = _whole_text_pattern(text=normalized)
+    cited = (
+        record.source_span,
+        *(
+            document_md[span.char_start : span.char_end]
+            for span in record.evidence_spans
+        ),
+    )
+    if any(whole_name.search(normalize_name(value=text) or "") for text in cited):
+        return record, OwnDocumentNameDrop.IN_SOURCE_SPAN
+    match = matches[0]
+    return (
+        record.model_copy(
+            update={
+                "own_document_name_start": match.start(),
+                "own_document_name_end": match.end(),
+            }
+        ),
+        None,
+    )
+
+
+def _whole_text_pattern(*, text: str) -> re.Pattern[str]:
+    """``text`` as a whole: not preceded or followed by a word character."""
+    return re.compile(rf"(?<!\w){re.escape(text)}(?!\w)")
+
+
+def _document_names(*, source: ChunkSource) -> frozenset[str]:
+    """The header's names for the document, normalized (D134)."""
+    names: list[str | None] = [source.header_title(), source.file_name]
+    if source.file_name is not None:
+        names.append(PurePosixPath(source.file_name).stem)
+    return frozenset(
+        normalized
+        for normalized in (normalize_name(value=name) for name in names)
+        if normalized is not None
     )
 
 
@@ -1602,7 +1728,8 @@ def _header_text(*, source: ChunkSource) -> str:
     """The deterministic document header shared by every chunk's bundle."""
     modified = source.source_modified_at or source.published_at
     return (
-        f"title {source.title or 'untitled'}; source {source.source_kind};"
+        f"title {source.header_title() or 'untitled'};"
+        f" file {source.file_name or 'unknown'}; source {source.source_kind};"
         f" date {modified.isoformat() if modified else 'unknown'};"
         f" language {source.language or 'unknown'}"
     )
@@ -1946,8 +2073,35 @@ def _selection_decisions(
     )
 
 
-def _edit_decision(*, source: ChunkSource, record: ClaimRecord) -> DecisionRecord:
-    """The D33 decontextualization-edit row for one accepted claim."""
+def _edit_decision(
+    *,
+    source: ChunkSource,
+    record: ClaimRecord,
+    own_document_name: str | None = None,
+    own_document_name_drop: OwnDocumentNameDrop | None = None,
+) -> DecisionRecord:
+    """The D33 decontextualization-edit row for one accepted claim.
+
+    A returned ``own_document_name`` (D134) is recorded with its outcome:
+    ``recorded`` when the claim carries its span, otherwise ``dropped`` and
+    the gate's reason — the grounding diagnostic for a dropped name.
+    """
+    edit_detail: dict[str, object] = {
+        "added": [
+            {"text": added.text, "source_kind": added.source_kind}
+            for added in record.added_context
+        ]
+    }
+    if own_document_name:
+        edit_detail["own_document_name"] = {
+            "text": _truncate_for_ledger(own_document_name),
+            "outcome": "recorded" if own_document_name_drop is None else "dropped",
+            **(
+                {}
+                if own_document_name_drop is None
+                else {"reason": own_document_name_drop.value}
+            ),
+        }
     return DecisionRecord(
         decision_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -1957,12 +2111,7 @@ def _edit_decision(*, source: ChunkSource, record: ClaimRecord) -> DecisionRecor
         decision_type=DecisionType.DECONTEXT_EDIT,
         source_span=record.source_span,
         reason=None,
-        edit_detail={
-            "added": [
-                {"text": added.text, "source_kind": added.source_kind}
-                for added in record.added_context
-            ]
-        },
+        edit_detail=edit_detail,
         protected_class=None,
         extractor_version=E2_EXTRACTOR_VERSION,
     )

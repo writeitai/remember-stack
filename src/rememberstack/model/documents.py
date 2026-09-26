@@ -62,6 +62,9 @@ class DocumentUpload(BaseModel):
     mime: NonEmptyString
     content: bytes
     title: str | None = None
+    source_path: str | None = None
+    """Where the file lives at its source (a folder path, a URL), as observed
+    now; recorded per version in D134 document metadata and names."""
 
 
 class UploadRecord(BaseModel):
@@ -84,6 +87,13 @@ class UploadRecord(BaseModel):
     source_version_ref: str | None = None
     sync_cycle_id: UUID | None = None
     ingested_by: IngestPrincipal | None = None
+    file_name: str | None = None
+    """The file name observed with these bytes (D134 metadata and names)."""
+    declared_title: str | None = None
+    """The title the caller declared, if any; ``title`` above is the lineage
+    title, which falls back to the file stem."""
+    source_path: str | None = None
+    """The source location observed with these bytes (D134)."""
 
 
 class ConvertSource(BaseModel):
@@ -182,6 +192,7 @@ class SourceItem(BaseModel):
     deleted: bool = False
     filename: str = ""
     mime: str = "text/markdown"
+    source_path: str | None = None  # where the item lives in the source (D134)
 
 
 class SyncCycleSummary(BaseModel):

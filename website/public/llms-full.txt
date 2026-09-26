@@ -416,8 +416,8 @@ pip install remember
 This installs the Python client and the `remember` command. It needs
 Python 3.12 or later.
 The current release is
-[v0.17.1](https://github.com/writeitai/remember-stack/releases/tag/v0.17.1)
-([on PyPI](https://pypi.org/project/remember/0.17.1/)).
+[v0.17.2](https://github.com/writeitai/remember-stack/releases/tag/v0.17.2)
+([on PyPI](https://pypi.org/project/remember/0.17.2/)).
 
 ## 3. Point the client at your endpoint
 
@@ -574,6 +574,8 @@ The `remember mcp` server gives the agent these tools:
 | `ingest` | Store a note, a decision or a file. |
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `delete_document` | Remove a document from the memory when the user asks. |
+| `search_documents` | Find a file by its name, title, path, authors, dates or text. |
+| `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
 Run `remember mcp --read-only` instead of `remember mcp` to leave out the
@@ -750,6 +752,24 @@ jumps back to an old snapshot.
 Bytes sent again after the document was [deleted](#deleting-a-document)
 also create a new version (`created=true`), and it is processed from the
 start.
+
+## Finding a document
+
+Every version records the names it was stored under: its file name, the
+title the caller declared, and the source path. Sending the same bytes again
+under another name creates no version, but the new name is recorded next to
+the old ones. `search_documents` (`POST /documents/search`,
+`MemoryClient.search_documents`, `remember documents search`, or the
+`search_documents` MCP tool) finds documents by any of those names, even
+partial or misspelled, by their text, and by general metadata: format
+family, authors, recipients, dates, language and thread.
+
+Each result is a document judged by one version, its current one by
+default, and it reports that version's status, so a file still being
+processed can already be found by name. Say Ravi uploaded
+`billing-migration-draft.md` and later sent the same file as
+`billing-migration.md`: searching for either name finds the one document.
+See [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ## Deleting a document
 
@@ -953,6 +973,47 @@ source leaves several readings possible, the candidate is omitted.
 Every piece of text Claimify adds from outside the target chunk is listed in
 the claim's `added_context`, tagged with where it came from.
 
+### Claims about their own document
+
+When a passage refers to its own document ("this report", "the attached
+spreadsheet", "this document"), Claimify writes the document's name in place
+of the bare reference, but only when the document itself is what the claim
+is about. It uses the version's title, or its file name when the version
+declares no title:
+
+> source: "This report summarizes the 2025 audit findings."
+> claim: "The report Audit_2025.pdf summarizes the 2025 audit findings."
+
+The name comes from the document header that extraction reads, and it is
+listed in `added_context` like any other addition. Claims about anything
+else never get the name added, including ordinary facts stated in an overview
+of the document ("Q3 revenue was €4.2M" stays as it is): every claim already
+links to its document.
+
+The engine records where in `claim_text` the name was written only when the
+name passes three checks:
+
+- it is one of the document's names: the title, the file name, or the file
+  name without its extension
+- it appears exactly once in the claim as a whole name ("Report" inside
+  "Reporting" does not count)
+- it does not appear as a whole in any source text the claim cites
+
+If a check fails, the claim is kept and nothing is recorded. The
+`decontext_edit` ledger row notes the name and why it was not recorded. The
+recorded position is part of the claim, so it survives when a new version
+reuses the claim.
+The recorded name does not become an [entity](https://remember.dev/docs/concepts/entities).
+The exception: when the claim has several references with that exact text,
+the engine cannot tell which one is the document, so it resolves them all.
+
+A new version with a different file name is extracted again, because the file
+name is one of the inputs that decides whether a new version can reuse earlier
+claims. Sending the same bytes under a new name creates no new version; the
+new name is recorded for the existing version, and its claims stay as they
+are. Claims are immutable, so a later rename never rewrites claims that name
+the old file.
+
 ### 3. The grounding gate: no text without a source
 
 Before a claim is stored, a deterministic check (no model involved) verifies
@@ -981,7 +1042,7 @@ per decision:
 |---|---|
 | `selection_drop` | Selection dropped a statement (with its reason). |
 | `selection_keep_flagged` | Selection kept a borderline statement. |
-| `decontext_edit` | Claimify added context to a statement. |
+| `decontext_edit` | Claimify added context to a statement, or named the claim's own document (with whether the name was recorded). |
 | `claimify_omitted` | Claimify left out a kept statement. |
 | `grounding_rejected` | The grounding gate refused a claim (with the check that failed). |
 
@@ -1280,6 +1341,14 @@ Two refinements matter in practice:
   again.
 - Bare head nouns ("the system", "the app", "a card") are not entities
   unless the claim pins down a specific referent.
+- A document's own name is not an entity. When a claim names its own
+  document in place of "this report" (see
+  [Claims](https://remember.dev/docs/concepts/claims#claims-about-their-own-document)), the one
+  reference at that recorded name is skipped, so two different files with
+  the same name never merge. The same name elsewhere, such as a person
+  called like the document's title or another file mentioned by name,
+  resolves normally. If the claim has several references with that exact
+  text, none is skipped.
 
 ## Merges and reversibility
 
@@ -2374,7 +2443,7 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](https://remember.dev/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](https://remember.dev/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, the four operations and the seven SQL query tools. No primitives. |
+| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](https://remember.dev/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 ## The four assured operations
@@ -2463,8 +2532,9 @@ tools.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic")` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400. |
-| Search chunks | `search_chunks(query=, k=10, channel="semantic")` | Source passages, likewise. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions. |
+| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None)` | Source passages, likewise. |
+| Search documents | `search_documents(query=, filters=, versions="current", k=20)` | Documents (files) by name, metadata and text. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
@@ -2479,6 +2549,13 @@ The graph reads take `valid_at` and `believed_at` together for a two-clock
 read (see [Time](https://remember.dev/docs/concepts/time#belief-time-and-as-of)). A graph path is returned
 whole or not at all: if any edge on it no longer holds, the path is dropped,
 because a path with a gap is a false statement about a connection.
+
+To ask about something *in* certain files, such as "Project X, from Alice's
+emails", pass the same filters `search_documents` takes as `documents`: the
+search then considers only results found in matching document versions,
+before choosing its best `k` results. A returned claim still cites the passage
+it was first extracted from, which can be another version of the same document. See
+[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
 
 See [Search](https://remember.dev/docs/reference/http-api/search),
 [Graph](https://remember.dev/docs/reference/http-api/graph) and
@@ -6045,8 +6122,8 @@ Graviton, Ampere) runs them natively, without emulation:
 
 | Image | Used by |
 |---|---|
-| `ghcr.io/writeitai/remember-stack:0.17.1` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack:0.17.2` | The API, the workers and `setup` |
+| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -6099,7 +6176,7 @@ Compose starts PostgreSQL with:
 shared_preload_libraries=pg_textsearch,pg_partman_bgw
 pg_partman_bgw.dbname=<REMEMBERSTACK_POSTGRES_DB>
 pg_partman_bgw.role=<REMEMBERSTACK_POSTGRES_USER>
-max_connections=300
+max_connections=<REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS, default 300>
 ```
 
 Everything else stays at the image defaults.
@@ -6175,7 +6252,8 @@ below and [Scaling](https://remember.dev/docs/self-hosting/scaling)).
 Nothing is deleted automatically; a hard forget removes a document's data.
 
 **Database connections.** Compose starts PostgreSQL with
-`max_connections=300` (the image default is 100). Each engine process opens
+`max_connections` from `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS`, `300` by
+default (the image default is 100). Each engine process opens
 connections as it needs them, up to these ceilings:
 
 | Process | General pool | Other | Ceiling |
@@ -6188,8 +6266,9 @@ within 300 with room to spare. They are ceilings, not what a stack holds:
 pools open connections only on demand. Nothing caps the total, though, so
 budget against the ceilings when you add replicas or API processes: each
 worker replica can add 16 connections and each API process 23, plus any
-increase in the retrieval and graph pool sizes. Past 300, raise the limit. [Scaling](https://remember.dev/docs/self-hosting/scaling#database-connections)
-shows how to raise `max_connections`.
+increase in the retrieval and graph pool sizes. When the sum passes the limit,
+raise it by setting `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` in `.env`; see
+[Scaling](https://remember.dev/docs/self-hosting/scaling#database-connections).
 
 Other configured bounds:
 
@@ -6202,7 +6281,7 @@ Other configured bounds:
 | Graph query `work_mem` | 16,384 KiB |
 | Retrieval connection pool in the API | 4 connections, at most 4 retrievals at once |
 | SQL query sandbox | 5 s default and 15 s maximum statement time, 16 MiB `work_mem`, 8 statements at once per deployment |
-| PostgreSQL `max_connections` | 300 (set in `compose.yaml`) |
+| PostgreSQL `max_connections` | 300 (`REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS`) |
 
 [Scaling](https://remember.dev/docs/self-hosting/scaling) explains each bound and how to change it.
 
@@ -6221,7 +6300,7 @@ that ship in the repository. Check [Requirements](https://remember.dev/docs/self
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.17.1
+git checkout v0.17.2
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -6233,7 +6312,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.17.2`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -7244,8 +7323,9 @@ Every replica holds its own database connections; see
 ## Database connections
 
 Each engine process has its own connection pools. Compose starts
-PostgreSQL with `max_connections=300`; the engine does not size itself
-against that limit. The ceilings per process are:
+PostgreSQL with `max_connections` set from
+`REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` (default `300`); the engine does not
+size itself against that limit. The ceilings per process are:
 
 | Process | Ceiling | Made of |
 |---|---|---|
@@ -7258,26 +7338,15 @@ The general pool's size is fixed. The retrieval and graph pools follow
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 215, within
-the limit of 300. When you add replicas or API processes, keep the sum of
-their ceilings under the limit, and when PostgreSQL refuses connections
-(`too many clients already` in the logs), raise it. The Compose `command` for PostgreSQL is one list, so an
-override repeats it whole and adds the new setting:
+the sum of its ceilings. The default stack's ceilings add up to 215 (23 +
+12 × 16), within the default limit of 300. When you add replicas or API
+processes, keep the sum of their ceilings under the limit, and when
+PostgreSQL refuses connections (`too many clients already` in the logs),
+raise it in `.env` and restart PostgreSQL:
 
-```yaml
-# compose.override.yaml
-services:
-  postgres:
-    command:
-      - postgres
-      - -c
-      - shared_preload_libraries=pg_textsearch,pg_partman_bgw
-      - -c
-      - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
-      - -c
-      - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
-      - -c
-      - max_connections=600
+```bash
+echo 'REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS=600' >> .env
+docker compose up -d postgres
 ```
 
 Every PostgreSQL connection takes memory on the database host, so raise the
@@ -7319,23 +7388,26 @@ PostgreSQL's memory allows: each running graph query may use up to
 
 ## API admission limits
 
-The API counts every request (except `GET /healthz`) against a rate and a
-number running at once, per credential and for the whole deployment. Over a
-limit it answers `429` with `Retry-After`.
+Optional, and off by default: the API does not limit the request rate or the
+number of requests running at once until you set one of these in `.env`.
+Each set limit counts every request (except `GET /healthz`) per credential or
+for the whole deployment; over it the API answers `429` with `Retry-After`.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | Requests per minute per signed credential, in bursts of up to a quarter of it |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | Requests running at once per signed credential |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | Requests per minute for the deployment, in bursts of up to a quarter of it |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | Requests running at once for the deployment |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | unset (no limit) | Requests per minute per signed credential, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | unset (no limit) | Requests running at once per signed credential |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | unset (no limit) | Requests per minute for the deployment, in bursts of up to a quarter of it |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | unset (no limit) | Requests running at once for the deployment |
 
-`compose.yaml` passes all four. The shared secret, and every caller when
-authentication is off, meets the deployment limits only. A script that
-ingests many files in parallel should keep its concurrency under the
-in-flight limit and wait `Retry-After` on a `429`; the `remember` client does
-not retry by itself. The counters live in the API process, so running more
-API processes multiplies the effective limits. See
+`0` also means no limit. Set them when a deployment is shared by callers you
+do not control and one of them could crowd out the rest. The shared secret,
+and every caller when authentication is off, meets the deployment limits
+only. With limits set, a script that ingests many files in parallel should
+keep its concurrency under the in-flight limit and wait `Retry-After` on a
+`429`; the `remember` client does not retry by itself. The counters live in
+the API process, so running more API processes multiplies the effective
+limits. See
 [Admission limits](https://remember.dev/docs/reference/http-api#admission-limits).
 
 ## SQL queries
@@ -8567,7 +8639,7 @@ Every statement is parsed and validated against it before it runs, and
 anything outside it is rejected.
 
 The machine-readable schema is attached to every GitHub release:
-[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.1/openapi.json).
+[openapi.json](https://github.com/writeitai/remember-stack/releases/download/v0.17.2/openapi.json).
 
 ## Base URL
 
@@ -8739,20 +8811,27 @@ do about it.
 
 ## Admission limits
 
-After the credential check, and before routing, every
-request except `GET /healthz` is counted against two sets of limits: one for
-its credential and one for the whole deployment. A request to an unknown path
+Admission limits are optional and **off by default**: a self-hosted
+deployment refuses no request for its rate or concurrency until you set one of
+the settings below. Each limit
+applies only when its setting is a positive number; unset or `0` means no
+limit.
+
+When a limit is set, every request except `GET /healthz` is counted against it
+after the credential check and before routing,
+for its credential or for the whole deployment. A request to an unknown path
 counts too.
 
-| Limit | Default | Setting |
-|---|---|---|
-| Requests per credential | 120 per minute, bursts of 30 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
-| Requests running at once, per credential | 8 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
-| Requests per deployment | 600 per minute, bursts of 150 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
-| Requests running at once, per deployment | 32 | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
+| Limit | Setting |
+|---|---|
+| Requests per minute, per credential | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` |
+| Requests running at once, per credential | `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` |
+| Requests per minute, per deployment | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` |
+| Requests running at once, per deployment | `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` |
 
 The request rate works as a bucket of tokens that refills continuously at the
-per-minute rate, up to a burst of a quarter of it; each request takes one. A
+per-minute rate, up to a burst of a quarter of it (30 at 120 per minute); each
+request takes one. A
 signed credential is counted by its id (`jti`). The shared secret, and every
 caller when authentication is off, is counted against the deployment limits
 only. A refused request counts against nothing.
@@ -8852,10 +8931,11 @@ Source: https://remember.dev/docs/reference/http-api/ingest
 
 # Ingest, readiness and documents
 
-Four routes cover the write side of memory. `POST /ingest` adds one file.
+Five routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
-document first. `DELETE /documents/{doc_id}` removes a document from the
+document first. `POST /documents/search` finds documents by name, metadata
+and text. `DELETE /documents/{doc_id}` removes a document from the
 memory.
 
 Base URL, authentication and error shapes are described in
@@ -8882,6 +8962,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | `source_modified_at` | query | date-time | no | | UTC only (`Z` or `+00:00`). Requires `source_kind` and `source_ref`. |
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
+| `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -8933,6 +9014,21 @@ Some settings are taken from the first ingest and kept:
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours
 were taken.
+
+### File names, titles and paths
+
+Each version records the names it was ingested under: `filename`, the
+`title` you sent (not the stem of `filename`), and `source_path`. A converter
+can add what the file itself declares, such as an HTML page's `<title>`.
+
+Sending the same bytes again under a different `filename`, `title` or
+`source_path` is still a no-op (`"created": false`), but the engine records
+the new name next to the old ones. A parameter you leave out does not count
+as a change. The document's own `title` in the response does not change: it
+stays the one set by the first ingest.
+
+[`POST /documents/search`](#post-documentssearch) finds a document by any of
+these names.
 
 ### Attribution
 
@@ -9190,6 +9286,158 @@ for document in page.documents:
 ```
 
 `remember documents list` prints the same page as JSON.
+
+## POST /documents/search
+
+Find documents by the names they were stored under, by their general
+metadata, and by their text.
+
+**Scope:** `read`.
+
+### Request body
+
+A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#documentsearchrequest):
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string | no | | 1 to 4,096 characters. Words from the file name, title, source path or text. |
+| `filters` | object | no | `{}` | See below. Every filter you give must hold. |
+| `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
+| `k` | integer | no | `20` | 1 to 200 results. |
+| `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
+
+`filters`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `family` | array of strings | The document's format family: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office` or `other`. Any listed family matches. |
+| `authors` | array of strings | A name or an address. Any listed term matches. |
+| `recipients` | array of strings | The same, for recipients. |
+| `created_from`, `created_to` | date-time with timezone | The date the document declares it was created or sent, inclusive. A document that declares no date does not match a range. |
+| `modified_from`, `modified_to` | date-time with timezone | The declared last-modified date, inclusive. |
+| `language` | string | Exact match. |
+| `thread_ref` | string | The conversation or thread key, exact match. |
+| `doc_ids` | array of UUIDs | Only these documents. |
+
+Unknown fields are rejected (`422`).
+
+### What matches
+
+**Documents, judged by one version.** Each result is a document. With
+`versions: current` and a `query`, a document is judged by its current
+version, or, while it has none yet because its first upload is still
+processing, by its newest version. Without a `query` (paged results), it is
+judged by its newest version that had arrived when the search started (see
+[Order and paging](#order-and-paging)). With `versions: all` any version may match, and the result is the
+newest version that did, with the others in `other_matching_version_ids`.
+Filters and names always use the returned version's own metadata. Deleted
+documents and deleted versions never match.
+
+Each result's `p3_path` is the document's stable path in the
+[filesystem view](https://remember.dev/docs/self-hosting/filesystem-views), relative to its root:
+`documents/<doc_id>`. It exists there only when the deployment publishes the
+filesystem view; `source_path` is where the file came from instead.
+
+**`query`** matches every name the version was stored under: the
+`filename`, `title` and `source_path` of the ingest that created it, and of
+each later ingest of the same bytes under another name (see
+[File names, titles and paths](#file-names-titles-and-paths)). So a renamed
+file is found by its new and old names, and a partial or misspelled name
+still finds it. It also matches the document's text, by its best-matching
+passage. Names (matched by whole words and by similar spelling) and text are two
+equal channels combined by rank; each document counts once per channel, by
+its best match. `matched_by` says which matched.
+Text matching is by words; there is no semantic matching on this route.
+
+**People.** A term matches a person when it equals their address, or when
+its words appear whole in their name, ignoring case and accents: `alice`
+matches "Alice Novák" but `ali` does not. Metadata such as authors comes
+from the format's converter. Today the only value read from inside a file is
+the title the markitdown converter reports (an HTML page's `<title>`, for
+example), so authors and recipients are empty, and a newly ingested version's only
+date is `modified_at`, from the `source_modified_at` you sent with it. When a people filter
+is given, `people_matched` lists each distinct person it matched, with the
+number of matching documents, so you can narrow an ambiguous filter (for
+example to an address) instead of guessing.
+
+### Order and paging
+
+With `query`, results are ranked, and there is no next page: `cursor` is
+`null`. Raise `k` for more.
+
+Without `query`, results are every document the filters match, newest first
+by when the judged version was ingested, then by `doc_id`; the `created_*`
+range is a filter, not the order. Pass `cursor` back for the next page. The
+first page fixes an instant, returned as `as_of`, and every later page judges
+each document by its newest version ingested by then. A document added, a
+version promoted to current, or a date filled in by processing while you
+page therefore neither moves nor repeats a row. Start a new search to see
+what arrived since.
+
+### Response
+
+`200` with a [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
+
+```json
+{
+  "documents": [
+    {
+      "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "version_no": 1,
+      "status": "ready",
+      "lineage_title": "Q3_sales_2025",
+      "file_name": "Q3_sales_2025.xlsx",
+      "title": null,
+      "source_path": "finance/2025",
+      "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "family": "office",
+      "created_at": null,
+      "modified_at": null,
+      "language": null,
+      "thread_ref": null,
+      "authors": [],
+      "recipients": [],
+      "extra": {},
+      "overview": "Quarterly sales by region …",
+      "other_matching_version_ids": [],
+      "matched_by": ["name"],
+      "score": 0.0328
+    }
+  ],
+  "cursor": null,
+  "as_of": "2026-09-24T10:12:03.117Z",
+  "people_matched": []
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | `cursor is malformed` | The cursor does not parse. |
+| `422` | validation list | An unknown field, `k` out of range, a date without a timezone, or `cursor` together with `query`. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/search" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "q3 sales", "filters": {"family": ["office"]}, "k": 5}'
+```
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("office",)))
+for result in page.documents:
+    print(result.doc_id, result.file_name, result.matched_by)
+```
+
+`remember documents search "q3 sales" --family office` prints the same page
+as JSON.
 
 ## DELETE /documents/{doc_id}
 
@@ -9783,6 +10031,37 @@ All six routes need the `read` scope. Base URL, authentication and error shapes 
 
 A search that finds nothing returns `200` with `negative.kind` `known_empty`.
 
+### Limiting search to certain documents
+
+The `POST` forms accept a `documents` filter with the same fields as
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch):
+`family`, `authors`, `recipients`, `created_from`/`created_to`,
+`modified_from`/`modified_to`, `language`, `thread_ref` and `doc_ids`. The
+filter decides which results are included:
+
+- **chunks** match when the chunk's document version matches;
+- **claims** match when at least one place the claim occurs is in a matching
+  document version. A claim that repeats across a document's versions is
+  checked against each version separately, so `authors: ["alice"]` finds the
+  claim through the version Alice wrote even if a later version names someone
+  else. The filter only decides which claims are included: each returned
+  claim looks exactly as it does without a filter, with the `chunk_id`,
+  offsets and `evidence_spans` of the passage it was first extracted from.
+
+Deleted documents and deleted versions never match. The filter is applied
+while ranking, before the `k` best are chosen, so asking for `k: 10` returns
+up to ten matching results even when better-scoring results from other
+documents exist.
+
+For "everything about Project X from emails from Alice": find the right
+Alice with `POST /documents/search` and `filters.authors`; if several people
+match, narrow to an address. Then search with
+`{"query": "Project X", "documents": {"authors": ["alice@acme.com"]}}`.
+Each returned claim was found in a version Alice wrote; its cited evidence is
+where the claim was first extracted, which can be another version of the same
+document.
+Every result cites the document it came from.
+
 ## GET /search/claims
 
 Search claims.
@@ -9839,6 +10118,7 @@ Search claims, with the query in the body.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
 
 Unknown fields are rejected.
 
@@ -9860,8 +10140,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/claims" \
   -d '{"query": "billing migration cutover date", "k": 20, "channel": "bm25"}'
 ```
 
-The `remember` Python client has no method for the `POST` form; its
-`search_claims` uses `GET`.
+The `remember` Python client's `search_claims` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /search/chunks
 
@@ -9927,7 +10207,8 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
   -d '{"query": "rollback plan", "k": 10}'
 ```
 
-The `remember` Python client has no method for the `POST` form.
+The `remember` Python client's `search_chunks` uses `GET`, and the `POST` form
+when you pass `documents`.
 
 ## GET /chunks/{chunk_id}/adjacent
 
@@ -10719,6 +11000,7 @@ None.
     "ingest": 1,
     "pipeline_readiness": 1,
     "delete_document": 1,
+    "search_documents": 1,
     "resolve_entity": 1,
     "claims_and_sources_context": 2,
     "facts_context": 3,
@@ -10734,7 +11016,8 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
-| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, and `delete_document` only when document deletion is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, and `search_documents`
+only when document search is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
 The first three fields also appear on every
 [`PipelineReadinessReport`](https://remember.dev/docs/reference/result-types#pipelinereadinessreport).
@@ -11942,6 +12225,73 @@ A version `status` of `ready` means conversion and structuring are done. It
 does not mean claims and facts have been extracted; check
 [readiness](#pipelinereadinessreport) for that.
 
+### DocumentSearchRequest
+
+Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `query` | string, nullable | no | | 1 to 4,096 characters. |
+| `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
+| `versions` | `current` \| `all` | no | `current` | |
+| `k` | integer | no | `20` | 1 to 200. |
+| `cursor` | string, nullable | no | | Only without `query`. |
+
+### DocumentSearchFilters
+
+| Field | Type | Default | Contents |
+|---|---|---|---|
+| `family` | array of strings | `[]` | Any listed format family. |
+| `authors` | array of strings | `[]` | Any listed name or address. |
+| `recipients` | array of strings | `[]` | Any listed name or address. |
+| `created_from`, `created_to` | date-time with timezone, nullable | | Inclusive range on the declared creation date. |
+| `modified_from`, `modified_to` | date-time with timezone, nullable | | Inclusive range on the declared modification date. |
+| `language` | string, nullable | | |
+| `thread_ref` | string, nullable | | |
+| `doc_ids` | array of UUIDs | `[]` | |
+
+### DocumentSearchPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `documents` | array of [`DocumentSearchResult`](#documentsearchresult) | Best first with a query; newest ingested first without one. |
+| `cursor` | string, nullable | The next page; always `null` with a query. |
+| `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
+| `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
+
+### DocumentSearchResult
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | The version the document was judged by. |
+| `version_no` | integer | |
+| `status` | string | That version's processing status, as in [`DocumentVersionSummary`](#documentversionsummary). |
+| `lineage_title` | string, nullable | The document's title, set by its first ingest. |
+| `file_name` | string, nullable | The file name this version was ingested under. |
+| `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
+| `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
+| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
+| `family` | string | The format family. |
+| `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
+| `language` | string, nullable | |
+| `thread_ref` | string, nullable | |
+| `authors`, `recipients` | array of `{name, address}` | Either field may be `null`. |
+| `extra` | object | Format-specific metadata; not filterable. |
+| `overview` | string, nullable | A summary of the whole document, when processing produced one. Orientation, not evidence. |
+| `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
+| `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
+| `score` | number, nullable | The combined rank score with a query; `null` without one. |
+
+### DocumentPeopleMatch
+
+| Field | Type | Contents |
+|---|---|---|
+| `role` | `author` \| `recipient` | |
+| `name` | string, nullable | |
+| `address` | string, nullable | |
+| `documents` | integer | Matching documents that list this person. |
+
 ### DocumentDeletion
 
 What [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id)
@@ -11992,6 +12342,7 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `query` | string | yes | | 1 to 4,096 characters. |
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
+| `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only results found in matching document versions; returned claims still cite their origin. |
 
 ### AdjacentChunksRequest
 
@@ -13491,6 +13842,7 @@ Client.ingest_file(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -13532,6 +13884,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
+| [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
@@ -13587,6 +13940,7 @@ MemoryClient.ingest(
     source_modified_at: datetime | None = None,
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
+    source_path: str | None = None,
 ) -> IngestedVersion
 ```
 
@@ -13606,6 +13960,7 @@ results.
 | `source_modified_at` | When the source itself last changed. Must be timezone-aware UTC. Requires `source_kind`/`source_ref`. |
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
+| `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](https://remember.dev/docs/reference/http-api/ingest#file-names-titles-and-paths). |
 
 Raises `ValueError` when:
 
@@ -13743,6 +14098,45 @@ while True:
     if page.cursor is None:
         break
     cursor = page.cursor
+```
+
+#### `search_documents`
+
+```python
+MemoryClient.search_documents(
+    query: str | None = None,
+    *,
+    filters: DocumentSearchFilters | None = None,
+    versions: Literal["current", "all"] = "current",
+    k: int = 20,
+    cursor: str | None = None,
+) -> DocumentSearchPage
+```
+
+Finds documents by the names they were stored under, their general metadata
+and their text, and returns a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage).
+`filters` is a
+[`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters)
+(`from remember import DocumentSearchFilters`): `family`, `authors`,
+`recipients`, the `created_*`/`modified_*` ranges, `language`, `thread_ref`
+and `doc_ids`. With a `query` the results are ranked and not paged; without
+one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
+`query`, a date without a timezone, or `k` outside 1 to 200 raises
+`pydantic.ValidationError` before any request. A malformed cursor raises
+`MemoryApiError` with `status_code` 400. What matches, and how, is in
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+page = memory.search_documents("audit report")
+emails = memory.search_documents(
+    filters=DocumentSearchFilters(authors=("alice@acme.com",)), k=50
+)
+if len(emails.people_matched) > 1:
+    print("several people matched:", emails.people_matched)
 ```
 
 #### `delete_document`
@@ -13984,22 +14378,47 @@ print([s.title for s in cited.sources])
 
 ```python
 MemoryClient.search_claims(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
 Searches claims by meaning (`"semantic"`) or by keywords (`"bm25"`). The
 result is evidence, not facts. The engine accepts `k` from 1 to 400.
+`documents` keeps only claims found in matching document versions (each still
+cites the passage it was first extracted from), with the same fields
+as [`search_documents`](#search_documents); a filtered search is sent as
+`POST /search/claims`. See
+[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
+
+```python
+from remember import Client, DocumentSearchFilters
+
+memory = Client()
+hits = memory.search_claims(
+    query="Project X",
+    channel="bm25",
+    documents=DocumentSearchFilters(authors=("alice@acme.com",)),
+)
+```
 
 #### `search_chunks`
 
 ```python
 MemoryClient.search_chunks(
-    *, query: str, k: int = 10, channel: Literal["semantic", "bm25"] = "semantic"
+    *,
+    query: str,
+    k: int = 10,
+    channel: Literal["semantic", "bm25"] = "semantic",
+    documents: DocumentSearchFilters | None = None,
 ) -> Envelope
 ```
 
-Searches source passages. Same arguments and bounds as `search_claims`.
+Searches source passages. Same arguments and bounds as `search_claims`;
+`documents` keeps passages whose document matches.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")
@@ -14347,7 +14766,7 @@ Source: https://remember.dev/docs/reference/cli
 
 # CLI
 
-This page describes the `remember` CLI (v0.17.1), installed by `pip install remember`.
+This page describes the `remember` CLI (v0.17.2), installed by `pip install remember`.
 
 The `remember` command stores documents, asks the memory questions and
 connects coding agents. It
@@ -14486,6 +14905,13 @@ readiness command. See [Wait until a document is queryable](https://remember.dev
 remember documents list [--limit N] [--cursor CURSOR]
                         [--status {ingesting,converting,structuring,ready,failed}]
                         [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
+                          [--recipient NAME_OR_ADDRESS]...
+                          [--created-from T] [--created-to T]
+                          [--modified-from T] [--modified-to T]
+                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--versions {current,all}] [--limit N] [--cursor CURSOR]
+                          [--api-url URL] [--api-key KEY] [--project PROJECT]
 remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
@@ -14497,6 +14923,20 @@ documents whose newest version has that status.
 
 ```bash
 remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`search` finds documents by name, metadata and text and prints a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage) as
+JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
+several; any listed value matches. Dates are ISO 8601 with a timezone, for
+example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+```bash
+remember documents search "q3 sales" --family office | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
 ```
 
 `delete` removes one document, every version of it, from the memory and
@@ -14868,7 +15308,7 @@ then environment variables, then the credential file. See [CLI: How the CLI find
 
 `--read-only` leaves out the two tools that change memory, `ingest` and
 `delete_document`, and refuses calls to them with the error `read_only`.
-`pipeline_readiness` only reads, so it stays.
+`pipeline_readiness` and `search_documents` only read, so they stay.
 
 ### Protocol
 
@@ -14899,17 +15339,18 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness` and `delete_document` (only
-   `pipeline_readiness` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
+   (only `pipeline_readiness` and `search_documents` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
-3. The seven SQL query tools, when the deployment serves the query space.
+3. Context expansion: `adjacent_chunks`.
+4. The seven SQL query tools, when the deployment serves the query space.
 
 A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 14 tools: 3 + 4 + 7.
+lists 16 tools: 4 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -15108,6 +15549,36 @@ and never as a way to correct a fact: to correct one, ingest a document that
 says the right thing. The token needs `write` scope. See
 [`DELETE /documents/{doc_id}`](https://remember.dev/docs/reference/http-api/ingest#delete-documentsdoc_id).
 
+### `search_documents`
+
+Finds documents (files) by the names they were stored under, their general
+metadata and their text. The tool description tells the agent to use it when
+the user names or describes a file ("find Q3_sales_2025.xlsx", "emails from
+Alice") rather than asking about its content.
+
+| Parameter | Type | Required | Limits |
+|---|---|---|---|
+| `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
+| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
+| `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
+| `language`, `thread_ref` | string | no | Exact match. |
+| `doc_ids` | array of strings | no | Document UUIDs. |
+| `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `k` | integer | no | 1–200; default 20. |
+| `cursor` | string | no | The previous page's `cursor`; only without `query`. |
+
+Unknown keys are refused. The result is a
+[`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
+`documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
+`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
+`overview`),
+`cursor`, `as_of` and `people_matched`. When a people filter matches several
+different people, `people_matched` lists each with a document count and the
+description tells the agent to narrow the filter instead of guessing. The
+token needs `read` scope. How matching and paging work:
+[`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
 ### Assured operations
 
 These four tools are the deployment's assured operations. Their input
@@ -15173,6 +15644,19 @@ Both of the above in one call, returned as `ContextBundle/v2`.
 
 For every operation, unknown keys are refused, and integers must be whole
 numbers.
+
+### Context expansion tool
+
+#### `adjacent_chunks`
+
+Retrieve neighbouring chunks preceding and succeeding a target chunk within the
+same document to expand conversational or narrative context. Returns an
+`Envelope` containing surrounding chunks ordered by ordinal.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `chunk_id` | string (UUID) | yes | Target chunk UUID to expand around. |
+| `window` | integer | no | Number of neighbouring chunks on each side (1 or 2, default 1). |
 
 ### SQL query tools
 
@@ -15489,6 +15973,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
 | `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
+| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 215 connections; see [Database connections](https://remember.dev/docs/self-hosting/scaling#database-connections). |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
 ## Deployment and API
@@ -15506,10 +15991,10 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES` | unset (no cap) | int > 0 | Largest `POST /ingest` body; larger uploads get `413`. |
 | `REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS` | empty | comma-separated https origins; http only on `localhost`, `127.0.0.1` or `[::1]` | Browser origins allowed by CORS. |
 | `REMEMBERSTACK_SELFHOST_TRUSTED_PRINCIPAL_SOURCE` | `false` | bool | Believe `X-Ingest-Principal-*` headers on `POST /ingest`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | `120` | int ≥ 1 | Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | `8` | int ≥ 1 | Requests running at once per credential. Over it: `429` `concurrency_limited`. |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | `600` | int ≥ 1 | Requests per minute for the whole deployment (bursts of a quarter of it). |
-| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | `32` | int ≥ 1 | Requests running at once for the whole deployment. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests per minute per credential (bursts of a quarter of it). Over it: `429` `rate_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests running at once per credential. Over it: `429` `concurrency_limited`. |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests per minute for the whole deployment (bursts of a quarter of it). |
+| `REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT` | unset (no limit) | int ≥ 0; `0` = no limit | Optional. Requests running at once for the whole deployment. |
 
 ## Storage
 
@@ -15742,7 +16227,7 @@ seconds. `wait_for_readiness` raises
 | `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
-| `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](https://remember.dev/docs/reference/http-api#admission-limits)). | Wait the `Retry-After` seconds, then retry. |
+| `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](https://remember.dev/docs/reference/http-api#admission-limits), off unless configured). | Wait the `Retry-After` seconds, then retry. |
 | `429` | `{"code": "concurrency_limited", …}` | Too many requests of the credential or the deployment are running at once. | Wait for your other requests to finish (`Retry-After` is `1`), then retry. |
 | `500` | `Internal Server Error` | An unhandled failure: a defect. | Report it. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running; the deployment accepts no traffic until it finishes. | Retry later. |
@@ -16356,6 +16841,14 @@ absent from the current release; nothing here has a date.
   SDK, the CLI and the MCP tools cannot erase a document's bytes.
 - **Deleting one version.** You can delete a whole document, not a single
   version of it.
+- **Document filters on facts and operations.** Claim and chunk search
+  take a `documents` filter; the assured operations (`facts_context` and the
+  others), fact lookups and the SQL query functions do not yet, and there is
+  no `documents` filter over MCP because MCP has no claim or chunk search
+  tool.
+- **Metadata read from inside files.** Converters read only a document's
+  title, and only where the markitdown converter reports one; no converter
+  reads authors, recipients or dates from files yet.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

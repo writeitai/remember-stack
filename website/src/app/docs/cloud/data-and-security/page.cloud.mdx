@@ -27,8 +27,9 @@ credentials. There are no tenant rows inside one shared engine, and
 projects inside the same organisation are isolated from each other as
 strictly as projects of different customers.
 
-A deployment API token names exactly one deployment. Another deployment
-refuses it.
+An API key names the organisation and the projects it covers. A deployment
+accepts it only if it covers that deployment's project; every other
+deployment refuses it.
 
 ## How requests reach your deployment
 
@@ -38,27 +39,32 @@ the connection by hostname without decrypting it; TLS ends inside your
 deployment. The gateway holds no certificate or key for your hostname.
 
 The console and the account API (`https://remember.dev/app/api`) handle
-sign-in, tokens, projects and billing. They do not relay your memory
+sign-in, keys, projects and billing. They do not relay your memory
 requests. When the console shows your memory, your browser fetches it from
 the deployment directly with a 10-minute, read-only credential.
 
 **Hosted MCP is the exception.** When an agent uses
-[hosted MCP](/docs/cloud/hosted-mcp), the tool call and its result pass through
-Cloudflare and the account API on their way to and from your deployment.
-remember.dev does not store them.
+[hosted MCP](/docs/cloud/hosted-mcp) at `https://remember.dev/mcp`, the tool
+call and its result pass through Cloudflare, which terminates TLS for
+`remember.dev`, and through remember.dev's account service on their way to
+and from your deployment. remember.dev holds them only while the call runs:
+tool arguments and results are not written to a database, logs, traces,
+error reports or audit records. Only their sizes are recorded. The SDK, the
+CLI and plain HTTP requests do not take this path.
 
 ## What remember.dev's control plane holds
 
 The control plane keeps account and billing data: your email address, name
 and password hash (or Google link), organisations, members, projects,
-token metadata, the credit ledger, statements and support records.
+API key and MCP connection metadata, the credit ledger, statements and
+support records.
 
 For billing it receives measurements from each deployment: character
 counts, byte counts, timestamps, outcomes and opaque identifiers. These
 measurements carry no document text, file names or content hashes.
 
-Tokens are stored only as hashes. A token's secret is shown once and
-cannot be recovered.
+API keys and MCP refresh tokens are stored only as hashes. A key's secret
+is shown once and cannot be recovered.
 
 ## Where data lives
 
@@ -81,7 +87,7 @@ replication.
 | Stripe | Your billing email, payment details and the amounts you buy | Payments and tax |
 | Google | Your sign-in, if you use Google sign-in | Authentication |
 | Brevo | Your email address and the transactional message | Verification, reset and invitation emails |
-| Cloudflare | Traffic to the website, the console and the account API, including hosted MCP calls. Not traffic to your deployment's hostname | DNS, the website and the console's front door |
+| Cloudflare | Traffic to the website, the console and the account API. On hosted MCP, the content of tool calls and their results. Not traffic to your deployment's hostname | DNS, the website, the console's front door and hosted MCP |
 
 Each project has its own OpenRouter key with its own spending limit.
 
@@ -94,14 +100,18 @@ there is nothing to switch off.
 remember.dev's own control plane (the console, the account API and hosted
 MCP) keeps logs and error reports. Error reports are stripped to an allowlist
 of fields: identifiers, timings and error types. They carry no request
-bodies and none of your documents, questions or memory.
+bodies and none of your documents, questions or memory. For a hosted MCP
+call the log line holds the tool, the project, the outcome, timings and
+sizes, never the arguments or the result.
 
 ## Records of what happened
 
-remember.dev writes an append-only record of account actions: tokens
-minted, presented and revoked, device logins approved, projects created and
-archived, members added, invitations, billing decisions and offboarding
-steps. The record names who acted, or which token.
+remember.dev writes an append-only record of account actions: API keys
+created, presented and revoked, MCP connections approved, refreshed and
+ended, each hosted MCP tool call (tool, project, outcome, duration and
+sizes, no content), device logins approved, projects created and archived,
+members added and removed, invitations, billing decisions and offboarding
+steps. The record names who acted, and which key or connection.
 
 The credit ledger is append-only too; see [Pricing and credits](/docs/cloud/pricing).
 
@@ -115,19 +125,21 @@ time-limited access to your deployment, and the console has no support
 access to approve. Support works from what you tell them in a support
 record, and from the account records above.
 
-## Token hygiene
+## Key hygiene
 
-- Give each machine or job its own deployment token, with a label that
-  names it.
-- Keep tokens in environment variables or a secret manager. Never commit
-  one, and never paste one into an agent's chat; connect agents with
-  [hosted MCP](/docs/cloud/hosted-mcp).
-- Rotate tokens before they expire; the console and the CLI warn you.
-- If a token leaks, revoke it first under **Settings → API Tokens**, then
-  mint a replacement.
+- Give each machine or job its own API key, named after it, covering only
+  the projects and permissions it needs.
+- Keep keys in environment variables or a secret manager. Never commit
+  one, and never paste one into an agent's chat; connect agents to
+  [hosted MCP](/docs/cloud/hosted-mcp) with a browser sign-in.
+- Replace keys before they expire; the console marks keys that expire soon.
+- If a key leaks, revoke it first under **Settings → API keys**, then
+  create a replacement. See
+  [when a revoked key stops working](/docs/cloud/tokens-and-sign-in#revoke-a-key).
+- Disconnect agents you no longer use under **Settings → Connections**.
 - `remember logout` revokes the key stored on a machine you are giving up.
 
-Details are in [Tokens and sign-in](/docs/cloud/tokens-and-sign-in).
+Details are in [API keys and sign-in](/docs/cloud/tokens-and-sign-in).
 
 ## What remember.dev does not promise
 

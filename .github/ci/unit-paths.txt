@@ -34,6 +34,7 @@ src/tests/core/test_context_references.py
 src/tests/core/test_consumption_skill.py
 src/tests/core/test_conversion.py
 src/tests/core/test_core_manifest.py
+src/tests/core/test_document_metadata.py
 src/tests/core/test_d80_recovery_and_hydration.py
 src/tests/core/test_embedding_input_policy.py
 src/tests/core/test_fact_application.py
@@ -78,6 +79,7 @@ src/tests/surfaces/test_client_first_run.py
 src/tests/surfaces/test_client_sdk.py
 src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
+src/tests/surfaces/test_document_search_clients.py
 src/tests/surfaces/test_document_deletion_http.py
 src/tests/surfaces/test_document_inventory_http.py
 src/tests/surfaces/test_forget_admission.py
@@ -109,6 +111,7 @@ src/tests/workers/test_d79_summary_consumption.py
 src/tests/workers/test_e3_bare_head_noun.py
 src/tests/workers/test_e3_claim_normalize_fanout.py
 src/tests/workers/test_e3_context_references.py
+src/tests/workers/test_e3_own_document_name.py
 src/tests/workers/test_e3_entity_obs_flush_fanout.py
 src/tests/workers/test_extraction_temperature.py
 src/tests/workers/test_hard_forget_handler.py
@@ -123,3 +126,4 @@ src/tests/surfaces/test_direct_admission.py
 src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
 src/tests/adapters/test_perimeter_trust.py
+src/tests/workers/test_self_reference_naming.py

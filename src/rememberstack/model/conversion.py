@@ -17,6 +17,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.documents import NonEmptyString
 from rememberstack.model.model_provider import ProviderCallUsage
 
@@ -47,6 +48,9 @@ class ConversionResult(BaseModel):
     """Provider-reported accounting, one event per billable call the route
     made — the convert worker meters each into the cost ledger under a
     deterministic key. Empty for local routes."""
+    metadata: DocumentMetadata | None = None
+    """The general metadata the route read from the file (D134): title,
+    people, dates, language, thread. None when the route reads none."""
 
 
 class ConverterUsageEvent(BaseModel):

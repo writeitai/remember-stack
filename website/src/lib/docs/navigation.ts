@@ -70,7 +70,7 @@ export const docsNavigation: NavItem[] = [
         children: [
           { title: "What remember.dev runs for you", href: "/docs/cloud/overview" },
           { title: "Organisations, projects and members", href: "/docs/cloud/organisations-and-projects" },
-          { title: "Tokens and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
+          { title: "API keys and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
           { title: "Hosted MCP", href: "/docs/cloud/hosted-mcp" },
           { title: "Pricing and credits", href: "/docs/cloud/pricing" },
           { title: "Spend caps and auto top-up", href: "/docs/cloud/spend-controls" },

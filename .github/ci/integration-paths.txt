@@ -1,4 +1,5 @@
 src/tests/adapters/test_mount_provisioning.py
+src/tests/adapters/test_postgres_p1_document_filters.py
 src/tests/adapters/test_selfhost_queue.py
 src/tests/eval/test_harness_skeleton.py
 src/tests/eval/test_s58_consumption.py
@@ -11,6 +12,7 @@ src/tests/spine/test_component_versions.py
 src/tests/spine/test_d123_context_nomination.py
 src/tests/spine/test_deployment_bootstrap.py
 src/tests/spine/test_document_inventory.py
+src/tests/spine/test_document_search.py
 src/tests/spine/test_fact_application_writer.py
 src/tests/spine/test_fact_rejection_retry.py
 src/tests/spine/test_concise_adjudication_pg.py
@@ -49,6 +51,7 @@ src/tests/surfaces/test_saved_queries_batch_e.py
 src/tests/surfaces/test_surface_cost.py
 src/tests/surfaces/test_surfaces_parity.py
 src/tests/workers/test_claimify_loss_ledger_pg.py
+src/tests/workers/test_document_metadata_chain.py
 src/tests/workers/test_e0_chain.py
 src/tests/workers/test_e1_chain.py
 src/tests/workers/test_e2_chain.py
