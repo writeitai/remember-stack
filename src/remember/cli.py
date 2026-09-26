@@ -341,7 +341,7 @@ def _run_switch(args: argparse.Namespace) -> int:
 
 
 def _run_ops(args: argparse.Namespace) -> int:
-    """Compose bounded local inspection, one-row replay, or an existing rebuild."""
+    """Compose bounded local inspection, route release, or one-row replay."""
     if args.ops_command == "graph-catalog":
         return _run_graph_catalog_ensure()
     try:
@@ -381,13 +381,7 @@ def _run_ops(args: argparse.Namespace) -> int:
             )
             print(replayed.model_dump_json())
             return 0
-        result = operations.rebuild(
-            deployment_id=args.deployment,
-            snapshot_root=args.snapshot_root,
-            version=args.version,
-        )
-        print(json.dumps(result, default=str, sort_keys=True))
-        return 0
+        raise AssertionError(f"unhandled ops command {args.ops_command!r}")
     except (WorkLedgerError, ValueError, OSError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -1015,10 +1009,6 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         )
         replay.add_argument("--lane", choices=("steady", "backfill"))
         replay.add_argument("--not-before", type=datetime.fromisoformat)
-        rebuild = ops_commands.add_parser("rebuild", help="rebuild P3 CorpusFS")
-        rebuild.add_argument("--deployment", type=UUID, required=True)
-        rebuild.add_argument("--snapshot-root", type=Path, required=True)
-        rebuild.add_argument("--version", required=True)
         graph_catalog = ops_commands.add_parser(
             "graph-catalog", help="inspect or repair PostgreSQL live-graph metadata"
         )

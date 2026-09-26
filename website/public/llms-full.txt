@@ -7479,7 +7479,6 @@ Pipe it through `python3 -m json.tool` to read it.
 | `remember ops inspect --deployment ID` | Report pipeline, dead-letter, projection and consistency state |
 | `remember ops replay PROCESSING_ID --deployment ID` | Give one dead-lettered item more attempts |
 | `remember ops resume-no-route --deployment ID` | Release conversions parked for lack of a route |
-| `remember ops rebuild --deployment ID --snapshot-root DIR --version V` | Build a filesystem snapshot into a local directory |
 | `remember ops graph-catalog ensure` | Check and repair the PostgreSQL graph definitions |
 | `remember ops cost-export --deployment ID` | Print one page of the cost ledger ([Observability](https://remember.dev/docs/self-hosting/observability#cost-export)) |
 
@@ -8517,23 +8516,21 @@ by hand, when you want the view to catch up.
 `mounts` copies the latest snapshot out of the object store into a directory:
 
 ```bash
-mkdir -p "$PWD/memory-views"
+mkdir -p memory-views
 docker compose run --rm --no-deps \
   --user "$(id -u):$(id -g)" \
-  -v "$PWD/memory-views:$PWD/memory-views" \
-  api mounts --root "$PWD/memory-views"
+  -v "$PWD/memory-views:/memory-views" \
+  api mounts --root /memory-views
 ```
 
-Mount the host directory at the **same path** inside the container, as
-above. `mounts` points the view at the snapshot with an absolute symbolic
-link, and a link created under a different path inside the container is
-broken on the host. `--user` makes the files yours rather than the
-container user's.
+`--user` makes the files yours rather than the container user's. `p3` is a
+relative symbolic link to the snapshot directory beside it, so the tree
+works on the host whatever path you mount it at inside the container.
 
-The command prints where each view is:
+The command prints where each view is, as paths inside the container:
 
 ```json
-{"deployment_id": "…", "p3": "…/memory-views/<deployment-id>/p3", "artifacts": "…/artifacts", "raw": "…/raw", "knowledge": "…/knowledge", "read_only": true}
+{"deployment_id": "…", "p3": "/memory-views/<deployment-id>/p3", "artifacts": "/memory-views/<deployment-id>/artifacts", "raw": "/memory-views/<deployment-id>/raw", "read_only": true}
 ```
 
 Publishing is atomic: `p3` is a link that switches from one complete
@@ -8541,14 +8538,13 @@ snapshot directory to the next, so an agent reading the tree never sees a
 half-copied one. Old snapshot directories stay in place; delete them when
 you no longer need them.
 
-## The four views
+## The three views
 
 | View | Contents |
 |---|---|
 | `p3` | The corpus tree described below. |
 | `artifacts` | The converted Markdown and other artifacts, **if** you pass `--artifacts-root` pointing at a directory where the `remember-artifacts` bucket is mounted. Otherwise an empty directory. |
 | `raw` | The original files, **if** you pass `--raw-root` pointing at a directory where the `remember-raw` bucket is mounted. Otherwise an empty directory. Nothing in the corpus tree links into it: reaching an original means following the `raw_uri` in a document's page on purpose. |
-| `knowledge` | Reserved. Always an empty directory in this release. |
 
 `--raw-root` and `--artifacts-root` must be existing directories. They
 default to `REMEMBERSTACK_SELFHOST_RAW_MOUNT_ROOT` and
@@ -8607,14 +8603,6 @@ make the directory read-only for them, for example by mounting it read-only
 into the agent's container. The same applies to bucket mounts you pass as
 `--raw-root` and `--artifacts-root`, and reads of the raw originals are
 logged only if your mount tool logs them.
-
-## Rebuilding into a local directory
-
-`remember ops rebuild --deployment ID --snapshot-root DIR --version V`
-writes a snapshot tree straight into a directory inside the container
-instead of the object store. It also records that snapshot as the latest, and `mounts`
-then fails to find it in the object store. Run the `projections` service again before
-the next `mounts`.
 
 ## When it refuses
 
@@ -15209,7 +15197,6 @@ docker compose exec api \
 | `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
 | `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
 | `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
-| `rebuild` | `--deployment ID`, `--snapshot-root PATH`, `--version VERSION` | Rebuilds the filesystem view snapshot. | JSON |
 | `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |
 
 When and why to use each: [Operating the pipeline](https://remember.dev/docs/self-hosting/operating).
