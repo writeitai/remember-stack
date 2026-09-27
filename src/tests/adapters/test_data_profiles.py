@@ -10,7 +10,9 @@ import dataclasses
 import datetime
 import io
 from pathlib import Path
+import re
 import sqlite3
+import zipfile
 
 from openpyxl import Workbook
 from openpyxl.workbook.defined_name import DefinedName
@@ -192,9 +194,12 @@ def test_xlsx_profile_lists_sheets_columns_sample_names_and_metadata() -> None:
     assert "- Format: xlsx" in markdown
     assert "- Sheets: 2" in markdown
     assert "## Sheet: Revenue" in markdown
-    assert "- Dimension: A2:E14 (13 rows × 5 columns)" in markdown
+    assert (
+        "- Declared dimension: A2:E14 (13 rows × 5 columns, as the file "
+        "declares it; not verified)"
+    ) in markdown
     assert "- Header row: 2" in markdown
-    assert "- Data rows below the header: 12" in markdown
+    assert "- Data rows below the header: 12 (from the declared size)" in markdown
     assert "  - Region: text (column A)" in markdown
     assert "  - Amount: number (column B)" in markdown
     assert "  - Booked: date (column C)" in markdown
@@ -289,13 +294,13 @@ def test_large_xlsx_is_profiled_from_dimensions_only(
     _assert_search_only_profile(result)
     markdown = result.document_md
     assert "## Sheet: Data" in markdown
-    assert "- Dimension: A1:A2 (2 rows × 1 columns)" in markdown
+    assert "- Declared dimension: A1:A2 (2 rows × 1 columns" in markdown
     assert "Sample: not read — the file is larger than 10 bytes" in markdown
     assert "Secret" not in markdown and "secret" not in markdown
     assert "Columns" not in markdown
     assert _section(result, "profile_sample") == ""
-    assert "column lists and sample rows are not read above 50 MB" in (
-        result.manifest.coverage.gaps
+    assert result.manifest.coverage.gaps[1].startswith(
+        "column lists and sample rows are not read: the file is larger than"
     )
 
 
@@ -466,7 +471,7 @@ def test_arrow_profile_reads_file_stream_and_feather(form: str) -> None:
         content=buffer.getvalue(), mime=_ARROW, hints=_hints("frame.arrow")
     )
     _assert_search_only_profile(result)
-    assert "- Rows: 7" in result.document_md
+    assert "- Rows: not recorded in the" in result.document_md
     assert "| 5 | 2.0 | row4 | 2024-01-05 |" in result.document_md
     assert "row5" not in result.document_md
 
@@ -582,3 +587,196 @@ def test_a_corrupt_dataset_fails_with_a_typed_reason(mime: str, reason: str) -> 
         DatasetConverter().convert(
             content=b"this is not the declared format" * 10, mime=mime
         )
+
+
+# --- review follow-ups ----------------------------------------------------
+
+
+def _rewrite_sheet_xml(content: bytes, rewrite: Callable[[str], str]) -> bytes:
+    """Copy an .xlsx, passing the first worksheet's XML through ``rewrite``."""
+    source = zipfile.ZipFile(io.BytesIO(content))
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                data = rewrite(data.decode()).encode()
+            target.writestr(info, data)
+    return buffer.getvalue()
+
+
+def _eight_rows(workbook: Workbook) -> None:
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Data"
+    sheet.append(["name", "value"])
+    for index in range(7):
+        sheet.append([f"row{index}", index])
+
+
+def test_an_understated_dimension_does_not_cut_the_sample() -> None:
+    content = _rewrite_sheet_xml(
+        _xlsx(_eight_rows),
+        lambda xml: re.sub(r'<dimension ref="[^"]+"', '<dimension ref="A1:A2"', xml),
+    )
+    result = SpreadsheetConverter().convert(content=content, mime=_XLSX)
+    markdown = result.document_md
+    assert "- Declared dimension: A1:A2 (2 rows × 1 columns" in markdown
+    assert "  - value: integer (column B)" in markdown
+    assert "| row4 | 4 |" in markdown
+    assert "- Data rows below the header: at least 5" in markdown
+
+
+def test_an_unsized_sheet_is_still_sampled() -> None:
+    content = _rewrite_sheet_xml(
+        _xlsx(_eight_rows), lambda xml: re.sub(r"<dimension [^>]*/>", "", xml)
+    )
+    result = SpreadsheetConverter().convert(content=content, mime=_XLSX)
+    markdown = result.document_md
+    assert "- Declared dimension: not recorded" in markdown
+    assert "| row4 | 4 |" in markdown
+    assert "- Data rows below the header: at least 5" in markdown
+
+
+def test_an_overstated_dimension_reports_the_rows_actually_read() -> None:
+    content = _rewrite_sheet_xml(
+        _xlsx(_eight_rows),
+        lambda xml: re.sub(r'<dimension ref="[^"]+"', '<dimension ref="A1:B3"', xml),
+    )
+    small = _rewrite_sheet_xml(
+        content, lambda xml: re.sub(r'<row r="([4-8])".*?</row>', "", xml, flags=re.S)
+    )
+    result = SpreadsheetConverter().convert(content=small, mime=_XLSX)
+    assert "- Data rows below the header: 2" in result.document_md
+
+
+def test_formula_cells_without_cached_values_show_their_formula() -> None:
+    def build(workbook: Workbook) -> None:
+        sheet = workbook.active
+        assert sheet is not None
+        sheet.append(["a", "b", "total"])
+        sheet.append([1, 2, "=A2+B2"])
+        sheet.append([3, 4, "=A3+B3"])
+
+    result = SpreadsheetConverter().convert(content=_xlsx(build), mime=_XLSX)
+    markdown = result.document_md
+    assert "| 1 | 2 | =A2+B2 |" in markdown
+    assert "  - total: empty (column C)" in markdown
+
+
+def test_hidden_sheets_are_marked() -> None:
+    def build(workbook: Workbook) -> None:
+        first = workbook.active
+        assert first is not None
+        first.title = "Shown"
+        workbook.create_sheet("Secret").sheet_state = "hidden"
+        workbook.create_sheet("Deep").sheet_state = "veryHidden"
+
+    markdown = (
+        SpreadsheetConverter().convert(content=_xlsx(build), mime=_XLSX).document_md
+    )
+    shown = markdown[
+        markdown.index("## Sheet: Shown") : markdown.index("## Sheet: Secret")
+    ]
+    assert "Visibility" not in shown
+    assert "## Sheet: Secret\n\n- Visibility: hidden" in markdown
+    assert "## Sheet: Deep\n\n- Visibility: very hidden" in markdown
+
+
+def test_a_large_shared_strings_table_skips_the_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(spreadsheet_module, "SHARED_STRINGS_LIMIT_BYTES", 10)
+    buffer = io.BytesIO(_xlsx(_eight_rows))
+    with zipfile.ZipFile(buffer, "a") as archive:
+        # openpyxl writes inline strings; add the table another writer would
+        archive.writestr("xl/sharedStrings.xml", "<sst>" + "x" * 100 + "</sst>")
+    result = SpreadsheetConverter().convert(content=buffer.getvalue(), mime=_XLSX)
+    markdown = result.document_md
+    assert "Sample: not read — its shared-strings table expands to" in markdown
+    assert "row0" not in markdown
+    assert "- Declared dimension: A1:B8" in markdown
+
+
+def test_a_large_xls_lists_sheet_names_without_loading_sheets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(spreadsheet_module, "XLS_SHEET_LOAD_LIMIT_BYTES", 10)
+
+    def refuse(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a sheet was loaded")
+
+    monkeypatch.setattr("xlrd.book.Book.sheet_by_index", refuse)
+    content = (_FIXTURES / "tiny_budget.xls").read_bytes()
+    result = SpreadsheetConverter().convert(content=content, mime=_XLS)
+    _assert_search_only_profile(result)
+    markdown = result.document_md
+    assert "## Sheet: Budget" in markdown and "## Sheet: Notes" in markdown
+    assert "Size: not read (the sheet was not loaded)" in markdown
+    assert "Rent" not in markdown
+
+
+def test_spreadsheet_over_its_time_limit_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(spreadsheet_module, "TIME_LIMIT_SECONDS", -1.0)
+    with pytest.raises(ConversionError, match="time limit"):
+        SpreadsheetConverter().convert(content=_xlsx(_eight_rows), mime=_XLSX)
+
+
+def test_csv_field_over_the_size_limit_fails_clearly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(table_module, "FIELD_SIZE_LIMIT", 100)
+    content = b"a,b\n1," + b"x" * 500 + b"\n"
+    with pytest.raises(ConversionError, match="longer than the 100-character limit"):
+        TableConverter().convert(content=content, mime="text/csv")
+    monkeypatch.undo()
+    result = TableConverter().convert(content=content, mime="text/csv")
+    assert "x" * 79 + "…" in result.document_md
+
+
+def test_arrow_stops_reading_once_the_sample_is_full() -> None:
+    """Batches after the fifth row are never decoded (a truncated tail is fine)."""
+    table = _frame_table()
+    buffer = io.BytesIO()
+    with pa.ipc.new_stream(buffer, table.schema) as writer:
+        for batch in table.to_batches(max_chunksize=3):
+            writer.write_batch(batch)
+        writer.write_batch(table.to_batches()[0])
+    content = buffer.getvalue()
+    result = DatasetConverter().convert(content=content[:-200], mime=_ARROW)
+    assert "| 5 | 2.0 | row4 | 2024-01-05 |" in result.document_md
+
+
+def test_sqlite_generated_columns_views_and_bounded_values(tmp_path: Path) -> None:
+    path = tmp_path / "gen.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE t (a INTEGER, body TEXT, "
+            "twice INTEGER GENERATED ALWAYS AS (a * 2) VIRTUAL)"
+        )
+        connection.execute("INSERT INTO t (a, body) VALUES (3, ?)", ("y" * 5000,))
+        connection.execute("CREATE VIEW doubled AS SELECT twice FROM t")
+    connection.close()
+    markdown = (
+        DatasetConverter().convert(content=path.read_bytes(), mime=_SQLITE).document_md
+    )
+    assert "  - twice: integer (column 3; declared INTEGER)" in markdown
+    assert "| 3 | " + "y" * 79 + "… | 6 |" in markdown
+    assert "- Views: 1 (`doubled`)" in markdown
+
+
+def test_a_views_only_sqlite_database_names_its_views(tmp_path: Path) -> None:
+    path = tmp_path / "views.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE VIEW answer AS SELECT 42 AS value")
+    connection.close()
+    markdown = (
+        DatasetConverter().convert(content=path.read_bytes(), mime=_SQLITE).document_md
+    )
+    assert "- Tables: 0" in markdown
+    assert "- Views: 1 (`answer`)" in markdown
+
+
+def test_nan_is_ignored_when_inferring_types() -> None:
+    assert infer_type(values=[float("nan"), None], parse_text=False) == "empty"
+    assert infer_type(values=[float("nan"), 1.5], parse_text=False) == "number"

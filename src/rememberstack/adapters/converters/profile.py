@@ -19,6 +19,7 @@ never straddle two labels. Everything is labelled ``profile_structure`` or
 from collections.abc import Sequence
 from dataclasses import dataclass
 import datetime
+import math
 from pathlib import PurePosixPath
 import re
 import time
@@ -107,6 +108,13 @@ class DataFileProfile:
     metadata: DocumentMetadata | None = None
 
 
+class FormulaText(str):
+    """A formula cell with no cached value, shown as its formula text.
+
+    It is never counted when a column's type is inferred.
+    """
+
+
 class Deadline:
     """The route's wall-time limit, checked by its loops."""
 
@@ -137,12 +145,16 @@ def infer_type(*, values: Sequence[object], parse_text: bool) -> ColumnType:
     ``parse_text`` reads strings as a CSV reader sees them: ``12`` is an
     integer, ``1.5`` a number, ``2024-01-31`` a date, ``true`` a boolean;
     a leading-zero code such as ``007`` stays text. Integers and numbers
-    together are a number; any other mix is text.
+    together are a number; any other mix is text. Missing values (None, the
+    empty string, NaN) and uncached formulas are ignored.
     """
     kinds: set[ColumnType] = {
         _value_type(value=value, parse_text=parse_text)
         for value in values
-        if value is not None and value != ""
+        if value is not None
+        and value != ""
+        and not isinstance(value, FormulaText)
+        and not (isinstance(value, float) and math.isnan(value))
     }
     if not kinds:
         return "empty"
@@ -210,7 +222,7 @@ def render_profile(
         parts.append(
             (_structure(table=table, title=title), "profile_structure", "computed")
         )
-        if table.sample:
+        if _sample_width(table=table) > 0:
             parts.append((_sample(table=table), "profile_sample", "source_expression"))
     if profile.unread_tables:
         names = ", ".join(_inline(text=name) for name in profile.unread_tables)
@@ -283,10 +295,17 @@ def _structure(*, table: TableProfile, title: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _sample_width(*, table: TableProfile) -> int:
+    """How many columns the head sample spans; 0 means there is no sample."""
+    if not table.sample:
+        return 0
+    return max(len(table.columns or ()), max(len(row) for row in table.sample))
+
+
 def _sample(*, table: TableProfile) -> str:
     """The head sample as a Markdown table, capped in width and cell length."""
     columns = table.columns or ()
-    width = max(len(columns), max(len(row) for row in table.sample))
+    width = _sample_width(table=table)
     shown = min(width, MAX_SAMPLE_COLUMNS)
     headers = [
         _cell(value=columns[index].header) if index < len(columns) else ""

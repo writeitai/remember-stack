@@ -3,14 +3,16 @@ file, never its rows.
 
 - **Parquet** — row and column counts and the schema from the file footer;
   the sample is the first five rows of the first 100 columns.
-- **Arrow / Feather** (IPC file or stream) — the schema, the record-batch row
-  counts summed, and the first five rows. The bytes are read in place.
+- **Arrow / Feather** (IPC file or stream) — the schema and the first five
+  rows; batches are decoded only until five rows are in hand. Arrow records
+  row counts per batch, not in a footer, so the count is not read.
 - **SPSS, SAS, Stata** (``sav``, ``por``, ``xpt``, ``sas7bdat``, ``dta``) —
   pyreadstat reads the header only (counts, names, declared formats), then
   five rows. ``por`` and ``xpt`` headers do not record a row count; the
   profile says so rather than reading every row to count them.
 - **SQLite** — opened read-only and immutable from a private temporary copy:
-  each table's columns with their declared types, its row count, five rows.
+  each table's columns (generated ones included) with their declared types,
+  its row count and five rows with long values cut in SQL; views by name.
 
 Bytes that do not parse as the stored format fail the version.
 """
@@ -27,6 +29,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pyreadstat
 
+from rememberstack.adapters.converters.profile import CELL_CHARS
 from rememberstack.adapters.converters.profile import ColumnProfile
 from rememberstack.adapters.converters.profile import DataFileProfile
 from rememberstack.adapters.converters.profile import Deadline
@@ -84,18 +87,23 @@ class DatasetConverter:
         """Read the format's metadata and first rows into a profile."""
         deadline = Deadline(seconds=TIME_LIMIT_SECONDS)
         name = (hints.file_name if hints else None) or "table"
+        unread: tuple[str, ...] = ()
+        heading_facts: tuple[str, ...] = ()
         if mime == _SQLITE_MIME:
-            tables, unread = _sqlite(content=content, deadline=deadline)
+            tables, unread, heading_facts = _sqlite(content=content, deadline=deadline)
         elif mime == _PARQUET_MIME:
-            tables, unread = (_parquet(content=content, name=name),), ()
+            tables = (_parquet(content=content, name=name, deadline=deadline),)
         elif mime == _ARROW_MIME:
-            tables, unread = (
-                (_arrow(content=content, name=name, deadline=deadline),),
-                (),
-            )
+            tables = (_arrow(content=content, name=name, deadline=deadline),)
         elif mime in _READSTAT:
-            tables = (_readstat(content=content, reader=_READSTAT[mime], name=name),)
-            unread = ()
+            tables = (
+                _readstat(
+                    content=content,
+                    reader=_READSTAT[mime],
+                    name=name,
+                    deadline=deadline,
+                ),
+            )
         else:
             raise ConversionError(f"the dataset route does not read {mime!r}")
         return render_profile(
@@ -104,6 +112,7 @@ class DatasetConverter:
                 table_kind="table",
                 tables=tables,
                 unread_tables=unread,
+                heading_facts=heading_facts,
             ),
             content_size=len(content),
             hints=hints,
@@ -116,52 +125,75 @@ class DatasetConverter:
         )
 
 
-def _parquet(*, content: bytes, name: str) -> TableProfile:
+def _parquet(*, content: bytes, name: str, deadline: Deadline) -> TableProfile:
     """Counts and schema from the footer; five rows of the first columns."""
     try:
         parquet = pq.ParquetFile(pa.BufferReader(content))
         schema = parquet.schema_arrow
+        row_count = parquet.metadata.num_rows
+        deadline.check()
         listed = schema.names[:MAX_COLUMNS_LISTED]
         batch = next(parquet.iter_batches(batch_size=SAMPLE_ROWS, columns=listed), None)
+        deadline.check()
         rows = batch.to_pylist() if batch is not None else []
-        row_count = parquet.metadata.num_rows
     except (pa.ArrowException, OSError) as err:
         raise _unreadable(kind="Parquet", err=err) from err
-    return _arrow_table(name=name, schema=schema, rows=rows, row_count=row_count)
+    return _arrow_table(
+        name=name, schema=schema, rows=rows, rows_fact=f"Rows: {row_count:,}"
+    )
 
 
 def _arrow(*, content: bytes, name: str, deadline: Deadline) -> TableProfile:
-    """Arrow IPC (Feather v2) file or stream: schema, summed counts, five rows."""
+    """Arrow IPC (Feather v2) file or stream: schema and the first rows.
+
+    Arrow keeps row counts per record batch, not in its footer, so the count
+    is not read; batches are decoded only until five rows are in hand, and
+    only for the listed columns.
+    """
     try:
         try:
-            reader = pa.ipc.open_file(pa.BufferReader(content))
-            batches = (
-                reader.get_batch(index) for index in range(reader.num_record_batches)
+            schema = pa.ipc.open_file(pa.BufferReader(content)).schema
+            options = _arrow_columns(schema=schema)
+            reader = pa.ipc.open_file(pa.BufferReader(content), options=options)
+            batch_count = reader.num_record_batches
+            batches = (reader.get_batch(index) for index in range(batch_count))
+            rows_fact = (
+                f"Rows: not recorded in the file's footer ({batch_count:,} "
+                "record batches)"
             )
         except pa.ArrowInvalid:
-            reader = pa.ipc.open_stream(pa.BufferReader(content))
-            batches = iter(reader)
-        schema = reader.schema
+            schema = pa.ipc.open_stream(pa.BufferReader(content)).schema
+            options = _arrow_columns(schema=schema)
+            batches = iter(
+                pa.ipc.open_stream(pa.BufferReader(content), options=options)
+            )
+            rows_fact = "Rows: not recorded in the stream"
         rows: list[dict[str, object]] = []
-        row_count = 0
         for batch in batches:
             deadline.check()
-            row_count += batch.num_rows
-            if len(rows) < SAMPLE_ROWS:
-                rows.extend(batch.slice(0, SAMPLE_ROWS - len(rows)).to_pylist())
+            rows.extend(batch.slice(0, SAMPLE_ROWS - len(rows)).to_pylist())
+            if len(rows) >= SAMPLE_ROWS:
+                break
     except (pa.ArrowException, OSError) as err:
         raise _unreadable(kind="Arrow", err=err) from err
-    return _arrow_table(name=name, schema=schema, rows=rows, row_count=row_count)
+    return _arrow_table(name=name, schema=schema, rows=rows, rows_fact=rows_fact)
+
+
+def _arrow_columns(*, schema: pa.Schema) -> pa.ipc.IpcReadOptions:
+    """Decode only the listed columns of each batch read for the sample."""
+    return pa.ipc.IpcReadOptions(
+        included_fields=list(range(min(len(schema), MAX_COLUMNS_LISTED)))
+    )
 
 
 def _arrow_table(
-    *, name: str, schema: pa.Schema, rows: list[dict[str, object]], row_count: int
+    *, name: str, schema: pa.Schema, rows: list[dict[str, object]], rows_fact: str
 ) -> TableProfile:
     """One Arrow-schema table: declared types plus sample-inferred ones."""
     names = schema.names
     return _table(
         name=name,
-        facts=(f"Rows: {row_count:,}",),
+        facts=(rows_fact,),
         names=names,
         declared=[str(field.type) for field in schema],
         sample=[tuple(row.get(column) for column in names) for row in rows],
@@ -169,11 +201,16 @@ def _arrow_table(
 
 
 def _readstat(
-    *, content: bytes, reader: Callable[..., tuple[Any, Any]], name: str
+    *,
+    content: bytes,
+    reader: Callable[..., tuple[Any, Any]],
+    name: str,
+    deadline: Deadline,
 ) -> TableProfile:
     """SPSS, SAS and Stata files: the header, then five rows."""
     try:
         _, meta = reader(io.BytesIO(content), metadataonly=True, output_format="dict")
+        deadline.check()
         names: list[str] = list(meta.column_names)
         data, _ = reader(
             io.BytesIO(content),
@@ -181,6 +218,7 @@ def _readstat(
             usecols=names[:MAX_COLUMNS_LISTED],
             output_format="dict",
         )
+        deadline.check()
     except (pyreadstat.ReadstatError, pyreadstat.PyreadstatError, OSError) as err:
         raise _unreadable(kind="statistical data", err=err) from err
     listed = names[:MAX_COLUMNS_LISTED]
@@ -212,8 +250,12 @@ def _readstat(
 
 def _sqlite(
     *, content: bytes, deadline: Deadline
-) -> tuple[tuple[TableProfile, ...], tuple[str, ...]]:
-    """Every table: its columns and declared types, row count, five rows."""
+) -> tuple[tuple[TableProfile, ...], tuple[str, ...], tuple[str, ...]]:
+    """Every table: its columns and declared types, row count, five rows.
+
+    Views are listed by name only. Returns the described tables, the names
+    of tables past the 50 described, and the heading's view line.
+    """
     with tempfile.TemporaryDirectory(prefix="rememberstack-sqlite-") as directory:
         path = Path(directory) / "database.sqlite"
         path.write_bytes(content)
@@ -227,13 +269,12 @@ def _sqlite(
             lambda: 1 if deadline.expired() else 0, _SQLITE_PROGRESS_STEPS
         )
         try:
-            names = [
-                row[0]
-                for row in connection.execute(
-                    "SELECT name FROM sqlite_master WHERE type = 'table' "
-                    "AND name NOT LIKE 'sqlite_%' ORDER BY name"
-                )
-            ]
+            objects = connection.execute(
+                "SELECT type, name FROM sqlite_master WHERE type IN ('table', 'view') "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            ).fetchall()
+            names = [name for kind, name in objects if kind == "table"]
+            views = [name for kind, name in objects if kind == "view"]
             tables = tuple(
                 _sqlite_table(connection=connection, name=name, deadline=deadline)
                 for name in names[:MAX_TABLES_DESCRIBED]
@@ -244,25 +285,58 @@ def _sqlite(
             raise _unreadable(kind="SQLite", err=err) from err
         finally:
             connection.close()
-    return tables, tuple(names[MAX_TABLES_DESCRIBED:])
+    heading = ()
+    if views:
+        shown = ", ".join(f"`{view}`" for view in views[:MAX_TABLES_DESCRIBED])
+        more = len(views) - MAX_TABLES_DESCRIBED
+        heading = (
+            f"Views: {len(views):,} ({shown}{f', and {more:,} more' if more > 0 else ''})",
+        )
+    return tables, tuple(names[MAX_TABLES_DESCRIBED:]), heading
 
 
 def _sqlite_table(
     *, connection: sqlite3.Connection, name: str, deadline: Deadline
 ) -> TableProfile:
-    """One SQLite table."""
+    """One SQLite table, generated columns included.
+
+    The sample selects only the listed columns, with each text value cut in
+    SQL and each blob replaced by its length, so five rows stay small.
+    """
     deadline.check()
-    quoted = '"' + name.replace('"', '""') + '"'
-    columns = connection.execute(f"PRAGMA table_info({quoted})").fetchall()
+    quoted = _quote(name=name)
+    columns = [
+        (str(column[1]), str(column[2]))
+        for column in connection.execute(f"PRAGMA table_xinfo({quoted})")
+        if column[6] != 1  # hidden columns of virtual tables
+    ]
     (row_count,) = connection.execute(f"SELECT COUNT(*) FROM {quoted}").fetchone()
-    rows = connection.execute(f"SELECT * FROM {quoted} LIMIT {SAMPLE_ROWS}").fetchall()
+    listed = columns[:MAX_COLUMNS_LISTED]
+    projection = ", ".join(
+        f"CASE typeof({column}) WHEN 'blob' THEN '(' || length({column}) || "
+        f"' bytes)' WHEN 'text' THEN substr({column}, 1, {CELL_CHARS + 1}) "
+        f"ELSE {column} END"
+        for column in (_quote(name=column_name) for column_name, _ in listed)
+    )
+    rows = (
+        connection.execute(
+            f"SELECT {projection} FROM {quoted} LIMIT {SAMPLE_ROWS}"
+        ).fetchall()
+        if listed
+        else []
+    )
     return _table(
         name=name,
         facts=(f"Rows: {row_count:,}",),
-        names=[str(column[1]) for column in columns],
-        declared=[str(column[2]) for column in columns],
+        names=[column_name for column_name, _ in columns],
+        declared=[declared for _, declared in columns],
         sample=[tuple(row) for row in rows],
     )
+
+
+def _quote(*, name: str) -> str:
+    """An SQLite identifier, quoted."""
+    return '"' + name.replace('"', '""') + '"'
 
 
 def _table(

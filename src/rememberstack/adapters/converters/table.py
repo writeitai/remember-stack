@@ -42,6 +42,10 @@ _ENCODING_NAMES: Final = {
     "utf-16": "UTF-16",
     "latin-1": "Latin-1",
 }
+FIELD_SIZE_LIMIT: Final = 10_000_000
+"""The largest field, in characters, the CSV reader accepts (starting value);
+a larger one fails the version instead of being read into memory."""
+
 _DEADLINE_EVERY: Final = 4096
 """Records between wall-time checks in the counting pass."""
 
@@ -66,6 +70,7 @@ class TableConverter:
     ) -> ConversionResult:
         """Sniff, sample and count the file in one streaming pass."""
         deadline = Deadline(seconds=TIME_LIMIT_SECONDS)
+        csv.field_size_limit(FIELD_SIZE_LIMIT)
         extension = format_extension(hints=hints, mime=mime)
         encoding = _declared_encoding(content=content)
         gaps: tuple[str, ...] = ()
@@ -178,6 +183,11 @@ def _scan(
             if len(sample) < SAMPLE_ROWS:
                 sample.append(record)
     except csv.Error as err:
+        if "field larger than field limit" in str(err):
+            raise ConversionError(
+                "not a readable delimited file: a field is longer than the "
+                f"{FIELD_SIZE_LIMIT:,}-character limit"
+            ) from err
         raise ConversionError(f"not a readable delimited file ({err})") from err
     return header or [], sample, data_rows, widest
 
