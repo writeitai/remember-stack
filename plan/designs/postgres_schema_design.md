@@ -1103,7 +1103,6 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the lineage's current snapshot (real FK added after that table)
-  counting_lineage_id uuid NOT NULL,           -- D133/D54: write-once confirmation-counting identity — doc_id for a root, the root container's counting_lineage_id for a container member
   title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
@@ -1162,7 +1161,6 @@ CREATE TABLE document_versions (
   source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
   current_representation_id uuid,              -- → document_representations (D65): the LIVE reading of this snapshot; swapped only after the new representation's conversion→E1→E2 chain completes (real FK added after that table)
   status          document_status NOT NULL DEFAULT 'ingesting', -- ingesting | converting | structuring | ready | failed | deleted
-  expansion_status text CHECK (expansion_status IN ('pending','complete','partial')), -- D133 §5.1: NULL for non-expanding families; scoped readiness of member ingestion, independent of status
   error           text,
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- system-time origin for everything derived from this version
   superseded_at   timestamptz,                 -- set when a newer version becomes current (lineage pointer moved)
@@ -1266,24 +1264,6 @@ COMMENT ON TABLE connector_sync_cycles IS
 ```
 
 ```sql
--- D133 §5: container expansion. One row per member of one parent VERSION. Children are ordinary
--- lineages (source_kind='container_member', source_ref='<parent doc_id>:<member_key>').
-CREATE TABLE document_members (
-  deployment_id     uuid NOT NULL,
-  parent_version_id uuid NOT NULL,             -- the expanded parent snapshot
-  member_key        text NOT NULL CHECK (member_key <> ''), -- D133 §5.2: unique within the parent version, stable across versions
-  member_path       text NOT NULL,             -- archive path / MIME part path / message index / page-n/image-k (display)
-  relation          text NOT NULL CHECK (relation IN ('archive_member','attachment','message','conversation','embedded_image')),
-  child_doc_id      uuid,                      -- NULL while pending or when skipped/failed
-  child_version_id  uuid,
-  parent_locators   jsonb NOT NULL DEFAULT '[]', -- SourceLocator[]: every place the member occurs in the parent (a figure repeated on two pages has two)
-  canonical_serialization boolean NOT NULL DEFAULT false, -- bytes are a canonical serialization, not an exact byte slice
-  status            text NOT NULL CHECK (status IN ('pending','ingested','skipped','failed')),
-  reason            text,                      -- skip/failure reason; mutable state here only — never written into the parent's immutable coverage.gaps (D133 §5.1)
-  PRIMARY KEY (deployment_id, parent_version_id, member_key),
-  FOREIGN KEY (deployment_id, parent_version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
-);
-CREATE INDEX ix_document_members_child ON document_members (deployment_id, child_doc_id) WHERE child_doc_id IS NOT NULL;
 
 -- D134: general document metadata, one row per version, the same fields for every format family.
 CREATE TABLE document_metadata (
@@ -1764,7 +1744,7 @@ CREATE TABLE relations (
   valid_until     timestamptz,                 -- VALID-time end: closed by supersession when the fact stops holding ("Alice left Acme")
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed this fact
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when the system learned it was superseded (NULL = still believed)
-  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT COUNTING LINEAGES (counting_lineage_id — a container and its members are one, D133) with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
+  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT DOCUMENT LINEAGES with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
   contradict_count integer NOT NULL DEFAULT 0, -- cached count of distinct current-testimony lineages contradicting (same D54 rule, stance=contradicts)
   confidence      real,                        -- aggregate confidence over evidence (not an extraction-time guess — concepts §3)
   contradiction_group uuid,                    -- shared id when two live relations contradict and can't be adjudicated — retrieval shows both sides (concepts §4)
@@ -1836,7 +1816,6 @@ CREATE TABLE relation_evidence (
   relation_id     uuid NOT NULL,               -- LOGICAL FK → relations; HASH partition key
   claim_id        uuid NOT NULL,               -- LOGICAL FK → claims; the asserting claim (immutable evidence). One claim may evidence MANY relations.
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the claim's LINEAGE, denormalized write-once) — makes the D54 recount a single-table scan per fact (F7)
-  counting_lineage_id uuid NOT NULL,           -- D133: documents.counting_lineage_id of that lineage, write-once; the D54 counting key (a container and its members are one witness)
   stance          evidence_stance NOT NULL,    -- supports | contradicts (concepts §3/§4)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions; which normalizer linked them
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -1940,7 +1919,7 @@ CREATE TABLE observations (
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed it
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when learned wrong (NULL = still believed). NOT used to "end" a fact — that's valid_until.
-  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT current-testimony COUNTING LINEAGES supporting (D54/D133 — mirrors relations)
+  evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT current-testimony LINEAGES supporting (D54 — mirrors relations)
   contradict_count integer NOT NULL DEFAULT 0, -- cached count of distinct current-testimony lineages contradicting (D54). NB: conflicting OBSERVATIONS are tracked via contradiction_group, a different concept.
   confidence      real,                        -- aggregate confidence over evidence
   contradiction_group uuid,                    -- shared id when two live observations conflict and both must stand (concepts §4)
@@ -1989,7 +1968,6 @@ CREATE TABLE observation_evidence (
   stance          evidence_stance NOT NULL,    -- supports | contradicts (concepts §3/§4)
   normalizer_version text NOT NULL,            -- LOGICAL FK → pipeline_component_versions
   doc_id          uuid NOT NULL,               -- LOGICAL FK → documents (the claim's lineage, write-once) — D54 recount without cross-partition claim joins (F7)
-  counting_lineage_id uuid NOT NULL,           -- D133: as relation_evidence.counting_lineage_id — the D54 counting key
   created_at      timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (observation_id, claim_id)       -- evidence-once, DB-enforced; re-link via ON CONFLICT DO NOTHING is a no-op
 ) PARTITION BY HASH (observation_id);
@@ -2566,9 +2544,6 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
 
 ### 13.1 Normal delete (remove a document; retain audit history)
 
-**Containers (D133 §5.4).** Deleting an uploaded container applies every step below to every
-lineage expanded from it (reachable through `document_members`), in the same operation. A
-member is not deleted on its own.
 
 1. **K tombstone first.** Before touching evidence, enqueue a `knowledge_refresh_queue` row with
    `trigger='tombstone'` carrying the doc/claim ids (found via `knowledge_artifact_evidence`), so
@@ -2604,7 +2579,7 @@ member is not deleted on its own.
    applies to hard forget alone. `relation_evidence`/`observation_evidence` rows are likewise
    retained as historical links (their claims are non-current, so counts exclude them).
 6. **`relations`**: **not** deleted with one document's claims — a relation is a *shared* fact. The
-   worker recomputes `evidence_count`/`contradict_count` (the D54 rule: `COUNT(DISTINCT counting_lineage_id)` — D133: a container and its members count once — over
+   worker recomputes `evidence_count`/`contradict_count` (the D54 rule: `COUNT(DISTINCT doc_id)` over
    evidence rows whose claims are current testimony, per stance — the write-once `doc_id` on evidence
    rows makes this a single-table scan per fact; so duplicates
    cannot inflate it). A relation whose **current** support drops to zero via deletion is
@@ -2638,9 +2613,8 @@ test fails when a new source-bearing field is not classified. At minimum it cove
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
   audit rationales/features, every `document_entity_bindings` row for the lineage, the
-  lineage's `document_members` rows, `document_metadata`, `document_people` and `document_names`
-  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people) and
-  private-store objects (D133), and
+  lineage's `document_metadata`, `document_people` and `document_names`
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
@@ -2785,7 +2759,7 @@ Labs."*
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
-| D133 format registry, profiles, expansion | `document_members`; `document_versions.expansion_status`; `documents.counting_lineage_id` + evidence-row copies; `chunks.extraction_eligible`; private query assets are object-store only (D37) |
+| D133/D138 format families and extraction eligibility | `chunks.extraction_eligible` + policy version; `computed` evidence mode; formats themselves need no new table |
 | D134 document metadata and search | `document_metadata`, `document_people` (general fields per version), `document_names` (every observed name, trigram + BM25 indexes); `claims.own_document_name_span`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 

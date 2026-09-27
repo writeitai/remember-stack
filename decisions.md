@@ -1719,9 +1719,9 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
-**Refined by D133.** A container and its members count as one lineage: the counting key is
-`documents.counting_lineage_id` (the root container's lineage for a member), so the count is
-`COUNT(DISTINCT counting_lineage_id)`. Everything else in this entry remains binding.
+**Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
+counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
+the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
 
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
@@ -2829,9 +2829,8 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
-**Refined by D133 and D134.** Forgetting an uploaded container forgets every member expanded from
-it under the same manifest; a member is not forgotten on its own. D134's document metadata,
-people and observed-name rows are deleted with their lineage.
+**Refined by D134** (document metadata, people and observed-name rows are deleted with their
+lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -5779,10 +5778,9 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
-**Refined by D133.** Parking applies to families the registry recognizes whose
-converter needs an unconfigured provider. A family a deployment explicitly turned
-off is refused at ingest with a typed error; unrecognized bytes remain a D132
-refusal.
+**Refined by D133 and D138.** Parking applies to recognized families whose converter needs
+an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
+(D138); only a declaration the bytes contradict is refused (D132).
 
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
@@ -6175,6 +6173,14 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
 
+**Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
+locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
+profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
+entirely** — `data_query` and container expansion are not part of the system; their reviewed
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`). D138 also
+replaces item 1's "turn families off": deployments add or override routes, and every file is
+stored.
+
 **Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
 PR #452, which this decision builds on.)
 
@@ -6302,9 +6308,8 @@ are what sources declare, not verified facts.
 
 ## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
 
-**Refined by D133.** Once containers expand into members, deleting an uploaded container covers
-every member lineage expanded from it; a member's own `doc_id` is refused with an error naming its
-upload.
+**Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
+removed container expansion, so deletion stays exactly as written here.
 
 **Status:** accepted. **Date:** 2026-09-23.
 
@@ -6528,3 +6533,33 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 - D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
 
 **Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+
+## D138. Coding-agent-first ingestion of workspace formats
+
+**Status:** accepted. **Date:** 2026-09-27.
+
+**Context.** D133 bound the format framework but left each family to its own design. A matched
+Workspace-Bench run must ingest whole professional workspaces: 23,268 files across 89 extensions,
+dominated by spreadsheets, PDFs, office documents, code and config. The readers of the result are
+coding agents that open files and compute on them.
+
+**Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
+what the file is, where it is and how it is shaped. One shipped registry routes 20 families by
+extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
+declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
+full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
+delimited files and statistical datasets always get a deterministic, search-only profile
+(structure, types from a 5-row head sample, defined names), never their rows and never a model
+call. Text over 1 MB gets a head/tail profile. Images (without configured providers), media,
+archives (with a bounded member listing) and unknown bytes get cards; oversized files are stored
+and carded. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+Deployment route settings overlay the registry instead of replacing it.
+
+**Alternatives and consequences.** Rendering everything through markitdown, skipping files the
+tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
+(analysis §7). `data_query` and container expansion leave the system; their reviewed designs are
+proposals with adoption triggers. LibreOffice adds
+several hundred megabytes to the engine image.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).
