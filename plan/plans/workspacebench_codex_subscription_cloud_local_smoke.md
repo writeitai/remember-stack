@@ -2,7 +2,8 @@
 
 **Status:** implementation plan for the experimental task-300 smoke
 
-**Baseline:** RememberStack `origin/main` at `8fad369d341950b869dd2f3f8acbce4693b63cea`
+**Baseline:** RememberStack `origin/main` at `8fad369d341950b869dd2f3f8acbce4693b63cea` (brought forward to
+current main after D134/D136/D137/D138; see WP1)
 
 **Upstream Workspace-Bench pin:** `3fbd0f1a136720fece86786545983e26642c3db2`
 
@@ -74,7 +75,9 @@ Credentials must not appear in prompts, workspaces, generated Codex config files
 arguments, traces, result envelopes, or judge views. The runner may ask the official Codex runtime
 to inspect the active account, but it must not inspect the credential cache itself. Remember MCP
 uses an operator-owned ambient Remember credential outside the task workspace, preferably a
-query-only deployment token, and a localhost SSH tunnel or narrow HTTPS endpoint.
+query-only deployment key, and a localhost SSH tunnel or narrow HTTPS endpoint. The stored-key
+origin rule (D136) applies: the stored key must belong to that endpoint (a self-hosted entry
+stored with the tunnel URL, or an issuer key whose resolved deployment is the receipt origin).
 
 Before a live subscription run, execute a disposable credential-isolation canary using a fake
 secret. If a model-generated command can read the credential location, or if the fake value enters
@@ -111,27 +114,28 @@ The local run refuses a receipt whose digest or required readiness coordinates d
 
 ## Implementation packages
 
-### WP1 — Fail-closed read-only remote MCP mode
+### WP1 — Use the shipping read-only MCP mode
 
-Build on the current `remember` facade in `src/remember/`, not the compatibility re-exports in
-`src/rememberstack/surfaces/`.
+The memory arm launches `remember mcp --read-only --api-url <engine origin>`, which is the
+shipping D136 engine-mode server (`remember.mcp_engine`) rendering the one shared tool catalogue
+(`remember.mcp_tools`). Nothing Workspace-Bench-specific is added to the MCP host:
 
-Add `remember mcp --read-only` while preserving the current default behavior:
+- `--read-only` lists only catalogue tools with `memory:read` permission (the tools whose
+  `readOnlyHint` is true) and refuses a direct `tools/call` for any `memory:write` tool
+  (`ingest`, `delete_document`) without sending it to the engine;
+- a tool is listed only when the deployment's `GET /deployment` reports it at the catalogue's
+  `tool_version`, so the agent never sees a tool the deployment would not serve;
+- an explicit `--api-url` always selects engine mode (never the bridge), and a bad key or a
+  dead engine fails `tools/list` instead of returning an empty catalogue.
 
-- default `remember mcp` continues to list memory-write/readiness tools, assured operations, and
-  open-query tools in its current stable order;
-- `--read-only` omits all `MEMORY_WRITE_TOOL_NAMES` descriptors, including ingest and pipeline
-  readiness, while retaining dynamically discovered assured operations and composed open-query
-  tools;
-- a direct `tools/call` for an omitted write tool fails explicitly and never falls through to an
-  assured operation with the same name;
-- the mode is represented as a typed constructor/configuration value rather than an ambient
-  environment branch; and
-- stdio protocol behavior and backwards-compatible import surfaces remain unchanged.
+The read-only catalogue therefore includes `search_documents` (D134), `adjacent_chunks` (D137),
+the four assured operations, `pipeline_readiness` (a read), and the open-query tools, as the
+deployment serves them.
 
-The Workspace-Bench runner must additionally configure Codex's `enabled_tools` with the exact
-read-tool names observed during preflight. This double boundary makes the treatment auditable and
-protects against a later MCP catalog expansion.
+The Workspace-Bench runner additionally configures Codex's `enabled_tools` with the exact
+tool names observed during preflight. The discovered catalogue is the pin: it is fingerprinted
+into the protocol identity, so a later catalogue change produces a different protocol rather than
+silently changing the treatment. This double boundary makes the treatment auditable.
 
 ### WP2 — Workspace-Bench adapter and immutable receipts
 
@@ -204,7 +208,10 @@ Required behavior:
   under the pinned upstream checkout; workspace and output must remain disjoint
   from each other and from every source root;
 - inject a fixed, versioned memory-consumption instruction only in the memory arm; preserve the
-  upstream task prompt verbatim otherwise;
+  upstream task prompt verbatim otherwise. The instruction is short and generic: find files with
+  `search_documents` and open the named file (`source_path` / `file_name`) on disk; use the
+  context and entity tools for facts across files; confirm load-bearing facts against native
+  files. It carries no benchmark-specific hints;
 - allow ordinary command executions, workspace-local file changes, and allowlisted Remember MCP
   calls; classify web searches, subagents, unknown MCP servers/tools, writes outside the task
   workspace, approval requests, or network escalation as protocol violations;
@@ -230,7 +237,8 @@ The initial code consumes a cloud receipt rather than implementing or triggering
 role-workspace ingest. Provide a documented receipt-generation handoff for the future cloud job:
 
 1. inventory and hash the complete role workspace before ingest;
-2. ingest through ordinary E0 using the pinned conversion/router configuration;
+2. ingest through ordinary E0 using the pinned conversion/router configuration, with each
+   file's workspace-relative path as its `source_path` so document search names local files;
 3. wait for the declared version IDs and required readiness coordinates;
 4. seal the deployment read-only for task execution;
 5. write a signed or operator-attested receipt containing no bearer token; and
@@ -238,13 +246,12 @@ role-workspace ingest. Provide a documented receipt-generation handoff for the f
 
 Local preflight must use the refreshed MCP composition rules:
 
-- call `GET /operations` for assured operations;
-- accept open-query tools only when `GET /query/space` provides the authoritative
-  `memory_v1`/major-1 identity and valid surface-manifest hash;
 - start `remember mcp --read-only`, complete MCP initialize and `tools/list`, and bind the returned
-  names/descriptors into the run manifest; and
-- reject missing required tools, write tools, discovery drift, auth errors, transport errors, or a
-  receipt origin that does not match the tunnel/endpoint.
+  names/descriptors into the run manifest;
+- require `search_documents` (the consumption instruction names it) and the four assured
+  operations, taken from `remember.mcp_tools` rather than a local copy; and
+- reject any listed tool outside the catalogue's read-only set, duplicate names, auth errors,
+  transport errors, or a receipt origin that does not match the tunnel/endpoint.
 
 ### WP5 — Upstream execution and local judge handoff
 
@@ -276,9 +283,9 @@ filesystem seams.
 
 Minimum acceptance tests:
 
-- existing `remember mcp` default tool-list/call behavior is unchanged;
-- `--read-only` hides and rejects every write/readiness tool while retaining assured/open-query
-  tools and failing closed on remote discovery errors;
+- catalogue binding against the real read-only engine catalogue enables exactly the
+  `memory:read` tools, and rejects a catalogue missing `search_documents` or listing a write
+  or unknown tool;
 - preflight accepts only the pinned upstream revision and rejects dirty/wrong revisions;
 - task 300 metadata is sanitized before the tested agent can see it;
 - native and memory arms start from byte-identical pristine workspace digests;
@@ -321,8 +328,8 @@ uses subscription capacity and an external processed corpus.
 The reviewer should stop the implementation at any checkpoint that weakens the benchmark or
 credential boundary:
 
-1. **MCP checkpoint:** read-only mode is based on current `remember` MCP composition and cannot
-   call hidden write tools.
+1. **MCP checkpoint:** the memory arm uses the shipping `remember mcp --read-only` engine mode
+   and cannot call write tools.
 2. **Authentication checkpoint:** no code reads/copies `auth.json`; ChatGPT credentials must
    come from the OS keyring under a disposable `CODEX_HOME`; and the fake-secret canary is
    green.

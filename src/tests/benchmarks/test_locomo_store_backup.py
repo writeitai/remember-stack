@@ -24,7 +24,7 @@ def _run_json(path: Path) -> None:
     (path / "run.json").write_text(
         json.dumps(
             {
-                "protocol_name": "RS-LoCoMo-Full-v26",
+                "protocol_name": "RS-LoCoMo-Full-v38",
                 "protocol_fingerprint": "p" * 64,
                 "repository_revision": "r" * 40,
                 "prepared_at": "2026-08-11T00:00:00Z",
@@ -660,7 +660,7 @@ def test_restore_validates_every_archive_before_running_docker(
         deployment_id="57000000-0000-0000-0000-000000000001",
         compose_project="rememberstack",
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v26",
+            protocol_name="RS-LoCoMo-Full-v38",
             protocol_fingerprint="p" * 64,
             repository_revision="r" * 40,
             prepared_at="2026-08-11T00:00:00Z",
@@ -922,7 +922,7 @@ def test_runtime_validation_uses_the_image_revision_stamp(
         sample_id="conv-1",
         deployment_id=deployment_id,
         run=store_backup.RunIdentity(
-            protocol_name="RS-LoCoMo-Full-v26",
+            protocol_name="RS-LoCoMo-Full-v38",
             protocol_fingerprint="p" * 64,
             repository_revision=revision,
             prepared_at="2026-08-11T00:00:00Z",
@@ -1023,16 +1023,36 @@ def test_shard_runner_guards_wipe_and_backs_up_before_scoring() -> None:
     assert "LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py" in script
     assert 'compose=(docker compose --project-name "$compose_project")' in script
     assert "REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna" in script
-    assert "REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna" in script
+    assert "REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna" in script
+    assert '[[ "$protocol" == "full-v38-glm" ]]' in script
+    assert 'REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"' in script
+    assert 'REMEMBERSTACK_FACT_MODEL="$glm_model"' in script
+    assert "glm_model=z-ai/glm-5.3-flash" in script
+    assert (
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP="
+        '\'{"z-ai/glm-5.3-flash":"minimal"}\''
+    ) in script
+    assert (
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER=deepinfra,relace,wafer" in script
+    )
+    assert "unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY" in script
+    frozen = script[script.index("local -a frozen_variables=(") :]
+    frozen = frozen[: frozen.index("\n  )")]
+    assert "REMEMBERSTACK_FACT_MODEL" in frozen
+    assert "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY" in frozen
+    assert "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER" in frozen
     assert "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius" in script
     assert "unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER" in script
     assert 'published=$("${compose[@]}" port api 8000 | head -n 1)' in script
-    assert 'REMEMBERSTACK_API_URL="http://127.0.0.1:$port"' in script
+    assert 'REMEMBER_API_URL="http://127.0.0.1:$port"' in script
     assert (
         "REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR="
         "/var/lib/rememberstack/invalid-completions"
     ) in script
     assert "extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}" in script
+    assert "ground_claim_workers=${LOCOMO_GROUND_CLAIM_WORKERS:-8}" in script
+    assert '--scale "worker-ground-claims=$ground_claim_workers"' in script
     assert (
         "adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}"
         in script
@@ -1071,7 +1091,7 @@ def test_restore_runtime_command_unsets_parent_overrides(tmp_path: Path) -> None
         arguments=("up", "api"),
     )
 
-    assert command[:3] == ("env", "--unset", "REMEMBERSTACK_E1_EMBEDDING_MODEL")
+    assert command[:3] == ("env", "--unset", "REMEMBERSTACK_E2_EXTRACT_MODEL")
     assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" in command
     assert "REMEMBERSTACK_BUILD_REVISION" in command
     assert command[-2:] == ("up", "api")

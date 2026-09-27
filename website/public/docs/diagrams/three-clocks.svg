@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" role="img" aria-labelledby="t d">
+  <title id="t">Three clocks</title>
+  <desc id="d">One fact, Ravi works on the billing migration, on three timelines. World time: true from 14 January to 1 June. Said-on time: the kickoff notes said it on 15 January and the retro said it ended on 12 June. Belief time: the memory learned it on 15 January and still holds it. A query at 1 March finds the fact true; a query at 1 July finds it no longer current, ended 1 June.</desc>
+  <defs>
+    <radialGradient id="glowC" cx="25%" cy="45%" r="45%"><stop offset="0" stop-color="#ee5b44" stop-opacity=".14"/><stop offset="1" stop-color="#ee5b44" stop-opacity="0"/></radialGradient>
+    <radialGradient id="glowT" cx="75%" cy="50%" r="45%"><stop offset="0" stop-color="#3e9b8e" stop-opacity=".18"/><stop offset="1" stop-color="#3e9b8e" stop-opacity="0"/></radialGradient>
+    <radialGradient id="sphereT" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#b9f0e6"/><stop offset=".35" stop-color="#5cc8b6"/><stop offset="1" stop-color="#2a6f66"/></radialGradient>
+    <radialGradient id="sphereC" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#ffc2b5"/><stop offset=".35" stop-color="#ff7a62"/><stop offset="1" stop-color="#a8392a"/></radialGradient>
+    <radialGradient id="sphereS" cx="35%" cy="30%" r="70%"><stop offset="0" stop-color="#f3e6de"/><stop offset=".4" stop-color="#c9b2a6"/><stop offset="1" stop-color="#7d665c"/></radialGradient>
+    <marker id="arrT" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5cc8b6"/></marker>
+    <marker id="arrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff7a62"/></marker>
+    <marker id="arrM" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#66739c"/></marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+      .h { fill: #ffffff; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+      .h2 { fill: #ffffff; font-size: 17px; font-weight: 700; }
+      .k { fill: #66739c; font-size: 12px; font-weight: 600; letter-spacing: .16em; }
+      .b { fill: #d9def0; font-size: 15px; }
+      .m { fill: #9faaca; font-size: 13px; }
+      .sm { fill: #66739c; font-size: 12px; }
+      .w { fill: #ffffff; }
+      .tc { fill: #5cc8b6; }
+      .cc { fill: #ff7a62; }
+      .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+      .card { fill: #101c42; stroke: #25335f; }
+      .cardT { fill: #0f2a3a; stroke: #3e9b8e; stroke-opacity: .7; }
+      .flow { stroke-dasharray: 5 7; animation: flow 1.6s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset: -24; } }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      @keyframes pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
+      .s1 { animation: s1 14s ease-out infinite both; }
+@keyframes s1 { 0%, 6% { opacity: 0; transform: translateY(8px); } 11%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s2 { animation: s2 14s ease-out infinite both; }
+@keyframes s2 { 0%, 12% { opacity: 0; transform: translateY(8px); } 17%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s3 { animation: s3 14s ease-out infinite both; }
+@keyframes s3 { 0%, 18% { opacity: 0; transform: translateY(8px); } 23%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s4 { animation: s4 14s ease-out infinite both; }
+@keyframes s4 { 0%, 24% { opacity: 0; transform: translateY(8px); } 29%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s5 { animation: s5 14s ease-out infinite both; }
+@keyframes s5 { 0%, 30% { opacity: 0; transform: translateY(8px); } 35%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s6 { animation: s6 14s ease-out infinite both; }
+@keyframes s6 { 0%, 36% { opacity: 0; transform: translateY(8px); } 41%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s7 { animation: s7 14s ease-out infinite both; }
+@keyframes s7 { 0%, 42% { opacity: 0; transform: translateY(8px); } 47%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+.s8 { animation: s8 14s ease-out infinite both; }
+@keyframes s8 { 0%, 48% { opacity: 0; transform: translateY(8px); } 53%, 90% { opacity: 1; transform: none; } 97%, 100% { opacity: 0; } }
+      
+      .cursor { animation: cursor 14s ease-in-out infinite both; }
+      @keyframes cursor { 0%, 44% { transform: translateX(0); opacity: 0; } 48% { opacity: 1; transform: translateX(0); } 62% { transform: translateX(0); opacity: 1; } 72%, 90% { transform: translateX(552.5px); opacity: 1; } 97%, 100% { opacity: 0; transform: translateX(552.5px); } }
+      .ansA { animation: ansA 14s ease-out infinite both; }
+      @keyframes ansA { 0%, 50% { opacity: 0; } 54%, 62% { opacity: 1; } 66%, 100% { opacity: 0; } }
+      .ansB { animation: ansB 14s ease-out infinite both; }
+      @keyframes ansB { 0%, 72% { opacity: 0; } 76%, 90% { opacity: 1; } 97%, 100% { opacity: 0; } }
+
+      @media (prefers-reduced-motion: reduce) { * { animation: none !important; } .rm-hide { display: none; } }
+    </style>
+  </defs>
+  <rect width="1200" height="600" rx="24" fill="#0a1230"/>
+  <rect width="1200" height="600" rx="24" fill="url(#glowC)"/>
+  <rect width="1200" height="600" rx="24" fill="url(#glowT)"/>
+  <text class="k" x="60" y="62">ONE FACT, THREE CLOCKS</text>
+  <text class="h" x="60" y="92">Ravi works on the billing migration</text>
+  <text class="sm" x="174" y="136">JAN</text>
+  <line x1="170" y1="146" x2="170" y2="470" stroke="#18244f"/>
+  <text class="sm" x="314" y="136">FEB</text>
+  <line x1="310" y1="146" x2="310" y2="470" stroke="#18244f"/>
+  <text class="sm" x="441" y="136">MAR</text>
+  <line x1="437" y1="146" x2="437" y2="470" stroke="#18244f"/>
+  <text class="sm" x="582" y="136">APR</text>
+  <line x1="578" y1="146" x2="578" y2="470" stroke="#18244f"/>
+  <text class="sm" x="717" y="136">MAY</text>
+  <line x1="713" y1="146" x2="713" y2="470" stroke="#18244f"/>
+  <text class="sm" x="858" y="136">JUN</text>
+  <line x1="854" y1="146" x2="854" y2="470" stroke="#18244f"/>
+  <text class="sm" x="994" y="136">JUL</text>
+  <line x1="990" y1="146" x2="990" y2="470" stroke="#18244f"/>
+  <g class="s1">
+    <text class="k" x="60" y="196" style="font-size:11px">WORLD TIME</text>
+    <text class="sm" x="60" y="214">When was it true?</text>
+    <line x1="170" y1="230" x2="1130" y2="230" stroke="#25335f" stroke-width="2"/>
+  </g>
+  <g class="s2">
+    <text class="k" x="60" y="296" style="font-size:11px">SAID-ON TIME</text>
+    <text class="sm" x="60" y="314">When did a source say it?</text>
+    <line x1="170" y1="330" x2="1130" y2="330" stroke="#25335f" stroke-width="2"/>
+  </g>
+  <g class="s3">
+    <text class="k" x="60" y="396" style="font-size:11px">BELIEF TIME</text>
+    <text class="sm" x="60" y="414">When did the memory learn it?</text>
+    <line x1="170" y1="430" x2="1130" y2="430" stroke="#25335f" stroke-width="2"/>
+  </g>
+  <g class="s4">
+    <rect x="228.9" y="218" width="624.9" height="24" rx="12" fill="#3e9b8e"/>
+    <text class="m w" x="242.9" y="235">valid 14 Jan – 1 Jun</text>
+  </g>
+  <g class="s5">
+    <circle cx="233.4" cy="330" r="10" fill="url(#sphereC)"/>
+    <text class="m" x="223.4" y="362">kickoff notes: “since yesterday”</text>
+    <circle cx="903.6" cy="330" r="10" fill="url(#sphereC)"/>
+    <text class="m" x="885.6" y="362" text-anchor="middle">retro: “moved on 1 June”</text>
+    <path d="M233.4 318 L228.9 248" stroke="#ff7a62" stroke-dasharray="3 4" marker-end="url(#arrC)"/>
+    <path d="M903.6 318 L855.8 248" stroke="#ff7a62" stroke-dasharray="3 4" marker-end="url(#arrC)"/>
+  </g>
+  <g class="s6">
+    <path d="M233.4 430 L1130.0 430" stroke="#5cc8b6" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="233.4" cy="430" r="8" fill="url(#sphereT)"/>
+    <text class="m" x="249.4" y="458">learned 15 Jan · still believed</text>
+  </g>
+  <g class="cursor">
+    <line x1="437.2" y1="150" x2="437.2" y2="470" stroke="#ffffff" stroke-width="2" stroke-dasharray="2 5"/>
+    <circle cx="437.2" cy="150" r="5" fill="#ffffff"/>
+  </g>
+  <g class="ansA">
+    <rect x="60" y="500" width="620" height="60" rx="14" class="card"/>
+    <text class="b mono" x="84" y="536">time: at 1 March</text>
+    <text class="b tc" x="300" y="536">→ true, from the kickoff notes</text>
+  </g>
+  <g class="ansB rm-hide">
+    <rect x="60" y="500" width="620" height="60" rx="14" class="card"/>
+    <text class="b mono" x="84" y="536">time: at 1 July</text>
+    <text class="b cc" x="300" y="536">→ not current: ended 1 June</text>
+  </g>
+</svg>

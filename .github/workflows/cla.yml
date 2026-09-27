@@ -18,12 +18,17 @@ jobs:
         env:
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          RELEASE_AUTOMATION_BOT: ${{ vars.REMEMBER_RELEASE_AUTOMATION_APP_BOT_LOGIN }}
         run: |
           python3 - <<'PY'
           import os
 
           author = os.environ.get("PR_AUTHOR", "")
-          if author in {"dependabot[bot]", "github-actions[bot]"}:
+          automation_bot = os.environ.get("RELEASE_AUTOMATION_BOT", "")
+          trusted_bots = {"dependabot[bot]", "github-actions[bot]"}
+          if automation_bot:
+              trusted_bots.add(automation_bot)
+          if author in trusted_bots:
               raise SystemExit(0)
 
           expected = (

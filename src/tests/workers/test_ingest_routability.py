@@ -65,6 +65,9 @@ class _RecordingCatalog:
             version_id=uuid4(),
             content_hash=record.content_hash,
             created=True,
+            mime=record.mime,
+            title=None,
+            versioning_mode="snapshot",
         )
 
 
@@ -100,7 +103,9 @@ class _CountingStore:
         self.writes += 1
 
 
-def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingStore]:
+def _ingest(
+    mime: str, *, observed: bool, filename: str = "input.bin"
+) -> tuple[_RecordingCatalog, _CountingStore]:
     """Drive one E0 entry point and return what it recorded."""
     catalog, store = _RecordingCatalog(), _CountingStore()
     ingestor = UploadIngestor(
@@ -109,7 +114,7 @@ def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingS
         admission=_AllowingAdmission(),
         routable_mimes=frozenset(_ROUTES),
     )
-    upload = DocumentUpload(filename="input.bin", mime=mime, content=b"hello")
+    upload = DocumentUpload(filename=filename, mime=mime, content=b"hello")
     if observed:
         ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
@@ -149,21 +154,20 @@ def test_unroutable_input_parks_its_convert_work(observed: bool) -> None:
 @pytest.mark.parametrize("observed", (False, True))
 def test_routable_input_is_scheduled_immediately(observed: bool) -> None:
     """The control: a type the deployment converts is not deferred at all."""
-    catalog, _ = _ingest("text/plain", observed=observed)
+    catalog, _ = _ingest("text/plain", observed=observed, filename="input.txt")
     assert catalog.defer_reason is None
 
 
-def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
-    """A parameterised MIME parks, because the router would not route it.
+def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:
+    """D138: ingest stores the family's parameter-free MIME, never the declared one.
 
-    `ConversionRouter.converter_for` is an exact dict lookup. If ingest
-    normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
-    did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D117 exists to remove. Normalisation belongs in the router,
-    where both callers inherit it.
+    `ConversionRouter.converter_for` is an exact dict lookup, so ingest and
+    the worker must agree on the key. Detection stores the registry's MIME
+    (here ``text/markdown``, from the declared ``text/markdown;
+    charset=utf-8``), which is exactly what the route table names.
     """
-    catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
-    assert catalog.defer_reason is DeferReason.NO_ROUTE
+    catalog, _ = _ingest("text/markdown; charset=utf-8", observed=False)
+    assert catalog.defer_reason is None
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:
@@ -202,3 +206,53 @@ def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
         )
     assert store.writes == 0
     assert catalog.calls == 0
+
+
+def test_ingest_stores_the_detected_family_mime() -> None:
+    """D138 §3: the extension decides over a generic or guessed declaration."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    recorded: list[str] = []
+    original = catalog.record_upload
+
+    def record(**kwargs: object) -> IngestedVersion:
+        recorded.append(cast(UploadRecord, kwargs["record"]).mime)
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    catalog.record_upload = record  # type: ignore[method-assign]
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(),
+    )
+    for filename, mime in (
+        ("main.py", "text/plain"),
+        ("Dockerfile", "application/octet-stream"),
+        ("notes.md", "application/octet-stream"),
+        ("unknown", "text/plain"),
+    ):
+        ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(filename=filename, mime=mime, content=b"print(1)\n"),
+        )
+    assert recorded == [
+        "text/x-code",
+        "text/x-code",
+        "text/markdown",
+        "text/x-other-text",
+    ]
+
+
+def test_an_oversized_file_is_never_parked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over its family's reading limit, an unrouted PDF is scheduled for a card."""
+    from rememberstack.workers import e0 as e0_module
+
+    monkeypatch.setattr(
+        e0_module,
+        "exceeds_reading_limit",
+        lambda *, mime, byte_size: mime == "application/pdf",
+    )
+    catalog, _ = _ingest("application/pdf", observed=False, filename="scan.pdf")
+    assert catalog.defer_reason is None
+    parked, _ = _ingest("application/msword", observed=False, filename="old.doc")
+    assert parked.defer_reason is DeferReason.NO_ROUTE

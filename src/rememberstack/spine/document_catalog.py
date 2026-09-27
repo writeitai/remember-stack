@@ -40,9 +40,14 @@ from rememberstack.model import StructureRouteTag
 from rememberstack.model import StructureSource
 from rememberstack.model import SyntheticRootRecord
 from rememberstack.model import UploadRecord
+from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
 from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.spine.document_metadata import merge_converter_metadata_on
+from rememberstack.spine.document_metadata import observe_names_on
+from rememberstack.spine.document_metadata import record_ingest_metadata_on
+from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -75,9 +80,18 @@ class DocumentCatalog:
         already fed extraction. Bytes matching only an OLDER version (content
         reverted A→B→A) are a new observation and become a new version: the
         lineage moves forward, never silently back to a stale current pointer.
+
+        The lineage's ``title`` and ``versioning_mode`` and the content's MIME
+        are first-write-wins; the receipt reports the values that apply, so a
+        caller sending different ones sees they were not taken. One exception:
+        bytes whose recorded MIME has no route take a newly declared routable
+        MIME, and their parked conversions are released (D117) — otherwise a
+        file first sent as ``application/octet-stream`` could never be fixed
+        by re-sending it with its real type.
         """
         with self._engine.begin() as connection:
-            doc_id = _lineage_locked(connection=connection, record=record)
+            lineage = _lineage_locked(connection=connection, record=record)
+            doc_id: UUID = lineage["doc_id"]
             connection.execute(
                 _INSERT_CONTENT_OBJECT,
                 {
@@ -88,8 +102,37 @@ class DocumentCatalog:
                     "raw_uri": record.raw_uri,
                 },
             )
-            # Content identity is first-write-wins. A later declaration must
-            # not schedule against a different MIME than convert_source uses.
+            if (
+                routable_mimes is not None
+                and record.mime in routable_mimes
+                and connection.execute(
+                    _ADOPT_ROUTABLE_MIME,
+                    {
+                        "deployment_id": record.deployment_id,
+                        "content_hash": record.content_hash,
+                        "mime": record.mime,
+                        "routable_mimes": list(routable_mimes),
+                    },
+                ).rowcount
+                == 1
+            ):
+                refresh_family_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    content_hash=record.content_hash,
+                    mime=record.mime,
+                )
+                # The wake is a NOTIFY, delivered only when this commits.
+                connection.execute(
+                    _RELEASE_PARKED_CONVERSIONS,
+                    {
+                        "deployment_id": record.deployment_id,
+                        "content_hash": record.content_hash,
+                    },
+                )
+            # Otherwise content identity is first-write-wins. A later
+            # declaration must not schedule against a different MIME than
+            # convert_source uses.
             effective_mime = connection.execute(
                 _SELECT_CONTENT_MIME,
                 {
@@ -110,7 +153,15 @@ class DocumentCatalog:
                 .mappings()
                 .one_or_none()
             )
-            created = latest is None or latest["content_hash"] != record.content_hash
+            # A deleted latest version is never the no-op target: the bytes
+            # returning after a deletion are a new observation and must be
+            # processed again, or the document would come back live while
+            # contributing nothing (D135).
+            created = (
+                latest is None
+                or latest["content_hash"] != record.content_hash
+                or latest["deleted_at"] is not None
+            )
             version_id = uuid4() if created or latest is None else latest["version_id"]
             principal_id: UUID | None = None
             if created and record.ingested_by is not None:
@@ -142,16 +193,41 @@ class DocumentCatalog:
                         "status": "ingesting" if metering is not None else "converting",
                     },
                 )
-            elif record.source_version_ref is not None:
-                connection.execute(
-                    _ADVANCE_VERSION_CURSOR,
-                    {
-                        "version_id": version_id,
-                        "source_version_ref": record.source_version_ref,
-                    },
+                record_ingest_metadata_on(
+                    connection=connection,
+                    record=record,
+                    doc_id=doc_id,
+                    version_id=version_id,
+                    mime=effective_mime,
                 )
+            else:
+                # Lock order (D134): the document_versions row, then its
+                # document_metadata row — the order conversion takes them in
+                # (version status update, then the metadata merge). The
+                # cursor update comes first; observe_names_on locks the
+                # version row itself when there is no cursor to advance.
+                if record.source_version_ref is not None:
+                    connection.execute(
+                        _ADVANCE_VERSION_CURSOR,
+                        {
+                            "version_id": version_id,
+                            "source_version_ref": record.source_version_ref,
+                        },
+                    )
+                # D134 metadata observation: identical bytes under a new
+                # file name, title or path create no version but are a name
+                # the document must be findable by.
+                observe_names_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=version_id,
+                    file_name=record.file_name,
+                    title=record.declared_title,
+                    source_path=record.source_path,
+                )
+            parked = False
             if metering is None:
-                enqueue_on(
+                convert = enqueue_on(
                     connection=connection,
                     work=EnqueueWork(
                         deployment_id=record.deployment_id,
@@ -168,6 +244,11 @@ class DocumentCatalog:
                         defer_reason=convert_defer_reason,
                     ),
                 )
+                # Read the work row, not today's route table: an identical
+                # re-ingest must report what its existing convert row does.
+                parked = connection.execute(
+                    _CONVERT_PARKED_NO_ROUTE, {"processing_id": convert.processing_id}
+                ).scalar_one()
             else:
                 record_managed_measurement_on(
                     connection=connection,
@@ -185,6 +266,10 @@ class DocumentCatalog:
                 version_id=version_id,
                 content_hash=record.content_hash,
                 created=created,
+                mime=effective_mime,
+                title=lineage["title"],
+                versioning_mode=lineage["versioning_mode"],
+                parked="no_route" if parked else None,
                 processing_admission=(
                     "pending" if metering is not None else "not_required"
                 ),
@@ -266,12 +351,17 @@ class DocumentCatalog:
                 _MARK_VERSION_FAILED, {"version_id": version_id, "error": error}
             )
 
-    def record_representation(self, *, record: RepresentationRecord) -> None:
+    def record_representation(
+        self, *, record: RepresentationRecord, metadata: DocumentMetadata | None = None
+    ) -> None:
         """Insert one immutable conversion output and advance the version (D65).
 
         The representation lands in ``structuring`` status; the structure stage
         completes it. The version's live-reading pointer is NOT set here — it
         swaps only on chain completion (`record_synthetic_root`), the D54 rule.
+        Metadata the converter read from the file is merged into the version's
+        D134 row in the same transaction, recorded under the converter's
+        identity as its mapping version.
         """
         with self._engine.begin() as connection:
             connection.execute(_INSERT_REPRESENTATION, record.model_dump(mode="json"))
@@ -282,6 +372,16 @@ class DocumentCatalog:
                     "deployment_id": record.deployment_id,
                 },
             )
+            if metadata is not None:
+                merge_converter_metadata_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=record.version_id,
+                    metadata=metadata,
+                    mapping_version=(
+                        f"{record.converter_name}@{record.converter_version}"
+                    ),
+                )
 
     def structure_source(self, *, representation_id: UUID) -> StructureSource:
         """Load what the structure stage needs about one representation."""
@@ -568,8 +668,10 @@ class DocumentCatalog:
         return _persisted_tree(generation=generation, sections=persisted)
 
 
-def _lineage_locked(*, connection: Connection, record: UploadRecord) -> UUID:
-    """Create or lock the upload's lineage row; returns its doc_id.
+def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMapping:
+    """Create or lock the upload's lineage row.
+
+    Returns its ``doc_id`` and the ``title`` and ``versioning_mode`` in force.
 
     The insert-or-lock serializes concurrent ingests of one lineage so the
     version-number assignment below it is race-free. An ingest is an
@@ -578,30 +680,38 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> UUID:
     otherwise the recreated file would attach versions to a dead lineage
     that never resurfaces and gets refetched on every poll.
     """
-    inserted = connection.execute(
-        _INSERT_DOCUMENT,
-        {
-            "doc_id": record.doc_id,
-            "deployment_id": record.deployment_id,
-            "source_kind": record.source_kind,
-            "source_ref": record.source_ref,
-            "source_uri": record.source_uri,
-            "title": record.title,
-            "versioning_mode": record.versioning_mode,
-        },
-    ).scalar_one_or_none()
+    inserted = (
+        connection.execute(
+            _INSERT_DOCUMENT,
+            {
+                "doc_id": record.doc_id,
+                "deployment_id": record.deployment_id,
+                "source_kind": record.source_kind,
+                "source_ref": record.source_ref,
+                "source_uri": record.source_uri,
+                "title": record.title,
+                "versioning_mode": record.versioning_mode,
+            },
+        )
+        .mappings()
+        .one_or_none()
+    )
     if inserted is not None:
         return inserted
-    doc_id = connection.execute(
-        _SELECT_DOCUMENT_LOCKED,
-        {
-            "deployment_id": record.deployment_id,
-            "source_kind": record.source_kind,
-            "source_ref": record.source_ref,
-        },
-    ).scalar_one()
-    connection.execute(_RESURRECT_LINEAGE, {"doc_id": doc_id})
-    return doc_id
+    lineage = (
+        connection.execute(
+            _SELECT_DOCUMENT_LOCKED,
+            {
+                "deployment_id": record.deployment_id,
+                "source_kind": record.source_kind,
+                "source_ref": record.source_ref,
+            },
+        )
+        .mappings()
+        .one()
+    )
+    connection.execute(_RESURRECT_LINEAGE, {"doc_id": lineage["doc_id"]})
+    return lineage
 
 
 _INSERT_DOCUMENT = text(
@@ -614,13 +724,13 @@ _INSERT_DOCUMENT = text(
         CAST(:versioning_mode AS versioning_mode)
     )
     ON CONFLICT (deployment_id, source_kind, source_ref) DO NOTHING
-    RETURNING doc_id
+    RETURNING doc_id, title, versioning_mode::text AS versioning_mode
     """
 )
 
 _SELECT_DOCUMENT_LOCKED = text(
     """
-    SELECT doc_id FROM documents
+    SELECT doc_id, title, versioning_mode::text AS versioning_mode FROM documents
     WHERE deployment_id = :deployment_id
       AND source_kind = :source_kind
       AND source_ref = :source_ref
@@ -639,6 +749,36 @@ _INSERT_CONTENT_OBJECT = text(
     """
 )
 
+_ADOPT_ROUTABLE_MIME = text(
+    """
+    UPDATE content_objects SET mime = :mime
+    WHERE deployment_id = :deployment_id AND content_hash = :content_hash
+      AND purged_at IS NULL
+      AND mime <> ALL(CAST(:routable_mimes AS text[]))
+    """
+)
+
+# Mirrors the work ledger's resume_no_route, narrowed to one content object.
+_RELEASE_PARKED_CONVERSIONS = text(
+    """
+    WITH released AS (
+        UPDATE processing_state p
+        SET defer_reason = NULL, not_before = now()
+        FROM document_versions v, documents d
+        WHERE p.deployment_id = :deployment_id
+          AND p.status = 'pending' AND p.stage = 'convert'
+          AND p.target_kind = 'document_version'
+          AND p.defer_reason::text = 'no_route'
+          AND v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+          AND v.content_hash = :content_hash AND v.deleted_at IS NULL
+          AND d.deployment_id = v.deployment_id AND d.doc_id = v.doc_id
+          AND d.deleted_at IS NULL
+        RETURNING p.processing_id
+    )
+    SELECT pg_notify('queue_wake', CAST(processing_id AS text)) FROM released
+    """
+)
+
 _SELECT_CONTENT_MIME = text(
     """
     SELECT mime FROM content_objects
@@ -646,9 +786,19 @@ _SELECT_CONTENT_MIME = text(
     """
 )
 
+_CONVERT_PARKED_NO_ROUTE = text(
+    """
+    SELECT status = 'pending'
+       AND defer_reason IS NOT NULL
+       AND defer_reason::text = 'no_route'
+    FROM processing_state
+    WHERE processing_id = :processing_id
+    """
+)
+
 _SELECT_LATEST_VERSION = text(
     """
-    SELECT version_id, content_hash FROM document_versions
+    SELECT version_id, content_hash, deleted_at FROM document_versions
     WHERE deployment_id = :deployment_id AND doc_id = :doc_id
     ORDER BY version_no DESC
     LIMIT 1
@@ -716,11 +866,13 @@ _SELECT_VERSION_PRINCIPAL = text(
 _SELECT_CONVERT_SOURCE = text(
     """
     SELECT v.deployment_id, v.doc_id, v.version_id, v.content_hash,
-           c.mime, c.raw_uri, d.title
+           c.mime, c.byte_size, c.raw_uri, d.title, m.file_name, m.source_path
     FROM document_versions v
     JOIN content_objects c
       ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
     JOIN documents d ON d.doc_id = v.doc_id
+    LEFT JOIN document_metadata m
+      ON m.deployment_id = v.deployment_id AND m.version_id = v.version_id
     WHERE v.version_id = :version_id
     """
 )
@@ -751,7 +903,7 @@ _MARK_VERSION_STRUCTURING = text(
 _SELECT_STRUCTURE_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.blocks_uri, r.markdown_uri, d.title, d.source_kind
+           r.blocks_uri, r.markdown_uri, r.conversion_uri, d.title, d.source_kind
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id

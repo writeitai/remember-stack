@@ -31,6 +31,9 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.cli import _split_operation_arg
+from remember.cli import operations_list
+from remember.cli import operations_run
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core import AssuredOperationLintError
 from rememberstack.model import AuthenticatedContext
@@ -48,9 +51,7 @@ from rememberstack.surfaces import OperationExecutor
 from rememberstack.surfaces import OperationMcpServer
 from rememberstack.surfaces import OperationSurface
 from rememberstack.surfaces import QueryEngine
-from rememberstack.surfaces.cli import _split_operation_arg
-from rememberstack.surfaces.cli import operations_list
-from rememberstack.surfaces.cli import operations_run
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -79,6 +80,7 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         """Never called."""
         return ()
@@ -131,7 +133,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real surface proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -194,7 +196,7 @@ class _Deployment:
                     " subject_entity_id, predicate, object_entity_id,"
                     " normalizer_version, fact_label, evidence_count, valid_from,"
                     " ingested_at) VALUES (:r, :d, :s, 'works_for', :o, 'toy',"
-                    " 'Alice works for Acme.', 2, '2024-01-01+00', now())"
+                    " 'Alice works for Acme.', 2, NULL, now())"
                 ),
                 {"r": uuid4(), "d": _DEPLOYMENT_ID, "s": self.alice, "o": acme},
             )
@@ -259,7 +261,7 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
 
     This composition is operation-only (no ingest/readiness ports), so Layer 1
     write tools are correctly absent. When those ports are composed, static
-    write tools lead the list — covered in test_mcp_memory_tools.
+    write tools lead the list — covered in test_mcp_write_tools.
     """
     registry_names = {
         operation.name.value
@@ -276,7 +278,8 @@ def test_the_tool_list_is_the_registry(deployment: _Deployment) -> None:
         "facts_context",
         "combined_context",
     }
-    assert mcp_names == registry_names == expected
+    assert mcp_names - {"adjacent_chunks"} == registry_names == expected
+    assert "adjacent_chunks" in mcp_names
     assert api_names == registry_names
     # and the tool carries its JSON-Schema input contract
     tool = next(t for t in tools if t["name"] == "resolve_entity")
@@ -611,9 +614,7 @@ def test_the_cli_reports_an_unreachable_api_as_an_exit_code(
 ) -> None:
     """A query against an API that is not up is a controlled exit code, not a
     traceback (Codex finding)."""
-    from rememberstack.surfaces import cli
+    from remember import cli
 
-    monkeypatch.setenv(
-        "REMEMBERSTACK_API_URL", "http://127.0.0.1:9"
-    )  # nothing listening
+    monkeypatch.setenv("REMEMBER_API_URL", "http://127.0.0.1:9")  # nothing listening
     assert cli.main(["operations", "list"]) == 1

@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
 from functools import wraps
@@ -39,12 +40,17 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_version_matches
+from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.temporal import inclusive_request
+from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AggregateBucket
 from rememberstack.model import AggregateReport
 from rememberstack.model import AtTemporalScope
@@ -72,6 +78,8 @@ from rememberstack.model import OverlapTemporalScope
 from rememberstack.model import PageRef
 from rememberstack.model import ProviderCallError
 from rememberstack.model import RankedItem
+from rememberstack.model import ResolutionThresholds
+from rememberstack.model import ResolverConfig
 from rememberstack.model import ScanRow
 from rememberstack.model import SourceRecord
 from rememberstack.model import TranscriptEntry
@@ -82,6 +90,9 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.client import DocumentSearchFilters
+from rememberstack.model.fact_windows import FactWindow
+from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -125,6 +136,32 @@ limit."""
 
 RESOLVE_CONTEXT_LIMIT: Final = 8
 """Maximum focal entities in WP-5.6's bounded S51 context tie-break."""
+
+QUERY_RESOLVE_TRIGRAM_FLOOR: Final = float(
+    ResolverConfig.model_fields["trigram_floor"].default
+)
+"""Shipped T1 recall floor. The write path constructs ResolverConfig with these defaults."""
+
+QUERY_RESOLVE_CANDIDATE_LIMIT: Final = int(
+    ResolverConfig.model_fields["blocking_limit"].default
+)
+"""Shipped blocking width. Query resolve discloses this cap instead of hiding it."""
+
+QUERY_RESOLVE_T3_FLOOR: Final = float(
+    ResolutionThresholds.model_fields["t3_reject"].default
+)
+"""Shipped T3 reject band. Scores at or below it are not query candidates."""
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolveHit:
+    """One current survivor a query-time tier is willing to show."""
+
+    entity_id: UUID
+    canonical_name: str
+    tier: str
+    score: float
+
 
 INTERACTIVE_HYDRATION_BATCH_SIZE: Final = 256
 """Maximum ids in one WP-5.6-measured Postgres confirmation hop."""
@@ -335,6 +372,7 @@ class QueryEngine:
             connection.exec_driver_sql("SELECT 1")
             yield connection
 
+    @_with_surface(SurfaceCostKind.LOOKUP)
     def resolve(
         self,
         *,
@@ -342,73 +380,73 @@ class QueryEngine:
         name: str,
         context_entity_ids: tuple[UUID, ...] = (),
     ) -> Envelope:
-        """Resolve a name to ranked current entities (T0 in the skeleton).
+        """Resolve a name to ranked current entities over T0–T3, never T4.
 
-        Nothing resolving is the `unknown_entity` negative (S39) — the agent
-        widens resolution or searches; it never gets a silent guess (S51).
-        Optional focal entities only reorder exact-name candidates by current
-        relation adjacency; every candidate remains visible, so context can
-        narrow ambiguity without becoming a silent identity verdict.
+        T0 is an exact match on a current alias and returns the whole homonym
+        set. A miss falls through to the write path's trigram and phonetic
+        blockers (T1/T2), and only an empty block embeds the query string and
+        searches entity profile vectors (T3). That embed is metered on
+        ``resolve_entity``; it is not an LLM call, and an outer request scope
+        keeps its own surface. Nothing here adjudicates: every survivor the
+        tier returns stays visible, and more than one candidate is ambiguity
+        rather than a guess (S51). Fuzzy and embedding tiers stop at the
+        write-path blocking width and disclose that cap. Focal entities only
+        reorder the returned set by how many distinct current relations touch
+        them.
         """
         context_entity_ids = tuple(dict.fromkeys(context_entity_ids))
         if len(context_entity_ids) > RESOLVE_CONTEXT_LIMIT:
             raise ValueError(
                 f"resolve context accepts at most {RESOLVE_CONTEXT_LIMIT} entities"
             )
+        lemma = normalized_lemma(surface=name)
+        if not lemma:
+            return _unknown_entity(name=name)
         with self._engine.connect() as connection:
-            rows = (
-                connection.execute(
-                    _RESOLVE_T0,
-                    {
-                        "deployment_id": deployment_id,
-                        "lemma": normalized_lemma(surface=name),
-                    },
+            hits, truncated = _string_resolve_hits(
+                connection=connection, deployment_id=deployment_id, lemma=lemma
+            )
+        if not hits:
+            embedding = self._embedding_resolve_hits(
+                deployment_id=deployment_id, name=name
+            )
+            if isinstance(embedding, Envelope):
+                return embedding
+            hits, truncated = embedding
+        context_hits: dict[UUID, int] = {}
+        if context_entity_ids:
+            with self._engine.connect() as connection:
+                context_hits = _context_hit_counts(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    candidate_ids=tuple(hit.entity_id for hit in hits),
+                    context_entity_ids=context_entity_ids,
                 )
-                .mappings()
-                .all()
-            )
-            candidate_ids = tuple(row["entity_id"] for row in rows)
-            context_hits = (
-                {
-                    row["candidate_id"]: int(row["context_hits"])
-                    for row in connection.execute(
-                        _RESOLVE_CONTEXT_HITS,
-                        {
-                            "deployment_id": deployment_id,
-                            "candidate_ids": list(candidate_ids),
-                            "context_entity_ids": list(context_entity_ids),
-                        },
-                    ).mappings()
-                }
-                if candidate_ids and context_entity_ids
-                else {}
-            )
         candidates = tuple(
             EntityCandidate(
-                entity_id=row["entity_id"],
-                canonical_name=row["canonical_name"],
-                tier="T0",
-                context_hits=context_hits.get(row["entity_id"], 0),
+                entity_id=hit.entity_id,
+                canonical_name=hit.canonical_name,
+                tier=hit.tier,
+                context_hits=context_hits.get(hit.entity_id, 0),
             )
-            for row in sorted(
-                rows,
-                key=lambda row: (
-                    -context_hits.get(row["entity_id"], 0),
-                    str(row["canonical_name"]),
-                    row["entity_id"].bytes,
+            for hit in sorted(
+                hits,
+                key=lambda hit: (
+                    -context_hits.get(hit.entity_id, 0),
+                    -hit.score,
+                    hit.canonical_name,
+                    hit.entity_id.bytes,
                 ),
             )
         )
+        if not candidates:
+            return _unknown_entity(name=name)
         return _envelope(
             grain=Grain.FACT,
             entities=candidates,
             freshness=_freshness(),
-            negative=None
-            if candidates
-            else Negative(
-                kind=NegativeKind.UNKNOWN_ENTITY,
-                explanation=f"nothing resolves for {name!r}",
-                workaround="check spelling, try search over claims or chunks",
+            truncation=_resolve_truncation(
+                returned=len(candidates), truncated=truncated
             ),
         )
 
@@ -1221,8 +1259,12 @@ class QueryEngine:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
+        k: int = 50,
     ) -> Envelope:
         """Relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
+
+        At most `k` relations return, strongest evidence first; when more
+        match, the envelope's `truncation` says so (no silent top-k, S18).
 
         Without `valid_at`, current means both clocks: still believed AND the
         valid-time window covers now. With `valid_at`, the window test moves
@@ -1231,7 +1273,8 @@ class QueryEngine:
         is echoed in the envelope. An existing entity with no matching facts
         is `known_empty` (S39).
         """
-        as_of = valid_at or datetime.now(tz=UTC)
+        evaluated_at = datetime.now(tz=UTC)
+        as_of = valid_at or evaluated_at
         with self._engine.connect() as connection:
             rows = (
                 connection.execute(
@@ -1242,11 +1285,16 @@ class QueryEngine:
                         "predicate": predicate,
                         "object_entity_id": object_entity_id,
                         "as_of": as_of,
+                        "limit": k + 1,
                     },
                 )
                 .mappings()
                 .all()
             )
+        truncated = len(rows) > k
+        rows = rows[:k]
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="relation") for row in rows),
@@ -1255,12 +1303,15 @@ class QueryEngine:
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
-                AtTemporalScope(at=valid_at, evaluated_at=as_of, believed_at=as_of)
+                AtTemporalScope(
+                    at=valid_at, evaluated_at=evaluated_at, believed_at=evaluated_at
+                )
                 if valid_at is not None
                 else current_temporal_scope(evaluated_at=as_of)
             ),
             facts=facts,
             freshness=_freshness(),
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -1289,7 +1340,9 @@ class QueryEngine:
         is read directly.
         """
         dropped = 0
-        as_of = valid_at or datetime.now(tz=UTC)
+        truncated = False
+        evaluated_at = datetime.now(tz=UTC)
+        as_of = valid_at or evaluated_at
         if property_query is None:
             with self._engine.connect() as connection:
                 rows = (
@@ -1299,11 +1352,14 @@ class QueryEngine:
                             "deployment_id": deployment_id,
                             "entity_id": entity_id,
                             "as_of": as_of,
+                            "limit": k + 1,
                         },
                     )
                     .mappings()
                     .all()
                 )
+            truncated = len(rows) > k
+            rows = rows[:k]
         else:
             nominated = self._search_index.search_facts(
                 deployment_id=str(deployment_id),
@@ -1321,6 +1377,8 @@ class QueryEngine:
                 observation_ids=tuple(UUID(item) for item in nominated),
                 as_of=as_of,
             )
+        # Every candidate carries its own temporal_match; an undated fact is a
+        # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
             deployment_id=deployment_id,
             facts=tuple(_fact_result(row=row, kind="observation") for row in rows),
@@ -1329,13 +1387,16 @@ class QueryEngine:
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=(
-                AtTemporalScope(at=valid_at, evaluated_at=as_of, believed_at=as_of)
+                AtTemporalScope(
+                    at=valid_at, evaluated_at=evaluated_at, believed_at=evaluated_at
+                )
                 if valid_at is not None
                 else current_temporal_scope(evaluated_at=as_of)
             ),
             facts=facts,
             freshness=_freshness(),
             dropped_by_hydration=dropped,
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -1353,23 +1414,32 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
         hydration re-reads each claim from the spine and drops what no longer
         confirms, counting the drops (D48 nominate-then-drop honesty).
+
+        ``documents`` (D134) keeps a claim only when a live occurrence lies in
+        a matching document version — applied inside the ranked statement,
+        before the top-k cut, and re-checked at hydration. It decides
+        inclusion only: the evidence is the claim's origin occurrence.
         """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_claim_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CLAIMS,
+            documents=documents,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id,
             claim_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1419,18 +1489,26 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source chunks without pretending they are claims."""
+        """Search live source chunks without pretending they are claims.
+
+        ``documents`` (D134) keeps a chunk only when its document version
+        matches, inside the ranked statement before the top-k cut.
+        """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_chunk_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CHUNKS,
+            documents=documents,
         )
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
             chunk_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1443,6 +1521,69 @@ class QueryEngine:
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation="no live source chunks match the query",
                 workaround="broaden the query or inspect the source artifacts",
+            ),
+        )
+
+    @_with_surface(SurfaceCostKind.SEARCH)
+    def adjacent_chunks(
+        self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
+    ) -> Envelope:
+        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
+            raise ValueError(
+                f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
+            )
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            target = (
+                connection.execute(
+                    _TARGET_CHUNK_COORDINATES,
+                    {"deployment_id": deployment_id, "chunk_id": chunk_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if target is None:
+                return _envelope(
+                    grain=Grain.EVIDENCE,
+                    chunks=(),
+                    freshness=_freshness(),
+                    negative=Negative(
+                        kind=NegativeKind.UNKNOWN_ENTITY,
+                        explanation=f"chunk {chunk_id} does not exist or is not visible",
+                        workaround="verify the chunk_id from a prior search result",
+                    ),
+                )
+            rows = (
+                connection.execute(
+                    _ADJACENT_CHUNKS,
+                    {
+                        "deployment_id": deployment_id,
+                        "doc_id": target["doc_id"],
+                        "version_id": target["version_id"],
+                        "ordinal_start": target["ordinal"] - window,
+                        "ordinal_end": target["ordinal"] + window,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        adjacent_ids = tuple(UUID(str(row["chunk_id"])) for row in rows)
+        chunks, dropped, _ = self._confirm_chunks(
+            deployment_id=deployment_id, chunk_ids=adjacent_ids
+        )
+        return _envelope(
+            grain=Grain.EVIDENCE,
+            chunks=chunks,
+            freshness=_freshness(),
+            dropped_by_hydration=dropped,
+            negative=None
+            if chunks
+            else Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=f"adjacent chunks for {chunk_id} are not currently visible in storage",
+                workaround="verify that neighboring chunks are indexed in storage",
             ),
         )
 
@@ -1475,9 +1616,13 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        # Passed only when present, so an index without document filters is
+        # never handed an argument it does not take.
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_claims(
                 deployment_id=str(deployment_id),
@@ -1486,9 +1631,14 @@ class QueryEngine:
                 ),
                 k=k,
                 current_only=True,
+                **scope,
             )
         return self._search_index.search_claims_lexical(
-            deployment_id=str(deployment_id), query=query, k=k, current_only=True
+            deployment_id=str(deployment_id),
+            query=query,
+            k=k,
+            current_only=True,
+            **scope,
         )
 
     def _nominate_chunk_ids(
@@ -1499,9 +1649,11 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_chunks(
                 deployment_id=str(deployment_id),
@@ -1511,6 +1663,7 @@ class QueryEngine:
                 k=k,
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
+                **scope,
             )
         return self._search_index.search_chunks_lexical(
             deployment_id=str(deployment_id),
@@ -1518,14 +1671,15 @@ class QueryEngine:
             k=k,
             policy_generation=self._policy_generation,
             embedder_generation=self._embedder_generation,
+            **scope,
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents.
 
         Composite grain: the fact, its supporting evidence-grain claims
-        (verbatim spans and offsets against the representation they were cut
-        from), and the ID-addressed document handles. Hydrate-by-ID is the
+        (origin-chunk spans and offsets against the representation they were
+        cut from), and the ID-addressed document handles. Hydrate-by-ID is the
         AUDIT deepening hop: an invalidated relation is returned with its
         invalidation disclosed in `validity` (D48 re-reads and discloses —
         it does not refuse audit access); current-fact questions route
@@ -2080,6 +2234,7 @@ class QueryEngine:
         predicate: str | None = None,
         since: datetime | None = None,
         limit: int = 50,
+        time: FactTime | None = None,
     ) -> Envelope:
         """An enumerated aggregate — never a general GROUP BY (retrieval §9).
 
@@ -2109,11 +2264,18 @@ class QueryEngine:
                 ),
             )
         statement, needs = builder
+        selected_time = time or (
+            HistoryFactTime() if form == "timeline" else CurrentFactTime()
+        )
+        evaluated_at = datetime.now(UTC)
+        if form != "delta_top_entities":
+            statement = text(_AGGREGATE_TIME_CTE + str(statement))
         parameters = {
             "deployment_id": deployment_id,
             "subject_entity_id": subject_entity_id,
             "predicate": predicate,
             "since": since,
+            **_fact_time_parameters(time=selected_time, evaluated_at=evaluated_at),
             "fetch": limit + 1,  # one extra row reveals a truncation honestly
         }
         for required, value in (
@@ -2131,17 +2293,23 @@ class QueryEngine:
             AggregateBucket(
                 key=None if row["key"] is None else str(row["key"]),
                 count=row["count"],
+                possible_count=row.get("possible_count", 0),
                 entity_id=row.get("entity_id"),
             )
             for row in (rows[:limit] if bounded else rows)
         )
         total = sum(bucket.count for bucket in buckets)
+        possible_total = sum(bucket.possible_count for bucket in buckets)
         return _envelope(
             grain=Grain.FACT,
+            temporal_scope=_fact_temporal_scope(
+                time=selected_time, evaluated_at=evaluated_at
+            ),
             aggregate=AggregateReport(
                 form=form,
                 buckets=buckets,
                 total=total,
+                possible_total=possible_total,
                 bounded_by="delta window" if form == "delta_top_entities" else None,
             ),
             freshness=_freshness(),
@@ -2149,12 +2317,13 @@ class QueryEngine:
                 truncated=truncated,
                 returned=len(buckets),
                 estimated_total=len(buckets),
-                total_is_exact=not truncated,
+                total_is_exact=not truncated and possible_total == 0,
             )
-            if bounded
+            if bounded or possible_total
             else None,
         )
 
+    @_with_surface(SurfaceCostKind.LIBRARY)
     def scan(
         self, *, deployment_id: UUID, kind: str, batch_size: int = DEFAULT_SCAN_BATCH
     ) -> Iterator[ScanRow]:
@@ -2515,7 +2684,7 @@ class QueryEngine:
     ) -> tuple[UUID | None, Envelope | None]:
         """Apply principle 9 to one string entity parameter.
 
-        The T0 ladder may return no candidate, exactly one, or an ambiguity.
+        The resolve cascade may return no candidate, exactly one, or an ambiguity.
         Context retrieval never silently takes the first ambiguity: candidates remain in
         ``entities[]`` and the negative names the boundary.
         """
@@ -2524,21 +2693,32 @@ class QueryEngine:
             return None, _envelope(
                 grain=grain, freshness=_freshness(), negative=resolved.negative
             )
-        if len(resolved.entities) > 1:
+        if len(resolved.entities) > 1 or (
+            resolved.truncation is not None and resolved.truncation.truncated
+        ):
             names = ", ".join(
                 f"{candidate.canonical_name} ({candidate.entity_id})"
                 for candidate in resolved.entities
+            )
+            explanation = (
+                f"{entity!r} is ambiguous between these candidates: {names}"
+                if len(resolved.entities) > 1
+                else (
+                    f"{entity!r} matched more candidates than the resolve limit;"
+                    f" the visible candidate is {names}"
+                )
             )
             return None, _envelope(
                 grain=grain,
                 entities=resolved.entities,
                 freshness=_freshness(),
+                truncation=resolved.truncation,
                 negative=Negative(
                     kind=NegativeKind.BOUNDARY,
-                    explanation=(
-                        f"{entity!r} is ambiguous between these candidates: {names}"
+                    explanation=explanation,
+                    workaround=(
+                        "retry with an unambiguous alias or resolve an entity UUID first"
                     ),
-                    workaround="retry with an unambiguous alias or resolve an entity UUID first",
                 ),
             )
         return next(iter(resolved.entities)).entity_id, None
@@ -2805,12 +2985,38 @@ class QueryEngine:
         claim_ids: tuple[UUID, ...],
         current_only: bool = True,
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[EvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm claim content and any entity scope in one PostgreSQL read."""
+        """Confirm claim content and any entity scope in one PostgreSQL read.
+
+        With ``documents`` (D134) each claim is re-checked for a live
+        occurrence in a matching document version; the evidence is still the
+        claim's origin occurrence.
+        """
         if not claim_ids:
             return (), 0, {}
         if entity_ids and not current_only:
             raise ValueError("entity-scoped historical claim hydration is unsupported")
+        if documents is not None and (entity_ids or not current_only):
+            raise ValueError(
+                "document-filtered claim hydration is current and unscoped only"
+            )
+        statement = (
+            _CONFIRM_CLAIMS_CURRENT_SCOPED
+            if entity_ids
+            else _CONFIRM_CLAIMS_CURRENT
+            if current_only
+            else _CONFIRM_CLAIMS_HISTORY
+        )
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            # D134: the filter decides inclusion only. The claim is re-checked
+            # for a live occurrence in a matching version, and the evidence is
+            # its origin occurrence, exactly as without a filter.
+            occurrence_sql, extra = matching_occurrence_exists(
+                filters=documents, claim="c.claim_id", prefix="documents_"
+            )
+            statement = text(f"{_CONFIRM_CLAIMS_CURRENT.text}  AND {occurrence_sql}\n")
         rows: list[RowMapping] = []
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
@@ -2820,17 +3026,12 @@ class QueryEngine:
             for batch in batched(claim_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        (
-                            _CONFIRM_CLAIMS_CURRENT_SCOPED
-                            if entity_ids
-                            else _CONFIRM_CLAIMS_CURRENT
-                            if current_only
-                            else _CONFIRM_CLAIMS_HISTORY
-                        ),
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "claim_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -2860,10 +3061,25 @@ class QueryEngine:
         deployment_id: UUID,
         chunk_ids: tuple[UUID, ...],
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm chunk content and any entity scope, then hydrate P1 bodies."""
+        """Confirm chunk content and any entity scope, then hydrate P1 bodies.
+
+        With ``documents`` (D134) the document filter is re-checked at
+        confirmation, so metadata that changed after nomination drops the
+        chunk (counted in ``dropped_by_hydration``) instead of returning it.
+        """
         if not chunk_ids:
             return (), 0, {}
+        if documents is not None and entity_ids:
+            raise ValueError("document-filtered chunk hydration is unscoped only")
+        statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            version_sql, extra = live_version_matches(
+                filters=documents, version="ch.version_id", prefix="documents_"
+            )
+            statement = text(f"{_CONFIRM_CHUNKS.text}  AND {version_sql}\n")
         rows: list[RowMapping] = []
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
@@ -2871,11 +3087,12 @@ class QueryEngine:
             for batch in batched(chunk_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS,
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "chunk_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -2957,6 +3174,76 @@ class QueryEngine:
             if observation_id in confirmed
         )
         return results, len(observation_ids) - len(results)
+
+    def _embedding_resolve_hits(
+        self, *, deployment_id: UUID, name: str
+    ) -> tuple[tuple[_ResolveHit, ...], bool] | Envelope:
+        """Return T3 profile neighbors, or a terminal negative when none qualify.
+
+        The semantic channel embeds the query string and ranks current entity
+        profiles. A score at or below the write-path reject band is not a
+        candidate. Several scores above it stay ranked candidates; this path
+        never calls the adjudicator. An unpublished entity channel is a
+        boundary, because the tier did not run.
+        """
+        search_entities = getattr(self._search_index, "search_entities_scored", None)
+        if not callable(search_entities):
+            return _embedding_channel_boundary()
+        channel_ready = getattr(self._search_index, "entity_semantic_ready", None)
+        if callable(channel_ready) and not channel_ready(
+            deployment_id=str(deployment_id)
+        ):
+            return _embedding_channel_boundary()
+        try:
+            nominations = cast(
+                "tuple[P1Nomination, ...]",
+                search_entities(
+                    deployment_id=str(deployment_id),
+                    vector=self._embed(
+                        query=name,
+                        call_site=SurfaceCallSite.RESOLVE_ENTITY,
+                        deployment_id=deployment_id,
+                    ),
+                    k=QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
+                ),
+            )
+        except P1SearchUnavailableError:
+            return _embedding_channel_boundary()
+        # The channel returns this window in descending score order. Once the
+        # tail is at or below the reject band, every later neighbor is too, so
+        # a below-band row does not hide an above-band candidate past the cap.
+        kept = tuple(
+            nomination
+            for nomination in nominations
+            if nomination.score > QUERY_RESOLVE_T3_FLOOR
+        )
+        truncated = len(kept) > QUERY_RESOLVE_CANDIDATE_LIMIT
+        kept = kept[:QUERY_RESOLVE_CANDIDATE_LIMIT]
+        if not kept:
+            return _unknown_entity(name=name)
+        score_by_id = {UUID(item.item_id): item.score for item in kept}
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _CONFIRM_CONTEXT_ENTITIES,
+                    {"deployment_id": deployment_id, "entity_ids": list(score_by_id)},
+                )
+                .mappings()
+                .all()
+            )
+        hits = tuple(
+            _ResolveHit(
+                entity_id=row["entity_id"],
+                canonical_name=row["canonical_name"],
+                tier="T3",
+                score=score_by_id[row["entity_id"]],
+            )
+            for row in rows
+            if row["entity_id"] in score_by_id
+        )
+        if not hits:
+            return _unknown_entity(name=name)
+        return hits, truncated
 
     def _embed(
         self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
@@ -3396,12 +3683,20 @@ def _normalize_hybrid_text(*, value: str) -> str:
 def _group_claim_evidence(
     *, evidence: Sequence[EvidenceResult]
 ) -> tuple[EvidenceResult, ...]:
-    """Group confirmed claims in incoming rank order by normalized text."""
-    grouped: dict[str, list[EvidenceResult]] = {}
+    """Group repeated testimony only when text, both clocks and attribution agree."""
+    grouped: dict[tuple[object, ...], list[EvidenceResult]] = {}
     for record in evidence:
-        grouped.setdefault(_normalize_hybrid_text(value=record.claim_text), []).append(
-            record
+        key = (
+            _normalize_hybrid_text(value=record.claim_text),
+            record.asserted_at,
+            record.claim_valid_from,
+            record.claim_valid_until,
+            record.claim_valid_precision,
+            record.claim_valid_kind,
+            record.is_attributed,
+            record.is_current_testimony,
         )
+        grouped.setdefault(key, []).append(record)
     return tuple(
         members[0].model_copy(
             update={
@@ -3501,9 +3796,19 @@ def _fact_result(*, row, kind: str) -> FactResult:  # noqa: ANN001
         evidence_count=row["evidence_count"],
         contradiction_group=mapping.get("contradiction_group"),
         support=FactSupport(mapping.get("support_state", FactSupport.CURRENT.value)),
+        temporal_match=(
+            TemporalMatch.CONFIRMED
+            if FactWindow(
+                valid_from=row["valid_from"],
+                valid_until=row["valid_until"],
+                valid_precision=row["valid_precision"],
+            ).is_complete
+            else TemporalMatch.POSSIBLE
+        ),
         validity=Validity(
             valid_from=row["valid_from"],
             valid_until=row["valid_until"],
+            valid_precision=row["valid_precision"],
             ingested_at=row["ingested_at"],
             invalidated_at=mapping.get("invalidated_at"),
         ),
@@ -3519,6 +3824,7 @@ def _co_member(row: dict[str, object]) -> CoMember:
         validity=Validity(
             valid_from=row["valid_from"],  # type: ignore[arg-type]
             valid_until=row["valid_until"],  # type: ignore[arg-type]
+            valid_precision=row["valid_precision"],  # type: ignore[arg-type]
             ingested_at=row["ingested_at"],  # type: ignore[arg-type]
             invalidated_at=row["invalidated_at"],  # type: ignore[arg-type]
         ),
@@ -3655,6 +3961,146 @@ _CHUNK_NEIGHBORS = text(
     """
 )
 
+
+def _embedding_channel_boundary() -> Envelope:
+    """The embedding tier was required and the semantic channel cannot answer."""
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation=(
+                "entity embedding resolution is not published for this deployment"
+            ),
+            workaround="check spelling, or search claims and chunks",
+        ),
+    )
+
+
+def _unknown_entity(*, name: str) -> Envelope:
+    """The typed miss after every available non-LLM tier has run."""
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        negative=Negative(
+            kind=NegativeKind.UNKNOWN_ENTITY,
+            explanation=f"nothing resolves for {name!r}",
+            workaround="check spelling, try search over claims or chunks",
+        ),
+    )
+
+
+def _lookup_truncation(*, returned: int, truncated: bool) -> Truncation | None:
+    """Disclose that a fact lookup's `k` cap left matching rows out."""
+    if not truncated:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=returned + 1,
+        total_is_exact=False,
+        reason="lookup_k_limit",
+    )
+
+
+def _resolve_truncation(*, returned: int, truncated: bool) -> Truncation | None:
+    """Disclose a blocking cap without inventing an exact remainder."""
+    if not truncated:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=returned + 1,
+        total_is_exact=False,
+        reason="resolve_candidate_limit",
+    )
+
+
+def _string_resolve_hits(
+    *, connection: Connection, deployment_id: UUID, lemma: str
+) -> tuple[tuple[_ResolveHit, ...], bool]:
+    """Exact alias hits, or the write path's trigram/phonetic block when none.
+
+    Exact hits are not capped: same-name ambiguity must stay visible (S51).
+    The fuzzy block reuses the write-path floor and width, against current
+    survivor aliases only, and reports when that width hid further blockers.
+    Trigram hits outrank phonetic hits for the same survivor, so a name that
+    reaches both tiers is returned once, as T1.
+    """
+    exact = (
+        connection.execute(
+            _RESOLVE_T0, {"deployment_id": deployment_id, "lemma": lemma}
+        )
+        .mappings()
+        .all()
+    )
+    if exact:
+        return (
+            tuple(
+                _ResolveHit(
+                    entity_id=row["entity_id"],
+                    canonical_name=row["canonical_name"],
+                    tier="T0",
+                    score=1.0,
+                )
+                for row in exact
+            ),
+            False,
+        )
+    connection.execute(
+        _SET_TRGM_THRESHOLD, {"floor": format(QUERY_RESOLVE_TRIGRAM_FLOOR, "f")}
+    )
+    blocked = (
+        connection.execute(
+            _RESOLVE_T1_T2,
+            {
+                "deployment_id": deployment_id,
+                "lemma": lemma,
+                "floor": QUERY_RESOLVE_TRIGRAM_FLOOR,
+                "limit": QUERY_RESOLVE_CANDIDATE_LIMIT + 1,
+            },
+        )
+        .mappings()
+        .all()
+    )
+    truncated = len(blocked) > QUERY_RESOLVE_CANDIDATE_LIMIT
+    return (
+        tuple(
+            _ResolveHit(
+                entity_id=row["entity_id"],
+                canonical_name=row["canonical_name"],
+                tier=row["tier"],
+                score=float(row["trigram_score"]),
+            )
+            for row in blocked[:QUERY_RESOLVE_CANDIDATE_LIMIT]
+        ),
+        truncated,
+    )
+
+
+def _context_hit_counts(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    candidate_ids: tuple[UUID, ...],
+    context_entity_ids: tuple[UUID, ...],
+) -> dict[UUID, int]:
+    """Count distinct current neighbors among the caller's focal entities."""
+    if not candidate_ids or not context_entity_ids:
+        return {}
+    return {
+        row["candidate_id"]: int(row["context_hits"])
+        for row in connection.execute(
+            _RESOLVE_CONTEXT_HITS,
+            {
+                "deployment_id": deployment_id,
+                "candidate_ids": list(candidate_ids),
+                "context_entity_ids": list(context_entity_ids),
+            },
+        ).mappings()
+    }
+
+
 _RESOLVE_T0_SQL = """
     SELECT DISTINCT entity.entity_id, entity.canonical_name
     FROM memory_v1.entity_aliases_current AS alias
@@ -3666,6 +4112,53 @@ _RESOLVE_T0_SQL = """
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
+
+_SET_TRGM_THRESHOLD = text(
+    "SELECT set_config('pg_trgm.similarity_threshold', :floor, true)"
+)
+
+_RESOLVE_T1_T2_SQL = """
+    WITH t1 AS (
+        SELECT DISTINCT ON (alias.entity_id)
+               alias.entity_id,
+               similarity(alias.normalized_lemma, :lemma) AS score
+        FROM memory_v1.entity_aliases_current AS alias
+        WHERE alias.deployment_id = :deployment_id
+          AND alias.normalized_lemma % :lemma
+          AND similarity(alias.normalized_lemma, :lemma) >= :floor
+        ORDER BY alias.entity_id,
+                 similarity(alias.normalized_lemma, :lemma) DESC
+    ),
+    t2 AS (
+        SELECT DISTINCT alias.entity_id
+        FROM memory_v1.entity_aliases_current AS alias
+        LEFT JOIN t1 ON t1.entity_id = alias.entity_id
+        WHERE alias.deployment_id = :deployment_id
+          AND daitch_mokotoff(alias.normalized_lemma)
+              && daitch_mokotoff(:lemma)
+          AND t1.entity_id IS NULL
+    ),
+    blocked AS (
+        SELECT t1.entity_id, t1.score, 'T1'::text AS tier
+        FROM t1
+        UNION ALL
+        SELECT t2.entity_id, 0.0::double precision, 'T2'::text
+        FROM t2
+    )
+    SELECT entity.entity_id, entity.canonical_name,
+           blocked.score AS trigram_score,
+           blocked.tier
+    FROM blocked
+    JOIN memory_v1.entities_current AS entity
+      ON entity.deployment_id = :deployment_id
+     AND entity.entity_id = blocked.entity_id
+    ORDER BY blocked.score DESC,
+             similarity(entity.normalized_name, :lemma) DESC,
+             entity.entity_id
+    LIMIT :limit
+    """
+
+_RESOLVE_T1_T2 = text(_RESOLVE_T1_T2_SQL)
 
 _CONFIRM_CONTEXT_ENTITIES = text(
     """
@@ -3702,7 +4195,7 @@ _LOOKUP_RELATIONS = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id
@@ -3714,14 +4207,15 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, relation_id
+    LIMIT :limit
     """
 )
 
 _LOOKUP_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3729,7 +4223,8 @@ _LOOKUP_OBSERVATIONS = text(
       AND invalidated_at IS NULL
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, observation_id
+    LIMIT :limit
     """
 )
 
@@ -3781,7 +4276,7 @@ def _confirm_facts_context_statement(
     SELECT requested.nomination_rank, '{fact_kind}'::text AS kind, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.contradiction_group,
            fact.support_state_current AS support_state,
            {_FACTS_CONTEXT_COVERAGE} AS coverage
@@ -3809,7 +4304,7 @@ _FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     SELECT fact.fact_kind AS kind, fact.contradiction_group, fact.fact_id,
            coalesce(fact.fact_label, fact.statement, fact.predicate) AS label,
            fact.evidence_count_current AS evidence_count,
-           fact.valid_from, fact.valid_until, fact.ingested_at,
+           fact.valid_from, fact.valid_until, fact.valid_precision, fact.ingested_at,
            fact.invalidated_at, fact.support_state_current AS support_state
     FROM memory_v1.facts_visible_history AS fact
     WHERE fact.deployment_id = :deployment_id
@@ -3839,6 +4334,7 @@ _CURRENT_FACT_EVIDENCE = text(
                ) AS stance_rank,
                claim.claim_id, claim.doc_id, claim.chunk_id, claim.claim_text,
                claim.source_span, claim.char_start, claim.char_end,
+               COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
                claim.is_attributed, true AS is_current_testimony,
                claim.asserted_at, claim.claim_valid_from,
                claim.claim_valid_until,
@@ -3862,10 +4358,19 @@ _CURRENT_FACT_EVIDENCE = text(
         JOIN memory_v1.documents_live AS document
           ON document.deployment_id = claim.deployment_id
          AND document.doc_id = claim.doc_id
+        LEFT JOIN LATERAL (
+            SELECT cc.evidence_spans
+            FROM chunk_claims cc
+            WHERE cc.deployment_id = claim.deployment_id
+              AND cc.claim_id = claim.claim_id
+              AND cc.chunk_id = claim.chunk_id
+            ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+            LIMIT 1
+        ) AS occ ON true
     )
     SELECT fact_id, kind, stance, evidence_total, stance_rank,
            claim_id, doc_id, chunk_id, claim_text, source_span,
-           char_start, char_end, is_attributed, is_current_testimony,
+           char_start, char_end, evidence_spans, is_attributed, is_current_testimony,
            asserted_at, claim_valid_from, claim_valid_until,
            claim_valid_precision, claim_valid_kind, document_title, source_kind
     FROM representative
@@ -3880,7 +4385,7 @@ _CURRENT_FACT_EVIDENCE = text(
 _CONFIRM_OBSERVATIONS = text(
     """
     SELECT observation_id AS fact_id, statement AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM observations
     WHERE deployment_id = :deployment_id
@@ -3895,7 +4400,9 @@ _CONFIRM_OBSERVATIONS = text(
 _CONFIRM_CLAIMS_CURRENT = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
            TRUE AS is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
@@ -3903,6 +4410,15 @@ _CONFIRM_CLAIMS_CURRENT = text(
     FROM memory_v1.claims_live c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.deployment_id = c.deployment_id
+          AND cc.claim_id = c.claim_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
     """
@@ -3911,7 +4427,9 @@ _CONFIRM_CLAIMS_CURRENT = text(
 _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
            TRUE AS is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
@@ -3919,6 +4437,15 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
     FROM memory_v1.claims_live c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.deployment_id = c.deployment_id
+          AND cc.claim_id = c.claim_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true
     JOIN LATERAL (
         SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
         FROM memory_v1.mentions_live AS mention
@@ -3934,13 +4461,24 @@ _CONFIRM_CLAIMS_CURRENT_SCOPED = text(
 _CONFIRM_CLAIMS_HISTORY = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed, c.is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision, c.claim_valid_kind,
            d.title AS document_title, d.source_kind
     FROM memory_v1.claims_visible_history c
     JOIN memory_v1.documents_live d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.claim_id = c.claim_id
+          AND cc.deployment_id = c.deployment_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true
     WHERE c.deployment_id = :deployment_id
       AND c.claim_id = ANY(:claim_ids)
     """
@@ -3991,11 +4529,32 @@ _CONFIRM_CHUNKS_SCOPED = text(
     """
 )
 
+_TARGET_CHUNK_COORDINATES = text(
+    """
+    SELECT doc_id, version_id, ordinal
+    FROM memory_v1.chunks_live
+    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
+    """
+)
+
+_ADJACENT_CHUNKS = text(
+    """
+    SELECT chunk_id
+    FROM memory_v1.chunks_live
+    WHERE deployment_id = :deployment_id
+      AND doc_id = :doc_id
+      AND version_id = :version_id
+      AND ordinal >= :ordinal_start
+      AND ordinal <= :ordinal_end
+    ORDER BY ordinal ASC
+    """
+)
+
 _HYDRATE_RELATION = text(
     """
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
-           evidence_count, valid_from, valid_until, ingested_at, invalidated_at,
+           evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
     FROM relations
     WHERE deployment_id = :deployment_id AND relation_id = :relation_id
@@ -4005,7 +4564,9 @@ _HYDRATE_RELATION = text(
 _HYDRATE_EVIDENCE_CLAIMS = text(
     """
     SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
-           c.char_start, c.char_end, c.is_attributed, c.is_current_testimony,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed, c.is_current_testimony,
            c.asserted_at, c.claim_valid_from, c.claim_valid_until,
            c.claim_valid_precision::text, c.claim_valid_kind::text,
            d.title AS document_title, d.source_kind
@@ -4015,6 +4576,15 @@ _HYDRATE_EVIDENCE_CLAIMS = text(
                  AND c.doc_id = e.doc_id
     LEFT JOIN documents d
       ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.claim_id = c.claim_id
+          AND cc.deployment_id = c.deployment_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true
     WHERE e.deployment_id = :deployment_id
       AND e.relation_id = :relation_id
       AND e.stance = 'supports'
@@ -4257,10 +4827,36 @@ _PAGES_ABOUT = text(
     """
 )
 
+_AGGREGATE_TIME_CTE = (
+    "WITH "
+    + ", ".join(
+        f"""eligible_{table} AS (
+        SELECT fact.*,
+            (valid_from IS NOT NULL AND (valid_until IS NOT NULL OR valid_precision='open')) AS confirmed
+        FROM {table} fact
+        WHERE deployment_id=:deployment_id AND invalidated_at IS NULL
+          AND ingested_at<=:evaluated_at
+          AND (valid_from IS NULL OR valid_from <= CASE :time_mode
+              WHEN 'at' THEN CAST(:at AS timestamptz)
+              WHEN 'overlap' THEN CAST(:to AS timestamptz)
+              ELSE :evaluated_at END)
+          AND (:time_mode='history' OR valid_until IS NULL
+              OR valid_until > CASE :time_mode
+                  WHEN 'at' THEN CAST(:at AS timestamptz)
+                  WHEN 'overlap' THEN CAST(:from AS timestamptz)
+                  ELSE :evaluated_at END)
+    )"""
+        for table in ("relations", "observations")
+    )
+    + " "
+)
+"""Count accepted matches and disclose incomplete candidates in the same snapshot."""
+
 _AGG_COUNT = text(
     """
-    SELECT NULL::text AS key, count(*) AS count, NULL::uuid AS entity_id
-    FROM relations
+    SELECT NULL::text AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
+    FROM eligible_relations
     WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
       AND (CAST(:subject_entity_id AS uuid) IS NULL
            OR subject_entity_id = :subject_entity_id)
@@ -4270,8 +4866,9 @@ _AGG_COUNT = text(
 
 _AGG_GROUP_BY_PREDICATE = text(
     """
-    SELECT predicate AS key, count(*) AS count, NULL::uuid AS entity_id
-    FROM relations
+    SELECT predicate AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
+    FROM eligible_relations
     WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
       AND subject_entity_id = :subject_entity_id
     GROUP BY predicate
@@ -4282,9 +4879,10 @@ _AGG_GROUP_BY_PREDICATE = text(
 
 _AGG_GROUP_BY_OBJECT = text(
     """
-    SELECT e.canonical_name AS key, count(*) AS count,
+    SELECT e.canonical_name AS key, count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count,
            r.object_entity_id AS entity_id
-    FROM relations r
+    FROM eligible_relations r
     JOIN entities e ON e.deployment_id = r.deployment_id
                    AND e.entity_id = r.object_entity_id
     WHERE r.deployment_id = :deployment_id AND r.invalidated_at IS NULL
@@ -4302,16 +4900,17 @@ _AGG_TIMELINE = text(
     -- observations about it, so the timeline is the whole fact evolution,
     -- not just relations
     SELECT to_char(date_trunc('year', ts), 'YYYY') AS key,
-           count(*) AS count, NULL::uuid AS entity_id
+           count(*) FILTER (WHERE confirmed) AS count,
+           count(*) FILTER (WHERE NOT confirmed) AS possible_count, NULL::uuid AS entity_id
     FROM (
-        SELECT coalesce(valid_from, ingested_at) AS ts
-        FROM relations
+        SELECT valid_from AS ts, confirmed
+        FROM eligible_relations
         WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
           AND (subject_entity_id = :subject_entity_id
                OR object_entity_id = :subject_entity_id)
         UNION ALL
-        SELECT coalesce(valid_from, ingested_at) AS ts
-        FROM observations
+        SELECT valid_from AS ts, confirmed
+        FROM eligible_observations
         WHERE deployment_id = :deployment_id AND invalidated_at IS NULL
           AND subject_entity_id = :subject_entity_id
     ) facts
@@ -4348,19 +4947,21 @@ _AGG_DELTA_TOP_ENTITIES = text(
 
 _AGG_PREDICATE_ABSENCE = text(
     """
-    -- entities with NO live relation of a predicate (S40, D96: no type filter).
-    -- Each bucket IS one absent entity (count 1).
-    SELECT e.canonical_name AS key, 1 AS count, e.entity_id AS entity_id
+    SELECT e.canonical_name AS key,
+           CASE WHEN possible.present THEN 0 ELSE 1 END AS count,
+           CASE WHEN possible.present THEN 1 ELSE 0 END AS possible_count,
+           e.entity_id AS entity_id
     FROM entities e
-    WHERE e.deployment_id = :deployment_id AND e.status = 'active'
-      AND NOT EXISTS (
-          SELECT 1 FROM relations r
-          WHERE r.deployment_id = e.deployment_id
-            AND r.subject_entity_id = e.entity_id
-            AND r.predicate = :predicate
-            AND r.invalidated_at IS NULL
-      )
-    ORDER BY e.canonical_name
+    CROSS JOIN LATERAL (
+        SELECT EXISTS (SELECT 1 FROM eligible_relations r
+            WHERE r.subject_entity_id=e.entity_id AND r.predicate=:predicate
+              AND NOT r.confirmed) AS present
+    ) possible
+    WHERE e.deployment_id=:deployment_id AND e.status='active'
+      AND NOT EXISTS (SELECT 1 FROM eligible_relations r
+          WHERE r.subject_entity_id=e.entity_id AND r.predicate=:predicate
+            AND r.confirmed)
+    ORDER BY e.canonical_name, e.entity_id
     LIMIT :fetch
     """
 )
@@ -4409,9 +5010,11 @@ _CONTRADICTION_MEMBERS_RELATIONS = text(
     SELECT member.contradiction_group, member.fact_id,
            member.fact_label AS label,
            member.evidence_count,
-           member.valid_from, member.valid_until, member.ingested_at,
+           member.valid_from, member.valid_until, fact.valid_precision, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_visible_history AS fact
+      ON fact.deployment_id=member.deployment_id AND fact.fact_kind=member.fact_kind AND fact.fact_id=member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'relation'
       AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))
@@ -4424,9 +5027,11 @@ _CONTRADICTION_MEMBERS_OBSERVATIONS = text(
     SELECT member.contradiction_group, member.fact_id,
            member.fact_label AS label,
            member.evidence_count,
-           member.valid_from, member.valid_until, member.ingested_at,
+           member.valid_from, member.valid_until, fact.valid_precision, member.ingested_at,
            NULL::timestamptz AS invalidated_at, member.support_state
     FROM memory_v1.contradiction_members_current AS member
+    JOIN memory_v1.facts_visible_history AS fact
+      ON fact.deployment_id=member.deployment_id AND fact.fact_kind=member.fact_kind AND fact.fact_id=member.fact_id
     WHERE member.deployment_id = :deployment_id
       AND member.fact_kind = 'observation'
       AND member.contradiction_group = ANY(CAST(:groups AS uuid[]))

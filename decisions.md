@@ -658,6 +658,12 @@ neighbouring slice; a closed end is never reopened) and replayed
 idempotently after caps and retractions. Full contract:
 `plan/designs/temporal_clocks_design.md` §4.3.
 
+**Amendment (2026-09-24, D108, PR #460).** The `remember review` CLI
+(`review list`, `review decide`) is deleted, including its internal-ops
+path; no command exposes the queue to humans. The engine's review-queue
+store and its append-only, reversible verdict records remain; adjudication
+is autonomous (D3/D43/D107).
+
 ## D25. No pre-extraction value/salience gate — junk-control is in-call at E2 Selection + D2
 
 **Decision.** There is **no E1.5 stage and no value/salience gate**. Plane E is `E0 → E1 → E2 → E3`;
@@ -819,6 +825,21 @@ lake sunrise last year!` yielded a correct attributed claim, then layer 2 reject
 prompt-required scaffolding without weakening content or numeric traceability. Rejections still drop
 the claim and are ledgered; `edit_detail.failed_tokens` names the tokens that failed.
 
+**Amendment (2026-09-11, own valid-time exemption).** Layer 2 gains one traceable exception to
+the numeric rule so the D41 amendment of the same day can write a resolved date into claim text.
+Before tokenizing an addition, the gate removes exact occurrences of the ISO renderings of the
+claim's *own* parsed `claim_valid_*` bounds, tied to the stored precision: `day` → `YYYY-MM-DD`,
+`month` → `YYYY-MM`, `year` → `YYYY`, `quarter` → both calendar bounds as `YYYY-MM-DD`/`YYYY-MM`,
+`open` → the start as `YYYY-MM-DD`/`YYYY-MM`/`YYYY`, `instant` → the model's ISO strings verbatim
+and their UTC parse; `unknown` precision exempts nothing. Every remaining numeric token still needs
+a union match, so a day written against a year-precise bound, a differently spelled date, or a date
+with no structured bounds is rejected exactly as before. The invariant becomes: every content token
+of every addition is traceable verbatim to source-derived bundle text **or** is the rendering of
+the claim's own structured valid time, which is itself derived from the document header anchor.
+The functional allowlist also admits the temporal connectives `since`, `until`, `between`, and
+`during` that the prompt asks the model to write around a date. Extractor generation
+`temporal-anchor-4`.
+
 **Refined by D65 (media).** For media-derived documents grounding is **two hops**: the anchor
 (layer 1) proves the claim derives from the *representation* (document.md); it cannot prove the
 ASR heard or the VLM saw correctly. The layer-4 sampled audit therefore becomes
@@ -932,6 +953,11 @@ text lives where it can be mounted.
 change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
+
+**Refined by D133.** The operator-built MIME → converter table is replaced by an
+engine-shipped format registry (family → posture → converter) that deployments
+overlay rather than replace; routing keys are normalized. The pluggable, versioned
+converter module and its contract remain binding.
 
 **Decision.** A pluggable, **configurable** conversion module (a reusable open-source library):
 interface `convert(bytes, mime, hints) -> { markdown, blocks[] }` where `blocks` carry **page +
@@ -1085,6 +1111,27 @@ text, not these structured fields. Evidence payloads, including `claims_verbatim
 surface `claim_valid_from` and `claim_valid_until`, so an answer agent can use the extracted time.
 The same rule applies when the relative expression is inside a preserved direct quotation or
 attributed claim.
+
+**Amendment (2026-09-11, resolved dates are written into claim text).** The #158 rule that the
+claim text keeps the relative wording is reversed. A relative time expression ("last Friday",
+"yesterday", "last year") is context a standalone claim must not depend on — the same defect a
+dangling pronoun is — so decontextualization now treats it the same way: whenever E2 can resolve
+the expression against the in-document anchor and emit `claim_valid_*`, it also replaces the
+expression in `claim_text` with the same absolute value in ISO form (`on 2022-01-21`, `in 2022`,
+`since 2019`, `from 2024-01-01 to 2024-03-31`, an instant exactly as `valid_from_iso`). This applies
+inside preserved quotations and attributed speech too; the verbatim wording survives in
+`source_span`. When the expression cannot be resolved, the source wording stays as spoken and no
+date is guessed — so a relative phrase still present in claim text is itself the signal that
+resolution failed, to be read against `asserted_at`. The structured fields are unchanged in
+meaning and remain the queryable form; the LoCoMo conv-42 miss on "printed it last Friday"
+(answered with the message date rather than the resolved day) was the measured cost of making
+every reader recombine claim text with separately labelled timestamps. Grounding of the written
+date is the D32 amendment of the same day. Agent-facing surfaces (the consumption skill, the
+`EvidenceResult` field descriptions, the LoCoMo answer prompt) now define the two source-asserted
+times in plain words: `asserted_at` is *when the source made this statement*; `claim_valid_from` /
+`claim_valid_until` are *when the claim says it happened or was true*, with `claim_valid_kind`
+naming which (event happened / state was true / period a figure covers). Extractor generation
+`temporal-anchor-4`.
 
 **Amendment (2026-08-03, retrieval surface Batch B).** The D41-era no-default-index stance is
 superseded for PostgreSQL claim-window retrieval. The default schema now carries the partial index
@@ -1552,6 +1599,16 @@ access-isolation arm; `retrieval_design.md` §9.)
 > a saved query, not minting a top-level MCP tool. A fifth assured operation
 > requires the evidence gate in `open_query_space_design.md` §1.13.
 
+> **Refined by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> "MCP tools render from the registry" now means: the agent-facing fields of the
+> four operations (name, description, input schema, `mutates`, version) are defined
+> once in the public `remember.mcp_tools` catalogue, the engine registry generates
+> them from it, and every MCP host — including hosts outside this repository —
+> renders from the catalogue rather than from `GET /operations`. The registry still
+> owns the primitive chain, grain and intent enums and the linter; the trust model
+> above (one deployment, one trust domain) is unchanged, and the host-resolved
+> `project` argument never reaches the engine.
+
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
 **Decision.** The primary consumers are **agentic coding harnesses** (Claude Code, Codex,
@@ -1662,6 +1719,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+**Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
+counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
+the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
+
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
 
@@ -1723,6 +1784,13 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
+> (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
+> with the lineage. The identical-byte no-op below therefore never matches a deleted version:
+> bytes that return after a deletion become a new version and are processed afresh, and D56
+> reuse never draws on a deleted version. "Resurrecting" a tombstoned lineage still revives the
+> lineage identity, not its retired testimony. Everything else here remains binding.
 
 > **Clarified 2026-07-30 (metadata no-op):** an identical-byte observation may
 > advance `source_version_ref` so a connector does not refetch forever, but it
@@ -2027,7 +2095,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 
 | Port | Self-host adapter | Reference adapter |
 |---|---|---|
-| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. MinIO); local FS for dev | GCS |
+| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. SeaweedFS, which the Compose profile bundles); local FS for dev | GCS |
 | Task queue / scheduler (at-least-once announcement, scheduled delivery, rate limits) | Postgres-backed queue (`SKIP LOCKED`; application retry/DLQ state is the row, D12/D67) | Cloud Tasks + Cloud Run jobs |
 | Mount publication (P3 + artifact/raw/K mounts, D51) | local directory trees | GCS + gcsfuse |
 | K git remote | any git remote | hosted per-deployment repo |
@@ -2090,6 +2158,16 @@ never permission to skip a separately restored store or database.
 > `plan/designs/packaging_distribution_design.md`.
 
 ## D62. Delivery artifacts, delivery-only task execution, and the enforced code architecture
+
+> **Amended 2026-09-24 (bundled object store):** the Compose self-host profile
+> runs **SeaweedFS** (`chrislusf/seaweedfs`, Apache-2.0) as its S3-compatible
+> object store instead of MinIO. The pinned MinIO image became unpullable
+> (quay.io answers 401 for `minio/minio`, and Docker Hub has no matching
+> tag). SeaweedFS covers everything the self-host object-store adapter uses
+> (path-style SigV4, bucket create, conditional create with
+> `If-None-Match: *`, user metadata, list/delete) and is the store the
+> commercial cloud already runs. "Postgres + MinIO + api + worker" below
+> reads "Postgres + SeaweedFS + api + worker"; the rest of D62 is unchanged.
 
 **Decision.** The library ships as **three artifacts**: the GitHub repo (source + the design
 corpus), **one PyPI package positioned as the client** (base install = typed SDK + CLI + MCP
@@ -2244,6 +2322,10 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+**Refined by D133.** The locator union gains `sheet_range`, `table_region`,
+`json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
+routes, contract shape and every other D65 binding remain.
 
 **Decision.** Standalone images, audio, and video enter the system as **E0 inputs, never a new
 plane or parallel pipeline**: a media file is a source whose testimony reaches the system
@@ -2746,6 +2828,9 @@ status documentation, but adds no new public runtime feature or configuration su
 D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
+
+**Refined by D134** (document metadata, people and observed-name rows are deleted with their
+lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -3887,6 +3972,19 @@ export on the customer perimeter; derive token host from API URL (that is D92).
 
 ## D92. `remember login` is a CLI device-grant client, not a second credential store
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> Replaced: the required explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`
+> (login now discovers endpoints from the issuer's OAuth metadata, default issuer
+> `https://remember.dev`, `--issuer` / `REMEMBER_ISSUER` to override), the D92/D108
+> credential-file shape (now version 2 holding one key), and the JSON device-grant
+> variant (now the standard RFC 8628 grant). Also replaced: "the credential file is
+> CLI-only" — the SDK now reads the same stored file with the same precedence as the
+> CLI (explicit > environment > file), and the stored-key origin rule (D136 design
+> §8.2) is what stops a stored key reaching a host the caller never named; and
+> "revoke, then replace" on re-login — now mint, persist, then revoke with the
+> pending-revocation journal. Still binding: logout revokes then unlinks; the engine
+> grows no second credential store.
+
 **Decision (2026-08-13).** `remember login` / `logout` live in the base CLI.
 They require an explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`. The
 credential file is CLI-only; `MemoryClient` / `ClientSettings` do not read it.
@@ -4137,6 +4235,9 @@ a shipped switch.
 D20, or D21.
 
 ## D96. No entity types; profile is observation prose
+
+**Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
+one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -4936,6 +5037,10 @@ counterfactual instruction.
 
 ## D106. Dated events never collapse across dates; evidence requires temporal compatibility
 
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D118 when that amendment merges.
+
 **Decision (2026-09-03).** The observation adjudicator (D43) gains a
 deterministic temporal-compatibility rung that runs before any model call,
 reading the D41 valid-time each claim already carries:
@@ -5031,6 +5136,11 @@ Preserves D41 (claims stay the one home of asserted validity), D98
 retrieval, D100/D102 identity, and D104/D105 answer-prompt contracts.
 
 ## D107. World-time flows from the claim's window; said-on time is provenance, never validity
+
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** partially superseded by D118 when that amendment merges. Canonical
+arithmetic, published SQL and extraction remain in force.
 
 **Decision (2026-09-03).** Every stage that reasons about *when* a fact held
 reads the claim's resolved D41 window (what the statement **is about**) and
@@ -5237,15 +5347,25 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> In item 4, the *Authentication & Project Context* host (`https://api.remember.dev`
+> was never a live host; login now uses the issuer's metadata, default issuer
+> `https://remember.dev`), the *Credential Separation* clause (control-plane session
+> plus per-project data-plane tokens is replaced by one signed key; `remember switch`
+> changes only the default project), and the *Data Plane* default of `remember setup`
+> (now: remote MCP entry, stdio bridge, or self-hosted entry per D136) are replaced,
+> as is the D92 part of **Amends**. Items 1–3 and 5, the platform-CLI taxonomy and
+> the durable launcher rule remain binding.
+
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
 1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
-2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
+2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, an S3-compatible object store, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
 3. Early D24 review-queue tooling (`remember review`) and spend inspection (`remember budget`) remained in the CLI entry point despite the production engine evolving to fully autonomous bitemporal adjudication (D3/D43/D107), with zero human review queues in managed cloud or public documentation.
 
 **Decision.**
-1. **Single PyPI Distribution (`remember`)**: PyPI publishes exclusively **`remember`**. `remember` contains the Python client SDK (`RememberClient`), the AI coding agent bootstrapper (`remember setup`), the Model Context Protocol server (`remember mcp`), and the unified platform CLI. It carries zero database or server dependencies (`httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` only).
-2. **Container-First Engine (`remember-stack`)**: The server engine, workers (E0–E3), Alembic migrations, and database spine are distributed exclusively via pre-built Docker images (`ghcr.io/writeitai/remember-stack:<version>`) and official Docker Compose manifests. Standalone distribution of `rememberstack` on PyPI is retired (existing package receives a terminal deprecation forwarder).
-3. **Repository Preservation**: The git repository retains its canonical name `writeitai/remember-stack`, housing the engine, client package, documentation website, and benchmarks in one repository.
+1. **Single PyPI Distribution (`remember`)**: PyPI publishes exclusively **`remember`**. `remember` contains the Python client SDK (`RememberClient`), the AI coding agent bootstrapper (`remember setup`), the Model Context Protocol server (`remember mcp`), and the unified platform CLI. It carries zero database or server dependencies (`httpx>=0.28.1`, `pydantic>=2.11`, `pydantic-settings>=2.10` only) and installs no `rememberstack` executable.
+2. **Container-First Engine (`remember-stack`)**: The server engine, workers (E0–E3), Alembic migrations, and database spine are distributed exclusively via pre-built Docker images (`ghcr.io/writeitai/remember-stack:<version>`) and official Docker Compose manifests. Standalone distribution of `rememberstack` on PyPI is retired: `0.17.0` is published once as an inactive transition forwarder, is not attached to the GitHub release, and the PyPI project is then archived without deletion or further versions.
+3. **Repository and History Preservation**: The git repository retains its canonical name `writeitai/remember-stack`, housing the engine, client package, documentation website, and benchmarks in one repository. Existing tags and releases remain unchanged historical records; new releases retain `v<version>` tags but are titled `remember <version>` and attach only canonical `remember` Python artifacts plus engine deployment inputs.
 4. **Binary Ownership & Platform CLI**: The `remember` executable is owned exclusively by the `remember` package. It unifies:
    - **Authentication & Project Context**: `remember login`, `logout`, `whoami`, `switch` (authenticating against `https://api.remember.dev`). The CLI is primarily a developer and data-plane tool. Administrative control-plane actions (`projects create`, `members list|invite`, `balance` top-up without control token) direct operators to the web console at `https://remember.dev/app/...` and exit with code 1.
    - **Data Plane**: `remember setup`, `ingest`, `query`, `operations`, `mcp`, `doctor` (defaulting to Managed Cloud with `--self-hosted` for `http://localhost:8000`).
@@ -5253,10 +5373,11 @@ D32, D43's untyped statement, D98, D100–D105.
    - **Resilient Agent Bootstrapper (`remember setup`)**: When bootstrapping agent harnesses via `uvx`, generates durable launch commands using resolved, normalized absolute launcher binaries (`Path(shutil.which(...)).resolve().as_posix()`) so configured MCP servers launch reliably across environment reboots and GUI editor spawns without PATH inheritance or relative-working-directory issues.
 5. **Retirement of Legacy Surfaces**: `review` and `budget` commands are retired from public CLI surfaces.
 
-**Consequences.** Developers and AI coding agents have a single canonical package name (`remember`) with sub-second installation and zero C-extension compilation friction; `uvx remember setup` serves as the primary universal onboarding command; self-hosters run verified Docker Compose environments; the cloud control plane (projects, balance, members) is directly manageable from the terminal; and binary collisions are eliminated. Costs: migrating existing `rememberstack` PyPI users via deprecation notice, reorganizing repository packaging, and establishing cross-image CI contract tests between client and released engine containers.
+**Consequences.** Developers and AI coding agents have a single canonical package name (`remember`) with sub-second installation and zero C-extension compilation friction; `uvx remember setup` serves as the primary universal onboarding command; self-hosters run verified Docker Compose environments; the cloud control plane (projects, balance, members) is directly manageable from the terminal; and binary collisions are eliminated. GitHub retains the full pre-cutover history without presenting the terminal package as a current choice. A mistaken unpinned install of the retired name resolves to the safe forwarder rather than the obsolete engine. Costs: one final transition upload and manual PyPI archival, reorganizing repository packaging, and establishing cross-image CI contract tests between client and released engine containers.
 
-**Rejected.** Keeping two active packages on PyPI (perpetuates consumer confusion and collision); distributing the server as a bare-metal pip wheel (leads to host compilation failures; real deployments use Docker); splitting into a separate repository (unnecessary overhead for a focused team; monorepo guarantees atomic PRs and zero contract drift); renaming the `remember-stack` repository; maintaining human review queues in public interfaces (adjudication is autonomous).
+**Rejected.** Keeping two active packages on PyPI (perpetuates consumer confusion and collision); deleting the retired PyPI project (breaks old pins and releases the trusted name to another publisher); archiving `0.16.0` without a terminal forwarder (leaves mistaken installs on obsolete engine code); distributing the server as a bare-metal pip wheel (leads to host compilation failures; real deployments use Docker); splitting into a separate repository (unnecessary overhead for a focused team; monorepo guarantees atomic PRs and zero contract drift); renaming the `remember-stack` repository; maintaining human review queues in public interfaces (adjudication is autonomous).
 
+**Analysis.** `plan/analysis/remember_release_identity_and_pypi_retirement.md`.
 **Design.** `plan/designs/unified_remember_distribution_design.md`; amendment banner on `plan/designs/packaging_distribution_design.md`.
 **Amends.** D43 (CLI entry point owned by `remember`, not `rememberstack`); D62 (replaces dual-distribution on PyPI with single client package + GHCR Docker engine); D24 (retires `review` from public surfaces; autonomous bitemporal adjudication is sole authority); D92 (structures CLI credentials into control-plane session and per-project data-plane tokens with strict audience isolation). Preserves D66, D98, D107.
 
@@ -5285,7 +5406,9 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D110. Ordered temporal writes, autonomous corrections, and certified cache/forget lifecycle
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D118 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 separates source, world and belief clocks but leaves four
 implementation gates (#365–#368). D108 subsequently makes autonomous
@@ -5338,7 +5461,9 @@ the design gates; it does not certify T.1 implementation, conversion or release.
 
 ## D111. Unknown-start states may coexist without fabricated identity or contradiction
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D118 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D107 prohibits mixed dated/undated evidence attachment and requires
 coexistence without a supported succession or contradiction. Its exclusion
@@ -5372,7 +5497,9 @@ mixed-state contract conflict; implementation and release remain separate gates.
 
 ## D112. A dated state assertion supports every compatible overlapping slice
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D118 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** A broad same-value state claim can overlap several existing disjoint
 state slices. D107 requires evidence attachment, but D110's scalar application
@@ -5408,7 +5535,9 @@ the library boundary. Implementation and release remain separate gates.
 
 ## D113. Observation applications retain original results and current assertion support
 
-**Status:** accepted when merged. **Date:** 2026-09-07.
+> **D118 supersession (effective when merged).** The temporal fact rules below are historical where superseded by [D118’s authority map](plan/designs/mutable_fact_windows_design.md#10-authority-and-supersession-map). D107 canonical arithmetic, published SQL and extraction remain in force.
+
+**Status:** superseded by D118 when that amendment merges. **Date:** 2026-09-07.
 
 **Context.** D110 requires observation inference outside locks with durable
 prepared answers and exact application. D90's disposable, version-qualified
@@ -5649,6 +5778,10 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
+**Refined by D133 and D138.** Parking applies to recognized families whose converter needs
+an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
+(D138); only a declaration the bytes contradict is refused (D132).
+
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
 **Context.** Accepting an unsupported format previously stored it and then
@@ -5685,3 +5818,748 @@ absence-based closures indefinitely.
 
 **Authority:** [E0 §3 and P3 §6](plan/designs/e0_files_design.md).
 **Analysis:** [Stored originals and conversion without a route](plan/analysis/unroutable_mime_parking.md).
+
+
+## D118. Immutable claims, mutable facts, one world-time window
+
+> Processing amendments D120–D123 clarify assertion identity, project concise
+> model inputs and add source-backed context nomination. D118's one world window,
+> ordered application and validation/forget authority remain in force.
+
+**Status:** accepted when merged; replacement runtime is not implemented by this
+amendment. **Date:** 2026-09-07.
+
+**Context.** The temporal program tried to preserve historical events and correct
+source-time leakage by adding fixed fact categories, a second evidence window,
+seed/endpoint authority and a dedicated correction/replay/cache framework. The
+unreleased implementation became large before its worker cutover was complete.
+Independent write and retrieval audits found that ordinary mutable facts and the
+existing time-query modes can meet the semantic need with less machinery.
+
+**Decision.** Each fact has one chosen world-time window with honest precision;
+claims retain their original dates and source timestamps. Ordinary contextual
+adjudication can revise dates in either direction, reopen an end, attach evidence,
+and distinguish repeated events. Fixed fact categories, date-overlap identity
+vetoes, occurrence unions, permanent seed authority, and special temporal
+correction/compensation states are removed. Date-qualified historical profiles
+and generated snapshots use existing mutation repair; they do not claim cached
+prose is a current-time filter. Retrieval explicitly selects current, overlap or
+history and distinguishes unknown dates from established matches.
+
+**Alternatives and consequences.** Keeping two windows or renaming the framework
+retains duplicate authority and deletion cost. Current-only generated prose would
+require boundary scheduling and stale-read protection; stable dated content is
+chosen instead. Atomic writes, stable application results, short transactions,
+stale-inference rejection, source provenance and hard-forget non-resurrection
+remain requirements. Relation identity must precede attachment; distinct events
+can overlap, so universal same-triple interval exclusion is removed from the
+replacement contract. Extra model use for contextual identity must be measured.
+
+**Existing stores (2026-09-11).** Stores populated before this decision are
+recreated and re-ingested, not converted in place; the migration refuses a
+database that already holds claims. The in-place conversion built during
+implementation was withdrawn as unneeded for an unreleased product
+([design §8](plan/designs/mutable_fact_windows_design.md#8-existing-stores-and-deployment)).
+Points to observe on real corpora are kept in
+[the watch list](plan/analysis/mutable_fact_windows_watch_list.md).
+
+**Authority and delivery.** [D118 design](plan/designs/mutable_fact_windows_design.md)
+contains the full concepts, semantics, alternatives, security/recovery obligations
+and explicit supersession map for D106/D107/D110–D113. [Analysis](plan/analysis/lean_mutable_fact_windows.md)
+records the inspected code and independent audits. [Delivery](plan/plans/temporal_clocks.md)
+withdraws PR #384's incompatible unshipped framework and gates replacement code
+on concrete storage, consumer and deletion contracts. Already merged canonical
+SQL, extraction vocabulary and all evaluator variants remain intact. No schema
+upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
+
+## D119. Coherent claims with multi-span evidence and version reuse
+
+**Status:** accepted by the user (2026-09-14); runtime implementation proceeds
+through a reviewed PR. No benchmark gain or shipped support is claimed here.
+
+**Context.** LoCoMo inspection found expensive over-decomposition into vague
+fragments, while one contiguous evidence anchor constrains coherent statements
+supported across passages. The user explicitly accepted multi-span claim evidence
+and required the version-reuse mechanism to remain operational for hundreds of
+small document revisions.
+
+**Decision.** Extract coherent source-supported claims without splitting every
+conjunction. The engine labels exact source passages; the model selects supplied
+references, and the engine validates their positions. Store bounded lists of
+supporting spans per source occurrence, all within one immutable document version
+and representation. Keep one target-chunk extraction owner, existing bounded
+same-section context, summaries as orientation only, and D31's two extraction calls.
+D56 must reuse the same claim IDs for unchanged extraction inputs and remap all
+evidence spans into each new occurrence. Coordinates and temporary labels are not
+reuse keys; changed supporting context invalidates reuse.
+
+**Rationale and alternatives.** Single-sentence fragments can lose referents and
+multiply downstream work. A document-wide bounding span obscures evidence;
+removing provenance weakens verification; disabling reuse multiplies extraction
+and claims across versions. A short occurrence span array meets the need without
+an evidence graph, wider context search, a new checker model or a fact redesign.
+
+**Consequences.** Exact pointers still do not prove entailment. Grounding,
+Selection accounting, occurrence reuse, media locators, forget, model/surface
+contracts and generation pins require coordinated updates and meaningful tests.
+A 500-version test is required. Existing timestamp-based invalidation remains
+explicit; no silent removal of temporal anchors is permitted. Populated stores
+follow the clean-store/refuse-upgrade policy, never automatic deletion or invented
+provenance backfills. Additional span metadata grows per retained occurrence;
+unchanged sources must not multiply claim identities or provider calls.
+
+**Authority:** [D119 design](plan/designs/multi_span_claim_extraction_design.md).
+**Evidence:** [analysis](plan/analysis/multi_span_claim_extraction.md).
+
+## D120. Clear processing prompts preserve the assertion being made
+
+**Status:** accepted 2026-09-14, binding when merged. A shared person/event is
+not a shared proposition. Processing prompts explain claims, assertions, facts,
+source times and world dates plainly, with contrasting repetition, correction,
+attribution and distinct-assertion examples. Preserve winning information when
+the candidate says only participation or enjoyment, and do not treat
+participation or enjoyment as positive evidence of an existing win. Date
+corrections revise the chosen window of a date-neutral proposition; the writer
+does not rewrite the stored statement. Keep existing writer operations; no
+semantic checker call, new temporal class or human prompt-exam ceremony. Roll
+affected inference generations and validate both false merges and unnecessary
+duplication. Confidence thresholds alone were rejected because the audited
+wrong assignment was already highly confident.
+
+**Authority:** [design](plan/designs/processing_prompt_clarity_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D121. Present concise evidence while retaining full database validation
+
+**Status:** accepted 2026-09-14, binding when merged. Deterministically project
+the prepared adjudication snapshot into complete semantic evidence with short
+attempt-local handles and factored repeated text. Translate a closed model-facing
+response through that exact attempt's typed mapping into the existing writer.
+Retain hashes, ownership and generation bookkeeping internally. Preserve witness
+membership, source distinctions, snapshot checks, source deletion and inference
+outside locks. This change adds no context-only fact payload, editable flags,
+checker, or mapping registry; D123 does not produce one. Stale replies fail
+attempt/CAS/fingerprint checks, not the handle spelling F1. A smaller evidence
+set and a model-generated summary were rejected as unnecessary correctness/cost
+risks. Measure input/schema bytes and a labeled tokenizer proxy without
+promising billed tokens or a fixed saving.
+
+**Authority:** [design](plan/designs/concise_adjudication_inputs_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D122. Share frozen source reference context between extraction chunks
+
+
+**Status:** accepted 2026-09-14, binding when merged. Extend the existing
+Selection response with exact-source-backed reference cards, freeze/reuse it,
+then run Claimify after an idempotent representation Selection barrier. Supply
+bounded preceding source context with explicit positive and negative reuse
+dependencies. This amends D119 local context, D56 reuse inputs and D84 scheduling;
+it preserves D119 occurrence spans, same-claim-ID reuse and existing entity
+resolution authority. No new extraction model call or mutable alias registry.
+A durable Selection intermediate and barrier are accepted costs. Timing-dependent
+live hints, ungrounded summary inventories and whole-document prompt lists were
+rejected; E3-only reuse would not help extraction understand distant introductions.
+
+**Authority:** [design](plan/designs/document_reference_context_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md).
+
+## D123. Use source-backed entity context to nominate fact candidates
+
+**Status:** accepted 2026-09-14, binding when merged. Existing normalization
+emits bounded generic context references; existing resolution produces immutable
+source-owned application bindings. Derive fact context from current supporting
+applications. Preserve the baseline same-subject/same-plane nomination and union
+bounded additional shared-context candidates. Context improves reach but never
+proves fact identity or absence of matches. Keep attributed subjects, dates on
+ordinary facts, profiles as derived descriptions, and D118 order/locking/forget.
+No event table/type, fact event column, profile neighborhood retrieval or extra
+model call. An event-only filter or smaller fallback was rejected without recall
+evidence. Expanded candidates can add cost; D121 supplies independent compaction.
+
+**Authority:** [design](plan/designs/contextual_fact_nomination_design.md),
+[analysis](plan/analysis/lean_processing_contracts.md),
+[delivery](plan/plans/lean_processing_delivery.md). Grouped application is only
+an [unchosen proposal](design/proposals/grouped_fact_adjudication.md).
+
+## D124. Compare local P3 and the OSS MCP surface without reprocessing
+
+**Status:** accepted 2026-09-14, binding when merged. Add an explicitly
+experimental, resumable answer-and-judge runner over one already-processed
+LoCoMo sample. Its four profiles are native Codex with local P3, native Codex
+with local P3 plus RememberStack MCP, a provider-neutral agent with the OSS MCP
+read surface, and that agent with three P3-like MCP tools. P3 is an ordinary
+local directory restored or copied through existing OSS workflows; UMC,
+RememberFS and FUSE are out of scope.
+
+Use a read-only form of the actual remote OSS MCP composition authority, and
+show models only MCP names, descriptions and input schemas. Keep canonical
+source state untouched; bind the source/runner revisions, source fingerprint
+and P3 version; pin Luna/high across answer arms and the canonical Full-v30
+judge; and label results non-publication. Only the within-runtime pairs are
+causal access comparisons. Native Codex gets the owner-selected simple
+instruction-and-audit policy rather than a hard filesystem/network boundary:
+commands and the one allowed MCP server are recorded under the eight-action
+ceiling, other action types fail, and a reviewer invalidates any command that
+writes, leaves the corpus or uses the Internet. This does not claim prompt
+instructions are a security boundary.
+
+Four fresh full protocols were rejected because repeated ingestion would
+confound the retrieval comparison. Replacing Full-v30 before evidence and
+building a managed mount/download service were also rejected. Full contract:
+[design](plan/designs/locomo_retrieval_ablation_design.md). Analysis:
+[retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).
+
+## D126. Configurable System One Jev fact adjudication engine
+
+**Status:** accepted 2026-09-17, binding when merged. Provide a dedicated,
+alternate fact adjudication engine powered by TypeSafe AI's System One model
+(`jev-latest`), selectable via the `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE`
+(or `REMEMBERSTACK_FACT_ENGINE`) environment variable (`"prompt"` vs `"jev"`).
+
+Fact adjudication reconciles staged assertions against existing candidate facts
+for the same entity. It does not synthesize new text, rewrite claims, or generate
+summaries. Using generative LLMs for this task introduces severe token inflation
+(34.5M input tokens, 97.7% of conv-42 ingestion spend), handle format
+rejections, and semantic drift (false-positive merges on shared topical context).
+The Jev engine replaces the generative chat completion step with three parallel
+`Choice` decision primitives (`match`, `stance`, `window_action`) evaluated
+over the complete prepared concise snapshot state (D121). An empty-candidate set
+short-circuits in code to `NEW` (`_sole_new_fact`) with zero network calls. The
+resulting choices translate deterministically into a canonical `PromptFactDecision`
+(with grounded claim window construction via `fact_window_from_raw` or cleared
+`FactWindow()`) and then through verified existing mapping into `FactApplicationDecision`.
+
+Per the D118 streaming single-assertion placement contract, the streaming Jev
+path emits single-assertion placements; multi-assertion updates, predecessor caps,
+and re-linking remain explicit empty tuples. Preserve existing database locking,
+compare-and-swap publication, revalidation, and idempotency contracts in
+`FactAdjudicator`. Sub-floor confidence matches (< 0.75) fail-safe to creating a
+new fact rather than performing destructive merges, aligned with `FactAdjudicator.apply()`'s
+coexist invariant; prompt fallback is strictly limited to provider network errors/5xx.
+Settings split between `FactAdjudicationSettings` (`model`, `engine` via `AliasChoices`,
+`confidence_floor`) and `TypeSafeSettings` (`REMEMBERSTACK_TYPESAFE_` prefix,
+`api_key: str | None`, `timeout_s: float = 30.0`, `extra="ignore"`), with fail-fast
+startup validation (`ConfigurationError(ValueError)`) when `engine="jev"`.
+Strict D61/D62 architectural boundary: `FactAdjudicator` depends only on `SystemOnePort`
+protocol (`ports/systemone.py`), wired at composition roots (`profiles/selfhost.py`)
+so spine never imports adapters.
+Binds distinct plane versions (`RELATION_APPLICATION_VERSION_JEV`, `OBSERVATION_APPLICATION_VERSION_JEV`)
+and attempt fingerprints (`snapshot_hash` with engine and `active_question_identity`)
+to prevent cross-engine attempt contamination. All generation identity call sites
+(`NormalizeRelationsHandler`/`AdjudicateObservationsHandler`, `FactAdjudicator.prepare` and `apply`,
+`selfhost._expected_components`, and `work_ledger` barrier/enqueue checks) read unified active version
+helpers (`active_adjudicator_versions`, `active_flush_version`). Metered on tier `fact_adjudication_jev`
+with `:jev` call key suffix and canonical `ProviderCallUsage` pricing ($0.042/1M input tokens).
+Replacing generative claim extraction or section summaries with System One was rejected
+because System One cannot generate freeform prose; placing the engine behind a Cloud
+proxy was rejected per the D60/D61 library boundary.
+
+**Authority:** [design](plan/designs/jev_adjudication_design.md),
+[analysis](plan/analysis/jev_adjudication_analysis.md).
+
+## D127. Rotate OpenRouter chat providers on overload in the core engine
+
+**Status:** accepted 2026-09-17, binding when merged. R14 dead-lettered 45/997 work
+items, and the Langfuse autopsy (full payloads, `run_tag = r14-glm-c42`) shows a single
+cause: DeepInfra 429 `engine_overloaded` on the shared OpenRouter pool. The chat seat pins
+providers with `allow_fallbacks: false` and never rotates, so adapter and work-ledger
+retries re-hit the same overloaded engine. Fix it in `adapters/openrouter.py`: an ordered chat shortlist with fallbacks (setting
+default `None`; DeepInfra → Relace → Wafer is the deployment-level GLM recommendation),
+rotation on overload signals, a dedicated throttle budget (Retry-After honor, jittered
+backoff) that does not consume work attempts, per-call serving-host recording (response
+`provider` field, else generation lookup, else targeted slug), and unconditional
+`data_collection: deny` with an opt-in ZDR flag. Routing settings stay out of
+`_model_bindings()` so `readiness.model_bindings`, `surface_manifest_hash`, and
+`protocol_fingerprint` are stable; the implementing PR asserts all three in tests.
+
+Locomo-only routing was rejected (it would fork benchmark behavior from product
+behavior), model switching on throttle was rejected (silent comparability break), and
+more parallelism was rejected (it feeds throttles). BYOK keys are the accepted ops
+complement; a first-party Z.AI adapter is a deferred follow-up. UMC consumes this via
+its pinned engine bump; per-tenant key management stays UMC-side later. Full contract:
+[design](plan/designs/openrouter_provider_rotation_design.md). Analysis:
+[inference capacity](plan/analysis/openrouter_inference_capacity_20260916.md). Evidence:
+R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
+
+## D128. GLM ingest variant of the v38 LoCoMo protocol
+
+**Status:** accepted 2026-09-17, binding when merged. Verifying the D127
+rotation fix requires rerunning the exact R14 failure mode -- GLM ingest over
+the shared OpenRouter pool -- as a scoreable protocol run, but v38 ingest pins
+Luna in a module-global map, so GLM cannot go through protocol ingest. Add the
+`full-v38-glm` (`RS-LoCoMo-Full-v38-GLM`) variant instead of a v39: same v38
+pipeline stages, component generations, prompts, tool catalog, budgets,
+embeddings, and frozen Luna answer agent and judge; only the ten ingest
+generation seats move to `z-ai/glm-5.3-flash` with reasoning effort `minimal`
+(the exact R14 model and effort pin). Ingest bindings become a per-protocol pin
+(`LoCoMoProtocol.ingest_model_bindings`, canonical map as default) and the
+runner checks readiness and pre-upload bindings against the prepared protocol,
+so a wrong-model deployment fails closed naming the expected protocol.
+Fingerprints are untouched, so existing v38 run dirs keep validating. Its
+scores are a new ingest-model family baseline, comparable only to other
+GLM-ingest runs, never to Luna-ingest v38 runs. The shard driver routes chat
+through the ordered shortlist DeepInfra → Relace → Wafer with fallbacks (the
+D127 deployment-level recommendation); pinning `CHAT_PROVIDER_ONLY` was
+rejected because a single-slug allowlist leaves rotation nowhere to advance.
+`REMEMBERSTACK_FACT_MODEL` gains a Compose passthrough (default Luna) because
+the fact-adjudication seat previously had no container-visible setting.
+Unpinning Luna silently was rejected (it would produce fake-comparable
+scores); a full v39 was rejected (a model swap is a variant per the
+Gemma-vertex/Codex-subscription precedent, not a pipeline change).
+
+**Authority:** [design](plan/designs/locomo_benchmark_design.md).
+
+## D129. Clean temporal facts and entity-first cognitive retrieval
+
+**Status:** accepted. **Date:** 2026-09-21.
+
+**Context.** Ingestion worker P1 appended a bracketed string (`[world time: ...]`) to `obs_label` and `fact_label` before saving to PostgreSQL and generating vector embeddings (`P1FactRow`). This caused severe vector embedding pollution: every undated observation (~80% of facts) contained the identical 5-token suffix `[world time: world date unknown]`, creating artificial semantic clustering among unrelated facts. Simultaneously, the answering agent prompt instructed agents to query `question_context` / claims first, bypassing entity resolution and the de-duplicated, Jev-adjudicated fact layer. In `conv-42/qa/0011` ("What is Joanna allergic to?"), all 4 allergies were present in the database, but vector top-15 truncation missed dairy because the agent did not query entity observations.
+
+**Decision.**
+1. P1 removes bracketed temporal formatting from `obs_label` and `fact_label`. In PostgreSQL and in vector embeddings, labels contain only the clean statement or relation prose.
+2. Temporal bounds (`valid_from`, `valid_until`, `valid_precision`) remain first-class typed columns in PostgreSQL and structured fields in `FactResult.validity` and `EvidenceResult`, preserving exact database column naming across the API, Python SDK, CLI, and TypeScript models.
+3. The answering agent prompt is updated to bind an entity-first, fact-first cognitive retrieval hierarchy:
+   - Resolve named entities first (`resolve_entity`) and query the fact layer (`facts_context`) for entity-anchored attributes.
+   - Query the fact layer before falling back to source passages (`claims_and_sources_context`), which is reserved for verbatim quotes or tone.
+   - Explicitly instruct the agent on temporal semantics: `valid_from`/`valid_until` denote real-world event validity ("When did X happen?"), `asserted_at` denotes conversation time (for relative expressions like "last Friday"), and `valid_precision` sets granularity without fabrication.
+
+**Alternatives and consequences.** Stripping bracketed strings at the API layer was rejected because it would leave vector embeddings polluted. Keeping claims-first retrieval was rejected because it wastes adjudicated facts and causes top-K truncation across multi-session dialogues. Bumping the fact-labeler component version ensures deterministic re-labeling and re-embedding.
+
+**Authority:** [design](plan/designs/clean_temporal_facts_and_retrieval_flow_design.md),
+[analysis](plan/analysis/clean_temporal_facts_and_retrieval_flow_analysis.md).
+
+## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
+
+**Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
+
+**Context.** Arbitrary chunk boundary cutoffs in documents and conversational transcripts frequently split multi-turn dialogues, answers to questions, or lists across chunk boundaries. When callers query `search_chunks` or `claims_and_sources_context`, relevant context from preceding or succeeding chunks often lacks search query keywords and is omitted from top-$K$ candidates. Previously, callers had no direct mechanism to read neighboring chunks for a given chunk, forcing prompt workarounds or leading to missing context (e.g. `conv-42/qa/0094`).
+
+**Decision.**
+1. Implement a first-class retrieval primitive `adjacent_chunks(chunk_id, window=1)` on `QueryEngine`.
+2. Given a target `chunk_id`, the engine looks up its `(doc_id, version_id, ordinal)` in `memory_v1.chunks_live` and queries all live chunks within `[ordinal - window, ordinal + window]` for that document version, returning hydrated chunks in document order (`ordinal ASC`).
+3. Bound `window` strictly between 1 and 2 (default 1), preventing context flooding while providing immediate preceding/succeeding dialogue turns.
+4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and originally did not mint a top-level MCP tool (D50, D83, D87). *(Superseded in part by D137: adjacent_chunks is now exposed in the shared MCP catalogue for surface parity).*
+5. Register `adjacent_chunks` in the benchmark tool catalog (expanding to 22 tools) and execution dispatch table.
+
+**Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL index `ix_chunks_doc (deployment_id, doc_id)` prefixes the lookup and per-document row counts are bounded, requiring no schema migrations.
+
+**Authority:** [design](plan/designs/adjacent_chunks_retrieval_design.md),
+[analysis](plan/analysis/adjacent_chunks_retrieval_analysis.md).
+
+## D131. Cross-turn conversational anaphora and question-affirmation resolution in claim extraction
+
+**Status:** accepted. **Date:** 2026-09-22.
+
+**Context.** In multi-turn dialogue transcripts, speakers routinely respond to questions using anaphoric demonstratives or pronouns (e.g. Nate asks "Is that your third one?" → Joanna responds "Yep! I chose to write about this because it's really personal. It's about loss, identity, and connection."). In core extraction (D31/D119), Selection drops the question (drop_question) because it is not an assertion. However, Claimify lacked explicit instructions for cross-turn question-affirmations. Fearing that replacing "this" with "her third screenplay" would be rejected as unverified context, models defaulted to generic nouns ("a story"), completely dropping the ordinal ("third") and work kind ("screenplay"). This caused severe downstream failure (e.g. conv-42/qa/0094): the third screenplay was never cataloged as an entity in E3, the observation lacked identifying keywords, and semantic search surfaced facts about Joanna's second screenplay instead.
+
+**Decision.**
+1. Update `_CLAIMIFY_PROMPT` in `workers/e2.py` with explicit, binding instructions for cross-turn conversational anaphora and question-affirmation resolution:
+   - Unambiguous affirmative commitment: When an utterance affirmatively commits to the premise of a preceding question or dialogue turn, the affirmative response confirms the referent from the question.
+   - Multi-hop resolution: Demonstratives and pronouns ("this", "that", "it", "one") must resolve across multi-hop referential chains established within the supplied bundle (e.g. "this" → "third one" → "screenplay" = "her third screenplay"), rather than degrading into a vague generic noun ("a story").
+   - Negative and hedging boundaries: If the speaker negates, deflects, or expresses uncertainty, the model must not bind the question's premise as true. On explicit correction ("No, my fourth"), the model extracts the speaker's corrected assertion ("her fourth screenplay"). On ambiguous or competing referents, omit the candidate per D31.
+2. Require standalone completeness: standalone claims must preserve specific entity names, ordinal numbers, and qualifiers ("third screenplay", "second marathon"), ensuring semantic search and entity resolution distinguish between different works and milestones. Never drop an established ordinal or specific noun in favor of a vague generalization.
+3. Source references (`source_refs`) must cite the complete evidence chain (origin turn, preceding question turn, and work kind origin) establishing the antecedent.
+4. Token grounding invariants under D32/D119: antecedent text occurring in the target chunk or cited passages is grounded source context and passes deterministic layer-2 token verification (`_failed_added_context_tokens`) without triggering `ADDED_CONTEXT_UNVERIFIED`. The `source_kind` tag is advisory. Semantic validity is guarded by layer-3 entailment self-verdicts and layer-4 audits.
+5. Invalidate component generation (D56): bump `E2_EXTRACTOR_VERSION` (appending `:d131-anaphora-1`) in `workers/e1.py` so that re-ingestion does not reuse stale, generic claims.
+
+**Alternatives and consequences.** Relaxing Selection to keep questions was rejected because interrogatives are not factual assertions and would pollute the claim catalog. Query-time resolution was rejected because it violates D1/D48 and cannot repair top-K truncation when the stored observation lacks keywords. A dedicated E1 dialogue-rewriting pass was rejected due to added latency, cost, and loss of verbatim character offsets. The change adds zero extra LLM calls, zero schema migrations, and minimal prompt token overhead (~110–130 tokens).
+
+**Authority:** [design](plan/designs/cross_turn_conversational_anaphora_extraction_design.md),
+[analysis](plan/analysis/cross_turn_conversational_anaphora_analysis.md).
+
+## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
+
+**Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
+locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
+profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
+entirely** — `data_query` and container expansion are not part of the system; their reviewed
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`). D138 also
+replaces item 1's "turn families off": deployments add or override routes, and every file is
+stored.
+
+**Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
+PR #452, which this decision builds on.)
+
+**Context.** Out of the box the engine converts two formats (text, Markdown).
+Routes are an exact lookup on the declared MIME in a table each deployment must
+rebuild by hand, and configuring one route replaces the defaults. The office/HTML
+converter is the thinnest and emits no source map, and the parser extras it needs
+are not installed. The pipeline assumes every file is prose to extract claims
+from, which is wrong for structured data: row-by-row extraction scales model cost
+with rows and still cannot answer aggregations. Containers (archives, email with
+attachments, mailboxes, message exports, documents with embedded images) have no
+way to become several documents.
+
+**Decision.**
+1. An engine-shipped **format registry** maps each format family to detection,
+   canonical MIME types, a **posture**, a converter, provider requirements, a size
+   limit and an opaque cost-class label; one registry-wide alias table maps
+   non-canonical MIME spellings, and originals keep D132's storage-class rule.
+   Deployments overlay it (turn families off, configure providers, lower limits);
+   they never replace it. Detection is byte-first in a fixed precedence (D132's
+   binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
+   then deterministic structural tests on text). **This refines D132's text-flavour
+   rule:** JSON, NDJSON, delimited and log text route to their own families when
+   their structural test passes. A family needing an unconfigured provider parks
+   (D117); a disabled family is refused.
+2. Four postures: **full** (complete reading), **profile** (a description of a data
+   file — overview, structure, identifying values, formulas — never its rows),
+   **expand** (members become child documents routed on their own), and **card**
+   (a deterministic file card for recognized formats with no reading). Structured
+   families are read fully only within hard bounds (200 rows, 20,000 characters).
+3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
+   structure searchable but not claim-extracted. Converters must change eligibility
+   only at block boundaries (validated at conversion); E1 forces a chunk boundary
+   there and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as normalized Parquet in a new **private store** (a
+   third object-store root no mount, P3 or `hydrate` reads), and a new direct
+   primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
+   inside a worker process with no network, OS resource limits, a staged read-only
+   input directory, a separate scratch directory, disabled external access and
+   extensions, and a parent-enforced wall time; a platform that cannot sandbox it
+   answers with a typed `boundary`. It returns its own `DataQueryResult/v1` and is
+   exposed on MCP beside `source_open`.
+5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
+   ordinary E0 lineages keyed by a content- or identifier-based member key (never a
+   position), linked by mutable member records; the parent's immutable
+   representation lists members by stable handle and does not wait for them. A
+   container and its members count as one source (`counting_lineage_id`, refining
+   D54). Delete and hard forget act on the uploaded document and cover every member
+   expanded from it; a member is never deleted or forgotten on its own (refining
+   D74). Bounds apply to the whole tree.
+6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. D133 binds the framework, not individual formats. The family table is the
+   target coverage. **Each family is delivered one at a time through its own
+   family design, implementation and test suite** (fixtures, detection, golden
+   rendering, source map, failures, end-to-end retrieval, performance), and is
+   supported only when all three are merged; until then its uploads are stored
+   and parked (D117).
+
+**Alternatives and consequences.** Full-row extraction for structured data,
+loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
+query dialects, in-process DuckDB relying on its settings alone, a separate
+conversation-ingest path, and OCR-provider captions instead of image children were
+rejected (analysis §6–§7). Normalized Parquet stores data a second time. The log
+event digest is a documented alternative with an adoption trigger.
+
+**Authority:** [design](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
+[delivery order](plan/plans/format_coverage_delivery.md).
+
+## D134. General document metadata, document search, and self-references that name the document
+
+**Status:** accepted. **Date:** 2026-09-24.
+
+**Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
+who and when ("emails from Alice"), and for information limited to certain
+files ("everything about Project X from Alice's emails"). Every derived record
+already links to its document, but nothing about a document — author,
+recipients, dates, title — is stored in a filterable form, `GET /documents`
+only pages by status, retrieval has no document search or document filters,
+and a claim like "this report summarizes the 2025 audit" does not say which
+report.
+
+**Decision.**
+1. **General document metadata.** Every version gets the same fields whatever
+   its format — `file_name`, `title`, `authors`, `recipients` (people as name
+   plus address or handle), `created_at`, `modified_at`, `language`,
+   `thread_ref`, `family` — with per-field provenance (source or connector),
+   plus every name a version was observed under (`document_names`), so renames
+   are searchable.
+   Each family design maps its native fields onto them (an email's From is
+   `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
+   `document_metadata` and `document_people`.
+2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
+   MCP: results are documents judged by their current version (or any live
+   version on request), filtered on the general fields, with a query matched
+   on names (file name, title, source path) and content (the document's best
+   `chunk_search` hit — no new search index), and carrying the judged
+   version's metadata and access handles. Ambiguous people matches are listed.
+3. **Document filters on `search`** for chunks, claims (through their live
+   occurrences, refining D80's origin-chunk join so reused claims are tested
+   per version) and facts (through supporting claims), applied before the
+   top-k cut. Only live versions match.
+4. **Self-references name the document.** When a passage refers to its own
+   document, Claimify writes the title (else file name) from the extraction
+   header, which gains the file name (and the extraction reuse key with it),
+   and returns the exact inserted name; the gate stores its span on the claim
+   only when it is one of the document's names, occurs once, and came from the
+   header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips only the reference
+   whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
+   merge while a person who shares a document's title still resolves. The
+   unused D18-era `documents.document_entity_id` bridge is not used and is removed
+   in a separate cleanup.
+
+**Alternatives and consequences.** Making documents entities bound to their
+lineage (the first D134 draft) was rejected as heavier than the questions
+require and kept as a proposal with an adoption trigger. Per-family metadata
+only, metadata only as Markdown text, appending the file name to every claim,
+and resolving file names as entities were rejected (design §7). Metadata values
+are what sources declare, not verified facts.
+
+**Authority:** [design](plan/designs/document_metadata_and_search_design.md),
+[proposal not chosen](plan/proposals/document_subject_entities.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.
+
+## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
+
+**Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
+removed container expansion, so deletion stays exactly as written here.
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** D55 and the evidence-lifecycle design §8 always defined deleting a document —
+its claims stop being current testimony, support is recounted, and facts only it supported
+close with a recorded `retracted_source_removal` — and the engine implemented it
+(`LifecycleCatalog`, `DeletionService`), but no public surface could call it. Exposing it
+raised questions the internal service never answered: a repeated or interrupted delete,
+pipeline work still running for the document, the same file ingested again afterwards
+(which returned a live document that contributed nothing), who may delete, and whether it
+is charged. Analysis: `plan/analysis/public_document_deletion.md`.
+
+**Decision.**
+1. Lineage deletion is a public write: `DELETE /documents/{doc_id}` returning
+   `DocumentDeletion` (`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
+   `observations_closed`), `MemoryClient.delete_document`, `remember documents delete`, and a
+   `delete_document` MCP tool omitted by `--read-only`. `MemoryClient.list_documents` and
+   `remember documents list` read the existing `GET /documents`.
+2. It requires full write scope, runs behind the D74 admission barrier, and is not
+   spend-gated. Its only provider call — re-embedding entity profiles whose facts changed —
+   is metered on the surface cost ledger (`profile_delete`) and is best effort.
+3. **One fenced, atomic episode; finish or refuse.** The tombstone and the whole cascade
+   commit in one transaction that holds the D74 hard-forget fence (shared advisory lock)
+   from start to commit: a forget already preparing refuses the delete
+   (`forget_in_progress`, 503) before any change, a forget requested mid-delete waits for
+   it, and a concurrent re-ingest of the lineage waits on the lineage row. The cascade
+   retires only testimony no live version carries. Each episode has its own run id, derived
+   from the lineage and its tombstone instant (stable for a repeat, new after a re-add), so
+   every episode gets its own ledger rows and `evidence_changed` event. An unknown id is
+   `document_not_found` (404). For a lineage already tombstoned by another path, the cascade
+   reruns; if nothing changes the answer is `document_not_found`, otherwise the call
+   finishes it and answers 200.
+4. Lineage deletion (operator or source-observed) tombstones every version with the
+   lineage. Returning bytes are a new version processed afresh; D56 reuse never draws on a
+   deleted version (refines D55). Source-observed deletions clear T4 anchors with the
+   tombstone and are finalized per episode against their deleted versions: an episode is
+   pending while a claim no live version carries is current, under an open support
+   review, or evidencing an open zero-support fact; one lineage-locked transaction and one
+   run id per episode, so a recreate before finalization neither strands the old testimony
+   nor loses the new.
+5. Claim publication refuses a deleted version as well as a deleted lineage. Fact work
+   that lands after a delete is retired at the reconcile stage through the same cascade,
+   recounting and closing every fact the deleted testimony touches; T4 anchors are cleared
+   for a deleted lineage and rebuilt from live testimony for a re-added one (D102). The
+   chain ends there.
+6. A `support_withdrawn` review on a claim no live version carries is closed as
+   `auto_resolved` by the deletion, so it no longer holds the fact open, and
+   `restore_support` refuses a claim of a deleted document or one only deleted versions
+   carry; a verdict locks the claim's lineage and versions (shared, deletion's order)
+   before checking, so it cannot race a deletion.
+7. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
+   operations.
+
+**Alternatives and consequences.** Idempotent 200 for every repeat hides a wrong id;
+plain 404 strands an interrupted cascade. Refusing deletion while work is pending leaves
+stuck documents undeletable; cancelling work needs a ledger state no stage has. Refusing
+re-ingest breaks delete-then-re-add; undelete would need a fact-reopening outcome and
+revives testimony the person removed. Deletion stays auditable, and adding the document
+again restores its contribution as new testimony; it is not erasure — stored originals
+and retired claims remain, and D74 is the only erasure. Queued extraction for a deleted
+document still runs once. The library boundary (D60/D61) is unchanged: deletion is fully
+in the engine.
+
+**Authority:** [design §8](plan/designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly),
+[analysis](plan/analysis/public_document_deletion.md).
+
+## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
+
+**Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
+
+**Context.** On 2026-09-23 the owner approved one credential for every client
+surface of remember.dev — a signed key covering one or more projects with the
+permissions `memory:read`, `memory:write`, `account:read`, `account:manage` —
+one hosted MCP endpoint, and one set of memory tools defined once in the
+open-source `remember` package. The engine side needed answers the old corpus
+contradicted: tool definitions lived in three places here and were copied by
+hand into the hosted server (which shipped stale names and still lacks the
+SQL tools and most `ingest` arguments); `remember mcp` was stdio-only and could
+only call an engine directly; the perimeter accepted signed tokens only with
+exactly one audience and an engine-specific `scope` claim; `remember login`
+chose between deployment and control tokens against a hard-coded
+`https://api.remember.dev` that is not a live host; and the SDK read
+`REMEMBER_API_KEY` while the CLI ignored it.
+
+**Decision.**
+1. **One catalogue.** `remember.mcp_tools` is the public, versioned module
+   that defines every memory tool (`ingest`, `pipeline_readiness`,
+   `delete_document`, the four assured operations, `source_open`, the seven SQL tools):
+   names, descriptions, input schemas, validation, error envelopes, required
+   permission, and a per-tool version. Every MCP host imports it; the engine
+   registry generates `GET /operations`' agent-facing fields from it; each
+   deployment advertises the tool versions it serves in `GET /deployment`, and
+   hosts render a tool only at an equal version.
+2. **`project` is host-resolved routing.** The catalogue defines one optional
+   `project` argument that hosts serving several deployments add and strip
+   before calling one. The engine API and `remember mcp` (which serves one
+   engine) refuse it.
+3. **`remember mcp`** has an engine mode (stdio, and Streamable HTTP that
+   forwards each caller's bearer to the engine) and a bridge mode that relays
+   stdio to any remote MCP URL with a bearer key. A stored key is attached only to the
+   issuer-advertised `remember_mcp_endpoint` origin; `--read-only` passes only
+   tools annotated `readOnlyHint: true`. `remember setup` writes a remote entry
+   (OAuth, or a key header by variable reference) where the harness supports
+   it, a stdio bridge otherwise, and a self-hosted entry for local engines.
+4. **Perimeter contract.** The signed-credential adapter requires a
+   configured issuer and complete claim sets per `kind`. A bearer is
+   `<letters>_<JWS>` (remember.dev: `rmb_`) so secret scanners can catch leaked
+   keys; the engine strips the prefix when the token does not start with `eyJ`. A `key` must carry
+   `aud = org:<tenant>` and `org = <tenant>` (the deployment's configured
+   issuer-tenant id) and `projects` of `"org:*"` or at most 20 project ids
+   including this one; a derived `session` credential must carry `aud` = this
+   deployment's id and `projects` = exactly this project; any other `aud`
+   (such as a hosted-MCP OAuth token's) is refused. It maps `memory:read` → read,
+   `memory:write` → write (ingest included), `memory:ingest` → ingest only,
+   ignores non-memory permissions, refuses unknown memory permissions,
+   records a credential `kind` for audit, and takes revocation only as a
+   signed document whose `aud` is this deployment, with a sequence that
+   advances on every issued document including the heartbeat every R (lower
+   sequences rejected, last sequence persisted, the first validly signed
+   document accepted, later ones signed by a key active in the previous one),
+   with `exp = iat + S`, and whose `active_kids` list retires signing-key
+   generations. Without a fresh accepted document (at first start, or once
+   it is older than S) every signed credential is refused; a revoked key
+   stops working by r + S + leeway. S is one hour (R = 60 s), so a short
+   account-service outage does not take every data plane down.
+   The `service` credential kind (`dpcred:` subject) remains part of the
+   generic contract. The perimeter enforces per-key and per-deployment rate
+   and in-flight limits on the direct path (`429` with `Retry-After`),
+   counted in process per API replica.
+5. **Clients.** One resolver gives the SDK and CLI identical environment
+   precedence (`REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`,
+   `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`, `REMEMBER_CONFIG_DIR`; older aliases
+   removed), and both read the stored credential file after the environment;
+   a stored key is only ever sent to its issuer, its advertised MCP endpoint,
+   its recorded URL or an issuer-resolved deployment. `CloudClient` is
+   removed; account calls are a namespace of `remember.Client` calling the
+   issuer's account API. A signed key resolves its data-plane host from the
+   issuer's project endpoint (`{project, name, api_url}`), cached with a bounded lifetime and
+   re-resolved when a deployment moves. Re-login journals the old key durably,
+   then mints and persists the new key, then revokes the old one from the
+   journal. Issuer metadata also
+   names the account API (`remember_account_endpoint`).
+   `remember login` runs the standard device grant discovered from the
+   issuer's OAuth metadata and stores one key (`credentials.json` version 2).
+
+**Why.** Shared import is the only arrangement under which a separately
+deployed host cannot drift. Resolving routing in hosts and verifying keys at
+the engine against operator-configured issuer, keys and audiences meets
+remember.dev's needs through the existing D61 auth-perimeter port without the
+engine learning organisations, members or billing (D60, CLAUDE.md Rule 3).
+The bridge keeps the one key usable by harnesses that only run local servers.
+
+**Consequences.** A leaked multi-project key is valid at several deployments
+until revoked, which the old strict single audience prevented; revocation is
+therefore signed, sequenced, audience-bound and bounded in age. A host may carry
+memory traffic to the engine (the hosted MCP path); the engine treats it like any
+other caller holding a credential. Public docs change when the behaviour ships.
+
+**Simplicity.** Left out as unnecessary machinery: local multi-target
+routing, per-tool compatibility ranges, prefix configuration, inline key-set or
+revocation configuration, bridge path-ingest rewriting, and routing hints
+inside keys.
+
+**Rejected.** Per-host copies with contract tests; hosts rendering from
+`GET /operations`; the engine accepting `project`; one MCP connection per
+project; key-for-token exchange in the SDK; `remember mcp` holding its own
+credential behind the HTTP transport; keeping environment aliases.
+
+**Supersedes.** D92 in part (explicit token host, credential file shape, CLI-only file, revoke-before-replace re-login);
+D108 item 4's authentication, credential-separation and `setup` default
+clauses and its amendment of D92; the metering design's §6 login contract;
+the distribution design's §3.1/§3.4/§4 credential text. Cloud-side
+supersessions are recorded in the companion cloud design. *(Amended in part by D137:
+adjacent_chunks is added to remember.mcp_tools as an exposed read tool).*
+
+**Authority:** [design](plan/designs/one_key_client_surfaces_design.md),
+[analysis](plan/analysis/one_key_client_surfaces_analysis.md). Companion:
+the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
+`design/one-key-one-mcp`).
+
+---
+
+## D137. Conversational section integrity and MCP adjacent_chunks parity
+
+**Status:** accepted. **Date:** 2026-09-25.
+
+**Context.** In multi-turn conversational transcripts and dialogue-heavy documents, two structural fractures impaired recall:
+1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
+2. **MCP catalogue surface parity:** While `adjacent_chunks` was implemented across the HTTP API, SDK, CLI, and benchmark harness in D130, D130 excluded it from the shared MCP catalogue (`remember.mcp_tools`, D136) on the grounds that raw primitives should not mint top-level MCP tools. However, in practice coding agents connecting via MCP had no capability to expand dialogue context around a retrieved chunk, creating an artificial capability gap between MCP agents and SDK/CLI callers.
+
+**Decision.**
+1. **Deterministic run-merging of single-block leaf sections in fallback skeletons (`structure_skeleton.py`):**
+   - In `resolve_fallback_skeleton()`, identify runs of contiguous single-block leaf sections (sections with `block_start == block_end` and no child subsections).
+   - If a run is followed by an immediate next leaf section without subsections, the run is merged forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`.
+   - In all cases, the merged section is titled by the proposal at `run_start` (its first block), so title, heading level, and starting position remain aligned without in-place mutation.
+   - Sections with subsections are never absorbed and never absorb single-block runs, preserving hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+2. **Fallback prompt guidance (`e0.py`):**
+   - Update `_FALLBACK_PROMPT` to explicitly instruct models that individual conversational turns, rhetorical questions, and brief remarks must not form section headings. Section anchors must represent substantive topic shifts or document sections.
+3. **Skeleton cache invalidation (`e0.py`):**
+   - Bump `E0_SKELETON_VERSION` to `:anchor-v3-depth{MAX_FALLBACK_DEPTH}` and `E0_STRUCTURE_VERSION` to `e0-structure-2026.07h:d79-wave2`. This guarantees that existing documents re-structure under the new integrity rules upon re-ingestion or rebuild.
+4. **First-class MCP tool parity for `adjacent_chunks` (`remember.mcp_tools`, `mcp.py`, `http_api.py`):**
+   - Add `adjacent_chunks` as an exposed read tool in `remember.mcp_tools._definitions.py` with `permission="memory:read"`, `tool_version=1`, `http_route="GET /chunks/{chunk_id}/adjacent"`, and description referencing neighbouring chunks.
+   - Keep `OPERATION_TOOL_NAMES` strictly to the four assured operations (`resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`) to preserve the D50 contract with `AssuredOperationRegistry`.
+   - Expose `adjacent_chunks` in `OperationMcpServer` and `EngineMcpServer` `list_tools()` and dispatch tables.
+   - In `http_api._served_tools`, advertise `adjacent_chunks` whenever operations are composed.
+
+**Consequences.**
+- Question turns and answer turns in dialogue transcripts now usually share the same section in E0 (bounded by non-contiguous section boundaries per Cost 3), allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
+- Re-ingesting existing documents updates their skeleton cache keys via `anchor-v3`.
+- Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
+- Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
+
+**Costs and boundaries.**
+1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE` title. Hierarchy protection relies on the model emitting subsections.
+2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
+
+**Supersedes.**
+- D130 item 4 in part: supersedes the restriction that `adjacent_chunks` does not mint an MCP tool.
+- D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
+
+**Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+
+## D138. Coding-agent-first ingestion of workspace formats
+
+**Status:** accepted. **Date:** 2026-09-27.
+
+**Context.** D133 bound the format framework but left each family to its own design. A matched
+Workspace-Bench run must ingest whole professional workspaces: 23,268 files across 89 extensions,
+dominated by spreadsheets, PDFs, office documents, code and config. The readers of the result are
+coding agents that open files and compute on them.
+
+**Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
+what the file is, where it is and how it is shaped. One shipped registry routes 20 families by
+extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
+declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
+full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
+delimited files and statistical datasets always get a deterministic, search-only profile
+(structure, types from a 5-row head sample, defined names), never their rows and never a model
+call. Text over 1 MB gets a head/tail profile. Images (without configured providers), media,
+archives (with a bounded member listing) and unknown bytes get cards; oversized files are stored
+and carded. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+Deployment route settings overlay the registry instead of replacing it.
+
+**Alternatives and consequences.** Rendering everything through markitdown, skipping files the
+tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
+(analysis §7). `data_query` and container expansion leave the system; their reviewed designs are
+proposals with adoption triggers. LibreOffice adds
+several hundred megabytes to the engine image.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).

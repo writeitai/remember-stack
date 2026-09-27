@@ -22,11 +22,15 @@ def main() -> None:
     _validate_semver(version=version)
     _validate_compose_pin(root=root, version=version)
     _validate_release_docs(root=root, version=version)
-    _validate_postgres_release(root=root)
+    _validate_postgres_release(root=root, version=version)
+    _validate_engine_image_release(root=root)
     _validate_terminal_package_release(root=root)
     if arguments.tag is not None:
         _validate_tag(tag=arguments.tag, version=version)
-    print(f"release contract valid for RememberStack {version}")
+    if arguments.print_version:
+        print(version)
+    else:
+        print(f"release contract valid for RememberStack {version}")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -35,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--tag",
         help="release tag to compare with the package version, for example v0.1.0",
+    )
+    parser.add_argument(
+        "--print-version",
+        action="store_true",
+        help="print only the validated package version",
     )
     return parser
 
@@ -87,21 +96,17 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
         Path("README.md"): (
             f"[v{version}](https://github.com/writeitai/remember-stack/releases/tag/v{version})",
         ),
-        Path("website/src/app/docs/getting-started/page.mdx"): (image,),
-        Path("website/src/app/docs/deployment/page.mdx"): (
-            f"`v{version}` release",
-            image,
+        Path("website/src/app/docs/start/quickstart/page.mdx"): (
+            f"releases/tag/v{version}",
+            f"remember/{version}/",
         ),
+        Path("website/src/app/docs/self-hosting/install/page.mdx"): (image,),
+        Path("website/src/app/docs/self-hosting/requirements/page.mdx"): (image,),
         Path("website/src/app/docs/reference/cli/page.mdx"): (
             f"`remember` CLI (v{version}",
         ),
-        Path("website/src/app/docs/reference/api/page.mdx"): (
-            f"Release v{version} and later",
+        Path("website/src/app/docs/reference/http-api/page.mdx"): (
             f"releases/download/v{version}/openapi.json",
-        ),
-        Path("website/src/app/docs/project-status/page.mdx"): (
-            f"releases/tag/v{version}",
-            f"remember/{version}/",
         ),
     }
     for relative_path, expected_markers in markers.items():
@@ -113,7 +118,7 @@ def _validate_release_docs(*, root: Path, version: str) -> None:
                 )
 
 
-def _validate_postgres_release(*, root: Path) -> None:
+def _validate_postgres_release(*, root: Path, version: str) -> None:
     """Bind Compose to the multi-architecture immutable image publisher."""
     dockerfile = (root / "Dockerfile.postgres").read_text(encoding="utf-8")
     base = next(
@@ -127,9 +132,10 @@ def _validate_postgres_release(*, root: Path) -> None:
     if base is None:
         raise ValueError("Dockerfile.postgres must pin a PostgreSQL 19 source marker")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
-    if f"image: rememberstack-postgres:{base}" not in compose:
+    if f"image: {_IMAGE}-postgres:{base}-{version}" not in compose:
         raise ValueError(
-            "Compose PostgreSQL source marker must match Dockerfile.postgres"
+            "Compose must name the published PostgreSQL image "
+            f"{_IMAGE}-postgres:{base}-{version}"
         )
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
@@ -137,8 +143,10 @@ def _validate_postgres_release(*, root: Path) -> None:
     for required in (
         "file: Dockerfile.postgres",
         "platforms: linux/amd64,linux/arm64",
-        f"pattern={base}-{{{{version}}}}",
+        f"type=raw,value={base}-${{{{ needs.prepare.outputs.version }}}}",
         "postgres-image-digests.json",
+        "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
+        "docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2",
     ):
         if required not in workflow:
             raise ValueError(
@@ -146,8 +154,37 @@ def _validate_postgres_release(*, root: Path) -> None:
             )
 
 
+def _validate_engine_image_release(*, root: Path) -> None:
+    """Require the API/worker image to publish for both supported architectures."""
+    workflow = (root / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+    start, end = "\n  publish-ghcr:\n", "\n  publish-postgres-ghcr:\n"
+    if start not in workflow or end not in workflow:
+        raise ValueError("release workflow must keep the publish-ghcr job")
+    job = workflow.split(start, maxsplit=1)[1].split(end, maxsplit=1)[0]
+    for required in (
+        "platforms: linux/amd64,linux/arm64",
+        "docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf",
+        'sort == ["amd64", "arm64"]',
+        "for platform in linux/amd64 linux/arm64; do",
+    ):
+        if required not in job:
+            raise ValueError(
+                f"release workflow is missing engine image contract {required!r}"
+            )
+
+
 def _validate_terminal_package_release(*, root: Path) -> None:
-    """Validate that the terminal transition package is one-time gated on v0.17.0 (D108)."""
+    """Validate the one-time, non-public transition package contract (D108)."""
+    with (root / "pyproject.toml").open("rb") as pyproject:
+        canonical_document = tomllib.load(pyproject)
+    canonical_scripts = canonical_document.get("project", {}).get("scripts", {})
+    if "rememberstack" in canonical_scripts:
+        raise ValueError(
+            "the canonical remember distribution must not install a rememberstack command"
+        )
+
     terminal_pyproject = root / "packages" / "rememberstack" / "pyproject.toml"
     if not terminal_pyproject.is_file():
         raise ValueError(f"missing terminal package manifest: {terminal_pyproject}")
@@ -161,20 +198,35 @@ def _validate_terminal_package_release(*, root: Path) -> None:
         )
     deps = project.get("dependencies", [])
     if "remember>=0.17.0" not in deps:
-        raise ValueError(
-            "packages/rememberstack must depend on 'remember>=0.17.0'"
-        )
+        raise ValueError("packages/rememberstack must depend on 'remember>=0.17.0'")
+    classifiers = project.get("classifiers", [])
+    if "Development Status :: 7 - Inactive" not in classifiers:
+        raise ValueError("packages/rememberstack must be marked inactive")
 
     workflow = (root / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
-    if 'if [ "${GITHUB_REF_NAME}" = "v0.17.0" ]; then' not in workflow:
+    if 'if [ "${{ needs.prepare.outputs.tag }}" = "v0.17.0" ]; then' not in workflow:
         raise ValueError(
             "release workflow must gate packages/rememberstack build strictly on v0.17.0"
         )
     if "skip-existing: true" not in workflow:
         raise ValueError(
             "release workflow publish-pypi step must set skip-existing: true"
+        )
+    for required in (
+        "name: remember ${{ needs.prepare.outputs.version }}",
+        "dist/remember-*",
+        "fail_on_unmatched_files: true",
+    ):
+        if required not in workflow:
+            raise ValueError(
+                f"release workflow is missing canonical remember presentation {required!r}"
+            )
+    github_release = workflow.split("github-release:", maxsplit=1)[1]
+    if "dist/*" in github_release or "dist/rememberstack" in github_release:
+        raise ValueError(
+            "GitHub releases must not expose the terminal rememberstack distribution"
         )
 
 

@@ -23,14 +23,16 @@ from rememberstack.model import PackedChunk
 from rememberstack.model import SectionSpan
 
 CHUNKER_VERSION: Final = (
-    "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs"
-    ":blockizer-heading-metadata"
+    "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs"
+    ":blockizer-heading-metadata:eligibility-cuts"
 )
 """Pins packing plus its blockizer-contract generation.
 
-The ``07c`` bump follows D12/D57 because ``blocks.json`` gained D79 heading
-metadata. Packing behavior and emitted chunk-grid bytes are unchanged from
-``e1-chunker-2026.07b:whitespace-tokens:anchored:owner-runs``.
+The ``07c`` bump followed D12/D57 because ``blocks.json`` gained D79 heading
+metadata. ``09a`` adds the D133 §4.5 eligibility cut: a chunk boundary is
+forced wherever extraction eligibility changes between blocks, and each chunk
+records its eligibility. Documents whose blocks are all eligible pack exactly
+as under ``e1-chunker-2026.07c``.
 """
 
 
@@ -67,6 +69,7 @@ def pack_blocks(
     sections: tuple[SectionSpan, ...],
     document_md: str,
     params: ChunkerParams,
+    ineligible_ordinals: frozenset[int] | None = None,
 ) -> tuple[PackedChunk, ...]:
     """Pack the block grid into chunks, deepest-owner run by run.
 
@@ -80,9 +83,13 @@ def pack_blocks(
     blocks accumulate greedily to the token budget; a chunk boundary is
     forced before every anchor block, and a block that alone exceeds the
     budget ships as its own oversized chunk. Sections are never crossed
-    (§3 makes the partition well-defined).
+    (§3 makes the partition well-defined). A boundary is also forced where
+    extraction eligibility changes (``ineligible_ordinals`` names the blocks
+    the eligibility policy excludes), so every chunk is wholly eligible or
+    wholly ineligible (D133 §4.5).
     """
     chunks: list[PackedChunk] = []
+    ineligible = ineligible_ordinals or frozenset()
     for section, run_start, run_end in _owner_runs(sections=sections):
         run_blocks = tuple(
             block for block in blocks if run_start <= block.ordinal <= run_end
@@ -94,6 +101,7 @@ def pack_blocks(
                 document_md=document_md,
                 params=params,
                 first_ordinal=len(chunks),
+                ineligible=ineligible,
             )
         )
     return tuple(chunks)
@@ -141,9 +149,12 @@ def extraction_input_hash(
     """The D56 reuse key: stable inputs of the E2 bundle, no LLM output.
 
     Own blocks + neighbor blocks + deterministic document metadata + the
-    extractor and structurer versions. Prefixes, summaries, and section paths
-    are carried forward on reuse, never keyed — so an unchanged key within a
-    lineage means the prior claims are re-attached instead of re-extracted.
+    extractor and structurer versions. ``neighbor_block_hashes`` is the
+    previous-then-next pair, using an empty string for an absent same-section
+    neighbour so previous-only text cannot hash the same as next-only text.
+    Prefixes, summaries, and section paths are carried forward on reuse,
+    never keyed — so an unchanged key within a lineage means the prior
+    claims are re-attached instead of re-extracted.
     """
     payload = "\x1e".join(
         (
@@ -174,6 +185,7 @@ def _pack_section(
     document_md: str,
     params: ChunkerParams,
     first_ordinal: int,
+    ineligible: frozenset[int],
 ) -> tuple[PackedChunk, ...]:
     """Pack one section's blocks; boundaries never leave the section."""
     chunks: list[PackedChunk] = []
@@ -198,6 +210,7 @@ def _pack_section(
                     block_hashes=tuple(block.block_hash for block in run_blocks)
                 ),
                 token_count=run_tokens,
+                extraction_eligible=run_blocks[0].ordinal not in ineligible,
             )
         )
         run = []
@@ -209,6 +222,8 @@ def _pack_section(
             is_anchor(block_hash=block.block_hash, params=params)
             and tokens_since_anchor >= params.anchor_min_gap_tokens
         )
+        if run and (run[0][0].ordinal in ineligible) != (block.ordinal in ineligible):
+            flush()  # eligibility changes: a chunk is wholly one or the other
         if anchored:
             flush()  # packing after an anchor is independent of everything before
             tokens_since_anchor = 0

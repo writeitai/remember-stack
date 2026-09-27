@@ -212,8 +212,8 @@ def test_only_memory_arm_receives_instruction_and_mcp_allowlist() -> None:
     memory_prompt = compose_prompt(task_prompt=prompt, arm=memory)
     assert memory_prompt.endswith(prompt)
     assert "augmentation" in memory_prompt
-    assert "`combined_context` returns `ContextBundle/v2`" in memory_prompt
-    assert "`claims_and_sources` and `facts` child envelopes" in memory_prompt
+    assert "`search_documents`" in memory_prompt
+    assert "`source_path`" in memory_prompt
     assert "`testimony_context`" not in memory_prompt
     assert "`fact_context`" not in memory_prompt
     assert "`answer_context`" not in memory_prompt

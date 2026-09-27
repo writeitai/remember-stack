@@ -24,12 +24,19 @@ Endpoint shape (retrieved 2026-09-04 from
 https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/call-open-model-apis):
 ``POST https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT}/locations/{LOCATION}/endpoints/openapi/chat/completions``;
 the ``global`` location uses the bare ``aiplatform.googleapis.com`` host.
+``generate`` stays a synchronous port: it requests that route with ``stream``
+and reassembles one complete completion from server-sent events before
+validating or charging. Analysis:
+``plan/analysis/vertex_streamed_completion_20260915.md``.
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
 from decimal import Decimal
 import hashlib
+import json
+import logging
 import threading
 import time
 from typing import Any
@@ -44,6 +51,9 @@ from pydantic import ValidationError
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.generation_recorder import GenerationOutcome
+from rememberstack.adapters.generation_recorder import GenerationRecord
+from rememberstack.adapters.generation_recorder import GenerationRecorder
 from rememberstack.adapters.openrouter import _completion_content
 from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.model import EmbeddingRequest
@@ -70,12 +80,23 @@ Experimental. Google currently contradicts itself about thinking support; this
 adapter deliberately does not send provider-specific thinking controls.
 """
 CLOUD_PLATFORM_SCOPE: Final = "https://www.googleapis.com/auth/cloud-platform"
-_DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 4_096
+# Published global Gemma maximum, verified 2026-09-14 against the model card
+# linked above. This is provider capacity, not a per-task spend allowance.
+_DEFAULT_MAX_COMPLETION_TOKENS: Final[int] = 128_000
 _DEFAULT_THROTTLE_RETRY_DELAYS_S: Final[tuple[float, ...]] = (1.0, 2.0, 4.0, 8.0, 16.0)
 _SAFE_FINISH_REASONS: Final[frozenset[str]] = frozenset(
     ("stop", "length", "content_filter", "tool_calls", "error", "cancelled")
 )
+# R8 evidence: one Gemma stream degenerated into tens of kilobytes of repeated
+# text before the truncated completion failed validation. A legitimate
+# structured verdict never repeats a long delta verbatim several times in a
+# row, while a long varied processing response must keep flowing (see
+# test_large_processing_response_is_preserved), so the guard keys on
+# repetition, never on total size.
+_REPETITION_PIECE_MIN_CHARS: Final[int] = 32
+_REPETITION_MAX_IDENTICAL_RUN: Final[int] = 8
 _ONE_MILLION: Final = Decimal(1_000_000)
+_logger = logging.getLogger(__name__)
 
 AccessTokenSource = Callable[[], str]
 """Return a currently valid bearer token; called before every request."""
@@ -113,10 +134,13 @@ class VertexSettings(BaseSettings):
     """Google Cloud project that holds the model entitlement and is billed."""
     location: str = Field(default="global", min_length=1)
     """``global`` for the global endpoint; otherwise a regional location id."""
-    timeout_s: float = Field(default=120.0, gt=0)
+    timeout_s: float | None = Field(default=None, gt=0)
+    """Optional operator deadline; by default slow generations are allowed to finish."""
     max_completion_tokens: int = Field(default=_DEFAULT_MAX_COMPLETION_TOKENS, ge=1)
-    """Output budget sent as ``max_tokens``; kept small because every
-    structured benchmark step is short and the cap bounds per-call spend."""
+    """Output allowance sent as ``max_tokens``. Defaults to the documented Gemma
+    maximum, so processing is not truncated by a guessed short-response budget.
+    Operators can explicitly override this for a different managed model.
+    """
     price_table_usd_per_million: dict[str, VertexModelPrice] = Field(
         default_factory=lambda: dict(DEFAULT_PRICE_TABLE_USD_PER_MILLION)
     )
@@ -230,14 +254,18 @@ class VertexModelProvider:
         settings: VertexSettings,
         access_token_source: AccessTokenSource | None = None,
         transport: httpx.BaseTransport | None = None,
+        recorder: GenerationRecorder | None = None,
     ) -> None:
         """Bind one HTTP client to the project endpoint and a token source.
 
         ``access_token_source`` defaults to Application Default Credentials;
         tests pass a stub. ``transport`` exists only so tests can intercept
-        requests without monkeypatching.
+        requests without monkeypatching. ``recorder`` is an opt-in
+        full-payload sink for benchmark diagnosis; ``None`` (the default)
+        records nothing.
         """
         self._settings = settings
+        self._recorder = recorder
         self._access_token = (
             access_token_source
             if access_token_source is not None
@@ -281,30 +309,156 @@ class VertexModelProvider:
         }
         if request.temperature is not None:
             payload["temperature"] = request.temperature
+        payload["stream"] = True
+        payload["stream_options"] = {"include_usage": True}
 
         started_ns = time.monotonic_ns()
-        body = self._post(path="/chat/completions", payload=payload)
-        usage = _usage(
-            body=body,
-            price=price,
-            latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
-        )
+        try:
+            body = self._complete(
+                path="/chat/completions",
+                payload=payload,
+                price=price,
+                started_ns=started_ns,
+            )
+        except VertexProviderError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="transport_error",
+                error=str(error),
+                usage=error.usage,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+            )
+            raise
+        latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
+        finish = _finish_reason(body)
+        if finish is None:
+            usage = _try_usage(body=body, price=price, latency_ms=latency_ms)
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=_message_text(body),
+                outcome="incomplete",
+                error=(
+                    f"{response_type.__name__}: Vertex stream ended before"
+                    " a complete completion"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
+            raise VertexProviderError(
+                f"{response_type.__name__}: Vertex stream ended before a complete"
+                " completion"
+                f" ({_diagnosis(body=body, content=_message_text(body), usage=usage)})",
+                usage=usage,
+            )
+        usage = _usage(body=body, price=price, latency_ms=latency_ms)
         content = _completion_content(body=body)
         if content is None:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="no_content",
+                error=(
+                    f"{response_type.__name__}: provider returned no completion content"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexInvalidResponseError(
                 f"{response_type.__name__}: provider returned no completion"
                 f" content ({_diagnosis(body=body, content='', usage=usage)})",
                 usage=usage,
             )
-        try:
-            output = response_type.model_validate_json(content)
-        except ValidationError:
+        if finish != "stop":
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="incomplete",
+                error=(
+                    f"{response_type.__name__}: provider returned an incomplete"
+                    " completion"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
             raise VertexInvalidResponseError(
-                f"completion content failed {response_type.__name__} validation"
+                f"{response_type.__name__}: provider returned an incomplete"
+                " completion"
                 f" ({_diagnosis(body=body, content=content, usage=usage)})",
                 usage=usage,
+            )
+        try:
+            output = response_type.model_validate_json(content)
+        except ValidationError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=content,
+                outcome="invalid",
+                error=(
+                    f"completion content failed {response_type.__name__}"
+                    f" validation ({_validation_summary(error=error)})"
+                ),
+                usage=usage,
+                latency_ms=latency_ms,
+            )
+            raise VertexInvalidResponseError(
+                f"completion content failed {response_type.__name__} validation"
+                f" ({_diagnosis(body=body, content=content, usage=usage)};"
+                f" {_validation_summary(error=error)})",
+                usage=usage,
             ) from None
+        self._record_generation(
+            request=request,
+            response_type_name=response_type.__name__,
+            raw_content=content,
+            outcome="succeeded",
+            error=None,
+            usage=usage,
+            latency_ms=latency_ms,
+        )
         return GeneratedResponse(output=output, usage=usage)
+
+    def _record_generation(
+        self,
+        *,
+        request: ModelRequest,
+        response_type_name: str,
+        raw_content: str | None,
+        outcome: GenerationOutcome,
+        error: str | None,
+        usage: ProviderCallUsage | None,
+        latency_ms: int,
+    ) -> None:
+        """Report one generation to the opt-in recorder, if any is bound.
+
+        A failing recorder must never turn a good generation into an
+        exception, nor replace the provider error the ledger needs.
+        """
+        if self._recorder is None:
+            return
+        try:
+            self._recorder.record(
+                record=GenerationRecord(
+                    provider="vertex",
+                    requested_model=request.model,
+                    resolved_model=(usage.model_name if usage is not None else None),
+                    response_type_name=response_type_name,
+                    prompt=request.prompt,
+                    raw_content=raw_content,
+                    outcome=outcome,
+                    error=error,
+                    usage=usage,
+                    latency_ms=latency_ms,
+                    run_tag="",
+                )
+            )
+        except Exception as emit_error:
+            _logger.warning("vertex generation record dropped: %s", emit_error)
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         """Refuse: this adapter serves generation only, by design."""
@@ -313,42 +467,54 @@ class VertexModelProvider:
             " embeddings to the provider that owns the deployment's vector space"
         )
 
-    def _post(self, *, path: str, payload: dict[str, object]) -> dict[str, Any]:
-        """POST one JSON request with a fresh bearer token; map HTTP failures.
+    def _complete(
+        self,
+        *,
+        path: str,
+        payload: dict[str, object],
+        price: VertexModelPrice,
+        started_ns: int,
+    ) -> dict[str, Any]:
+        """POST one streamed completion; map HTTP failures; never retry a 2xx.
 
         Only HTTP 429 is re-sent, after the configured delays, because it is
-        the one refusal that provably did no billable work.
+        the one refusal that provably did no billable work. A 2xx stream has
+        been admitted: this call is not re-sent even if the body is later
+        incomplete or malformed. Error bodies are read before ``response.text``.
+        The 429 response is closed before the backoff sleep.
         """
         delays = iter(self._settings.throttle_retry_delays_s)
         while True:
-            response = self._client.post(
+            retry_delay_s: float | None = None
+            with self._client.stream(
+                "POST",
                 path,
                 json=payload,
                 headers={"Authorization": f"Bearer {self._access_token()}"},
-            )
-            if response.status_code != 429:
-                break
-            delay_s = next(delays, None)
-            if delay_s is None:
-                break
-            time.sleep(delay_s)
-        if response.status_code in (401, 403):
-            raise VertexAccessError(
-                f"Vertex {path} returned {response.status_code}: {response.text[:500]}"
-            )
-        if response.status_code >= 400:
-            raise VertexProviderError(
-                f"Vertex {path} returned {response.status_code}: {response.text[:500]}"
-            )
-        try:
-            body = response.json()
-        except ValueError as error:
-            raise VertexProviderError(
-                f"Vertex {path} returned non-JSON body"
-            ) from error
-        if not isinstance(body, dict):
-            raise VertexProviderError(f"Vertex {path} returned a malformed body")
-        return body
+            ) as response:
+                if response.status_code == 429:
+                    retry_delay_s = next(delays, None)
+                    preview = _error_preview(response)
+                    if retry_delay_s is None:
+                        raise VertexProviderError(
+                            f"Vertex {path} returned 429: {preview}"
+                        )
+                elif response.status_code in (401, 403):
+                    raise VertexAccessError(
+                        f"Vertex {path} returned {response.status_code}:"
+                        f" {_error_preview(response)}"
+                    )
+                elif response.status_code >= 400:
+                    raise VertexProviderError(
+                        f"Vertex {path} returned {response.status_code}:"
+                        f" {_error_preview(response)}"
+                    )
+                else:
+                    return _completion_from_stream(
+                        response, path=path, price=price, started_ns=started_ns
+                    )
+            if retry_delay_s is not None:
+                time.sleep(retry_delay_s)
 
 
 def computed_cost_usd(
@@ -386,6 +552,210 @@ def _usage(
     )
 
 
+def _try_usage(
+    *, body: dict[str, Any], price: VertexModelPrice, latency_ms: int
+) -> ProviderCallUsage | None:
+    """Return parsed usage when the stream actually reported it; never invent it."""
+    try:
+        return _usage(body=body, price=price, latency_ms=latency_ms)
+    except ProviderAccountingError:
+        return None
+
+
+def _finish_reason(body: dict[str, Any]) -> object:
+    """Return the provider finish reason, or None when the stream never finished."""
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    if not isinstance(choice, dict):
+        return None
+    return choice.get("finish_reason")
+
+
+def _message_text(body: dict[str, Any]) -> str:
+    """Return assembled completion text for diagnosis; never invent content."""
+    try:
+        content = body["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        return ""
+    return content if isinstance(content, str) else ""
+
+
+def _error_preview(response: httpx.Response) -> str:
+    """Read an unread streamed error body, then return a short text preview."""
+    try:
+        response.read()
+    except httpx.HTTPError:
+        return ""
+    return response.text[:500]
+
+
+def _completion_body(
+    *,
+    content_parts: list[str],
+    finish_reason: object,
+    model_name: object,
+    usage_raw: object,
+) -> dict[str, Any]:
+    """Build the chat.completion-shaped dict used by usage and validation."""
+    body: dict[str, Any] = {
+        "model": model_name if isinstance(model_name, str) else "",
+        "choices": [
+            {
+                "finish_reason": finish_reason,
+                "index": 0,
+                "message": {"role": "assistant", "content": "".join(content_parts)},
+            }
+        ],
+    }
+    if usage_raw is not None:
+        body["usage"] = usage_raw
+    return body
+
+
+def _stream_usage(
+    *, body: dict[str, Any], price: VertexModelPrice, started_ns: int
+) -> ProviderCallUsage | None:
+    """Attach real terminal usage to a failed stream; never invent counts."""
+    return _try_usage(
+        body=body,
+        price=price,
+        latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
+    )
+
+
+def _completion_from_stream(
+    response: httpx.Response, *, path: str, price: VertexModelPrice, started_ns: int
+) -> dict[str, Any]:
+    """Reassemble one completion, keeping any usage already seen if the stream fails."""
+    content_parts: list[str] = []
+    finish_reason: object = None
+    model_name: object = None
+    usage_raw: object = None
+    previous_piece: str | None = None
+    identical_run = 0
+
+    def body() -> dict[str, Any]:
+        """Build the current completion for validation or error accounting."""
+        return _completion_body(
+            content_parts=content_parts,
+            finish_reason=finish_reason,
+            model_name=model_name,
+            usage_raw=usage_raw,
+        )
+
+    try:
+        for payload in _sse_data_payloads(response):
+            try:
+                event = json.loads(payload)
+            except json.JSONDecodeError as error:
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                ) from error
+            if not isinstance(event, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            error = event.get("error")
+            if isinstance(error, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions stream error"
+                    + (
+                        f": {error.get('code')}"
+                        if error.get("code") is not None
+                        else ""
+                    )
+                )
+            if error:
+                raise VertexProviderError("Vertex /chat/completions stream error")
+            model = event.get("model")
+            if isinstance(model, str) and model.strip():
+                model_name = model
+            raw_usage = event.get("usage")
+            if raw_usage is not None:
+                usage_raw = raw_usage
+            choices = event.get("choices")
+            if choices is None:
+                continue
+            if not isinstance(choices, list):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            if not choices:
+                continue
+            choice = choices[0]
+            if not isinstance(choice, dict):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed stream event"
+                )
+            if choice.get("finish_reason") is not None:
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            piece = delta.get("content")
+            if piece is None:
+                continue
+            if not isinstance(piece, str):
+                raise VertexProviderError(
+                    "Vertex /chat/completions returned a malformed content delta"
+                )
+            content_parts.append(piece)
+            if len(piece) >= _REPETITION_PIECE_MIN_CHARS and piece == previous_piece:
+                identical_run += 1
+            elif len(piece) >= _REPETITION_PIECE_MIN_CHARS:
+                identical_run = 1
+            else:
+                identical_run = 0
+            previous_piece = piece
+            if identical_run >= _REPETITION_MAX_IDENTICAL_RUN:
+                assembled = sum(len(part) for part in content_parts)
+                raise VertexProviderError(
+                    "Vertex /chat/completions stream repeated one"
+                    f" {len(piece)}-character delta {identical_run} times in a"
+                    f" row (assembled {assembled} characters); aborting a"
+                    " degenerating stream"
+                )
+    except VertexProviderError as error:
+        raise VertexProviderError(
+            str(error),
+            usage=_stream_usage(body=body(), price=price, started_ns=started_ns),
+        ) from error
+    except (httpx.HTTPError, UnicodeError, OSError) as error:
+        raise VertexProviderError(
+            f"Vertex {path} stream failed: {type(error).__name__}",
+            usage=_stream_usage(body=body(), price=price, started_ns=started_ns),
+        ) from error
+    return body()
+
+
+def _sse_data_payloads(response: httpx.Response) -> Iterator[str]:
+    """Yield SSE ``data`` payloads, stopping at ``[DONE]``."""
+    pending: list[str] = []
+    for line in response.iter_lines():
+        if line == "":
+            if not pending:
+                continue
+            payload = "\n".join(pending)
+            pending = []
+            if payload.strip() == "[DONE]":
+                return
+            yield payload
+            continue
+        if line.startswith(":"):
+            continue
+        if line.startswith("data:"):
+            value = line[5:]
+            if value.startswith(" "):
+                value = value[1:]
+            pending.append(value)
+    if pending:
+        payload = "\n".join(pending)
+        if payload.strip() != "[DONE]":
+            yield payload
+
+
 def _token_count(*, raw: dict[str, Any], key: str) -> int:
     """Read one non-negative integer token count or fail closed."""
     value = raw.get(key)
@@ -396,26 +766,45 @@ def _token_count(*, raw: dict[str, Any], key: str) -> int:
     return value
 
 
-def _diagnosis(*, body: dict[str, Any], content: str, usage: ProviderCallUsage) -> str:
+def _validation_summary(*, error: ValidationError, limit: int = 5) -> str:
+    """Name the failing fields of a rejected completion without its text.
+
+    Only each error's location path and enumerated type appear: the offending
+    input values and the raw content stay out because model output can restate
+    source material and these strings reach run records and logs. At most
+    ``limit`` entries are listed so one pathological answer cannot flood a log.
+    """
+    parts: list[str] = []
+    for entry in error.errors()[:limit]:
+        raw_loc = entry.get("loc", ())
+        loc = ".".join(str(step) for step in raw_loc) if raw_loc else "<root>"
+        parts.append(f"{loc}.{entry.get('type', 'unknown')}")
+    remaining = error.error_count() - len(parts)
+    if remaining > 0:
+        parts.append(f"+{remaining} more")
+    return f"validation_errors=[{', '.join(parts)}]"
+
+
+def _diagnosis(
+    *, body: dict[str, Any], content: str, usage: ProviderCallUsage | None
+) -> str:
     """Describe an unusable completion with metadata only, never its text.
 
     Model output can restate source material and these strings reach run
     records and logs, so only enumerated reasons, lengths, and a digest appear.
     """
-    finish: object = None
-    try:
-        choice = body["choices"][0]
-        if isinstance(choice, dict):
-            finish = choice.get("finish_reason")
-    except (KeyError, IndexError, TypeError):
-        finish = None
+    finish = _finish_reason(body)
     safe_finish = (
         finish if isinstance(finish, str) and finish in _SAFE_FINISH_REASONS else None
     )
     digest = hashlib.sha256(
         content.encode("utf-8", errors="surrogatepass")
     ).hexdigest()[:12]
+    tokens_out = usage.tokens_out if usage is not None else None
+    model: object = usage.model_name if usage is not None else body.get("model")
+    if not isinstance(model, str) or not model.strip():
+        model = None
     return (
         f"len={len(content)}, sha256_12={digest}, finish_reason={safe_finish!r},"
-        f" completion_tokens={usage.tokens_out}, model={usage.model_name!r}"
+        f" completion_tokens={tokens_out}, model={model!r}"
     )

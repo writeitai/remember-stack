@@ -1,11 +1,8 @@
 # Registries Design — Entity Resolution, Ontology, Governance
 
-> **Binding D107 amendment (2026-09-03).** The T4 candidate snapshot carries
-> each salient fact's occurrence window and bases, ranked by evidence then
-> occurrence recency (never `updated_at`); the relation supersession prompt
-> and its evidence laterals show both clocks (`said on` / `is about`) as
-> `temporal_clocks_design.md` §7.2 requires; matching, verdict revision and
-> temporal succession follow §4.2–§4.4.
+> **D118 amendment (2026-09-07; effective when merged).** Salient fact inputs use one chosen world window and source timestamps. Date-qualified profiles use stable selection; occurrence unions/bases and wall-clock recency are superseded (§§5–6).
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only globally.
 > One current `T4_small` match may establish a derived exact-name binding inside
@@ -868,10 +865,15 @@ the split cost are under-researched — registry SYNTHESIS G5.)*
 
 ## 8. Review tooling (D24)
 
-**Build** a thin CLI cluster-review queue over Postgres (no OSS tool offers cluster-queue +
+> **Amended by D108 (2026-09-24, PR #460).** The `remember review` CLI is
+> deleted; no command exposes the queue to humans. The Postgres review-queue
+> store and its append-only verdict records below remain the engine's
+> contract; adjudication is autonomous (D3/D43/D107).
+
+**Build** a thin cluster-review queue over Postgres (no OSS tool offers cluster-queue +
 append-only reversible verdicts + provenance + blast-radius gating). Review **clusters, not
-pairs**; route only the `expected_impact = blast_radius × (1 − confidence)` middle band to
-humans; hub merges never auto-accept. Evidence panel borrows Splink's waterfall; 3-way verdict
+pairs**; the queue ranks items by `expected_impact = blast_radius × (1 − confidence)`; hub
+merges never auto-accept. Evidence panel borrows Splink's waterfall; 3-way verdict
 ergonomics from Zingg; cluster-card-with-exclude interaction from OpenRefine. Every action
 appends a reversible, provenance-stamped record to `resolution_decisions`/`merge_events`.
 

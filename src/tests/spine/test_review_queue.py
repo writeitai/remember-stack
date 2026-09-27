@@ -22,11 +22,10 @@ from rememberstack.model import ReviewDecisionError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
-from rememberstack.spine import FactCatalog
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces import cli_main
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a1000000-0000-0000-0000-000000000001")
@@ -77,7 +76,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -157,7 +156,6 @@ def _queued_merge(*, engine: Engine, survivor: UUID, absorbed: UUID) -> UUID:
 
 def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
     """A relation whose sole claim lost currency (the triage precondition)."""
-    facts = FactCatalog(engine=engine)
     alice = _entity(engine=engine, name="Alice")
     acme = _entity(engine=engine, name="Acme")
     claim_id = uuid4()
@@ -172,15 +170,19 @@ def _withdrawn_fact(*, engine: Engine) -> tuple[UUID, UUID]:
             ),
             {"c": claim_id, "d": _DEPLOYMENT_ID, "doc": uuid4(), "ch": uuid4()},
         )
-    relation = facts.upsert_relation(
-        deployment_id=_DEPLOYMENT_ID,
-        subject_entity_id=alice,
-        predicate="works_for",
-        object_entity_id=acme,
-        claim_id=claim_id,
-        doc_id=uuid4(),
-        normalizer_version="test",
-    ).relation_id
+    relation = uuid4()
+    with engine.begin() as connection:
+        connection.execute(
+            text("""INSERT INTO relations(relation_id,deployment_id,subject_entity_id,
+            predicate,object_entity_id,normalizer_version) VALUES(:id,:dep,:subject,'works_for',:object,'test')"""),
+            {"id": relation, "dep": _DEPLOYMENT_ID, "subject": alice, "object": acme},
+        )
+        connection.execute(
+            text("""INSERT INTO relation_evidence(deployment_id,relation_id,claim_id,doc_id,
+            stance,normalizer_version) SELECT :dep,:id,claim_id,doc_id,'supports','test'
+            FROM claims WHERE claim_id=:claim"""),
+            {"dep": _DEPLOYMENT_ID, "id": relation, "claim": claim_id},
+        )
     return relation, claim_id
 
 
@@ -807,7 +809,7 @@ def test_terminal_review_verdicts_rebuild_then_clear_published_profiles(
                 {"deployment": _DEPLOYMENT_ID},
             ).scalars()
         )
-    assert restored == ("Alice works for Acme", "Alice works for Acme")
+    assert restored == ("Alice works for Acme",) * 2
 
     invalidate_id = queue.flag_support_withdrawn(
         deployment_id=_DEPLOYMENT_ID,
@@ -873,44 +875,6 @@ def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
         ).scalar_one()
     assert [entry["verdict"] for entry in history] == ["uncertain", "invalidate_fact"]
     assert history[0]["reviewer"] == "jiri"
-
-
-def test_cli_lists_and_decides_through_the_same_paths(
-    database_engine: Engine,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
-    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "1")
-    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
-    survivor = _entity(engine=database_engine, name="CLI Survivor")
-    absorbed = _entity(engine=database_engine, name="CLI Absorbed")
-    review_id = _queued_merge(
-        engine=database_engine, survivor=survivor, absorbed=absorbed
-    )
-    assert cli_main(["review", "list", "--deployment", str(_DEPLOYMENT_ID)]) == 0
-    listed = capsys.readouterr().out.strip().splitlines()
-    assert json.loads(listed[0])["review_id"] == str(review_id)
-
-    decide_args = [
-        "review",
-        "decide",
-        str(review_id),
-        "--deployment",
-        str(_DEPLOYMENT_ID),
-        "--verdict",
-        "merge",
-        "--reviewer",
-        "jiri",
-    ]
-    assert cli_main(decide_args) == 1
-    assert "profile-changing review verdicts require" in capsys.readouterr().err
-
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
-    assert cli_main(decide_args) == 0
-    decided = json.loads(capsys.readouterr().out.strip())
-    assert decided["verdict"] == "merge"
-    assert len(decided["merge_events"]) == 1
 
 
 def test_foreign_ids_are_refused_at_flag_and_decide(database_engine: Engine) -> None:

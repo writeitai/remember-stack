@@ -53,11 +53,12 @@ def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> No
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
     routes = build_conversion_routes(route_names=settings.conversion_routes)
-    assert routes["text/plain"].name == "passthrough"
+    assert routes["text/plain"].name == "text"
     assert routes["text/markdown"] is routes["text/plain"]
+    assert routes["application/octet-stream"].name == "card"
+    assert routes["text/html"].name == "markitdown"
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "build_conversion_routes" in source
-    assert "stock_passthrough_routes()" not in source
 
 
 def test_selfhost_composes_every_implemented_continuous_route() -> None:
@@ -68,6 +69,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.GROUND_CLAIMS,
         PipelineStage.NORMALIZE_RELATIONS,
         PipelineStage.ADJUDICATE_OBSERVATIONS,
         PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -81,7 +83,6 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
 def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
     """A stage enum is not proof that an independently runnable handler exists."""
     assert {
-        PipelineStage.GROUND_CLAIMS,
         PipelineStage.RESOLVE_ENTITIES,
         PipelineStage.EMBED_RELATION,
         PipelineStage.EMBED_OBSERVATION,
@@ -112,6 +113,11 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         "REMEMBERSTACK_SELFHOST_API_BEARER_BIND",
         "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN",
         "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL",
+        "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER",
+        "REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID",
+        "REMEMBERSTACK_SELFHOST_API_KEY_PROJECT_ID",
+        "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS_URL",
+        "REMEMBERSTACK_SELFHOST_API_REVOCATION_URL",
     ):
         assert f"{name}: ${{{name}:-}}" in compose
     for name, default in (
@@ -122,6 +128,8 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
+        ("REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S", "60"),
+        ("REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S", "3600"),
     ):
         assert f"{name}: ${{{name}:-{default}}}" in compose
     assert (
@@ -130,6 +138,38 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
     )
     assert 'meter-receipts:\n    <<: *app\n    command: ["meter-receipts"]' in compose
     assert 'profiles: ["managed"]' in compose
+
+
+def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
+    """A crashed worker comes back; setup and the projection job run once."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor = compose.split("\nservices:\n", maxsplit=1)[0]
+    assert "\n  restart: unless-stopped\n" in anchor
+    for one_shot in (
+        'setup:\n    <<: *app\n    command: ["setup"]\n    restart: "no"\n',
+        'projections:\n    <<: *app\n    command: ["project", "--plane", "p3"]\n'
+        '    restart: "no"\n',
+    ):
+        assert one_shot in compose
+    for dependency in ("postgres", "object-store"):
+        block = compose.split(f"\n  {dependency}:\n", maxsplit=1)[1]
+        block = block.split("\n\n", maxsplit=1)[0]
+        assert "    restart: unless-stopped\n" in block
+
+
+def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
+    """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    limits = re.findall(
+        r"- max_connections=\$\{REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-(\d+)\}\n",
+        compose,
+    )
+    assert len(limits) == 1
+    workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
+    api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
+    ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
+    assert ceiling == 215
+    assert int(limits[0]) >= ceiling + 50
 
 
 def test_stock_compose_empty_meter_scope_is_unconfigured() -> None:
@@ -334,12 +374,30 @@ def test_blank_routes_env_falls_back_to_the_stock_table(
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
 
+
+def test_routes_env_overlays_the_stock_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D138 §3: configured routes add or override entries, never replace the table.
+
+    Existing route names keep working: ``passthrough`` can still be bound.
+    """
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
+    from rememberstack.profiles.selfhost import SelfHostSettings
+
     monkeypatch.setenv(
-        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/html": "markitdown"}'
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES",
+        '{"image/png": "image_ocr_description", "application/pdf": "mistral_ocr",'
+        ' "text/plain": "passthrough"}',
     )
-    assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
-        "text/html": "markitdown"
+    routes = SelfHostSettings(deployment_id=uuid4()).conversion_routes
+    assert routes == {
+        **STOCK_CONVERSION_ROUTE_NAMES,
+        "image/png": "image_ocr_description",
+        "application/pdf": "mistral_ocr",
+        "text/plain": "passthrough",
     }
+    # untouched stock entries survive the overlay
+    assert routes["text/markdown"] == "text"
+    assert routes["image/jpeg"] == "card"
 
 
 def test_external_mount_roots_load_from_environment(
@@ -353,3 +411,84 @@ def test_external_mount_roots_load_from_environment(
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.raw_mount_root == raw
     assert settings.artifacts_mount_root == artifacts
+
+
+def test_model_bindings_ignore_chat_routing_transport_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chat provider rotation must not move the benchmark fingerprint.
+
+    Routing hosts, throttle budgets, and the ZDR flag are transport, not model
+    identity: setting them changes neither the bindings dict nor any value.
+    """
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+
+    baseline = _model_bindings()
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    assert _model_bindings() == baseline
+    assert not any(
+        key.startswith("openrouter_chat_") or key == "openrouter_zdr"
+        for key in baseline
+    )
+
+
+def test_compose_hands_the_whole_env_file_to_every_engine_service() -> None:
+    """Any engine setting in .env reaches the containers, not a fixed list."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    anchor, services = compose.split("\nservices:\n", 1)
+    assert "  env_file:\n    - path: .env\n      required: false\n" in anchor
+    engine_services = re.findall(r"\n  ([a-z0-9-]+):\n    <<: \*app\n", services)
+    assert {"setup", "api", "projections", "meter-receipts"} <= set(engine_services)
+    assert len(engine_services) == len(_SUPPORTED_WORKER_STAGES) + 4
+
+
+def test_no_shared_deployment_id_ships() -> None:
+    """Each install generates its own id; Compose refuses to start without one."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    example = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    assert (
+        "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:"
+        " ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID:?set"
+        " REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID}"
+    ) in compose
+    assert not re.search(r"^REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=", example, re.M)
+    assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s" in example
+
+
+def test_model_bindings_report_the_embedding_model_actually_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One embedding model serves every vector, so only it is reported."""
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("REMEMBERSTACK_P1_EMBEDDING_MODEL", "vendor/embedder")
+    monkeypatch.setenv("REMEMBERSTACK_E1_EMBEDDING_MODEL", "ignored/model")
+
+    bindings = _model_bindings()
+
+    assert bindings["p1_embedding"] == "vendor/embedder"
+    assert "chunk_embedding" not in bindings
+    assert "context_prefix" not in bindings
+    assert "fact_label" not in bindings
+
+
+def test_retired_model_settings_are_gone_from_compose_and_env_example() -> None:
+    """Settings nothing reads are not offered to operators."""
+    compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
+    example = (_ROOT / ".env.example").read_text(encoding="utf-8")
+    for name in (
+        "REMEMBERSTACK_E1_EMBEDDING_MODEL",
+        "REMEMBERSTACK_E1_PREFIX_MODEL",
+        "REMEMBERSTACK_P1_LABEL_MODEL",
+        "REMEMBERSTACK_OBS_FRONTIER_MODEL",
+        "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
+        "REMEMBERSTACK_ADJUDICATOR_",
+    ):
+        assert name not in compose
+        assert name not in example

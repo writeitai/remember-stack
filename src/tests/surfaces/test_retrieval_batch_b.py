@@ -31,6 +31,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_sandbox.examples import EXAMPLE_QUERIES
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("59000000-0000-0000-0000-000000000001")
@@ -48,7 +49,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for Batch B proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -326,12 +327,15 @@ class _Corpus:
             connection.execute(
                 text(
                     "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
-                    " created_at) VALUES (:deployment, :chunk, :claim, :at)"
+                    " evidence_spans, created_at)"
+                    " VALUES (:deployment, :chunk, :claim,"
+                    " CAST(:spans AS jsonb), :at)"
                 ),
                 {
                     "deployment": _DEPLOYMENT_ID,
                     "chunk": chunk_id,
                     "claim": claim_id,
+                    "spans": '[{"char_start": 0, "char_end": 1}]',
                     "at": _MENTIONED_AT,
                 },
             )

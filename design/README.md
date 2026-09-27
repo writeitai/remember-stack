@@ -13,6 +13,9 @@ lost in chat.
 
 Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 
+Processing: [D120–D123 design and delivery map](../plan/plans/lean_processing_delivery.md).
+Unchosen efficiency alternative: [grouped fact adjudication](proposals/grouped_fact_adjudication.md).
+
 ## PostgreSQL 19 live-graph review evidence
 
 - [Design review round 1](reviews/postgres19_live_graph_design_review_round1.md)
@@ -34,3 +37,6 @@ Analysis and research notes: [`../plan/analysis/`](../plan/analysis/).
 | PostgreSQL-native P1 search (D94) | [`../plan/designs/postgres_p1_search_projection_design.md`](../plan/designs/postgres_p1_search_projection_design.md) | [`../plan/analysis/postgres_p1_search_projection_analysis.md`](../plan/analysis/postgres_p1_search_projection_analysis.md) |
 | Live PostgreSQL 19 graph (D98) | [`../plan/designs/p2_graph_design.md`](../plan/designs/p2_graph_design.md) | [`../plan/analysis/postgres19_sqlpgq_live_graph_analysis.md`](../plan/analysis/postgres19_sqlpgq_live_graph_analysis.md) |
 | Entity identity and retrieval (D95–D97) | [`../plan/designs/entity_identity_and_retrieval_design.md`](../plan/designs/entity_identity_and_retrieval_design.md) | [`../plan/analysis/entity_identity_and_retrieval_analysis.md`](../plan/analysis/entity_identity_and_retrieval_analysis.md) |
+
+- [D119 coherent multi-span claims with version reuse](../plan/designs/multi_span_claim_extraction_design.md)
+  — accepted engine design; [analysis](../plan/analysis/multi_span_claim_extraction.md).

@@ -1,7 +1,16 @@
 # Unified `remember` Distribution, Container-First Engine, and Platform CLI (Design)
 
-> **Binding D110 amendment (2026-09-07).** D110 §§2, 4 supply the explicit autonomous temporal-correction contract that reconciles D108 authority with the superseded human mechanism in D107 §4.3. Existing plane adjudication logs record decisions; uncertainty does not create a public human queue.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D136 amendment (2026-09-23).** Credentials, login, `remember mcp` modes and
+> transports, and the entries `remember setup` writes are specified by
+> [one_key_client_surfaces_design.md](one_key_client_surfaces_design.md): one signed
+> key for every surface, `remember login` storing that one key, `remember mcp` with
+> an engine mode (stdio or Streamable HTTP) and a bridge mode to a remote MCP URL,
+> and one environment precedence shared by the SDK and CLI. §§2–4 below have been
+> reconciled with it; where they are brief, that design is the contract.
+
+> **D118 amendment (2026-09-07; effective when merged).** Ordinary autonomous adjudication can revise fact dates (§3); there is no separate temporal correction subsystem. D108 client and authority boundaries remain unchanged.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D108 decision (2026-09-05).** The single canonical package on PyPI is **`remember`**.
 > The database and worker engine is distributed exclusively via Docker container images (`ghcr.io/writeitai/remember-stack:<tag>`)
@@ -11,6 +20,17 @@
 > adjudication (D3/D43/D107) is the sole engine truth authority. The `remember` CLI operates as a developer
 > and data-plane tool supporting authentication and project context (`login`, `whoami`, `switch`) and data-plane
 > operations (`setup`, `ingest`, `query`, `mcp`), while administrative management tasks (`projects create`, `members list|invite`, `balance` billing top-ups) provide direct web console guidance to `https://remember.dev/app/...`.
+>
+> **D108 release-identity clarification (2026-09-22).** The repository remains
+> `writeitai/remember-stack`, and all existing GitHub tags and releases remain
+> historical records. New GitHub releases are titled `remember <version>` and
+> attach only the canonical `remember` Python artifacts plus container deployment
+> inputs. The canonical wheel installs no `rememberstack` executable. A terminal
+> `rememberstack==0.17.0` forwarder is published to PyPI without being featured as
+> a GitHub release asset, after which the PyPI project is archived and receives no
+> further versions. The project is not deleted because deletion would break old
+> pins and release the trusted name. Supporting analysis:
+> `plan/analysis/remember_release_identity_and_pypi_retirement.md`.
 
 
 ---
@@ -25,7 +45,7 @@ Prior to D108, the ecosystem maintained two packages with overlapping responsibi
 This split introduced fundamental developer and agent friction:
 - **Consumer Confusion**: Users and AI coding agents routinely questioned whether to install `remember` or `rememberstack`, frequently importing the wrong package or attempting to run server-side extras locally.
 - **Binary Collision**: `rememberstack` registered `[project.scripts] remember = "rememberstack.surfaces.cli:main"`. If both packages were installed into the same environment, binary resolution was non-deterministic.
-- **Heavyweight Host Burden**: Self-hosting a distributed bitemporal memory system requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO object storage, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Attempting to install the server directly via `pip install rememberstack[server]` on bare-metal developer machines led to compiler, header, and architecture incompatibilities.
+- **Heavyweight Host Burden**: Self-hosting a distributed bitemporal memory system requires PostgreSQL 19 with SQL/PGQ, `pgvector`, S3-compatible object storage, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Attempting to install the server directly via `pip install rememberstack[server]` on bare-metal developer machines led to compiler, header, and architecture incompatibilities.
 
 ### 1.2 Real-World Infrastructure Industry Alignment
 Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **PostHog**, **Temporal**) have converged on a single standard pattern:
@@ -50,8 +70,8 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
                  ┌───────────────────┴───────────────────┐
                  ▼                                       ▼
 ┌─────────────────────────────────────┐ ┌──────────────────────────────────────┐
-│ Control Plane (api.remember.dev)    │ │ Data Plane (Managed or Self-Hosted)  │
-│ - OAuth device-grant authentication │ │ - HTTPS Ingest & Chunking            │
+│ Key issuer (remember.dev or other)  │ │ Data Plane (Managed or Self-Hosted)  │
+│ - Signed keys, device-grant login   │ │ - HTTPS Ingest & Chunking            │
 │ - Tenant balance & billing status   │ │ - Assured Retrieval Context          │
 │ - Project & Member management       │ │ - Autonomous Bitemporal Memory       │
 └─────────────────────────────────────┘ └──────────────────────────────────────┘
@@ -61,7 +81,7 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 │  GHCR: `ghcr.io/writeitai/remember-stack:<version>` (Docker Engine)           │
 │                                                                              │
 │  - The complete containerized engine: FastAPI daemon + E0–E3 workers         │
-│  - Orchestrated via official `docker-compose.yaml` (Postgres 19, MinIO)       │
+│  - Orchestrated via official `docker-compose.yaml` (Postgres 19, SeaweedFS)   │
 │  - Consumed by: Self-hosters, CI test harnesses, and Cloud deployment fleet  │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -80,70 +100,51 @@ Modern cloud-plus-open-source developer tools (e.g. **Supabase**, **Sentry**, **
 
 The `remember` binary becomes the single command-line interface for the entire Remember platform. Commands are categorized strictly by **authority and transport**.
 
-### 3.1 Control Plane Commands (`https://api.remember.dev`)
-Authenticated via user session credentials obtained through OAuth device-grant login:
-- **`remember login`**: Initiates device-code OAuth flow against `https://api.remember.dev` (or explicit `--control-plane-url`), prompts in terminal or opens browser, receives user session credentials and active tenant bindings, and writes owner-only `0600` credential file to `~/.config/remember/credentials.json`.
-- **`remember logout`**: Idempotently revokes the active session token at the control plane and removes stored credentials.
-- **`remember whoami`**: Displays authenticated identity, active organization, and current project context.
-- **`remember balance`** (or `remember billing`): Directs operators to the cloud console at `https://remember.dev/app/billing` to view balances and top up credits (reports status code 1 when no control token is configured).
-- **`remember projects list`**: Enumerates available tenant deployments in the user's organization.
-- **`remember projects create <name>`**: Directs operators to the cloud console at `https://remember.dev/app/projects` to provision new tenant projects (exit code 1).
-- **`remember switch <project>`**: Sets the default active project and selects its corresponding tenant data-plane token in local configuration.
+### 3.1 Account Commands (the key issuer)
+All commands use the one signed key stored by `remember login` (D136). The key issuer
+is discovered from its OAuth metadata; the default issuer is `https://remember.dev`
+and `--issuer` / `REMEMBER_ISSUER` selects another. Account behaviour itself is
+defined by the issuer (for remember.dev, the cloud design).
+- **`remember login`**: Runs the device grant against the issuer, lets the person choose projects and permissions on the issuer's consent page, and stores the one key in the owner-only `0600` credential file (`~/.config/remember/credentials.json`, version 2).
+- **`remember logout`**: Revokes the stored key at the issuer and removes the file.
+- **`remember whoami`**: Displays the key's issuer, id, expiry, default project and permissions, then the issuer's account view when the key has `account:read`.
+- **`remember balance`** (or `remember billing`): Directs operators to the cloud console at `https://remember.dev/app/billing` to view balances and top up credits.
+- **`remember projects list`**: Enumerates the projects the key covers.
+- **`remember projects create <name>`**: Directs operators to the cloud console at `https://remember.dev/app/projects` to provision new projects (exit code 1).
+- **`remember switch <project>`**: Sets the default project in local configuration; no new credential is minted, because the one key already covers its projects.
 - **`remember members list`** / **`remember members invite <email>`**: Directs operators to the cloud console at `https://remember.dev/app/team` to manage team organization seats (exit code 1).
 
 *Self-Hosted Behavior*: When configured in self-hosted mode (`--self-hosted`), executing control-plane commands prints a clean, honest notice:
 > *"Note: You are connected to a self-hosted engine (http://localhost:8000). Projects, team members, and billing are cloud-managed services on remember.dev."*
 
 ### 3.2 Data Plane Commands (`https://<tenant>.dp.remember.dev` or `http://localhost:8000`)
-Authenticated via tenant data plane tokens (`umc_dp_...` in cloud) or pre-shared bearer secrets (`API_BEARER_BIND` in self-hosted mode):
+Authenticated with the one signed key (verified by the engine's signed-key perimeter, D136 §7) or a self-hosted pre-shared bearer secret (`API_BEARER_BIND`). With a signed key and no explicit URL, the data-plane host is resolved from the key (D136 §8.3):
 - **`remember setup [OPTIONS]`**: The Sentry-like AI harness bootstrapper (see §4).
 - **`remember ingest <path> [OPTIONS]`**: Streams markdown or source files through the E0 ingestion endpoint.
 - **`remember query <text> [OPTIONS]`**: Executes assured context retrieval (`facts_context` or `combined_context`) and prints formatted JSON or markdown summaries.
 - **`remember operations list|run`**: Discovers and invokes remote assured operations by name.
-- **`remember mcp [OPTIONS]`**: Runs the Model Context Protocol (MCP) server over `stdio` (or Streamable HTTP) forwarding requests to the resolved data plane.
+- **`remember mcp [OPTIONS]`**: Runs the Model Context Protocol (MCP) server. Engine mode serves the shared `remember.mcp_tools` catalogue against the resolved data plane over stdio or Streamable HTTP (`--transport http`); bridge mode relays stdio to a remote MCP URL (`--remote-url` / `REMEMBER_MCP_URL`) with the key. Specified in D136 §5.
 - **`remember doctor`**: Verifies connectivity, auth token validity, tenant endpoint health, and agent harness configurations.
 
 ### 3.3 Retirement of Legacy Commands
-- **`remember review` (Retired)**: The D24 human review queue (`review list`, `review decide`) was built for early prototype cluster curation. The production engine uses autonomous bitemporal adjudication (D3/D43/D107). Human review has been removed from all documentation and is not part of the public product.
-- **`remember budget` (Retired from Client)**: Spend ceiling inspection on local database ledgers is an internal worker detail, replaced on the platform level by `remember balance`.
+- **`remember review` (Removed)**: The D24 human review queue commands (`review list`, `review decide`) are deleted from the CLI, including their internal-ops path. They were built for early prototype cluster curation. The production engine uses autonomous bitemporal adjudication (D3/D43/D107). Human review has been removed from all documentation and is not part of the public product.
+- **`remember budget` (Removed)**: The command is deleted from the CLI, including its internal-ops path. Spend ceilings are an internal worker detail enforced by the workers; operators read spend with `remember ops cost-export`, and the platform exposes credits through `remember balance`.
 - **`remember ops` (Confined to Internal/Docker)**: SRE tasks (`ops replay`, `ops rebuild`) are executed inside the server container environment via internal scripts, not exposed on the developer client CLI.
 
-### 3.4 Credential Architecture & Token Isolation (Amending D92)
-D92 originally modeled `remember login` as a flat client storing a single deployment-bound token. D108 amends D92 to establish structured, multi-tenant credential storage with strict audience isolation:
+### 3.4 Credential Architecture (D136)
+One credential serves every surface: a signed key minted by the issuer (or, for a
+self-hosted engine without an issuer, the pre-shared bearer secret). The credential
+file holds that one key; the SDK and CLI resolve the key, engine URL and project with
+one shared precedence (explicit value, then `REMEMBER_API_KEY` / `REMEMBER_API_URL` /
+`REMEMBER_PROJECT`, then the stored credential file (read by SDK and CLI alike), then derivation from the
+key). A key from the file is sent only to its issuer, its recorded URL, or a
+data-plane URL the issuer resolved for it. The file format, resolution table and
+failure behaviour are in
+[one_key_client_surfaces_design.md §8](one_key_client_surfaces_design.md#8-sdk-and-cli-with-one-key).
 
-```json
-{
-  "version": 1,
-  "control_plane": {
-    "url": "https://api.remember.dev",
-    "access_token": "umc_usr_...",
-    "org_id": "0191...",
-    "user_id": "0191...",
-    "email": "dev@example.com"
-  },
-  "active_project_id": "0191-proj-alpha",
-  "projects": {
-    "0191-proj-alpha": {
-      "name": "production",
-      "data_plane_url": "https://tenant-alpha.dp.remember.dev",
-      "data_plane_token": "umc_dp_..."
-    }
-  }
-}
-```
-
-1. **Strict Transport & Audience Isolation**:
-   - Control-plane credentials (`control_plane.access_token`) are used **exclusively** against `https://api.remember.dev` and are **never** forwarded to tenant data planes.
-   - Tenant data-plane tokens (`umc_dp_...`) are presented **only** to the tenant's data plane (`https://<tenant>.dp.remember.dev`).
-2. **Resolution Precedence for Data Plane Operations**:
-   - Explicit CLI flag: `--token <token>` and `--url <url>`.
-   - Explicit environment: `REMEMBER_TOKEN` and `REMEMBER_DATA_PLANE_URL`.
-   - Ambient stored project: `projects[active_project_id]`.
-   - Fallback self-hosted: `http://localhost:8000` with `REMEMBER_TOKEN`.
-3. **Preshared Secret Parity for Self-Hosted Engines**:
-   - Self-hosted engines authenticate via `HashedBearerAuth` matching the SHA-256 digest of the presented bearer secret against `API_BEARER_BIND`.
-   - Possessing this bearer secret grants full authority over the instance.
-   - Consequently, self-hosted tokens are treated with the **exact same confidentiality and secret-isolation protections** (D92/D108) as cloud tokens: zero git commits, `0600` disk permissions, and process-isolated environment variables.
+Self-hosted bearer secrets grant full authority over the instance and receive the
+same confidentiality protections as issued keys: never committed, `0600` on disk,
+and passed to harnesses only by environment reference.
 
 ---
 
@@ -154,10 +155,13 @@ D92 originally modeled `remember login` as a flat client storing a single deploy
 remember setup [OPTIONS]
 
 Options:
-  --cloud                          Configure for Managed Cloud (default)
+  --cloud                          Configure for the key issuer (default; runs `remember login` if no key is stored)
+  --issuer URL                     Non-default key issuer
   --self-hosted                    Configure for local self-hosted engine (http://localhost:8000)
-  --url TEXT                       Explicit data-plane URL override
-  --token TEXT                     Explicit token override (discouraged; ambient login preferred)
+  --api-url TEXT                   Explicit engine URL (selects a self-hosted engine-mode entry)
+  --mcp-url TEXT                   Remote MCP URL of a self-hoster's `remember mcp --transport http`
+  --api-key TEXT                   Explicit key (discouraged; ambient login preferred)
+  --headless                       Prefer a key-header remote entry over OAuth sign-in
   --agent [cursor|claude|codex|agy|all]  Target specific harness (auto-detects all present if omitted)
   --dry-run                        Preview file modifications without writing
   --help                           Show this message and exit
@@ -167,7 +171,7 @@ Options:
 1. **Zero Secret Leakage in Git**: Project-local configuration files (`.cursor/mcp.json`, `.agents/mcp_config.json`, `.codex/config.toml`) must **never** embed plaintext API tokens.
 2. **Ambient Credential Resolution**:
    - The CLI executable resolves credentials dynamically at runtime via the precedence cascade in §3.4.
-   - Injected harness configuration delegates entirely to the local CLI binary or references standard environment variable interpolation (`${env:REMEMBER_TOKEN}`).
+   - Injected harness configuration is one of the D136 §6 entry shapes: a remote entry with OAuth sign-in (no secret), a remote entry whose bearer header references `REMEMBER_API_KEY`, a stdio bridge (`<launcher> mcp` with `REMEMBER_MCP_URL`), or a self-hosted engine-mode entry (`<launcher> mcp` with `REMEMBER_API_URL`).
 
 ### 4.3 Durable Harness Launcher Strategy (`uvx` vs System PATH)
 A common pitfall with ephemeral package runners and GUI editors (e.g. Cursor, VS Code, Claude Desktop) is that GUI applications on macOS and Linux are launched with a minimal system environment (`PATH=/usr/bin:/bin`) that does not inherit interactive shell paths (such as `~/.local/bin` where `uvx` and `uv` reside, or an active virtualenv). Naively emitting bare `remember` or bare `uvx` results in immediate `FileNotFoundError` upon editor restart or background agent invocation.
@@ -199,6 +203,8 @@ To guarantee zero-friction, permanent launcher operation across all harness exec
      > *"Tip: Run `uv tool install remember` to install the `remember` CLI permanently to your shell PATH."*
 
 ### 4.4 Harness Configuration Matrix
+
+Which entry shape a harness receives (remote or local launcher) follows D136 §6; the table lists the launcher form used whenever a local entry is written.
 
 | Harness | Detection Trigger | Configuration Action | Launch Command Emitted |
 | :--- | :--- | :--- | :--- |
@@ -238,8 +244,9 @@ Decoupling client delivery from internal engine implementation requires strict, 
    - Restructure repository root to house the `remember` client package alongside engine modules (or clean `packages/remember` layout).
    - Ensure `pyproject.toml` for `remember` declares only `httpx`, `pydantic`, and `pydantic-settings`.
 2. **Phase 2: PyPI Cutover**:
-   - Release `remember 0.4.0` owning the `remember` CLI binary.
-   - Release a final `rememberstack` update (e.g. `0.16.1` or `1.0.0`) containing a clear terminal deprecation warning directing users to `remember` for client usage and Docker Compose for server deployments.
+   - Release `remember 0.17.0` owning the `remember` CLI binary and presenting `remember 0.17.0` as the GitHub release title.
+   - Release `rememberstack 0.17.0` once as an inactive PyPI-only transition forwarder with a visible warning directing users to `remember` for client usage and Docker Compose for server deployments.
+   - Archive the `rememberstack` PyPI project after publication. Do not delete it, attach it to the GitHub release, or publish another version.
 3. **Phase 3: Docs & Quickstart Updates**:
    - Update `remember.dev/docs` and `docs.remember.dev` quickstart guides to feature `uvx remember setup` as the primary onboarding command.
    - Deprecate bare-metal pip install instructions for self-hosters; standardize all self-hosted guides on Docker Compose.
@@ -251,6 +258,6 @@ Decoupling client delivery from internal engine implementation requires strict, 
 - **D92 & D108 (Secret Isolation)**: API tokens and bearer secrets (both cloud and self-hosted) are never written into committed git repositories or project-local files.
 - **D43 (Autonomous Bitemporal Memory)**: All recall and truth adjudication operates autonomously without blocking on human queues.
 - **D66 (Honest Status & Balance)**: Balance and credit transparency is maintained across both web UI and CLI (`remember balance`).
-- **D92 (CLI Credential Storage)**: Amended to store structured credentials with strict separation between the control-plane user session and per-project data-plane tokens.
+- **D92 (Credential Storage)**: The credential file holds one signed key, written by `remember login` and read by SDK and CLI under the stored-key origin rule (D136).
 - **Durable Zero-Friction Onboarding**: `uvx remember setup` automatically configures persistent, absolute-path launchers (`<resolved_launcher_path> [remember] mcp`) that operate seamlessly without manual `$PATH` intervention or GUI editor `FileNotFoundError` failures.
 - **Zero Host-Dependency Friction**: Developers and AI agents never encounter C-extension compilation errors when adopting Remember.

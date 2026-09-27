@@ -1,5 +1,6 @@
 """E3 normalization values: LLM candidates, resolution, and fact records (D2-D5, D17-D18, D43)."""
 
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -38,6 +39,8 @@ class RelationCandidate(BaseModel):
     subject: EntityRef
     predicate: _NonEmpty
     object: EntityRef
+    uses_claim_window: bool = False
+    context_refs: tuple[EntityRef, ...] = ()
 
 
 class ObservationCandidate(BaseModel):
@@ -47,6 +50,8 @@ class ObservationCandidate(BaseModel):
 
     subject: EntityRef
     statement: _NonEmpty
+    uses_claim_window: bool = False
+    context_refs: tuple[EntityRef, ...] = ()
 
 
 class ObservationAssertion(BaseModel):
@@ -80,6 +85,23 @@ class ClaimForNormalization(BaseModel):
     claim_text: str
     is_attributed: bool
     extractor_version: str
+    asserted_at: datetime | None = None
+    claim_valid_from: datetime | None = None
+    claim_valid_until: datetime | None = None
+    claim_valid_precision: str = "unknown"
+    claim_valid_kind: str | None = None
+    # D134: [start, end) of the document's own name in claim_text, when
+    # Claimify wrote it in place of a self-reference.
+    own_document_name_start: int | None = None
+    own_document_name_end: int | None = None
+
+    def own_document_name(self) -> str | None:
+        """The document's own name at the recorded span, or None without one."""
+        if self.own_document_name_start is None or self.own_document_name_end is None:
+            return None
+        return self.claim_text[
+            self.own_document_name_start : self.own_document_name_end
+        ]
 
 
 class ResolvedEntity(BaseModel):
@@ -89,3 +111,4 @@ class ResolvedEntity(BaseModel):
 
     entity_id: UUID
     created: bool
+    decision_id: UUID | None = None

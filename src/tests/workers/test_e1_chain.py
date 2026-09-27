@@ -42,9 +42,11 @@ from rememberstack.workers import ConvertHandler
 from rememberstack.workers import E1Settings
 from rememberstack.workers import EmbedChunksHandler
 from rememberstack.workers import HandlerRegistry
+from rememberstack.workers import P1Settings
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("70000000-0000-0000-0000-000000000001")
@@ -68,7 +70,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -105,7 +107,7 @@ class _E1Rig:
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.chunk_index = PostgresP1Index(
-            engine=engine, embedding_model=E1Settings().embedding_model
+            engine=engine, embedding_model=P1Settings().embedding_model
         )
         self.provider = FakeModelProvider(
             generate_payload={"prefix": "Sits early in the test document."}
@@ -158,6 +160,7 @@ class _E1Rig:
                 model_provider=self.provider,
                 chunk_index=self.chunk_index,
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )
@@ -354,6 +357,7 @@ def test_embed_retry_replays_stored_prefixes(rig: _E1Rig, tmp_path: Path) -> Non
         model_provider=rig.provider,
         chunk_index=rig.chunk_index,
         settings=E1Settings(),
+        embedding_model=P1Settings().embedding_model,
         params=_PARAMS,
     )
     handler.handle(

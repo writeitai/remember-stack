@@ -100,6 +100,12 @@ class _Catalog:
     def materialize_portable(self, *, manifest: ForgetManifest) -> None:
         self.materializations += 1
 
+    def profile_repair_batches(
+        self, *, manifest: ForgetManifest
+    ) -> tuple[tuple[UUID, ...], ...]:
+        """Offer the cleared fixture profiles to the normal repair loop."""
+        return (manifest.resolved_entity_ids,)
+
     def scrub_postgres(self, *, manifest: ForgetManifest) -> None:
         self.state.remove("semantic", "verbatim")
 

@@ -226,7 +226,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         if isinstance(operation, dict)
         and operation["name"] == "claims_and_sources_context"
     )
-    assert question["version"] == 1
+    assert question["version"] == 2
     schema = question["input_schema"]
     assert isinstance(schema, dict)
     properties = schema["properties"]

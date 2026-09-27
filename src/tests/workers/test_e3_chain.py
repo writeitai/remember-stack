@@ -38,14 +38,13 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
-from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
@@ -65,7 +64,9 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("90000000-0000-0000-0000-000000000001")
@@ -89,12 +90,12 @@ _CLAIMIFY_PAYLOAD: dict[str, object] = {
     "claims": [
         {
             "claim_text": "Alice Novak joined Acme in 2024.",
-            "source_span": "Alice Novak joined Acme in 2024.",
+            "source_refs": ["S1"],
             "entailment_self_verdict": True,
         },
         {
             "claim_text": "Alice Novak works for Acme.",
-            "source_span": "Alice Novak works for Acme as an engineer.",
+            "source_refs": ["S3"],
             "entailment_self_verdict": True,
         },
     ]
@@ -153,7 +154,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -200,8 +201,14 @@ class _E3Rig:
             "ObservationVerdict": {"outcome": "new", "confidence": 0.9},
         }
 
+        self.normalization_payload: dict[str, object] = _NORMALIZATION_PAYLOAD
+
         def route(prompt: str, type_name: str) -> dict[str, object]:
             """Serve canned chain payloads and a dynamic T4 candidate id."""
+            if type_name == "NormalizationResponse":
+                return self.normalization_payload
+            if type_name == "PromptFactDecision":
+                return same_fact_application_answer(prompt=prompt)
             if type_name == "T4Selection":
                 return match_first_t4_candidate(prompt, type_name)
             return payloads[type_name]
@@ -242,10 +249,10 @@ class _E3Rig:
                 small_model="openai/gpt-5.6-luna",
             ),
             facts=FactCatalog(engine=engine),
-            observation_adjudicator=ObservationAdjudicator(
+            observation_adjudicator=FactAdjudicator(
                 engine=engine,
                 model_provider=self.provider,
-                settings=ObservationSettings(),
+                settings=FactAdjudicationSettings(),
             ),
             profile_refresher=profile_refresher,
             model_provider=self.provider,
@@ -284,6 +291,7 @@ class _E3Rig:
                 model_provider=self.provider,
                 chunk_index=self.p1,
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )
@@ -299,16 +307,20 @@ class _E3Rig:
             ),
         )
         registry.register(
+            stage=PipelineStage.GROUND_CLAIMS,
+            handler=registry.handler_for(stage=PipelineStage.EXTRACT_CLAIMS),
+        )
+        registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS, handler=self.normalize_handler
         )
         registry.register(
             stage=PipelineStage.ADJUDICATE_OBSERVATIONS,
             handler=AdjudicateObservationsHandler(
                 facts=FactCatalog(engine=engine),
-                observation_adjudicator=ObservationAdjudicator(
+                observation_adjudicator=FactAdjudicator(
                     engine=engine,
                     model_provider=self.provider,
-                    settings=ObservationSettings(),
+                    settings=FactAdjudicationSettings(),
                 ),
                 profile_refresher=profile_refresher,
                 chunk_catalog=chunk_catalog,
@@ -319,10 +331,12 @@ class _E3Rig:
         registry.register(
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
+                facts=FactCatalog(engine=engine),
+                chunk_catalog=chunk_catalog,
+                claim_catalog=claim_catalog,
+                chunker_version=chunker_version(params=_PARAMS),
                 adjudicator=SupersessionAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=SupersessionSettings(),
+                    engine=engine, model_provider=self.provider
                 ),
                 profile_refresher=profile_refresher,
             ),
@@ -339,6 +353,7 @@ class _E3Rig:
             ),
         )
         self.label_handler = LabelFactsHandler(
+            profile_refresher=profile_refresher,
             facts=FactCatalog(engine=engine),
             model_provider=self.provider,
             fact_index=self.p1,
@@ -368,6 +383,7 @@ class _E3Rig:
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -446,7 +462,9 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
         )
         adjudications = (
             connection.execute(
-                text("SELECT outcome, method FROM observation_adjudications")
+                text(
+                    "SELECT outcome, method FROM observation_adjudications ORDER BY decided_at, adjudication_id"
+                )
             )
             .mappings()
             .all()
@@ -465,13 +483,15 @@ def test_same_fact_twice_is_one_relation_with_lineage_distinct_count(
     assert [e["canonical_name"] for e in entities] == ["Acme", "Alice Novak"]
     assert new_decisions == 2
 
-    # the observation landed once with collapsed evidence and its novelty-gate
-    # adjudication (D43/D4):
+    # the observation landed once with collapsed evidence: the first assertion
+    # on an empty entity is decided without a model call (contract §8), the
+    # repeat is an inferred attachment to the same identity:
     (observation,) = observations
     assert observation["statement"] == "Acme employs Alice Novak as an engineer."
     assert observation["evidence_count"] == 1
     assert [dict(a) for a in adjudications] == [
-        {"outcome": "add", "method": "novelty_gate"}
+        {"outcome": "add", "method": "novelty_gate"},
+        {"outcome": "noop", "method": "small_model"},
     ]
 
 
@@ -511,6 +531,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.GROUND_CLAIMS,
         PipelineStage.NORMALIZE_RELATIONS,
         PipelineStage.ADJUDICATE_OBSERVATIONS,
         PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -523,6 +544,7 @@ def test_empty_document_completes_the_same_terminal_pipeline_without_model_calls
         ).outcome
         if stage in (
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             # D90: empty path is durable empty_complete — no document_version
             # adjudicate_observations work row at the entity-fanout generation.

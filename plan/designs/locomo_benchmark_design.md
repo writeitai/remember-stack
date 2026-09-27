@@ -1,5 +1,176 @@
 # LoCoMo full-system benchmark design
 
+> **v38 retrieval adjacent-chunks amendment (2026-09-21).** Direct retrieval
+> primitives expand from 7 to 8 with `adjacent_chunks` (symmetric window
+> `1 <= window <= 2`), bringing the complete benchmark answer catalog from 21
+> to 22 tools. Tool catalog SHA-256 and protocol fingerprints roll accordingly.
+> Pipeline stages, component generations, prompts, budgets, models, live graph,
+> dataset, and judge remain identical to Full-v38; stores ingested under v38
+> remain fully compatible and do not need re-ingestion. Existing in-flight v38
+> runs updating answers/judges must update their protocol fingerprint and catalog
+> hash pins to match the 22-tool catalog. Decision: [D130](../../decisions.md).
+>
+> **v38 GLM ingest variant (2026-09-17).** `full-v38-glm`
+> (`RS-LoCoMo-Full-v38-GLM`) replays the R14 generation model
+> (`z-ai/glm-5.3-flash` via OpenRouter, reasoning effort `minimal`) under the
+> full v38 pipeline: same stages including `ground_claims`, component
+> generations, prompts, tool catalog, budgets, Qwen embeddings, and the frozen
+> Luna answer agent and judge. Ingest model bindings move from a module-global
+> constant to a per-protocol pin (`LoCoMoProtocol.ingest_model_bindings`,
+> canonical map as default); the runner checks readiness and pre-upload
+> bindings against the prepared protocol, so a wrong-model deployment fails
+> closed naming the expected protocol. Fingerprints are untouched, so existing
+> v38 run dirs keep validating. Scores are a new ingest-model family baseline,
+> comparable only to other GLM-ingest runs, never to Luna-ingest v38 runs. The
+> shard driver routes chat through the ordered shortlist
+> `deepinfra,relace,wafer` with fallbacks so D127 rotation can engage; the
+> first GLM run sets the baseline and verifies the rotation fix against the
+> exact DeepInfra 429 `engine_overloaded` failure that dead-lettered 45 R14
+> work items. Decision: [D128](../../decisions.md) (decisions log in repo root).
+>
+> **v38 adjudication rejection-feedback amendment (2026-09-15).** Full-v38 is
+> the current protocol. The fact adjudicator retries one deterministic
+> translator rejection inside the delivery: on a new-fact target/declare
+> mismatch, a supplied-name collision, or incoming support filed as a move,
+> drain re-generates once against the same prepared attempt with a structural
+> note appended outside the inputs, metered under a distinct
+> `:translator-retry1` receipt. A second identical rejection raises exactly as
+> before. Relation and observation application generations append
+> `:rej-feedback-1`. The base prompt is byte-identical; schema, translator,
+> normalizer, and resolver generations stay the same. Adapter identity,
+> protocol keys, variants, and fingerprints roll together. Dataset, models,
+> budgets, and scoring are unchanged. Stores ingested under v37 are not this
+> protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v37 adjudication target-discipline amendment (2026-09-15).** Full-v37 added
+> two sentences to the fact-adjudication prompt: when target was a supplied
+> F-name, `new_facts` had to be empty, and the incoming assertion's placement
+> was decided by target/stance alone, never by a `support_moves` entry. That
+> addressed the R8 Vertex/Gemma dead-letters (declared-but-unused N-names,
+> incoming support filed as a move). Schema and translator stayed the same.
+> Relation and observation application generations appended
+> `:target-discipline-1`. Normalizer and resolver generations stayed the same.
+> The v36 N1/F2 wording and JSON examples were unchanged underneath. Adapter
+> identity, protocol keys, variants, and fingerprints rolled together. Dataset,
+> models, budgets, and scoring were unchanged. Stores ingested under v36 are
+> not that protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v36 fact new-fact-reference amendment (2026-09-15).** Full-v36 said to
+> choose N1 rather than continue F-numbering, declare that name in `new_facts`,
+> and use the same name as `target`. Two complete nine-field JSON examples
+> showed structure only: repeating supplied F1 with no other changes, or
+> incoming A1 as a different proposition declared as N1. A separate
+> Gemma/Vertex control on one captured R7 input had named the new fact F2;
+> three diagnostics of this template returned N1 or F1 as required. Invalid F
+> references remained rejected. Schema and translator stayed the same.
+> Relation and observation application generations appended `:new-fact-refs-1`.
+> Normalizer and resolver generations stayed the same. Meaning, temporal,
+> schema, retrieval, answer, and judge pins stayed the same. Adapter identity,
+> protocol keys, variants, and fingerprints rolled together. Dataset, models,
+> budgets, and scoring were unchanged. Stores ingested under v35 are not that
+> protocol. Analysis:
+> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
+>
+> **v35 nested-normalizer-field amendment (2026-09-15).** Full-v35 named
+> existing nested normalizer fields after the root both-array sentence. Each
+> observation, relation, and entity reference lists its declared fields;
+> empty context uses `[]`; `uses_claim_window` is an explicit boolean;
+> `surface=null` when the claim spelling matches the canonical name. That
+> completed one captured Gemma/Vertex input that already had the both-array
+> sentence; the same input completed in an earlier run, so this is not a
+> deterministic failure. Three sequential diagnostics completed that one
+> unique input; the third verified raw required fields before Pydantic,
+> including three entity references: the subject and two context references.
+> Resolver and fact-adjudicator prompt generations stayed the same; the
+> normalizer generation appended `:nested-fields-1`. Meaning, temporal,
+> schema, retrieval, answer, and judge pins stayed the same. Adapter
+> identity, protocol keys, variants, and fingerprints rolled together.
+> Dataset, models, budgets, and scoring were unchanged. Stores ingested under
+> v34 are not that protocol. Analysis:
+> [normalizer_nested_fields_20260915.md](../analysis/normalizer_nested_fields_20260915.md).
+> Durable probes:
+> [nested-field probes](https://github.com/writeitai/ultimate-memory-cloud/blob/2f64281c/design/analysis/locomo-conv42-gemma-normalizer-nested-probes-20260915.json).
+>
+> **v34 decision-output-format amendment (2026-09-15).** Full-v34 named
+> existing decision-output fields in two processing prompts. The T4 prompt
+> requires all four existing fields
+> (`candidate_id`, `confidence`, `decision`, `rationale`), including nulls;
+> that is a measured Gemma/Vertex completion of one captured input. The fact
+> prompt names all nine existing `PromptFactDecision` fields, uses `[]` for
+> empty arrays, and says `window=null` when no explicit date replacement is
+> intended; that corrects a
+> prompt/schema contradiction and is not a reproduced fact-adjudication
+> provider failure. Resolver, normalizer, and application generations roll.
+> Meaning, temporal, schema, retrieval, answer, and judge pins stay the same.
+> Adapter identity, protocol keys, variants, and fingerprints roll together.
+> Dataset, models, budgets, and scoring are unchanged. Stores ingested under
+> v33 are not that protocol. Analysis:
+> [t4_output_format_20260915.md](../analysis/t4_output_format_20260915.md),
+> [fact_adjudication_output_format_20260915.md](../analysis/fact_adjudication_output_format_20260915.md).
+>
+> **v33 normalizer output-format amendment (2026-09-15).** Full-v33 required
+> both `observations` and `relations` arrays in one JSON object, using `[]`
+> when a kind has no output. Meaning, temporal, schema, retrieval, answer, and
+> judge pins stayed the same. Adapter identity, protocol keys, variants, and
+> fingerprints rolled together. Dataset, models, budgets, and scoring were
+> unchanged. Stores ingested under v32 are not that protocol. Analysis:
+> [normalizer_output_format_20260915.md](../analysis/normalizer_output_format_20260915.md).
+
+> **v32 structuring-compatibility amendment (2026-09-15).** Full-v32 changed
+> the fallback structuring JSON field to `subsections` while preserving the
+> internal `children` tree. Other processing, retrieval, answer, and judge
+> pins stayed the same. Adapter identity, protocol keys, variants, and
+> fingerprints rolled together. Dataset, models, budgets, and scoring were
+> unchanged. Stores ingested under v31 are not that protocol. Analysis:
+> [gemma_fallback_subsections_20260915.md](../analysis/gemma_fallback_subsections_20260915.md).
+
+> **Binding D124 retrieval-ablation amendment (2026-09-14).** An additive,
+> answer-and-judge-only development runner compares four access profiles over
+> one already-processed run: native Codex with local P3, native Codex with P3
+> plus the official OSS MCP server, a provider-neutral agent with the OSS MCP
+> read surface, and that agent with three P3-like MCP tools. Results and state
+> are separate from the canonical run and are not publication scores. The
+> Full-v31 protocol is unchanged. Binding contract:
+> [`locomo_retrieval_ablation_design.md`](locomo_retrieval_ablation_design.md).
+
+> **D119–D123 processing amendments (2026-09-14).** Full-v29 identifies
+> [D119 coherent multi-span extraction](multi_span_claim_extraction_design.md)
+> with version reuse. Full-v30 adds [clear processing instructions](processing_prompt_clarity_design.md)
+> and [concise adjudication inputs](concise_adjudication_inputs_design.md).
+> Full-v31 adds [source-backed document references](document_reference_context_design.md)
+> and [contextual fact nomination](contextual_fact_nomination_design.md), with
+> separate Selection and Claimify work stages and unchanged two-call extraction.
+> The combined extractor, normalizer and adjudicator generations are pinned
+> separately from earlier stores. The adapter and protocol fingerprints roll
+> together. Dataset, provider defaults, answer/judge behavior and scoring do
+> not change. These processing changes do not establish a benchmark-quality
+> or billed-cost improvement; the offline byte comparisons are recorded in the
+> [implementation evaluation](../implementation_evals/d120_d121_implementation_20260914.md).
+
+> **Binding v28 amendment (2026-09-12).** The protocol pins the D118 fact
+> contract ([design](mutable_fact_windows_design.md)): the mutable-window
+> normalizer and adjudicator generations, the re-pinned query-space manifest
+> hash, and consumption skill 4.0.0. Facts carry one chosen world-time window
+> with precision; assured fact results carry `temporal_match`; history mode
+> returns completed intervals. Adapter version, protocol identities, and
+> fingerprints roll to v28; v27 stores must be re-ingested. Dataset, models,
+> budgets, judge rubric, and scoring are unchanged from v27.
+
+> **Binding v27 amendment (2026-09-11).** The protocol pins extractor
+> generation `temporal-anchor-4`: E2 writes a resolved relative date into
+> claim text as an ISO value and grounds it by the claim's own valid-time
+> fields (D41/D32 amendments of 2026-09-11). The answer prompt replaces "use
+> timestamps to resolve relative dates" with a plain-word definition of the
+> two evidence times — `asserted_at` is when the source made the statement,
+> `claim_valid_from` / `claim_valid_until` are when the claim says it happened
+> or was true, `claim_valid_kind` names which — and tells the agent that a
+> relative phrase still in claim text is unresolved and reads against
+> `asserted_at`. Adapter version, protocol identities, and fingerprints roll
+> together; stores ingested under v26 must be re-ingested. Dataset, models,
+> retrieval behavior, budgets, judge rubric, and scoring are unchanged.
+
 > **Binding D114 / v26 amendment (2026-09-07).** The three assured context
 > tools adopt `claims_and_sources_context`, `facts_context`, and
 > `combined_context`; the last returns `ContextBundle/v2`. The catalog,
@@ -29,15 +200,15 @@
 > and fingerprints change; earlier protocol scores are directional comparisons.
 > Binding extraction semantics: `temporal_clocks_design.md` §6.
 
-> **Binding D107 amendment (2026-09-03).** The answer-agent prompt carries the
-> two-clock paragraph naming `asserted_at` (said on), `claim_valid_*` (is
-> about), and the fact-grain `validity` fields with their bases and occurrence
-> window. Each D107 work package that changes ingestion provenance or the
-> assured surface rolls this protocol; the sequencing is
-> `plan/plans/temporal_clocks.md`. Contract: `temporal_clocks_design.md` §6–§8.
+> **D118 amendment (2026-09-07; effective when merged).** Future fact-time
+> inputs use one chosen window, precision and source timestamps, with explicit
+> current/history selection and unknown-date disclosure. Full-v24 and all current
+> evaluator variants remain unchanged by this design-only amendment. Roll the
+> protocol when replacement semantics ship; see
+> [D118](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
 
-> **Binding D107 amendment, WP-T.0b (2026-09-04).** The current protocol is
-> `RS-LoCoMo-Full-v23`. It retains v22's dataset, rendered documents, models,
+> **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
+> `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,
 > tools, budgets, prompts, scoring, and ingest component versions. The query
 > space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
 > `examples.claims_as_of` overlaps the half-open canonical window and counts
@@ -147,7 +318,7 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v26
+protocol                RS-LoCoMo-Full-v38
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
 dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
@@ -171,6 +342,78 @@ The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
 adapter and repository revisions, manifests, rendered documents, model
 identities, complete answer-tool catalog hash, and component generations are
 stored. A change creates a new protocol version.
+
+**v38 retrieval adjacent-chunks amendment (2026-09-21 — adjacent_chunks primitive):**
+Direct retrieval primitives expand from 7 to 8 with `adjacent_chunks`
+(window bounded by `1 <= window <= 2`), bringing the complete answer catalog to
+22 descriptors. The tool catalog SHA-256 and protocol fingerprints roll together.
+Pipeline stages, prompts, models, budgets, live graph schema, and stores
+ingested under v38 are unchanged and compatible. In-flight v38 run directories
+regenerating answers update their `tool_catalog_sha256` and `protocol_fingerprint`
+pins to reflect the 22-tool catalog.
+
+**v37 → v38 (2026-09-15 — adjudication rejection feedback):** Relation and
+observation application generations include `rej-feedback-1`. The fact
+adjudicator retries one deterministic translator rejection inside the delivery
+against the same prepared attempt, with a structural note outside the inputs
+metered under a distinct `:translator-retry1` receipt; a second identical
+rejection raises exactly as before. The base prompt is byte-identical; schema,
+translator, normalizer, and resolver generations are unchanged. Meaning,
+temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
+version, protocol identities, variants, and fingerprints roll. Stores ingested
+under v37 must be re-ingested.
+
+**v36 → v37 (2026-09-15 — adjudication target discipline):** Relation and
+observation application generations include `target-discipline-1`. The fact
+prompt says that when target is a supplied F-name, `new_facts` must be empty,
+and that the incoming assertion's placement is decided by target/stance alone,
+never by a `support_moves` entry. Schema, translator, normalizer, and resolver
+generations are unchanged. Meaning, temporal, schema, retrieval, answer, and
+judge pins are unchanged. Adapter version, protocol identities, variants, and
+fingerprints roll. Stores ingested under v36 must be re-ingested.
+
+**v35 → v36 (2026-09-15 — fact new-fact reference examples):** Relation and
+observation application generations include `new-fact-refs-1`. The fact prompt
+says to choose N1 rather than continue F-numbering and shows two complete JSON
+objects (repeat F1 with no other changes, or declare N1 for a different
+proposition). Schema, translator, normalizer, and resolver generations are
+unchanged. Meaning, temporal, schema, retrieval, answer, and judge pins are
+unchanged. Adapter version, protocol identities, variants, and fingerprints
+roll. Stores ingested under v35 must be re-ingested.
+
+**v34 → v35 (2026-09-15 — nested normalizer fields):** Normalizer generation
+includes `nested-fields-1`. After the root both-array sentence, the prompt
+names every existing nested observation, relation, and EntityRef field,
+uses `[]` for empty context references, an explicit boolean
+`uses_claim_window`, and `surface=null` when spelling matches. Resolver and
+fact-adjudicator prompt generations are unchanged. Meaning, temporal, schema,
+retrieval, answer, and judge pins are unchanged. Adapter version, protocol
+identities, variants, and fingerprints roll. Stores ingested under v34 must
+be re-ingested.
+
+**v33 → v34 (2026-09-15 — T4 and fact output-format prompts):** Resolver
+generation is `resolver-2026.08h`. Normalizer generation includes
+`t4-format-1`. Relation and observation application generations include
+`output-fields-1`. T4 names all four existing fields, including nulls. Fact
+adjudication names all nine existing fields, uses `[]` for empty arrays, and
+uses `window=null` when no explicit date replacement is intended. Meaning,
+temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
+version, protocol identities, variants, and fingerprints roll. Stores
+ingested under v33 must be re-ingested.
+
+**v32 → v33 (2026-09-15 — both-lists normalizer prompt):** Normalizer
+generation includes `both-lists-1`. The prompt requires both `observations`
+and `relations` arrays, using `[]` when a kind has no output. Meaning,
+temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
+version, protocol identities, variants, and fingerprints roll. Stores
+ingested under v32 must be re-ingested.
+
+**v31 → v32 (2026-09-15 — Gemma fallback subsections):** Structure generation
+includes the fallback nested JSON field `subsections`. This is the measured
+Gemma/Vertex compatibility correction.
+Dataset, models, answer/judge behavior, budgets, and scoring are unchanged.
+Adapter version, protocol identities, variants, and fingerprints roll. Stores
+ingested under v31 must be re-ingested.
 
 **v24 → v25 (2026-09-07 — shared entity follow-up and audited Codex):** The
 answer prompt remains one constant shared by the default, Gemma/Vertex, and
@@ -495,7 +738,7 @@ accounting differ even though they use the same model.
 
 #### 2.1.1 Codex ChatGPT-subscription variant
 
-`full-v26-codex-subscription` is an additive evaluator-provider variant for
+`full-v38-codex-subscription` is an additive evaluator-provider variant for
 answer and judge experiments on an operator machine already logged into Codex
 with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
 app-server runtime. The benchmark never reads Codex's auth file, never receives
@@ -531,11 +774,11 @@ accounting becomes a material requirement.
 
 The provider controls force a distinct protocol. Codex does not expose
 temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
-reasoning effort `high`, rather than v26's OpenRouter-specific `none`. The v26
+reasoning effort `high`, rather than v28's OpenRouter-specific `none`. The v28
 prompt is the same object used by the OpenRouter and Gemma variants; schemas,
 budgets, catalog, and judge rubric remain aligned.
 These runs are useful for smoke/development comparison but are not canonical
-v26 publication results. The SDK's synchronous turn currently has no
+v28 publication results. The SDK's synchronous turn currently has no
 benchmark-enforced deadline, so this variant is not the default unattended
 publication path.
 
@@ -721,7 +964,7 @@ reconcile
 label_relation
 ```
 
-All use the same deployment ID, PostgreSQL authority/P1 database, MinIO stores, and OpenRouter
+All use the same deployment ID, PostgreSQL authority/P1 database, object stores, and OpenRouter
 adapter. One route per process preserves the existing queue/rate-limit design; no workflow engine
 is introduced.
 
@@ -794,7 +1037,7 @@ compatibility form. The response contains:
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and
-- the non-secret `document_binding_generation`, which Full-v26 requires to be
+- the non-secret `document_binding_generation`, which Full-v38 requires to be
   exactly `document-t0-v1` and stores in `run.json` plus the protocol
   fingerprint.
 
@@ -843,7 +1086,7 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-No benchmark tool reads Postgres, MinIO, graph files, or internal
+No benchmark tool reads Postgres, the object store, graph files, or internal
 handlers directly. Product reads go through `MemoryClient`; filesystem reads
 stay inside the normal P3 mount.
 
@@ -851,7 +1094,7 @@ stay inside the normal P3 mount.
 
 For each question:
 
-1. Render the frozen answer-agent prompt with the question, all 21 tool
+1. Render the frozen answer-agent prompt with the question, all 22 tool
    descriptors, and prior trace.
 2. Ask for strict `AnswerAgentStep`.
 3. For `action="tool"`, validate the name against the catalog, decode
@@ -943,12 +1186,12 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v26 \
+  --protocol full-v38 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v26`; the
-explicit `full-v26-gemma-vertex` and `full-v26-codex-subscription` choices are
+`--protocol` exists only on `prepare`. Canonical runs use `full-v38`; the
+explicit `full-v38-gemma-vertex` and `full-v38-codex-subscription` choices are
 separately fingerprinted provider variants. Ingest, answer, judge, and summarize
 read the frozen choice from the prepared run and expose no protocol override.
 

@@ -14,11 +14,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimRecord
+from rememberstack.model import EvidenceSpan
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import NormalizedRegion
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("83000000-0000-0000-0000-000000000001")
@@ -39,7 +41,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -53,7 +55,7 @@ def empty_claim_tables(database_engine: Engine) -> None:
     """Each proof starts from empty claim/occurrence partitions."""
     with database_engine.begin() as connection:
         for table in ("chunk_claims", "claims", "claim_extraction_decisions"):
-            connection.execute(statement=text(f"TRUNCATE TABLE {table}"))
+            connection.execute(statement=text(f"TRUNCATE TABLE {table} CASCADE"))
 
 
 def _claim(*, chunk_id: UUID, source_span: str, char_start: int) -> ClaimRecord:
@@ -68,6 +70,9 @@ def _claim(*, chunk_id: UUID, source_span: str, char_start: int) -> ClaimRecord:
         source_span=source_span,
         char_start=char_start,
         char_end=char_start + len(source_span),
+        evidence_spans=(
+            EvidenceSpan(char_start=char_start, char_end=char_start + len(source_span)),
+        ),
         added_context=(),
         is_attributed=False,
         entailment_self_verdict=True,
@@ -164,11 +169,13 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         evidence_mode="model_observation",
         source_locators=(_WHOLE_IMAGE,),
     )
+    remapped = (EvidenceSpan(char_start=4, char_end=4 + len("the red valve")),)
     attached = catalog.attach_reused_claims(
         deployment_id=_DEPLOYMENT_ID,
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
         occurrences={claim.claim_id: target_provenance},
+        evidence_spans={claim.claim_id: remapped},
     )
     assert attached == 1
     # Idempotent: a retry must not invent a second occurrence row.
@@ -177,11 +184,14 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         chunk_id=target_chunk,
         prior_chunk_id=prior_chunk,
         occurrences={claim.claim_id: target_provenance},
+        evidence_spans={claim.claim_id: remapped},
     )
     anchors = catalog.claims_for_occurrence_reuse(chunk_id=prior_chunk)
     assert len(anchors) == 1
     assert anchors[0].claim_id == claim.claim_id
-    assert anchors[0].source_span == "the red valve"
+    assert anchors[0].evidence_spans == (
+        EvidenceSpan(char_start=0, char_end=len("the red valve")),
+    )
     with database_engine.connect() as connection:
         rows = (
             connection.execute(
@@ -208,3 +218,54 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         _WHOLE_IMAGE.model_dump(mode="json")
     ]
     assert len(rows) == 2
+
+
+def test_own_document_name_span_persists_and_survives_reuse(
+    database_engine: Engine,
+) -> None:
+    """D134: the span is on the claim row, so a reused occurrence carries it."""
+    catalog = ClaimCatalog(engine=database_engine)
+    prior_chunk = uuid4()
+    target_chunk = uuid4()
+    claim_text = "The report Audit_2025.pdf summarizes the 2025 audit findings."
+    claim = _claim(
+        chunk_id=prior_chunk,
+        source_span="This report summarizes the 2025 audit findings.",
+        char_start=0,
+    ).model_copy(
+        update={
+            "claim_text": claim_text,
+            "own_document_name_start": 11,
+            "own_document_name_end": 25,
+        }
+    )
+    plain = _claim(chunk_id=prior_chunk, source_span="Revenue grew.", char_start=60)
+    catalog.record_extraction(claims=(claim, plain), decisions=())
+    catalog.attach_reused_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        chunk_id=target_chunk,
+        prior_chunk_id=prior_chunk,
+        occurrences=None,
+        evidence_spans={
+            claim.claim_id: (EvidenceSpan(char_start=0, char_end=48),),
+            plain.claim_id: (EvidenceSpan(char_start=60, char_end=73),),
+        },
+    )
+    with database_engine.connect() as connection:
+        stored = connection.execute(
+            text(
+                "SELECT lower(own_document_name_span), upper(own_document_name_span)"
+                " FROM claims WHERE claim_id = :id"
+            ),
+            {"id": claim.claim_id},
+        ).one()
+    assert tuple(stored) == (11, 25)
+    reused = {
+        loaded.claim_id: loaded
+        for loaded in catalog.claims_for_chunks(chunk_ids=(target_chunk,))
+    }
+    assert reused[claim.claim_id].own_document_name() == "Audit_2025.pdf"
+    assert reused[plain.claim_id].own_document_name() is None
+    loaded = catalog.claim_for_normalization(claim_id=claim.claim_id)
+    assert loaded is not None
+    assert (loaded.own_document_name_start, loaded.own_document_name_end) == (11, 25)

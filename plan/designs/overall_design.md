@@ -206,8 +206,10 @@ PG entity registry             (D98)                      → GCS bytes
   `combined_context`. Testimony and facts stay separate; the bundle returns their
   complete responses without blending. Reusable
   patterns such as `entity_timeline`, `explain`, and `claims_as_of` are
-  non-tool `examples.*` saved queries; MCP renders only the assured catalog
-  plus open-query infrastructure.
+  non-tool `examples.*` saved queries. The four assured operations are the only
+  MCP *intent* tools; MCP renders the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)), whose other entries are
+  infrastructure: `ingest`, `pipeline_readiness`, `delete_document`,
+  `source_open` and the seven open-query tools.
 - Surfaces (D51): HTTP API, CLI, MCP server, and **four read-only mounts** (P3, E0 artifacts,
   E0 raw — off the navigation path, K repo checkout); **filesystem-first** for agent harnesses
   with full mount/API parity; a shipped **consumption skill** teaches cold agents the memory.

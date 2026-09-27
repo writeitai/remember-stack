@@ -45,6 +45,11 @@ _logger = logging.getLogger(__name__)
 class NoRouteHandlerError(Exception):
     """Convert found no configured route before any I/O or provider work (D117)."""
 
+    def __init__(self, message: str, *, mime: str) -> None:
+        """Keep the stored MIME the handler found unroutable."""
+        super().__init__(message)
+        self.mime = mime
+
 
 class ExtractChunkBarrier(BaseModel):
     """D84: after a chunk extract succeeds, complete+barrier in one ledger txn."""
@@ -59,6 +64,10 @@ class ExtractChunkBarrier(BaseModel):
     content_hash: str
     lane: ProcessingLane | None
     normalize_component_version: str
+
+
+class SelectionChunkBarrier(ExtractChunkBarrier):
+    """Complete Selection before any chunk consumes the shared source references."""
 
 
 class ClaimNormalizeBarrier(BaseModel):
@@ -119,6 +128,7 @@ class HandlerOutcome(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     follow_up: tuple[EnqueueWork, ...] = ()
+    selection_chunk_barrier: SelectionChunkBarrier | None = None
     extract_chunk_barrier: ExtractChunkBarrier | None = None
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
     entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
@@ -285,9 +295,11 @@ class Worker:
         )
         try:
             outcome = handler.handle(work=claimed, meter=meter)
-        except NoRouteHandlerError:
+        except NoRouteHandlerError as no_route:
             self._ledger.park_no_route(
-                processing_id=claimed.processing_id, attempt=claimed.attempt
+                processing_id=claimed.processing_id,
+                attempt=claimed.attempt,
+                mime=no_route.mime,
             )
             self._export_event(
                 event=_worker_event(
@@ -378,7 +390,13 @@ class Worker:
             return RunResult(
                 processing_id=claimed.processing_id, outcome=result_outcome
             )
-        if outcome.extract_chunk_barrier is not None:
+        if outcome.selection_chunk_barrier is not None:
+            self._ledger.complete_chunk_selection(
+                processing_id=claimed.processing_id,
+                barrier=outcome.selection_chunk_barrier,
+                follow_up=outcome.follow_up,
+            )
+        elif outcome.extract_chunk_barrier is not None:
             self._ledger.complete_chunk_extract(
                 processing_id=claimed.processing_id,
                 barrier=outcome.extract_chunk_barrier,

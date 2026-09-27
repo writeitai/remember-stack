@@ -21,6 +21,7 @@ class ProcessingTarget(StrEnum):
     DOCUMENT_SECTION = "document_section"
     CHUNK = "chunk"
     CLAIM = "claim"
+    FACT_APPLICATION = "fact_application"
     RELATION = "relation"
     OBSERVATION = "observation"
     ENTITY = "entity"
@@ -147,34 +148,6 @@ class BudgetParked(BaseModel):
     resume_at: UTCDateTime
     spent_usd: Decimal = Field(ge=Decimal(0))
     ceiling_usd: Decimal = Field(gt=Decimal(0))
-
-
-class CostTierSpend(BaseModel):
-    """Current-window spend attributed to one recorded cascade tier."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    tier: str | None
-    cost_usd: Decimal = Field(ge=Decimal(0))
-
-
-class CostBudgetStatus(BaseModel):
-    """Admin-visible state derived from one configured ceiling and the durable ledgers."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    deployment_id: UUID
-    stage: PipelineStage
-    lane: ProcessingLane | None
-    window_seconds: int = Field(gt=0)
-    window_started_at: UTCDateTime
-    window_ends_at: UTCDateTime
-    ceiling_usd: Decimal = Field(gt=Decimal(0))
-    spent_usd: Decimal = Field(ge=Decimal(0))
-    remaining_usd: Decimal = Field(ge=Decimal(0))
-    exhausted: bool
-    parked_work: int = Field(ge=0)
-    tiers: tuple[CostTierSpend, ...]
 
 
 class RecordCall(BaseModel):

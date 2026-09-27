@@ -41,20 +41,23 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
     )
 
     assert _header_text(source=source) == (
-        "title Unknown time; source upload; date unknown; language en"
+        "title Unknown time; file unknown; source upload; date unknown; language en"
     )
     dated = source.model_copy(
         update={"source_modified_at": datetime(2023, 5, 1, 13, tzinfo=UTC)}
     )
     assert _header_text(source=dated) == (
-        "title Unknown time; source upload; date 2023-05-01T13:00:00+00:00; language en"
+        "title Unknown time; file unknown; source upload;"
+        " date 2023-05-01T13:00:00+00:00; language en"
     )
 
 
 def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:
-    """The extraction request makes #158's structured-only rule unmistakable."""
+    """The extraction request resolves relative time into both text and fields."""
     rendered = _CLAIMIFY_PROMPT.format(
+        cards="(none)",
         keeps="- Melanie painted a lake sunrise last year.",
+        passages="[S1] TARGET (origin-eligible):\nMelanie painted a lake sunrise last year.",
         bundle=(
             "DOCUMENT HEADER: title chat; source upload; date 2023-05-08;"
             " language en\n"
@@ -66,11 +69,20 @@ def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> Non
     assert "regardless of claim form" in rendered
     assert "relative expression inside quoted or attributed text" in rendered
     assert "you MUST resolve the expression" in rendered
-    assert "computed absolute time ONLY in those structured" in rendered
+    assert "WRITE THE RESOLVED DATE INTO claim_text" in rendered
+    assert "exactly like a pronoun" in rendered
     assert "valid-time fields" in rendered
-    assert 'claim_text="Caroline said: I went to a support group yesterday"' in rendered
-    assert "the relative word stays inside the quoted claim_text" in rendered
-    assert 'claim_text="painted a lake sunrise last year"' in rendered
+    assert (
+        'claim_text="Caroline said: I went to a support group on 2023-05-07"'
+        in rendered
+    )
+    assert 'the resolved date replaces "yesterday" even inside the' in rendered
+    assert 'claim_text="painted a lake sunrise in 2022"' in rendered
+    assert 'claim_text="met the organizer on 2023-05-06"' in rendered
+    assert 'added_context=[{text: "on 2023-05-06", source_kind: header}]' in rendered
+    assert "keep the relative phrase exactly as\nthe source spoke it" in rendered
+    assert "never write a guessed date" in rendered
+    assert "unresolved wording stays as spoken; no date is written" in rendered
     assert "valid_from_iso=2022-01-01" in rendered
     assert "valid_until_iso=2022-12-31" in rendered
     assert "valid_precision=year" in rendered
@@ -113,7 +125,7 @@ def test_parse_claim_valid_time_malformed_falls_back_without_failing() -> None:
     """A bad model date must not reject the claim — only the temporal fields."""
     candidate = CandidateClaim(
         claim_text="Project Atlas launched in 2024.",
-        source_span="Project Atlas launched in 2024",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
         valid_from_iso="not-a-date",
@@ -133,7 +145,7 @@ def test_parse_claim_valid_time_accepts_year_bounds() -> None:
     """A well-formed year interval survives parsing with both ends and kind."""
     candidate = CandidateClaim(
         claim_text="Project Atlas launched in 2024.",
-        source_span="Project Atlas launched in 2024",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
         valid_from_iso="2024-01-01",
@@ -153,7 +165,7 @@ def test_bare_kind_without_interval_is_normalized_to_null() -> None:
     """A kind with no interval is meaningless and must not land in the row."""
     candidate = CandidateClaim(
         claim_text="Acme exists.",
-        source_span="Acme exists.",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
     )
@@ -169,7 +181,7 @@ def test_naive_datetime_degrades_instead_of_inventing_utc() -> None:
     """A datetime with no offset must not be assigned an invented timezone."""
     candidate = CandidateClaim(
         claim_text="The meeting happened at 14:30.",
-        source_span="at 14:30",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
         valid_from_iso="2024-05-08T14:30:00",
@@ -187,7 +199,7 @@ def test_date_only_bounds_cannot_pose_as_an_instant() -> None:
     """A date carries day precision; equal midnights are not an exact instant."""
     candidate = CandidateClaim(
         claim_text="It happened on 8 May 2024.",
-        source_span="on 8 May 2024",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
         valid_from_iso="2024-05-08",
@@ -203,7 +215,7 @@ def test_out_of_range_utc_conversion_degrades_not_raises() -> None:
     """Offset arithmetic at datetime.max must degrade, not fail the claim."""
     candidate = CandidateClaim(
         claim_text="Forever.",
-        source_span="Forever.",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.PROPOSITION_VALIDITY,
         valid_from_iso="9999-12-31T23:59:59-01:00",
@@ -221,7 +233,7 @@ def test_plus_separator_is_not_a_time() -> None:
     """fromisoformat would read 2024-01-01+02:00 as date plus TIME 02:00."""
     candidate = CandidateClaim(
         claim_text="Dated.",
-        source_span="Dated.",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=ClaimValidKind.EVENT_TIME,
         valid_from_iso="2024-01-01+02:00",
@@ -267,7 +279,7 @@ def test_all_taught_window_kinds_survive_the_deterministic_gate(
     """The four prompt vocabularies produce valid persisted D41 field combinations."""
     candidate = CandidateClaim(
         claim_text="Source assertion.",
-        source_span="Source assertion.",
+        source_refs=("S1",),
         entailment_self_verdict=True,
         valid_kind=kind,
         valid_from_iso=start,
@@ -304,10 +316,16 @@ def test_two_same_day_sources_keep_distinct_temporal_anchors() -> None:
         update={"source_modified_at": datetime(2023, 5, 8, 22, tzinfo=UTC)}
     )
     first_prompt = _CLAIMIFY_PROMPT.format(
-        keeps="the final ended three hours ago", bundle=_header_text(source=source)
+        cards="(none)",
+        keeps="the final ended three hours ago",
+        passages="",
+        bundle=_header_text(source=source),
     )
     later_prompt = _CLAIMIFY_PROMPT.format(
-        keeps="the final ended three hours ago", bundle=_header_text(source=later)
+        cards="(none)",
+        keeps="the final ended three hours ago",
+        passages="",
+        bundle=_header_text(source=later),
     )
     assert first_prompt != later_prompt
     assert first_prompt.endswith("date 2023-05-08T19:30:00+00:00; language en")

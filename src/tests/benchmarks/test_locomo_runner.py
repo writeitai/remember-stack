@@ -64,6 +64,8 @@ from benchmarks.locomo.runner import summarize_runs
 import httpx
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
@@ -81,8 +83,6 @@ from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
 from rememberstack.model import ToolDescriptor
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
 
@@ -191,6 +191,68 @@ def test_unknown_after_identity_only_forces_one_content_read() -> None:
     assert answer.agent_call_count == 4
     assert answer.reader_attempts == 2
     assert answer.unknown_guard_retries == 1
+    assert [call.name for call in answer.tool_calls] == [
+        "resolve_entity",
+        "claims_and_sources_context",
+    ]
+
+
+def test_ablation_guard_requires_content_before_a_substantive_answer() -> None:
+    """The optional experiment guard cannot score identity-only retrieval."""
+    calls = 0
+
+    def decide(prompt: str, type_name: str) -> dict[str, object]:
+        nonlocal calls
+        assert type_name == "AnswerAgentStep"
+        calls += 1
+        if calls == 1:
+            return {
+                "action": "tool",
+                "tool_name": "resolve_entity",
+                "arguments_json": '{"name":"Caroline"}',
+                "answer": None,
+            }
+        if calls == 2:
+            return {
+                "action": "answer",
+                "tool_name": None,
+                "arguments_json": "{}",
+                "answer": "Prague",
+            }
+        if calls == 3:
+            assert "GUARD FEEDBACK" in prompt
+            return {
+                "action": "tool",
+                "tool_name": "claims_and_sources_context",
+                "arguments_json": '{"query":"Caroline Prague"}',
+                "answer": None,
+            }
+        return {
+            "action": "answer",
+            "tool_name": None,
+            "arguments_json": "{}",
+            "answer": "Prague",
+        }
+
+    client, raw_client = _memory_client()
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=decide),
+            tools=(_identity_tool(), _tool()),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            require_content_before_answer=True,
+        )
+    finally:
+        raw_client.close()
+
+    assert answer.generated_answer == "Prague"
+    assert answer.agent_call_count == 4
+    assert answer.unknown_guard_retries == 0
     assert [call.name for call in answer.tool_calls] == [
         "resolve_entity",
         "claims_and_sources_context",
@@ -1057,9 +1119,9 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_reader_completions",
     ),
     (
-        ("full-v26", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
+        ("full-v38", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
         (
-            "full-v26-codex-subscription",
+            "full-v38-codex-subscription",
             "gpt-5.6-luna",
             "gpt-5.6-luna",
             "high",
@@ -1704,7 +1766,7 @@ def test_ingest_refuses_model_binding_drift_before_upload(
 def test_ingest_refuses_document_binding_generation_drift_before_upload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Full-v26 cannot silently process with document-local T0 disabled."""
+    """Full-v38 cannot silently process with document-local T0 disabled."""
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
     prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
@@ -1930,8 +1992,8 @@ def test_single_run_summary_json_is_unchanged(
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v26","protocol_fingerprint":'
-        '"981537b88316979ec86480b559cf06c7c2372a32544cc20a2e7638ee9b7fbc56",'
+        '{"protocol_name":"RS-LoCoMo-Full-v38","protocol_fingerprint":'
+        '"16aecde13146ffbd4e37b3213823d13995197b8bd9f2c79f82b465ac041dd06a",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2150,7 +2212,7 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v26"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v38"
     assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
     assert prepared.answer_agent_reasoning_effort == "none"
     assert prepared.answer_reader_retry_budget == 2
@@ -2675,6 +2737,9 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
                 "version_id": str(UUID("57000000-0000-0000-0000-000000000003")),
                 "content_hash": hashlib.sha256(request.content).hexdigest(),
                 "created": True,
+                "mime": "text/markdown",
+                "title": None,
+                "versioning_mode": "snapshot",
             },
         )
     if request.method == "POST" and request.url.path == "/readiness":
@@ -2882,6 +2947,9 @@ def test_partial_ingest_resumes_only_from_exact_checkpointed_versions(
                     "version_id": str(version_id),
                     "content_hash": hashlib.sha256(request.content).hexdigest(),
                     "created": True,
+                    "mime": "text/markdown",
+                    "title": None,
+                    "versioning_mode": "snapshot",
                 },
             )
         return _run_transport(request)
@@ -3422,7 +3490,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v26-gemma-vertex"]
+    protocol = PROTOCOL_REGISTRY["full-v38-gemma-vertex"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",

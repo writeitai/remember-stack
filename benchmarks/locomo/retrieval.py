@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import copy
 from datetime import datetime
 import hashlib
 from itertools import islice
@@ -19,14 +20,16 @@ from uuid import UUID
 from pydantic import JsonValue
 from pydantic import ValidationError
 
+from remember.client import MemoryClient
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import tool
+from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
+from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 from remember.models import ContextBundleV2
 from remember.models import Envelope
 from rememberstack.model import ToolDescriptor
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
-from rememberstack.surfaces.query_sandbox.mcp_tools import open_query_tool_descriptors
-from rememberstack.surfaces.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.sdk import MemoryClient
 
 PRIMITIVE_TOOL_NAMES: Final = (
     "resolve",
@@ -35,6 +38,7 @@ PRIMITIVE_TOOL_NAMES: Final = (
     "lookup_observations",
     "search_claims",
     "search_chunks",
+    "adjacent_chunks",
     "hydrate_relation",
 )
 P3_TOOL_NAMES: Final = ("p3_list", "p3_search", "p3_read")
@@ -95,7 +99,7 @@ def assured_tool_catalog() -> tuple[ToolDescriptor, ...]:
 
 
 def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
-    """Return the exact 21-tool read catalog exposed to the v17 answer seat."""
+    """Return the exact 22-tool read catalog exposed to the v17 answer seat."""
     tools = (
         *assured_tool_catalog(),
         *_primitive_tool_descriptors(),
@@ -106,6 +110,11 @@ def answer_tool_catalog() -> tuple[ToolDescriptor, ...]:
     if len(names) != len(set(names)):
         raise RuntimeError("the LoCoMo answer-tool catalog contains duplicate names")
     return tools
+
+
+def p3_tool_catalog() -> tuple[ToolDescriptor, ...]:
+    """Return the benchmark's three bounded P3 read descriptors."""
+    return _p3_tool_descriptors()
 
 
 def tool_catalog_sha256() -> str:
@@ -246,6 +255,11 @@ class P3Mount:
     def version(self) -> str:
         """Return the immutable P3 snapshot version served by this adapter."""
         return self._version
+
+    @property
+    def root(self) -> Path:
+        """Return the validated snapshot root for an audited native reader."""
+        return self._root
 
     def call(self, *, name: str, arguments: Mapping[str, object]) -> dict[str, object]:
         """Validate and execute one of the three P3 filesystem motions."""
@@ -707,6 +721,20 @@ def _dispatch_primitive(
         if name == "search_claims":
             return client.search_claims(query=query, k=k, channel=typed_channel)
         return client.search_chunks(query=query, k=k, channel=typed_channel)
+    if name == "adjacent_chunks":
+        _require_keys(
+            arguments=arguments, allowed={"chunk_id", "window"}, required={"chunk_id"}
+        )
+        return client.adjacent_chunks(
+            chunk_id=_uuid(value=arguments.get("chunk_id")),
+            window=_optional_bounded_int(
+                arguments=arguments,
+                field="window",
+                default=1,
+                minimum=ADJACENT_CHUNKS_MIN_WINDOW,
+                maximum=ADJACENT_CHUNKS_MAX_WINDOW,
+            ),
+        )
     if name == "hydrate_relation":
         _require_keys(
             arguments=arguments, allowed={"relation_id"}, required={"relation_id"}
@@ -718,7 +746,7 @@ def _dispatch_primitive(
 
 
 def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
-    """Describe the exact seven public direct primitive endpoints."""
+    """Describe the exact eight public direct primitive endpoints."""
     uuid = {"type": "string", "format": "uuid"}
     return (
         _descriptor(
@@ -782,6 +810,22 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
             answer_intent="source_context",
         ),
         _descriptor(
+            name="adjacent_chunks",
+            description="Read the surrounding chunks for one chunk ordered by document sequence.",
+            properties={
+                "chunk_id": uuid,
+                "window": {
+                    "type": "integer",
+                    "minimum": ADJACENT_CHUNKS_MIN_WINDOW,
+                    "maximum": ADJACENT_CHUNKS_MAX_WINDOW,
+                    "default": 1,
+                },
+            },
+            required=("chunk_id",),
+            output_grain="evidence",
+            answer_intent="source_context",
+        ),
+        _descriptor(
             name="hydrate_relation",
             description="Hydrate one relation through its evidence claims to source documents.",
             properties={"relation_id": uuid},
@@ -793,39 +837,27 @@ def _primitive_tool_descriptors() -> tuple[ToolDescriptor, ...]:
 
 
 def _open_query_descriptors() -> tuple[ToolDescriptor, ...]:
-    """Adapt the nine shared MCP descriptors without duplicating their schemas."""
-    result: list[ToolDescriptor] = []
-    for descriptor in open_query_tool_descriptors():
-        raw_schema = descriptor["inputSchema"]
-        if not isinstance(raw_schema, dict) or not all(
-            isinstance(key, str) for key in raw_schema
-        ):
-            raise RuntimeError("open-query tool descriptor has an invalid schema")
-        input_schema: dict[str, object] = {
-            key: value for key, value in raw_schema.items() if isinstance(key, str)
-        }
-        result.append(
-            ToolDescriptor(
-                name=str(descriptor["name"]),
-                description=str(descriptor["description"]),
-                input_schema=input_schema,
-                result_schema={"type": "object"},
-                result_contract="QueryResult/v1-or-discovery",
-                output_grain=(
-                    "discovery"
-                    if descriptor["name"]
-                    in {
-                        "describe_query_space",
-                        "search_query_space",
-                        "list_saved_queries",
-                        "describe_saved_query",
-                    }
-                    else "exploratory_tabular"
-                ),
-                answer_intent="query_infrastructure",
-            )
+    """Adapt the catalogue's open-query tools without duplicating their schemas."""
+    discovery = {
+        "describe_query_space",
+        "search_query_space",
+        "list_saved_queries",
+        "describe_saved_query",
+    }
+    return tuple(
+        ToolDescriptor(
+            name=definition.name,
+            description=definition.description,
+            input_schema=copy.deepcopy(definition.input_schema),
+            result_schema={"type": "object"},
+            result_contract="QueryResult/v1-or-discovery",
+            output_grain=(
+                "discovery" if definition.name in discovery else "exploratory_tabular"
+            ),
+            answer_intent="query_infrastructure",
         )
-    return tuple(result)
+        for definition in (tool(name) for name in OPEN_QUERY_TOOL_NAMES)
+    )
 
 
 def _p3_tool_descriptors() -> tuple[ToolDescriptor, ...]:
@@ -1034,6 +1066,7 @@ __all__ = (
     "RetrievalInfrastructureError",
     "RetrievalToolError",
     "answer_tool_catalog",
+    "p3_tool_catalog",
     "assured_tool_catalog",
     "dispatch_answer_tool",
     "is_correctable_query_error",

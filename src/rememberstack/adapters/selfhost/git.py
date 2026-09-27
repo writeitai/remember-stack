@@ -185,17 +185,23 @@ class LocalGitRepository:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-        _run(
-            arguments=(
-                "git",
-                "-C",
-                str(self._repository),
-                "add",
-                "-A",
-                "--",
-                *current_paths,
-            )
+        # filter-branch already removed these paths from the index. Deleted
+        # current bodies must stay absent; git add rejects absent pathspecs.
+        restored_paths = tuple(
+            path for path, content in current.items() if content is not None
         )
+        if restored_paths:
+            _run(
+                arguments=(
+                    "git",
+                    "-C",
+                    str(self._repository),
+                    "add",
+                    "--",
+                    *restored_paths,
+                )
+            )
+
         if (
             _status(
                 arguments=(

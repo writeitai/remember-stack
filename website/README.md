@@ -1,8 +1,8 @@
 # Remember documentation site
 
 The public documentation for [Remember](https://github.com/writeitai/remember-stack),
-canonically published at **[remember.dev/docs](https://remember.dev/docs)** (with
-`docs.remember.dev` 301-redirecting to `remember.dev/docs` per D109).
+canonically published at **[remember.dev/docs](https://remember.dev/docs)** with
+`docs.remember.dev` serving the GitHub Pages origin and compatibility site.
 
 
 It is a self-contained static site: a Next.js App-Router app whose pages are authored
@@ -64,58 +64,108 @@ The static site is written to `website/out/`. Preview that production build (wit
 a working search index) via `npm run preview`. `npm run typecheck` runs `tsc
 --noEmit` — run it after a build, since it depends on Next's generated types.
 
+## Hosted-service pages: the `DOCS_CLOUD` switch
+
+The public build documents open-source RememberStack and the `remember`
+client only. Pages and passages about the remember.dev hosted service stay in
+the repository but are left out unless the build runs with `DOCS_CLOUD=1`:
+
+| Source | Public build (default) | `DOCS_CLOUD=1` |
+|---|---|---|
+| A `page.cloud.mdx` page | Not a route (`next.config.ts` adds the `cloud.mdx` page extension only when the switch is on) | Route |
+| `<Cloud>…</Cloud>` in a page | Renders nothing | Rendered |
+| `<Tab cloud label="remember.dev">` | Dropped; a tab group left with one tab renders as plain content | Tab |
+| `<AppliesTo … />` | Not rendered | Badge |
+| Navigation entries inside `...(process.env.DOCS_CLOUD === "1" ? [...] : [])` | Not in the sidebar, pagination or JavaScript bundle | Listed |
+
+```bash
+DOCS_CLOUD=1 npm run dev     # or: DOCS_CLOUD=1 npm run build
+```
+
+`scripts/check_docs_truth.py` and `scripts/generate_docs_llms.py` check and
+render the public build; pass `--cloud` for the cloud build. The committed
+`public/llms*.txt` are the public build's, so do not commit the output of
+`generate_docs_llms.py --cloud`. Pagefind indexes the exported HTML, so search
+follows the build. CI builds both variants and deploys the public one.
+
+Writing a page, keep the public text complete without the hosted-service
+parts: a `<Cloud>` passage adds to the page, and the text around it must read
+naturally when it is gone. Public pages never link to a `page.cloud.mdx`
+route outside `<Cloud>`; `check_docs_truth.py` reports such links as broken.
+A `page.cloud.mdx` goes in `navigation.ts` only inside such a `DOCS_CLOUD`
+branch; the same script checks that.
+
 ## Add or edit a page
 
-1. Create `src/app/docs/<route>/page.mdx`. Start it with an exported `metadata`
-   object (`title`, `description`), then a single `#` H1, then content. Use `##`/`###`
-   headings — they populate the "On this page" table of contents.
-2. Add the page to `src/lib/docs/navigation.ts`. That array is the single source of
-   truth for the sidebar order and prev/next pagination.
+1. Create `src/app/docs/<section>/<page>/page.mdx`. Start it with an exported
+   `metadata` object (`title`, `description`), then one `#` H1, then
+   `<AppliesTo products={["remember.dev", "self-hosted"]} />` (either or both).
+   A page only about the hosted service is `page.cloud.mdx` (see
+   [the switch](#hosted-service-pages-the-docs_cloud-switch)).
+   Use `##`/`###` headings; they populate "On this page".
+2. Add the page to `src/lib/docs/navigation.ts`, the single source of truth for
+   the sidebar order and prev/next pagination.
+3. Run `python ../scripts/generate_docs_llms.py` to refresh `public/llms.txt`
+   and `public/llms-full.txt` (CI fails when they are stale), and
+   `python ../scripts/check_docs_truth.py`.
 
-## The docs contract (for implementing agents)
+Sections: `start/`, `concepts/`, `guides/`, `cloud/` (remember.dev only, all `page.cloud.mdx`),
+`self-hosting/`, `reference/` (including `reference/http-api/`), `project/`.
+`/docs` itself is the home page.
 
-**Docs ship with the code.** Any PR that changes user-facing behavior — CLI commands,
-API/MCP surface, configuration, mounts, connectors, deployment, the consumption
-skill — updates the affected `page.mdx` in the *same PR* (creating it if it doesn't
-exist yet). This mirrors the repo-wide rule in `CLAUDE.md`.
+### Components
 
-Write for a developer meeting the system for the first time (the same "reader who was
-not in the room" bar the design docs hold): plain language first, precise terms in
-parentheses, concrete examples over abstraction. These docs describe **what ships** —
-never aspirations; the design under `plan/` holds the full-scope intent, and the two
-must not be confused. A feature that hasn't landed belongs on the
-[Project Status](src/app/docs/project-status/page.mdx) page, not in a how-to.
+- `<AppliesTo products={[...]} />` under every H1.
+- `<Tabs>` with `<Tab cloud label="remember.dev">` first, then `<Tab label="Self-hosted">`,
+  only where the two genuinely differ (endpoint, token, starting the engine).
+  Leave a blank line after each opening tag and before each closing tag.
+- `<Cloud>` around hosted-service passages, with blank lines inside the tags
+  for block content, or inline around a clause.
+- `<Callout type="note">` or `<Callout type="warning" title="...">`.
+- `<LeadBlock><Lead>…</Lead></LeadBlock>` for the mission statement.
+- MDX treats `{`, `}` and `<` in prose as code: write `\{`, `\}` and `&lt;`
+  outside backticks.
 
-### Information architecture (progressive disclosure)
+### Diagrams
 
-Most important information lives on top-level pages; exhaustive detail sits one
-level deeper. Primary audience is **agents** (scannable contracts, anti-patterns,
-copy-pasteable surfaces); humans get the same pages with diagrams and plain language.
+Diagrams are animated SVGs in `public/docs/diagrams/`, in the remember.dev
+palette (navy background, coral for what sources said, teal for facts), with
+`prefers-reduced-motion` support. `python ../scripts/generate_docs_diagrams.py`
+regenerates most of them.
 
-| Route | Subject |
-| --- | --- |
-| `/docs` | Why RememberStack — sell + three planes + ship surface |
-| `/docs/getting-started` | Install, first ingest, first assured queries |
-| `/docs/why` | Competitive advantages without fluff |
-| `/docs/concepts` | Claims / facts / grains / two clocks / counting |
-| `/docs/architecture` | Planes, stores, write vs read path |
-| `/docs/knowledge` | Plane K: compiled vs authored pages, scopes, agent rules |
-| `/docs/ingestion` | Write-path overview + guarantees |
-| `/docs/ingestion/pipeline` | Exhaustive E0→E3 stage reference |
-| `/docs/ingestion/lifecycle` | Versions, currency, counting, deletion |
-| `/docs/retrieval` | Read-path overview + assured ops |
-| `/docs/retrieval/envelope` | Response envelope contract |
-| `/docs/retrieval/open-query` | SQL / live-graph helpers / saved queries |
-| `/docs/retrieval/primitives` | Zero-LLM primitive catalog |
-| `/docs/mounts` | Four mounts + consumption skill |
-| `/docs/deployment` | Docker Compose self-host |
-| `/docs/configuration` | Env, model seats, budgets, observability |
-| `/docs/troubleshooting` | Stuck work, empty retrieval, DLQ, readiness |
-| `/docs/evaluation` | Skill checks, golden sets, LoCoMo posture |
-| `/docs/project-status` | What exists vs designed |
-| `/docs/reference/api`, `cli`, `mcp` | Surface wire contracts |
+## Writing rules
 
-Diagrams for top pages live under `public/docs/diagrams/`.
+**Names.** RememberStack is the open-source engine. `remember` is its Python
+client, CLI and MCP server (`pip install remember`). remember.dev is the
+managed service (always lower case). "Self-hosted" means running the engine
+yourself. Do not use "Ultimate Memory", "RememberStack Cloud", "the Cloud",
+"open SQL" or "open query": the SQL feature is **SQL queries** over **the query
+space** (`memory_v1`), and every statement is validated against it before it
+runs.
+
+**Fixed terms.** document, version, source, claim, fact, relation,
+observation, entity, predicate, evidence, contradiction, corroboration,
+chunk, section, deployment, project, organisation, assured operation,
+envelope, readiness. `project/glossary` defines them; do not use synonyms.
+
+**Voice.** Second person, present tense, active voice. Say what happens,
+then why it matters. One idea per paragraph. Clarity over brevity, never
+padding. Examples use one running scenario (Dana, the product lead; Ravi, an
+engineer; the billing migration). Banned: seamless, powerful, robust,
+leverage, unlock, supercharge, cutting-edge, effortless, simply, easily,
+enterprise-grade, production-ready, "dive into", "let's", emoji,
+exclamation marks.
+
+**Truth.** Pages describe what exists on `main`; check every parameter,
+default, limit and error in code, and keep examples runnable. Say "not yet"
+plainly. remember.dev pages make no promises: no backups, export, SLA,
+latency figures, multi-region, SSO or certifications, and no notice
+periods. Product gaps found while writing go to the private gap report in
+`writeitai/ultimate-memory-cloud`, never into this public repository.
+
+**Same-PR docs.** Any PR that changes user-facing behaviour (CLI, API, MCP,
+configuration, file formats, deployment) updates the affected pages in the
+same PR and keeps `/docs/project/not-built-yet` truthful.
 
 ## Deploy
 
@@ -123,5 +173,27 @@ The documentation site is deployed canonically at **`https://remember.dev/docs`*
 
 - Next.js exports static HTML with `assetPrefix: "/docs"` into `website/out/`.
 - Postbuild mirrors `out/_next` into `out/docs/_next` and Pagefind into `out/docs/pagefind`, ensuring all static assets are served under `/docs/_next/...` and `/docs/pagefind/...` without collisions with the root Cloud web application at `remember.dev`.
-- Ingress routing on `remember.dev` routes `/docs*` traffic directly to the static documentation artifact.
-- The legacy subdomain `https://docs.remember.dev/` issues permanent 301 redirects to `https://remember.dev/docs/`.
+- The Cloudflare Pages Function on `remember.dev` proxies `/docs` and `/docs/*` to `https://docs.remember.dev` with the path preserved. `/pagefind/*` is also proxied for compatibility.
+- GitHub Pages **must retain the custom domain `docs.remember.dev`**, and its DNS-only CNAME must point to `writeitai.github.io`. Removing the repository custom domain produces GitHub 404s at both addresses even when the build and deploy succeed.
+- `docs.remember.dev` currently serves the documentation directly; it does **not** redirect to the canonical site. Redirecting that hostname back to `remember.dev/docs` would loop because it is also the proxy origin. A future redirect cutover needs a separate, verified origin first.
+
+### Hosting recovery and verification
+
+On 2026-09-08, the repository Pages custom domain was missing while the cloud
+proxy still targeted it. Restoring the Pages setting recovered the origin; the
+deploy workflow now checks that setting before publishing.
+
+Inspect the setting with `gh api repos/writeitai/remember-stack/pages`. To restore
+this topology, run:
+
+```sh
+gh api --method PUT repos/writeitai/remember-stack/pages -f cname=docs.remember.dev
+gh workflow run docs-deploy.yml --ref main -R writeitai/remember-stack
+```
+
+Verify both `https://docs.remember.dev/docs/` and `https://remember.dev/docs/`, a
+nested page such as `/docs/getting-started/`, the page's `/docs/_next/` assets,
+and `/docs/pagefind/pagefind.js`. Open search and follow a result in a browser.
+Also check `https://docs.remember.dev/` for old inbound links. GitHub's CDN can
+retain a previous 404 for several minutes; check ordinary URLs after caches
+expire, not just cache-busted requests.

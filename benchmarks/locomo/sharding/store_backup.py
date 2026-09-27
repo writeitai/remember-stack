@@ -33,7 +33,12 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
-EXPECTED_VOLUMES = ("postgres-data", "minio-data", "app-state", "forget-manifests")
+EXPECTED_VOLUMES = (
+    "postgres-data",
+    "object-store-data",
+    "app-state",
+    "forget-manifests",
+)
 RUN_CHECKPOINT_FILES = ("run.json", "manifest.json", "documents.json", "state.json")
 RECEIPT_DIRECTORY = Path(".locomo-backups/receipts")
 LIVE_STORE_MARKER = Path(".locomo-live-store.json")
@@ -41,13 +46,9 @@ RUNTIME_ENVIRONMENT = Path(".locomo-backups/compose-runtime.env")
 DEFAULT_LOCK_FILE = Path("/var/lock/rememberstack-locomo-shard.lock")
 
 MODEL_BINDING_ENVIRONMENT = {
-    "chunk_embedding": "REMEMBERSTACK_E1_EMBEDDING_MODEL",
     "claim_extraction": "REMEMBERSTACK_E2_EXTRACT_MODEL",
-    "context_prefix": "REMEMBERSTACK_E1_PREFIX_MODEL",
-    "entity_observation_embedding": "REMEMBERSTACK_OBS_EMBEDDING_MODEL",
-    "fact_label": "REMEMBERSTACK_P1_LABEL_MODEL",
-    "observation_frontier": "REMEMBERSTACK_OBS_FRONTIER_MODEL",
-    "observation_small": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "entity_resolution": "REMEMBERSTACK_OBS_SMALL_MODEL",
+    "fact_adjudication": "REMEMBERSTACK_FACT_MODEL",
     "openrouter_embedding_provider": "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER",
     "openrouter_embedding_provider_order": (
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER"
@@ -65,8 +66,6 @@ MODEL_BINDING_ENVIRONMENT = {
     "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
     "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
     "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
-    "supersession_frontier": "REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL",
-    "supersession_small": "REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL",
 }
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",
@@ -943,7 +942,7 @@ def _validate_manifest_inventory(manifest: BackupManifest) -> None:
 
     expected = {
         "postgres-data": "volume",
-        "minio-data": "volume",
+        "object-store-data": "volume",
         "app-state": "volume",
         "forget-manifests": "volume",
         "run-directory": "run",
@@ -1505,7 +1504,7 @@ def restore_store(
                     "--detach",
                     "--wait",
                     "postgres",
-                    "minio",
+                    "object-store",
                     "setup",
                     "api",
                 ),

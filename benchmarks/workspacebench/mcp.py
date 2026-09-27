@@ -19,12 +19,13 @@ from benchmarks.workspacebench.models import McpDiscovery
 from benchmarks.workspacebench.models import ToolDescriptorRecord
 from benchmarks.workspacebench.protocol import LOOPBACK_HOSTS
 from benchmarks.workspacebench.protocol import MCP_READ_ONLY_ARGS
-from benchmarks.workspacebench.protocol import REQUIRED_ASSURED_TOOLS
 from benchmarks.workspacebench.supervisor import SupervisedProcessResult
-from remember.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
-from remember.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
-from remember.remote_mcp import MCP_PROTOCOL_VERSION
-from remember.remote_mcp import RemoteOperationMcpServer
+from remember.mcp_engine import EngineMcpServer
+from remember.mcp_engine import MCP_PROTOCOL_VERSION
+from remember.mcp_tools import memory_tools
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import OPERATION_TOOL_NAMES
+from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 
 
 class McpDiscoveryError(WorkspaceBenchError):
@@ -108,26 +109,15 @@ def access_binding_from_args(
     return binding
 
 
-def canonical_assured_operation_names() -> tuple[str, ...]:
-    """Return shipping registry names in canonical order.
+def required_read_tools() -> tuple[str, ...]:
+    """Tools the memory arm cannot run without, taken from main's catalogue.
 
-    This is the live ``CANONICAL_OPERATIONS`` pin, not a Workspace-Bench copy.
-    Catalog binding compares it to ``REQUIRED_ASSURED_TOOLS`` so a later
-    rename fails preflight instead of leaving the harness on stale names.
+    ``search_documents`` is what the consumption instruction tells the agent
+    to use to find files; the assured operations are the RememberStack
+    treatment itself. Everything else the read-only server lists is enabled
+    as discovered.
     """
-    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
-
-    return tuple(operation.name.value for operation in CANONICAL_OPERATIONS)
-
-
-def reject_required_assured_tools_registry_drift() -> None:
-    """Refuse catalog binding when the protocol pin no longer matches main."""
-    registry = canonical_assured_operation_names()
-    if registry != REQUIRED_ASSURED_TOOLS:
-        raise McpDiscoveryError(
-            "required assured tools drifted from the canonical registry: "
-            f"pin={list(REQUIRED_ASSURED_TOOLS)} registry={list(registry)}"
-        )
+    return (SEARCH_DOCUMENTS_TOOL_NAME, *OPERATION_TOOL_NAMES)
 
 
 def catalog_sha256(records: Sequence[ToolDescriptorRecord]) -> str:
@@ -215,24 +205,32 @@ def bind_listed_tools(
     discovered_over_stdio: bool,
     negotiated_protocol_version: str | None = None,
 ) -> McpDiscovery:
-    """Validate a tools/list catalog and bind the memory-arm allowlist."""
-    reject_required_assured_tools_registry_drift()
+    """Validate a read-only tools/list catalog and bind it as the allowlist.
+
+    The discovered catalogue is the pin: every listed tool is enabled and
+    fingerprinted. A tool that changes memory, or that main's catalogue does
+    not define, fails closed.
+    """
     names = tuple(record.name for record in records)
     duplicates = tuple(name for name in dict.fromkeys(names) if names.count(name) > 1)
     if duplicates:
         raise McpDiscoveryError("duplicate MCP tool names: " + ", ".join(duplicates))
-    write_present = tuple(name for name in names if name in MEMORY_WRITE_TOOL_NAMES)
-    if write_present:
+    read_only_names = {
+        definition.name for definition in memory_tools() if not definition.mutates
+    }
+    not_read_only = tuple(name for name in names if name not in read_only_names)
+    if not_read_only:
         raise McpDiscoveryError(
-            "read-only MCP advertised write tools: " + ", ".join(write_present)
+            "read-only MCP advertised tools outside the read-only catalogue: "
+            + ", ".join(not_read_only)
         )
-    missing = tuple(name for name in REQUIRED_ASSURED_TOOLS if name not in names)
+    missing = tuple(name for name in required_read_tools() if name not in names)
     if missing:
         raise McpDiscoveryError(
             "required read tools missing from MCP catalog: " + ", ".join(missing)
         )
     open_query = tuple(name for name in names if name in OPEN_QUERY_TOOL_NAMES)
-    assured = tuple(name for name in names if name not in OPEN_QUERY_TOOL_NAMES)
+    assured = tuple(name for name in names if name in OPERATION_TOOL_NAMES)
     bound = tuple(records)
     return McpDiscovery(
         api_origin=api_origin.rstrip("/"),
@@ -322,14 +320,14 @@ def list_tools_over_stdio(
 
 
 def in_process_stdio_roundtrip(
-    *, server: RemoteOperationMcpServer
+    *, server: EngineMcpServer
 ) -> tuple[ToolDescriptorRecord, ...]:
     """Initialize and list tools against an in-process MCP server.
 
     Unit-test helper only. Production preflight must launch the current
     ``remember mcp --read-only`` executable over stdio.
     """
-    from remember.remote_mcp import serve_mcp_stdio
+    from remember.mcp_engine import serve_stdio
 
     requests = StringIO(
         "\n".join(
@@ -355,7 +353,7 @@ def in_process_stdio_roundtrip(
         )
     )
     output = StringIO()
-    serve_mcp_stdio(server=server, input_stream=requests, output_stream=output)
+    serve_stdio(server=server, input_stream=requests, output_stream=output)
     by_id = _jsonrpc_responses(output.getvalue().encode())
     listed = by_id.get(2)
     listed_result = None if listed is None else listed.get("result")
@@ -481,7 +479,6 @@ __all__ = (
     "StdioRunner",
     "access_binding_from_args",
     "bind_listed_tools",
-    "canonical_assured_operation_names",
     "catalog_sha256",
     "discover_mcp",
     "in_process_stdio_roundtrip",
@@ -490,7 +487,7 @@ __all__ = (
     "mcp_stdio_command",
     "origins_equal",
     "origins_match",
-    "reject_required_assured_tools_registry_drift",
     "remember_launcher",
+    "required_read_tools",
     "validate_access_binding",
 )

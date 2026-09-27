@@ -14,6 +14,7 @@ from rememberstack.spine.consumption import ConsumptionDeploymentNotFoundError
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.spine.document_inventory import DocumentInventory
+from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.entity_registry import EntityRegistry
 from rememberstack.spine.entity_registry import T0_RESOLVER_VERSION
 from rememberstack.spine.extension_packs import install_pack
@@ -49,7 +50,6 @@ from rememberstack.spine.resolver import seed_resolver_version
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
-from rememberstack.spine.supersession import SupersessionSettings
 from rememberstack.spine.sync import SyncCatalog
 from rememberstack.spine.work_ledger import WorkLedger
 from rememberstack.spine.work_ledger import WorkLedgerSettings
@@ -67,7 +67,6 @@ __all__ = (
     "CascadeResolver",
     "EntityProfileRefresher",
     "SupersessionAdjudicator",
-    "SupersessionSettings",
     "SyncCatalog",
     "FactCatalog",
     "ForgetCatalog",
@@ -105,6 +104,7 @@ __all__ = (
     "EntityClusterer",
     "DocumentCatalog",
     "DocumentInventory",
+    "DocumentSearch",
     "DeploymentBootstrapper",
     "WorkLedger",
     "WorkLedgerSettings",

@@ -1,96 +1,121 @@
 export const metadata = {
   title: "Why RememberStack",
-  description:
-    "Agent memory that separates testimony from truth, keeps every conclusion auditable, and scales to millions of documents — with zero LLM on the query path.",
+  description: "Memory for AI agents that keeps what each source said, what is true now, and when, with the path back to the source.",
 };
 
-# Why RememberStack
+# Give your agents a past
 
-**RememberStack** is a memory system for AI agents. Ingest documents into a structured spine and get back **navigable, auditable knowledge**: not just passages that *look* relevant, but an account of what sources said, what the system currently holds true, and how those two can differ.
+<AppliesTo products={["remember.dev", "self-hosted"]} />
 
-Scale is a design requirement, not a slide: the system is built to stay useful at **a million documents**.
+<LeadBlock>
+<Lead>Centralize all your information in a single place.</Lead>
+<Lead>Expose that information to AI agents in the best possible way.</Lead>
+</LeadBlock>
 
-The default self-host profile routes **Markdown** conversion out of the box; additional MIME routes (HTML/PDF/media) are engine-supported but must be registered on the deployment. See [Project status](/docs/project-status) for what ships.
+Your information is scattered across your life or your organisation: email,
+chat, documents, meeting notes, tickets, agent transcripts. Every AI session
+starts from zero. The agent does not know which decision still holds, which
+file said it, or what changed overnight. You paste the same notes in again,
+or the model fills the gap with something plausible.
 
-## Why you should care
+RememberStack is memory for that agent. You give it the documents your work
+already produces. It reads them, keeps what matters, and answers your
+agent's questions with facts it can trace back to the source. It knows what
+is true now and what was true a month ago.
 
-Most “memory” stacks answer: *where did I read something like this?*
+*RememberStack is the open-source memory engine. `remember` is its Python
+client and CLI.<Cloud> remember.dev runs RememberStack for you.</Cloud>*
 
-Agents that act need a harder question: **what do we actually know — and what changed our mind?**
+New to memory systems? Start with
+[What is a memory system?](/docs/start/what-is-a-memory-system), written for
+any reader.
 
-| Failure mode in typical RAG / memory | RememberStack response |
-| --- | --- |
-| Source text is treated as truth | **Claims** (testimony) are separate from **facts** (adjudicated current belief) |
-| Edits overwrite history | Supersession **closes a validity window**; history stays queryable |
-| Contradictions are averaged or hidden | Contradictions are **grouped and returned together** |
-| Re-ingestion inflates confidence | Support counts **distinct document lineages**, not re-extracts |
-| Vector index is the authority | Indexes **nominate**; Postgres **confirms** live validity |
-| LLM completion on every query | **No LLM completion on the query path** (semantic search still embeds the query string) — planning stays in the agent |
-| “No results” is a vague empty list | Typed negatives: `unknown_entity`, `known_empty`, `boundary` |
+## What RememberStack keeps that a context window loses
 
-If your agent must **act** on memory — not just chat about a corpus — those distinctions are load-bearing.
+**What each source said.** Every statement worth keeping is stored as a
+claim, together with the exact passage it came from and the date the source
+said it. Claims are never edited. If a spec from March said the billing
+migration would ship in June, that stays on record even after the plan
+changes.
 
-## The one mental model: three planes
+**What is true now.** From those claims, RememberStack maintains facts about
+the people, systems and decisions in your work. When a newer source changes
+a fact, the fact changes, and the claim it replaced stays on record. When two
+sources disagree, you see both, marked as a contradiction.
 
-![Three planes: Evidence, Knowledge, Projections](/docs/diagrams/three-planes.jpg)
+**When it was true.** Facts carry the period in which they held. You can ask
+what is true today, what was true on a given date, what held during a
+quarter, or how something changed over time.
 
-| Plane | Meaning | Authority | Rebuildable? |
-| --- | --- | --- | --- |
-| **E — Evidence** | What we ingested and adjudicated | Postgres (+ object storage for bytes) | No — it *is* the ground truth |
-| **K — Knowledge** | What we concluded in prose | Git (compiled + authored pages) | Compiled pages recompile; authored pages are commitments |
-| **P — Projections** | How we reach it fast | None — derived only | **Yes** — drop and rebuild anytime |
+**Where it came from.** Every fact links to the claims that support it, and
+every claim to the characters in the source document. Your agent can quote
+and cite. You can check.
 
-One line: **E is what we ingested, K is what we concluded, P is how we reach it — and P always rebuilds from E.**
+## What your agent gets back
 
-## Built for agents (primary), readable by humans
+When your agent asks a question, RememberStack does not return the passages
+most similar to the question. It returns the facts that answer it, each with
+its time window, the evidence behind it, and any contradiction, in one typed
+result that is ready to put into a prompt.
 
-Primary consumers are agent harnesses (Claude Code, Codex, OpenCode, and peers). That is not marketing color; it drives the surface design:
+If the memory has nothing on the subject, the result says so. It does not
+hand back the closest text it could find. If a name could mean two different
+people, it says that too. An agent that is told "unknown" stops inventing.
 
-1. **Filesystem-first.** Four read-only mounts: corpus tree, converted artifacts, raw originals (off the nav path), Plane K checkout. Prefer `ls` / read / `grep` when mounts exist.
-2. **Query when files cannot.** Semantic search, live graph traversal, time-travel, hydration, and open SQL — via API, CLI, and MCP with the **same** operations.
-3. **Honest envelopes.** Every assured answer declares grain, freshness, contradictions, truncation, and typed “no”s so the agent can *reason about* the answer. Wire shape is flat single-grain by default — see [Envelope](/docs/retrieval/envelope).
-4. **Generated skill.** Each deployment can render a versioned `SKILL.md` that teaches the two-layer model and the four assured operations. Automated cold-agent checks guard that curriculum.
+No language model writes the answer. The only model involved in reading is
+the embedding model that turns your question into a search vector. The same
+question against the same memory returns the same result, and you can
+inspect exactly why each item is there.
 
-Humans get the same audit trail: every conclusion drills to claims, then to the exact span, page, image region, or second of audio.
+## Why not a vector database
 
-## Reading motion (do this every time)
+A vector search finds the passages that sound most like your question. It
+cannot tell you which of them is still current, which one a later document
+corrected, or whether two of them contradict each other. It has no idea when
+anything was true. And it always returns something, even when nothing
+relevant exists.
 
-![Orient, verify, audit](/docs/diagrams/orient-verify-audit.jpg)
+| Where typical agent memory goes wrong | What RememberStack does instead |
+|---|---|
+| Source text is treated as the truth | What a source said (a claim) is kept apart from what is held true now (a fact). Claims are the transcript; facts are the verdict. |
+| A correction overwrites what came before | The old fact's time window is closed, not erased. You can still ask what held before. |
+| Contradictions are averaged away or hidden | Both sides come back, marked as a contradiction. |
+| Re-sending a file makes it look more certain | Support counts distinct documents. Re-processing a file, editing it or repeating a sentence does not add support. |
+| The search index is the authority | Indexes only nominate candidates. The database confirms each one against what is currently held before it is returned, and the result says how many were dropped. |
+| A model writes the answer at query time | No language model writes the answer. Your agent plans; RememberStack returns what is known, with its evidence. |
+| "No results" could mean anything | The result says which: the entity is unknown, or it is known and nothing matches. |
 
-1. **Orient** — K pages and P3 indexes for the map.
-2. **Verify** — fact grain (relations + observations) for anything load-bearing.
-3. **Audit** — claims and raw sources when stakes demand provenance.
+RememberStack still uses vector search, as one signal among several. The
+others are keyword search, the graph of how entities relate, and time.
 
-Never stop at orientation for decisions that cost money, trust, or irreversible action.
+## Where it runs
 
-## Ship surface (what agents call today)
+RememberStack is open source under Apache-2.0 and runs on your own
+infrastructure. Everything it does with your documents is in the public
+repository. [Requirements](/docs/self-hosting/requirements) says what it
+needs.
 
-Exactly **four** top-level assured operations:
+<Cloud>
 
-| Operation | Use for |
-| --- | --- |
-| `resolve_entity` | Turn a name/string into ranked entity candidates |
-| `claims_and_sources_context` | High-recall **evidence** context (claims + chunks) for a question |
-| `facts_context` | **Current or historical fact** context with live testimony under budget |
-| `combined_context` | Both complete authority views in `ContextBundle/v2` |
+**remember.dev** runs the same engine for you. Each project gets its own
+isolated deployment with its own database, storage and HTTPS endpoint. You
+install the client and start sending documents. Reading from memory is not
+charged. Nothing is held back for the managed service, and nothing about how
+memory works changes between the two.
 
-Plus open query: sandboxed SQL, typed live-graph helpers, saved `examples.*`
-queries, and schema discovery. The helpers read PostgreSQL live; there is no
-graph snapshot or public Cypher surface. Full contracts:
-[Retrieval](/docs/retrieval), [API](/docs/reference/api).
+[Compare remember.dev and self-hosted](/docs/start/choose)
 
-## Open source = full engine
+</Cloud>
 
-Apache-2.0. Correctness-determining behavior — extraction, entity resolution, supersession, provenance, budgets, DLQ, hard-forget — is **never paywalled**. The hosted cloud runs this same engine; it adds operations and product chrome, not a secret core.
+## Start here
 
-## Next
-
-| You want… | Go to |
-| --- | --- |
-| Run it in minutes | [Getting started](/docs/getting-started) |
-| Competitive brief vs passage RAG | [vs passage RAG](/docs/why) |
-| Vocabulary (claim / fact / grain / clocks) | [Concepts](/docs/concepts) |
-| End-to-end map | [Architecture](/docs/architecture) |
-| How writes work | [Ingestion](/docs/ingestion) |
-| How reads work | [Retrieval](/docs/retrieval) |
-| Compiled knowledge pages | [Knowledge (Plane K)](/docs/knowledge) |
+- [What is a memory system?](/docs/start/what-is-a-memory-system): the idea
+  in plain language, for any reader.
+- [A five-minute tour](/docs/start/how-it-works): what happens to a document
+  from the moment you send it to the moment your agent asks about it.
+- [Quickstart](/docs/start/quickstart): send a document and ask your first
+  question.
+- [Connect your coding agent](/docs/start/connect-your-agent): give Claude Code,
+  Cursor, Codex or Claude Desktop access to your memory.
+- [Time](/docs/concepts/time): the idea that sets RememberStack apart from
+  retrieval over text.

@@ -17,6 +17,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 
+from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.documents import NonEmptyString
 from rememberstack.model.model_provider import ProviderCallUsage
 
@@ -47,6 +48,21 @@ class ConversionResult(BaseModel):
     """Provider-reported accounting, one event per billable call the route
     made — the convert worker meters each into the cost ledger under a
     deterministic key. Empty for local routes."""
+    metadata: DocumentMetadata | None = None
+    """The general metadata the route read from the file (D134): title,
+    people, dates, language, thread. None when the route reads none."""
+
+
+class FileHints(BaseModel):
+    """What a converter may know about the file besides its bytes (D138).
+
+    Read from the version's D134 metadata; a card names the file by them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    file_name: str | None
+    source_path: str | None
 
 
 class ConverterUsageEvent(BaseModel):
@@ -173,8 +189,11 @@ class DerivationRange(BaseModel):
     derivation_kind: NonEmptyString
     """The producing route stage: ``passthrough``, ``ocr``, ``asr``, …"""
     evidence_mode: Literal[
-        "source_expression", "model_observation", "model_interpretation"
+        "source_expression", "computed", "model_observation", "model_interpretation"
     ]
+    """How mediated the range is: the source's own words, text a
+    deterministic library derived from the source (counts, sizes, inferred
+    types; D133 §4.3), or a model's observation or interpretation."""
     confidence: float | None = Field(default=None, ge=0, le=1)
     """The producing model's own confidence for this range (OCR/ASR), when it
     reports one — disclosure at whatever grain the route labeled, never a

@@ -109,16 +109,22 @@ class PipelineReadinessCatalog:
                 .mappings()
                 .all()
             )
-            extract_rows = ()
-            if extract_version is not None and chunk_version is not None:
-                extract_rows = (
+            extract_rows = []
+            for stage, component_version in self._expected:
+                if stage not in (
+                    PipelineStage.EXTRACT_CLAIMS,
+                    PipelineStage.GROUND_CLAIMS,
+                ):
+                    continue
+                extract_rows.extend(
                     connection.execute(
                         _EXTRACT_CHUNK_STATUS,
                         {
                             "deployment_id": deployment_id,
                             "version_ids": version_ids,
-                            "extractor_version": extract_version,
+                            "extractor_version": component_version,
                             "chunker_version": chunk_version,
+                            "extraction_stage": stage.value,
                         },
                     )
                     .mappings()
@@ -199,7 +205,7 @@ class PipelineReadinessCatalog:
         for row in extract_rows:
             key = (
                 UUID(str(row["target_id"])),
-                PipelineStage.EXTRACT_CLAIMS,
+                PipelineStage(str(row["stage"])),
                 str(row["component_version"]),
             )
             by_key[key] = row
@@ -235,6 +241,9 @@ class PipelineReadinessCatalog:
                             "component_version": component_version,
                             "status": status,
                             "finished_at": finished_at,
+                            "defer_reason": None
+                            if row is None
+                            else row["defer_reason"],
                         }
                     )
                 )
@@ -318,7 +327,7 @@ class PipelineReadinessCatalog:
 _VERSION_WORK = text(
     """
     SELECT target_id, stage::text AS stage, component_version,
-           status::text AS status, finished_at
+           status::text AS status, finished_at, defer_reason::text AS defer_reason
     FROM processing_state
     WHERE deployment_id = :deployment_id
       AND target_kind = 'document_version'
@@ -534,7 +543,7 @@ def _live_graph_status(
                 pass
 
 
-# D84: extract_claims primary rows target chunks; derive a version-level status
+# D84/D122: Selection and Claimify target chunks; derive their version status
 # for the version's current representation only.
 _EXTRACT_CHUNK_STATUS = text(
     """
@@ -553,10 +562,14 @@ _EXTRACT_CHUNK_STATUS = text(
     SELECT target_id, stage, component_version, status,
            CASE
              WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
-           END AS finished_at
+           END AS finished_at,
+           CASE
+             WHEN status = 'pending' THEN pending_defer_reason
+             WHEN status = 'failed' THEN 'retry_backoff'
+           END AS defer_reason
     FROM (
         SELECT v.version_id AS target_id,
-               'extract_claims'::text AS stage,
+               CAST(:extraction_stage AS text) AS stage,
                :extractor_version AS component_version,
                CASE
                  -- No current representation at all: convert/structure have not
@@ -584,6 +597,9 @@ _EXTRACT_CHUNK_STATUS = text(
                  WHEN bool_or(p.status = 'pending') THEN 'pending'
                  ELSE 'missing'
                END AS status,
+               min(p.defer_reason::text) FILTER (
+                 WHERE p.status = 'pending'
+               ) AS pending_defer_reason,
                -- No `now()` fallback: for the D84 empty-document arm the honest
                -- completion time is the version's embed_chunk success, which the
                -- worker stamps even when there are zero chunks. If that row is
@@ -613,7 +629,7 @@ _EXTRACT_CHUNK_STATUS = text(
           ON p.deployment_id = :deployment_id
          AND p.target_kind = 'chunk'
          AND p.target_id = c.chunk_id
-         AND p.stage = 'extract_claims'
+         AND p.stage = :extraction_stage
          AND p.component_version = :extractor_version
         LEFT JOIN processing_state embed
           ON embed.deployment_id = :deployment_id
@@ -640,7 +656,11 @@ _NORMALIZE_CLAIM_STATUS = text(
     SELECT target_id, stage, component_version, status,
            CASE
              WHEN status IN ('succeeded', 'dead_letter') THEN finished_at
-           END AS finished_at
+           END AS finished_at,
+           CASE
+             WHEN status = 'pending' THEN pending_defer_reason
+             WHEN status = 'failed' THEN 'retry_backoff'
+           END AS defer_reason
     FROM (
     SELECT v.version_id AS target_id,
            'normalize_relations'::text AS stage,
@@ -657,6 +677,9 @@ _NORMALIZE_CLAIM_STATUS = text(
              WHEN bool_or(p.status = 'pending') THEN 'pending'
              ELSE 'missing'
            END AS status,
+           min(p.defer_reason::text) FILTER (
+             WHERE p.status = 'pending'
+           ) AS pending_defer_reason,
            COALESCE(
              max(p.finished_at),
              max(embed.finished_at)
@@ -697,7 +720,11 @@ _NORMALIZE_CLAIM_STATUS = text(
 _ENTITY_OBS_FLUSH_STATUS = text(
     """
     SELECT target_id, stage, component_version, status,
-           CASE WHEN status IN ('succeeded', 'dead_letter') THEN finished_at END AS finished_at
+           CASE WHEN status IN ('succeeded', 'dead_letter') THEN finished_at END AS finished_at,
+           CASE
+             WHEN status = 'pending' THEN pending_defer_reason
+             WHEN status = 'failed' THEN 'retry_backoff'
+           END AS defer_reason
     FROM (
     SELECT v.version_id AS target_id,
            'adjudicate_observations'::text AS stage,
@@ -714,6 +741,9 @@ _ENTITY_OBS_FLUSH_STATUS = text(
              WHEN bool_or(p.status = 'pending') THEN 'pending'
              ELSE 'missing'
            END AS status,
+           min(p.defer_reason::text) FILTER (
+             WHERE p.status = 'pending'
+           ) AS pending_defer_reason,
            COALESCE(max(s.completed_at), max(p.finished_at)) AS finished_at
     FROM document_versions v
     LEFT JOIN obs_flush_version_state s

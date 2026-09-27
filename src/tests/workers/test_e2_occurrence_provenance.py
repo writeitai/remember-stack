@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from typing import cast
 from uuid import UUID
 from uuid import uuid4
@@ -15,6 +16,7 @@ from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
+from rememberstack.model import EvidenceSpan
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
@@ -33,6 +35,9 @@ from rememberstack.spine.chunk_catalog import ChunkCatalog
 from rememberstack.spine.claim_catalog import ClaimCatalog
 from rememberstack.workers import E2Settings
 from rememberstack.workers.e2 import ExtractClaimsHandler
+from tests.workers.e2_test_doubles import SelectionMemory
+from tests.workers.e2_test_doubles import SingleChunkCatalog
+from tests.workers.e2_test_doubles import with_ground_claims
 
 _DEPLOYMENT = UUID("84000000-0000-0000-0000-000000000001")
 _DOC = UUID("84000000-0000-0000-0000-000000000002")
@@ -58,6 +63,8 @@ _OCR_REGION = ImageRegionLocator(
 _CONVERSION_URI = "doc/conversion.json"
 _SOURCE_MAP_URI = "doc/source_map.json"
 _MARKDOWN_URI = "doc/document.md"
+_BLOCKS_URI = "doc/blocks.json"
+_STALE_BLOCKS = b'{"blockizer_version": "stale", "blocks": []}'
 
 
 class _MemoryStore:
@@ -77,6 +84,7 @@ class _RecordingCatalog:
     """Captures extraction and reuse writes without a database."""
 
     def __init__(self) -> None:
+        self.selections = SelectionMemory()
         self.claims: tuple[ClaimRecord, ...] = ()
         self.decisions: tuple[DecisionRecord, ...] = ()
         self.occurrences: dict[UUID, OccurrenceProvenance] | None = None
@@ -98,7 +106,10 @@ class _RecordingCatalog:
         doc_id: UUID,
         version_id: UUID,
         extraction_input_hash: str,
+        claimify_input_hash: str | None = None,
     ) -> UUID | None:
+        del deployment_id, doc_id, version_id, extraction_input_hash
+        del claimify_input_hash
         return self.prior
 
     def claims_for_occurrence_reuse(
@@ -113,7 +124,10 @@ class _RecordingCatalog:
         chunk_id: UUID,
         prior_chunk_id: UUID,
         occurrences: dict[UUID, OccurrenceProvenance] | None = None,
+        evidence_spans: object = None,
+        claimify_input_hash: str | None = None,
     ) -> int:
+        del deployment_id, evidence_spans, claimify_input_hash
         self.attached = (chunk_id, prior_chunk_id)
         self.reuse_occurrences = occurrences
         return 0 if not self.anchors else len(self.anchors)
@@ -127,27 +141,13 @@ class _RecordingCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: dict[UUID, OccurrenceProvenance] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
+        del claimify_input_hash
         self.record_calls += 1
         self.claims = claims
         self.decisions = decisions
         self.occurrences = occurrences
-
-
-class _ChunkCatalogStub:
-    """Returns a fixed source and the target chunk window."""
-
-    def __init__(self, *, source: ChunkSource, chunk: ChunkForEmbedding) -> None:
-        self.source = source
-        self.chunk = chunk
-
-    def chunk_source(self, *, representation_id: UUID) -> ChunkSource:
-        return self.source
-
-    def chunks_for_extract(
-        self, *, representation_id: UUID, chunker_version: str, chunk_id: UUID
-    ) -> tuple[ChunkForEmbedding, ...]:
-        return (self.chunk,)
 
 
 def _source(*, conversion_uri: str | None = _CONVERSION_URI) -> ChunkSource:
@@ -157,7 +157,7 @@ def _source(*, conversion_uri: str | None = _CONVERSION_URI) -> ChunkSource:
         version_id=_VERSION,
         representation_id=_REPR,
         markdown_uri=_MARKDOWN_URI,
-        blocks_uri="doc/blocks.json",
+        blocks_uri=_BLOCKS_URI,
         conversion_uri=conversion_uri,
         title="Scan",
         source_kind="upload",
@@ -248,6 +248,44 @@ def _source_map_bytes() -> bytes:
     return json.dumps(payload).encode("utf-8")
 
 
+def _payloads(prompt: str, type_name: str) -> dict[str, object]:
+    """Canned Selection/Claimify using engine-assigned origin-eligible labels."""
+    if type_name == "SelectionResponse":
+        return {
+            "candidates": [
+                {"source_span": _OCR_SPAN, "outcome": "keep"},
+                {"source_span": _OBS_SPAN, "outcome": "keep"},
+            ]
+        }
+    claims: list[dict[str, object]] = []
+    for match in re.finditer(
+        r"\[(S\d+)\] TARGET \(origin-eligible\):\n(.*?)(?=\n\[S|\Z)", prompt, flags=re.S
+    ):
+        label, body = match.group(1), match.group(2)
+        if _OCR_SPAN in body:
+            claims.append(
+                {
+                    "claim_text": "The invoice number is 42.",
+                    "source_refs": [label],
+                    "entailment_self_verdict": True,
+                }
+            )
+        elif _OBS_SPAN in body:
+            claims.append(
+                {
+                    "claim_text": "The image shows a red valve on a bench.",
+                    "source_refs": [label],
+                    "entailment_self_verdict": True,
+                }
+            )
+    return {"claims": claims}
+
+
+def _with_blocks(objects: dict[str, bytes]) -> dict[str, bytes]:
+    """Ensure extract can load a (stale) blocks sidecar and re-blockize."""
+    return {**objects, _BLOCKS_URI: _STALE_BLOCKS}
+
+
 def _handler(
     *, catalog: _RecordingCatalog, store: _MemoryStore, source: ChunkSource
 ) -> ExtractClaimsHandler:
@@ -255,33 +293,10 @@ def _handler(
     return ExtractClaimsHandler(
         catalog=cast("ClaimCatalog", catalog),
         chunk_catalog=cast(
-            "ChunkCatalog", _ChunkCatalogStub(source=source, chunk=chunk)
+            "ChunkCatalog", SingleChunkCatalog(source=source, chunk=chunk)
         ),
         artifact_store=cast("ObjectStorePort", store),
-        model_provider=FakeModelProvider(
-            generate_payloads={
-                "SelectionResponse": {
-                    "candidates": [
-                        {"source_span": _OCR_SPAN, "outcome": "keep"},
-                        {"source_span": _OBS_SPAN, "outcome": "keep"},
-                    ]
-                },
-                "ClaimifyResponse": {
-                    "claims": [
-                        {
-                            "claim_text": "The invoice number is 42.",
-                            "source_span": _OCR_SPAN,
-                            "entailment_self_verdict": True,
-                        },
-                        {
-                            "claim_text": "The image shows a red valve on a bench.",
-                            "source_span": _OBS_SPAN,
-                            "entailment_self_verdict": True,
-                        },
-                    ]
-                },
-            }
-        ),
+        model_provider=FakeModelProvider(generate_router=_payloads),
         settings=E2Settings(),
         chunker_version="test-chunker",
     )
@@ -292,15 +307,20 @@ def test_fresh_extract_stamps_ocr_and_description_separately() -> None:
     map_bytes = _source_map_bytes()
     digest = hashlib.sha256(map_bytes).hexdigest()
     store = _MemoryStore(
-        objects={
-            _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
-            _CONVERSION_URI: _manifest_bytes(sha256=digest),
-            _SOURCE_MAP_URI: map_bytes,
-        }
+        objects=_with_blocks(
+            {
+                _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
+                _CONVERSION_URI: _manifest_bytes(sha256=digest),
+                _SOURCE_MAP_URI: map_bytes,
+            }
+        )
     )
     catalog = _RecordingCatalog()
     handler = _handler(catalog=catalog, store=store, source=_source())
-    handler.handle(work=_work(), meter=NoopCostMeter())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert catalog.record_calls == 0
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 1
     assert catalog.occurrences is not None
     by_span = {
@@ -326,10 +346,14 @@ def test_fresh_extract_stamps_ocr_and_description_separately() -> None:
 def test_missing_conversion_manifest_does_not_persist_claims() -> None:
     """A referenced conversion.json that is absent must not publish claims."""
     catalog = _RecordingCatalog()
-    store = _MemoryStore(objects={_MARKDOWN_URI: _DOCUMENT.encode("utf-8")})
+    store = _MemoryStore(
+        objects=_with_blocks({_MARKDOWN_URI: _DOCUMENT.encode("utf-8")})
+    )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="conversion manifest"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.claims == ()
 
@@ -338,14 +362,15 @@ def test_corrupt_conversion_manifest_is_terminal_and_persists_nothing() -> None:
     """Corrupt JSON dead-letters; no misleading occurrence rows are written."""
     catalog = _RecordingCatalog()
     store = _MemoryStore(
-        objects={
-            _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
-            _CONVERSION_URI: b"{not-json",
-        }
+        objects=_with_blocks(
+            {_MARKDOWN_URI: _DOCUMENT.encode("utf-8"), _CONVERSION_URI: b"{not-json"}
+        )
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(NonRetryableHandlerError, match="corrupt"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -353,14 +378,18 @@ def test_missing_referenced_source_map_does_not_persist_claims() -> None:
     """A conversion.json pointer whose map is absent fails closed."""
     catalog = _RecordingCatalog()
     store = _MemoryStore(
-        objects={
-            _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
-            _CONVERSION_URI: _manifest_bytes(sha256="deadbeef"),
-        }
+        objects=_with_blocks(
+            {
+                _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
+                _CONVERSION_URI: _manifest_bytes(sha256="deadbeef"),
+            }
+        )
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="source map"):
-        handler.handle(work=_work(), meter=NoopCostMeter())
+        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -369,20 +398,33 @@ def test_reuse_resolves_against_target_chunk_not_prior_coordinates() -> None:
     map_bytes = _source_map_bytes()
     digest = hashlib.sha256(map_bytes).hexdigest()
     store = _MemoryStore(
-        objects={
-            _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
-            _CONVERSION_URI: _manifest_bytes(sha256=digest),
-            _SOURCE_MAP_URI: map_bytes,
-        }
+        objects=_with_blocks(
+            {
+                _MARKDOWN_URI: _DOCUMENT.encode("utf-8"),
+                _CONVERSION_URI: _manifest_bytes(sha256=digest),
+                _SOURCE_MAP_URI: map_bytes,
+            }
+        )
     )
     catalog = _RecordingCatalog()
     catalog.prior = _PRIOR
     prior_claim_id = uuid4()
     catalog.anchors = (
-        ReusedClaimAnchor(claim_id=prior_claim_id, source_span=_OBS_SPAN),
+        ReusedClaimAnchor(
+            claim_id=prior_claim_id,
+            evidence_spans=(
+                EvidenceSpan(
+                    char_start=_OBS_START, char_end=_OBS_START + len(_OBS_SPAN)
+                ),
+            ),
+        ),
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
-    handler.handle(work=_work(), meter=NoopCostMeter())
+    work = _work()
+    handler.handle(work=work, meter=NoopCostMeter())
+    assert catalog.record_calls == 0
+    assert catalog.attached is None
+    handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.attached == (_CHUNK, _PRIOR)
     assert catalog.reuse_occurrences is not None

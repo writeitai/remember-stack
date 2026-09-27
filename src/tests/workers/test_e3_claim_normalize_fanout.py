@@ -25,16 +25,14 @@ def test_e3_version_includes_claim_fanout_suffix() -> None:
 
 
 def test_obs_flush_version_is_single_source_for_ledger_fanout() -> None:
-    """Ledger fan-out imports OBS_FLUSH_VERSION (no drifted literal)."""
+    """Ledger fan-out uses active_flush_version (no drifted literal)."""
     import inspect
 
     from rememberstack.spine import work_ledger
 
     source = inspect.getsource(work_ledger._enqueue_claim_normalize_fanout)
-    assert "OBS_FLUSH_VERSION" in source
-    assert "e3-obs-flush-2026.08a:claim-fanout-1" not in source.replace(
-        "OBS_FLUSH_VERSION", ""
-    )
+    assert "active_flush_version" in source
+    assert "e3-obs-flush-2026.08a:claim-fanout-1" not in source
 
 
 def test_normalize_barrier_uses_dedicated_advisory_lock() -> None:
@@ -134,82 +132,6 @@ def test_claim_normalize_requires_extractor_version_pin() -> None:
         assert "extractor_version" in str(error)
     else:
         raise AssertionError("expected NonRetryableHandlerError")
-
-
-def test_supersession_orients_by_asserted_at_not_process_order() -> None:
-    """Source-older relation is predecessor even when processed second."""
-    from datetime import datetime
-    from datetime import UTC
-
-    from rememberstack.spine.supersession import _is_source_successor
-
-    older = {"relation_id": uuid4(), "asserted_at": datetime(2019, 1, 1, tzinfo=UTC)}
-    newer = {"relation_id": uuid4(), "asserted_at": datetime(2024, 6, 1, tzinfo=UTC)}
-    assert _is_source_successor(left=newer, right=older)
-    assert not _is_source_successor(left=older, right=newer)
-    # Equal / undated times: keep the adjudicated subject (left) as successor.
-    same_time = datetime(2020, 1, 1, tzinfo=UTC)
-    a = {"relation_id": uuid4(), "asserted_at": same_time}
-    b = {"relation_id": uuid4(), "asserted_at": same_time}
-    assert _is_source_successor(left=a, right=b)
-    assert _is_source_successor(
-        left={"relation_id": uuid4(), "asserted_at": None},
-        right={"relation_id": uuid4(), "asserted_at": None},
-    )
-
-
-def test_observation_reverse_arrival_detects_source_earlier() -> None:
-    """Cross-version: source-older assertion is not treated as successor."""
-    from datetime import datetime
-    from datetime import UTC
-
-    from rememberstack.spine.observation_adjudication import _is_strictly_earlier
-
-    older = datetime(2019, 1, 1, tzinfo=UTC)
-    newer = datetime(2024, 6, 1, tzinfo=UTC)
-    assert _is_strictly_earlier(older, newer)
-    assert not _is_strictly_earlier(newer, older)
-    assert not _is_strictly_earlier(None, newer)
-    assert not _is_strictly_earlier(older, None)
-
-
-def test_ordinary_observation_inserts_pass_valid_from() -> None:
-    """First/novelty paths store asserted_at as valid_from (D88 reverse-arrival)."""
-    import inspect
-
-    from rememberstack.spine import observation_adjudication
-
-    source = inspect.getsource(
-        observation_adjudication.ObservationAdjudicator._add_with_block
-    )
-    # Ordinary first-mention / novelty inserts must not drop source time.
-    assert source.count("valid_from=asserted_at") >= 3
-    # Evidence collapse pulls open window to source-earliest assertion.
-    assert "_pull_valid_from_earlier" in source
-    sql = str(observation_adjudication._PULL_VALID_FROM)
-    assert "SET valid_from = :boundary" in sql
-    assert "valid_from IS NULL OR valid_from > :boundary" in sql
-
-
-def test_obs_flush_retires_staging_in_same_txn_as_apply() -> None:
-    """D43 apply and staging retire share one transaction (retry-safe)."""
-    import inspect
-
-    from rememberstack.spine import observation_adjudication
-    from rememberstack.workers import e3
-
-    entity_source = inspect.getsource(
-        e3.AdjudicateObservationsHandler._handle_entity_unit
-    )
-    legacy_source = inspect.getsource(
-        e3.AdjudicateObservationsHandler._handle_version_serial_legacy
-    )
-    assert "clear_staging=" in entity_source or "clear_staging=" in legacy_source
-    apply_source = inspect.getsource(
-        observation_adjudication.ObservationAdjudicator.add_observations
-    )
-    assert "clear_staging" in apply_source
-    assert "_DELETE_OBS_STAGING_ENTITY" in apply_source
 
 
 def test_claim_complete_rechecks_sibling_version_barriers() -> None:
@@ -423,10 +345,11 @@ def test_handle_claim_grain_returns_barrier() -> None:
             return frozenset()
 
     class _Facts:
-        staged: list[object]
-
         def __init__(self) -> None:
-            self.staged = []
+            from tests.workers.e3_test_doubles import RecordingApplications
+
+            self.applications = RecordingApplications()
+            self.staged = self.applications.staged
 
         def active_predicates(self, **kwargs: object) -> dict[str, str | None]:
             del kwargs
@@ -510,3 +433,7 @@ def test_handle_claim_grain_returns_barrier() -> None:
     assert outcome.claim_normalize_barrier.extractor_version == "e2-test-extractor"
     assert facts.staged
     assert outcome.follow_up == ()
+
+
+# D118 replaces source-time heuristics and source-inspection atomicity checks.
+# Real transaction, stale-input, retry and split proofs: test_fact_application_writer.py.

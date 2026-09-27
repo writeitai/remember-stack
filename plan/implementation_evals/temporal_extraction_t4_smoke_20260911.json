@@ -1,0 +1,568 @@
+{
+  "model": "openai/gpt-5.6-luna",
+  "date": "2026-09-11",
+  "cases": [
+    {
+      "case": "open_state",
+      "source_timestamp": "2024-05-08T19:30:00+00:00",
+      "source": "Alice has been CEO since 2019.",
+      "expected_kind": "proposition_validity",
+      "expected_precision": "open",
+      "expected_start": "2019-01-01T00:00:00+00:00",
+      "expected_end": null,
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Alice has been CEO since 2019.",
+            "source_span": "Alice has been CEO since 2019.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "proposition_validity",
+            "valid_from_iso": "2019-01-01",
+            "valid_until_iso": null,
+            "valid_precision": "open"
+          },
+          "parsed_start": "2019-01-01T00:00:00+00:00",
+          "parsed_end": null,
+          "parsed_precision": "open",
+          "parsed_kind": "proposition_validity",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2662,
+        "tokens_out": 87,
+        "cost_usd": "0.00015818",
+        "latency_ms": 123022
+      }
+    },
+    {
+      "case": "effective",
+      "source_timestamp": "2024-05-08T19:30:00+00:00",
+      "source": "Alice worked at Acme from 2015 to 2018.",
+      "expected_kind": "effective_period",
+      "expected_precision": "year",
+      "expected_start": "2015-01-01T00:00:00+00:00",
+      "expected_end": "2018-12-31T00:00:00+00:00",
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Alice worked at Acme from 2015 to 2018.",
+            "source_span": "Alice worked at Acme from 2015 to 2018.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "effective_period",
+            "valid_from_iso": "2015-01-01",
+            "valid_until_iso": "2018-12-31",
+            "valid_precision": "year"
+          },
+          "parsed_start": "2015-01-01T00:00:00+00:00",
+          "parsed_end": "2018-12-31T00:00:00+00:00",
+          "parsed_precision": "year",
+          "parsed_kind": "effective_period",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2672,
+        "tokens_out": 100,
+        "cost_usd": "0.00017398",
+        "latency_ms": 2043
+      }
+    },
+    {
+      "case": "measurement",
+      "source_timestamp": "2024-05-08T19:30:00+00:00",
+      "source": "Acme reports on calendar fiscal years. Acme FY2023 revenue was $5 million.",
+      "expected_kind": "measurement_period",
+      "expected_precision": "year",
+      "expected_start": "2023-01-01T00:00:00+00:00",
+      "expected_end": "2023-12-31T00:00:00+00:00",
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Acme reports on calendar fiscal years.",
+            "source_span": "Acme reports on calendar fiscal years.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": null,
+            "valid_from_iso": null,
+            "valid_until_iso": null,
+            "valid_precision": "unknown"
+          },
+          "parsed_start": null,
+          "parsed_end": null,
+          "parsed_precision": "unknown",
+          "parsed_kind": null,
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        },
+        {
+          "claim": {
+            "claim_text": "Acme FY2023 revenue was $5 million.",
+            "source_span": "Acme FY2023 revenue was $5 million.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "measurement_period",
+            "valid_from_iso": "2023-01-01",
+            "valid_until_iso": "2023-12-31",
+            "valid_precision": "year"
+          },
+          "parsed_start": "2023-01-01T00:00:00+00:00",
+          "parsed_end": "2023-12-31T00:00:00+00:00",
+          "parsed_precision": "year",
+          "parsed_kind": "measurement_period",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2682,
+        "tokens_out": 157,
+        "cost_usd": "0.00024258",
+        "latency_ms": 2375
+      }
+    },
+    {
+      "case": "hours_1930",
+      "source_timestamp": "2023-05-08T19:30:00+00:00",
+      "source": "The final ended three hours ago.",
+      "expected_kind": "event_time",
+      "expected_precision": "instant",
+      "expected_start": "2023-05-08T16:30:00+00:00",
+      "expected_end": "2023-05-08T16:30:00+00:00",
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "The final ended at 2023-05-08T16:30:00+00:00.",
+            "source_span": "The final ended three hours ago.",
+            "added_context": [
+              {
+                "text": "at 2023-05-08T16:30:00+00:00",
+                "source_kind": "header",
+                "source_ref": null
+              }
+            ],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2023-05-08T16:30:00+00:00",
+            "valid_until_iso": "2023-05-08T16:30:00+00:00",
+            "valid_precision": "instant"
+          },
+          "parsed_start": "2023-05-08T16:30:00+00:00",
+          "parsed_end": "2023-05-08T16:30:00+00:00",
+          "parsed_precision": "instant",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2658,
+        "tokens_out": 153,
+        "cost_usd": "0.0002373",
+        "latency_ms": 1896
+      }
+    },
+    {
+      "case": "hours_2200",
+      "source_timestamp": "2023-05-08T22:00:00+00:00",
+      "source": "The final ended three hours ago.",
+      "expected_kind": "event_time",
+      "expected_precision": "instant",
+      "expected_start": "2023-05-08T19:00:00+00:00",
+      "expected_end": "2023-05-08T19:00:00+00:00",
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "The final ended at 2023-05-08T19:00:00+00:00.",
+            "source_span": "The final ended three hours ago.",
+            "added_context": [
+              {
+                "text": "at 2023-05-08T19:00:00+00:00",
+                "source_kind": "header",
+                "source_ref": null
+              }
+            ],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2023-05-08T19:00:00+00:00",
+            "valid_until_iso": "2023-05-08T19:00:00+00:00",
+            "valid_precision": "instant"
+          },
+          "parsed_start": "2023-05-08T19:00:00+00:00",
+          "parsed_end": "2023-05-08T19:00:00+00:00",
+          "parsed_precision": "instant",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2658,
+        "tokens_out": 153,
+        "cost_usd": "0.0002373",
+        "latency_ms": 2964
+      }
+    },
+    {
+      "case": "part_of_day",
+      "source_timestamp": "2023-05-08T19:30:00+00:00",
+      "source": "Alice won the final this morning.",
+      "expected_kind": null,
+      "expected_precision": "unknown",
+      "expected_start": null,
+      "expected_end": null,
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Alice won the final this morning.",
+            "source_span": "Alice won the final this morning.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": null,
+            "valid_from_iso": null,
+            "valid_until_iso": null,
+            "valid_precision": "unknown"
+          },
+          "parsed_start": null,
+          "parsed_end": null,
+          "parsed_precision": "unknown",
+          "parsed_kind": null,
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2658,
+        "tokens_out": 75,
+        "cost_usd": "0.0001437",
+        "latency_ms": 1596
+      }
+    },
+    {
+      "case": "no_anchor",
+      "source_timestamp": "unknown",
+      "source": "Alice won the final yesterday.",
+      "expected_kind": null,
+      "expected_precision": "unknown",
+      "expected_start": null,
+      "expected_end": null,
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Alice won the final yesterday.",
+            "source_span": "Alice won the final yesterday.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": null,
+            "valid_from_iso": null,
+            "valid_until_iso": null,
+            "valid_precision": "unknown"
+          },
+          "parsed_start": null,
+          "parsed_end": null,
+          "parsed_precision": "unknown",
+          "parsed_kind": null,
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2640,
+        "tokens_out": 73,
+        "cost_usd": "0.00074745",
+        "latency_ms": 1597
+      }
+    },
+    {
+      "case": "absolute_no_anchor",
+      "source_timestamp": "unknown",
+      "source": "Alice won the final in 2022.",
+      "expected_kind": "event_time",
+      "expected_precision": "year",
+      "expected_start": "2022-01-01T00:00:00+00:00",
+      "expected_end": "2022-12-31T00:00:00+00:00",
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Alice won the final in 2022.",
+            "source_span": "Alice won the final in 2022.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": false,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2022-01-01",
+            "valid_until_iso": "2022-12-31",
+            "valid_precision": "year"
+          },
+          "parsed_start": "2022-01-01T00:00:00+00:00",
+          "parsed_end": "2022-12-31T00:00:00+00:00",
+          "parsed_precision": "year",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2646,
+        "tokens_out": 90,
+        "cost_usd": "0.00076935",
+        "latency_ms": 1908
+      }
+    },
+    {
+      "case": "last_friday_written_as_day",
+      "source_timestamp": "2022-01-23T14:05:00+00:00",
+      "source": "Joanna: I printed the screenplay last Friday.",
+      "expected_kind": "event_time",
+      "expected_precision": "day",
+      "expected_start": "2022-01-21T00:00:00+00:00",
+      "expected_end": "2022-01-21T00:00:00+00:00",
+      "expected_text_contains": [
+        "2022-01-21"
+      ],
+      "expected_text_excludes": [
+        "last Friday"
+      ],
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Joanna said: Joanna printed the screenplay on 2022-01-21",
+            "source_span": "Joanna: I printed the screenplay last Friday.",
+            "added_context": [
+              {
+                "text": "Joanna",
+                "source_kind": "prefix",
+                "source_ref": null
+              },
+              {
+                "text": "on 2022-01-21",
+                "source_kind": "header",
+                "source_ref": null
+              }
+            ],
+            "entailment_self_verdict": true,
+            "is_attributed": true,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2022-01-21",
+            "valid_until_iso": "2022-01-21",
+            "valid_precision": "day"
+          },
+          "parsed_start": "2022-01-21T00:00:00+00:00",
+          "parsed_end": "2022-01-21T00:00:00+00:00",
+          "parsed_precision": "day",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2663,
+        "tokens_out": 136,
+        "cost_usd": "0.0008288",
+        "latency_ms": 123347
+      }
+    },
+    {
+      "case": "yesterday_inside_attributed_speech",
+      "source_timestamp": "2023-05-08T09:00:00+00:00",
+      "source": "Caroline: I went to a support group yesterday.",
+      "expected_kind": "event_time",
+      "expected_precision": "day",
+      "expected_start": "2023-05-07T00:00:00+00:00",
+      "expected_end": "2023-05-07T00:00:00+00:00",
+      "expected_text_contains": [
+        "2023-05-07"
+      ],
+      "expected_text_excludes": [
+        "yesterday"
+      ],
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Caroline said: I went to a support group on 2023-05-07.",
+            "source_span": "Caroline: I went to a support group yesterday.",
+            "added_context": [
+              {
+                "text": "on 2023-05-07",
+                "source_kind": "header",
+                "source_ref": "DOCUMENT HEADER"
+              }
+            ],
+            "entailment_self_verdict": true,
+            "is_attributed": true,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2023-05-07",
+            "valid_until_iso": "2023-05-07",
+            "valid_precision": "day"
+          },
+          "parsed_start": "2023-05-07T00:00:00+00:00",
+          "parsed_end": "2023-05-07T00:00:00+00:00",
+          "parsed_precision": "day",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2665,
+        "tokens_out": 125,
+        "cost_usd": "0.0008161",
+        "latency_ms": 1936
+      }
+    },
+    {
+      "case": "last_year_written_as_year",
+      "source_timestamp": "2023-05-08T09:00:00+00:00",
+      "source": "Melanie: Yeah, I painted that lake sunrise last year!",
+      "expected_kind": "event_time",
+      "expected_precision": "year",
+      "expected_start": "2022-01-01T00:00:00+00:00",
+      "expected_end": "2022-12-31T00:00:00+00:00",
+      "expected_text_contains": [
+        "2022"
+      ],
+      "expected_text_excludes": [
+        "last year"
+      ],
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Melanie said: Melanie painted that lake sunrise in 2022",
+            "source_span": "Melanie: Yeah, I painted that lake sunrise last year!",
+            "added_context": [
+              {
+                "text": "Melanie",
+                "source_kind": "prefix",
+                "source_ref": null
+              },
+              {
+                "text": "in 2022",
+                "source_kind": "header",
+                "source_ref": null
+              }
+            ],
+            "entailment_self_verdict": true,
+            "is_attributed": true,
+            "valid_kind": "event_time",
+            "valid_from_iso": "2022-01-01",
+            "valid_until_iso": "2022-12-31",
+            "valid_precision": "year"
+          },
+          "parsed_start": "2022-01-01T00:00:00+00:00",
+          "parsed_end": "2022-12-31T00:00:00+00:00",
+          "parsed_precision": "year",
+          "parsed_kind": "event_time",
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2669,
+        "tokens_out": 133,
+        "cost_usd": "0.0008267",
+        "latency_ms": 122639
+      }
+    },
+    {
+      "case": "few_weeks_stays_as_spoken",
+      "source_timestamp": "2022-01-23T14:05:00+00:00",
+      "source": "Joanna: I have been working on the screenplay in the last few weeks.",
+      "expected_kind": null,
+      "expected_precision": "unknown",
+      "expected_start": null,
+      "expected_end": null,
+      "expected_text_contains": [
+        "last few weeks"
+      ],
+      "matched": true,
+      "outputs": [
+        {
+          "claim": {
+            "claim_text": "Joanna said: I have been working on the screenplay in the last few weeks.",
+            "source_span": "Joanna: I have been working on the screenplay in the last few weeks.",
+            "added_context": [],
+            "entailment_self_verdict": true,
+            "is_attributed": true,
+            "valid_kind": null,
+            "valid_from_iso": null,
+            "valid_until_iso": null,
+            "valid_precision": "unknown"
+          },
+          "parsed_start": null,
+          "parsed_end": null,
+          "parsed_precision": "unknown",
+          "parsed_kind": null,
+          "gate": {
+            "accepted": true
+          },
+          "text_matches": true
+        }
+      ],
+      "usage": {
+        "model_name": "openai/gpt-5.6-luna",
+        "tokens_in": 2675,
+        "tokens_out": 94,
+        "cost_usd": "0.0007814",
+        "latency_ms": 122625
+      }
+    }
+  ]
+}

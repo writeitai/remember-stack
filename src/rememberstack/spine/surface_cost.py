@@ -51,6 +51,7 @@ class SurfaceCallSite(StrEnum):
     CLAIMS_AND_SOURCES_CLAIMS = "claims_and_sources_claims"
     CLAIMS_AND_SOURCES_CHUNKS = "claims_and_sources_chunks"
     FACTS_CONTEXT = "facts_context"
+    RESOLVE_ENTITY = "resolve_entity"
     CLAIMS_ABOUT = "claims_about"
     CLAIMS_AS_OF = "claims_as_of"
     NOMINATE_CLAIMS = "nominate_claims"
@@ -59,6 +60,7 @@ class SurfaceCallSite(StrEnum):
     PROFILE_BACKFILL = "profile_backfill"
     PROFILE_REVIEW = "profile_review"
     PROFILE_FORGET_RECOVERY = "profile_forget_recovery"
+    PROFILE_DELETE = "profile_delete"
 
 
 @dataclass(frozen=True, slots=True)

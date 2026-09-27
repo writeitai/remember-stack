@@ -1,7 +1,8 @@
 # Entity identity and retrieval — design (binding)
 
-> **Binding D110 amendment (2026-09-07).** D110 §5 requires generation/revision/deadline checks before generated profile text or its vector participates in T3/T4 identity or retrieval. Future activation/expiry invalidates the certificate even with no new ingestion; stale profile evidence is omitted.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
+> **D118 amendment (2026-09-07; effective when merged).** Profiles are date-qualified historical summaries with mutation-driven repair (§6). D110 temporal deadline/certificate requirements are withdrawn; stale mutation-derived inputs still require existing revalidation.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D102 amendment (2026-08-31).** T0 remains candidate-only across
 > the registry, but gains one narrow verdict: after a D102-contract T4
@@ -582,6 +583,16 @@ unless the claim qualifies it as a specific referent (FIFA 23,
 James’s Unity strategy game). Prefer dropping the relation or
 observation over inventing a referent. Protocol/boilerplate lines
 (adapter banners, “X is a participant”) are the same class.
+
+**The source document's own name (D134).** When Claimify replaced
+"this report" with the document's name, the claim records that name's span
+(`own_document_name_span`); the one reference whose text is exactly that span
+is not minted or resolved, and the claim keeps the name as text. Claims
+without the span are unaffected, so a person who shares a document's title
+still resolves; if two references share the span's text, none is skipped. This
+stops two same-named files from merging through a name entity. Mentions of
+*other* files by name resolve normally. Authority:
+[`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §6.
 
 This is extract eligibility, not a new mentions subsystem.
 

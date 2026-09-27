@@ -75,6 +75,7 @@ from rememberstack.workers.p3 import CorpusFsSettings
 from rememberstack.workers.p3 import P3_BUILDER_VERSION
 from rememberstack.workers.reconcile import CycleFinalizer
 from rememberstack.workers.reconcile import DeletionService
+from rememberstack.workers.reconcile import DocumentDeleter
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 from rememberstack.workers.reconcile import ReconcileHandler
 from rememberstack.workers.sync import SyncCycleRunner
@@ -147,6 +148,7 @@ __all__ = (
     "P3_BUILDER_VERSION",
     "CycleFinalizer",
     "DeletionService",
+    "DocumentDeleter",
     "DeadLetterReplayer",
     "ReconcileHandler",
     "RECONCILE_VERSION",

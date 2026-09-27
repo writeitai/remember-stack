@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remember"
-version = "0.17.0"
+version = "0.17.2"
 description = "Open memory infrastructure for AI agents."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -55,13 +55,13 @@ benchmark = [
 ]
 observability = [
     "langfuse>=4.14.1,<5",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
     "sentry-sdk==2.66.1",
 ]
 
 [project.scripts]
 remember = "remember.cli:main"
-rememberstack = "remember.cli:rememberstack_main"
-remember-status = "remember.cli:main_status"
 
 [project.urls]
 Homepage = "https://remember.dev"
@@ -73,15 +73,18 @@ Issues = "https://github.com/writeitai/remember-stack/issues"
 server = [
     "alembic>=1.16",
     "boto3>=1.42",
+    "defusedxml>=0.7",
     "fastapi>=0.139.2",
     "markdown-it-py>=4.2.0",
-    "markitdown>=0.1.6",
+    "markitdown[docx,pptx,xlsx]>=0.1.6",
     "onnxruntime>=1.24.1; python_version >= '3.14'",
     "pglast>=8.4,<9",
     "pillow>=10.4",
     "psycopg[binary]>=3.2",
     "pyarrow>=25.0.0",
     "pyjwt[crypto]>=2.10",
+    "pypdfium2>=4.30",
+    "python-pptx>=1.0",
     "sqlalchemy>=2.0",
     "uvicorn>=0.37",
 ]

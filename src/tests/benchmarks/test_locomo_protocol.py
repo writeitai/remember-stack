@@ -18,7 +18,12 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
+from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
+from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
+from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
+from benchmarks.locomo.protocol import GLM_GENERATION_MODEL
+from benchmarks.locomo.protocol import GLM_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import PROTOCOL_NAME
@@ -38,6 +43,7 @@ from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import VertexSettings
+from rememberstack.core.concise_adjudication import PROMPT_RENDERER_VERSION
 from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -46,6 +52,7 @@ from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
 from rememberstack.spine.query_space.manifest import load_manifest
+from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import E3_NORMALIZER_VERSION
 from rememberstack.workers import OBS_FLUSH_VERSION
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
@@ -186,9 +193,96 @@ def test_reader_trace_keeps_chunk_evidence_but_omits_rank_bookkeeping() -> None:
     assert call.response.ranking  # durable raw record is unchanged
 
 
+def test_reader_trace_excludes_system_transaction_timestamps_from_facts() -> None:
+    """Facts serialized into reader trace retain valid_from/valid_precision but drop ingested_at and invalidated_at."""
+    from rememberstack.model import ContextBundleV2
+    from rememberstack.model import FactResult
+    from rememberstack.model import Validity
+    from rememberstack.model.claims import ClaimValidPrecision
+
+    now = datetime(2026, 7, 30, tzinfo=timezone.utc)
+    v = Validity(
+        valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        valid_until=None,
+        valid_precision=ClaimValidPrecision.DAY,
+        ingested_at=now,
+        invalidated_at=None,
+    )
+    fact = FactResult(
+        fact_id=uuid4(),
+        kind="relation",
+        label="Alice lives in Prague",
+        evidence_count=1,
+        validity=v,
+    )
+    fact_env = Envelope(
+        grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=now),
+        facts=(fact,),
+        freshness=Freshness(pg_live_ts=now),
+    )
+    call_facts = ToolCallRecord(
+        name="facts_context",
+        arguments={"entity_id": str(uuid4())},
+        latency_ms=1,
+        response=fact_env,
+    )
+    prompt_facts = render_answer_agent_prompt(
+        question="Where does Alice live?", tools=(), trace=(call_facts,)
+    )
+    assert "Alice lives in Prague" in prompt_facts
+    assert "2024-01-01" in prompt_facts
+    assert "ingested_at" not in prompt_facts
+    assert "invalidated_at" not in prompt_facts
+    assert isinstance(call_facts.response, Envelope)
+    assert call_facts.response.facts[0].validity.ingested_at == now
+
+    # ContextBundleV2
+    bundle = ContextBundleV2(
+        claims_and_sources=Envelope(
+            grain=Grain.EVIDENCE,
+            temporal_scope=current_temporal_scope(evaluated_at=now),
+            freshness=Freshness(pg_live_ts=now),
+        ),
+        facts=fact_env,
+    )
+    call_bundle = ToolCallRecord(
+        name="combined_context",
+        arguments={"query": "Alice"},
+        latency_ms=1,
+        response=bundle,
+    )
+    prompt_bundle = render_answer_agent_prompt(
+        question="Where does Alice live?", tools=(), trace=(call_bundle,)
+    )
+    assert "Alice lives in Prague" in prompt_bundle
+    assert "2024-01-01" in prompt_bundle
+    assert "ingested_at" not in prompt_bundle
+    assert "invalidated_at" not in prompt_bundle
+
+
+def test_protocol_pins_the_shipping_structure_generation() -> None:
+    """Readiness rejects a store structured under a different fallback wire contract."""
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS["structure"] == E0_STRUCTURE_VERSION
+
+
 def test_protocol_pins_the_shipping_extractor_generation() -> None:
     """The benchmark cannot silently ingest a different temporal extraction policy."""
     assert EXPECTED_INGEST_COMPONENT_VERSIONS["extract_claims"] == E2_EXTRACTOR_VERSION
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS["ground_claims"] == E2_EXTRACTOR_VERSION
+
+
+def test_protocol_pins_ground_claims_as_the_e2_split() -> None:
+    """Claimify is a supported ingest stage at the same extractor generation."""
+    assert EXPECTED_PIPELINE_STAGES.index("ground_claims") == (
+        EXPECTED_PIPELINE_STAGES.index("extract_claims") + 1
+    )
+    assert tuple(EXPECTED_INGEST_COMPONENT_VERSIONS) == EXPECTED_PIPELINE_STAGES
+
+
+def test_protocol_pins_the_shipping_concise_renderer_generation() -> None:
+    """Adjudication input rendering is part of the processing identity."""
+    assert EXPECTED_PROMPT_RENDERER_VERSION == PROMPT_RENDERER_VERSION
 
 
 def test_protocol_pins_the_shipping_observation_flush_generation() -> None:
@@ -226,7 +320,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
         tool.name: tool.implementation_plan_hash for tool in assured
     } == expected_chain_hashes
     tools = answer_tool_catalog()
-    assert len(tools) == 21
+    assert len(tools) == 22
     assert {tool.name for tool in tools} == {
         "combined_context",
         "facts_context",
@@ -238,6 +332,7 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
         "lookup_observations",
         "search_claims",
         "search_chunks",
+        "adjacent_chunks",
         "hydrate_relation",
         "query_sql",
         "explain_sql",
@@ -253,10 +348,10 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
     assert len(tool_catalog_sha256()) == 64
 
 
-def test_protocol_is_v26_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
+def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v26"
-    assert DEFAULT_PROTOCOL_KEY == "full-v26"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v38"
+    assert DEFAULT_PROTOCOL_KEY == "full-v38"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -271,6 +366,10 @@ def test_protocol_is_v26_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "The final answer must contain at most 20 words." in capped
     assert "never repeat a tool call with the same tool AND the same" in prompt
     assert "switch tools rather than retrying" in prompt
+    assert "asserted_at is when the source made this statement" in normalized_prompt
+    assert "when the claim says it happened or was true" in normalized_prompt
+    assert "relative to that row's asserted_at" in normalized_prompt
+    assert "Use timestamps to resolve relative dates" not in prompt
     assert "Open query" in prompt
     assert "P3 mount" in prompt
     assert "content-bearing" in prompt
@@ -290,20 +389,94 @@ def test_protocol_is_v26_and_answer_prompt_has_reasoning_and_loop_guards() -> No
     assert "Never use outside knowledge" not in normalized_prompt
     assert "Never seek or inspect benchmark reference solutions" in normalized_prompt
     assert "person, organization, place, or other entity" in normalized_prompt
-    assert "may issue those two requests in parallel" in normalized_prompt
+    assert "resolve it with resolve_entity first" in normalized_prompt
     assert "Use returned entity IDs" in normalized_prompt
     assert "Before any final answer" in normalized_prompt
+    assert (
+        "asserted_at is when the message was sent, NOT the event date"
+        in normalized_prompt
+    )
+    assert "never be used as a fallback event date" in normalized_prompt.lower()
+    assert 'what someone enjoys "most", "best"' in normalized_prompt
+    assert "complete union of all distinct matching values" in normalized_prompt
+    assert "shared, mutual, or collective attributes" in normalized_prompt
+    assert "unanswered question or reference directly relevant" in normalized_prompt
+    assert "deductive questions involving negative constraints" in normalized_prompt
+    assert "adjacent_chunks with the chunk_id" in normalized_prompt
+    assert "window=1 or window=2" in normalized_prompt
+    assert (
+        "consult claims_and_sources_context unless you have already queried it"
+        in normalized_prompt
+    )
+    assert "budget of at most 8 tool calls per question" in normalized_prompt
+    assert "Temporal filtering and event anchoring:" in prompt
+    assert 'time={{"mode": "at", "at": "<timestamp>"}}' in prompt
+    assert 'time={{"mode": "overlap", "from": "<start>", "to": "<end>"}}' in prompt
+    assert 'time={{"mode": "history"}}' in prompt
+    assert "Anchor your answer to the event's validity timeframe" in normalized_prompt
+    assert (
+        "Retrospective statements describing what happened or was felt during that event remain valid evidence"
+        in normalized_prompt
+    )
+    assert (
+        "Restrict to asserted_at (speech time) only when the question specifically asks what was stated or discussed"
+        in normalized_prompt
+    )
+    assert "prefer the speaker's specific verbatim terms" in normalized_prompt
+    assert (
+        "unless the question explicitly asks for a broader category"
+        in normalized_prompt
+    )
+    assert (
+        "distinguish activities explicitly stated as personal hobbies"
+        in normalized_prompt
+    )
+    assert 'time={"mode": "at", "at": "<timestamp>"}' in rendered
+    assert "all_sources" not in prompt
+
+
+def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
+    """Verify behavioral instructions for retrospective anchoring, speech time, and attributes."""
+    for protocol in PROTOCOL_REGISTRY.values():
+        rendered = render_answer_agent_prompt(
+            question="How did Caroline feel when submitting her screenplay?",
+            tools=(),
+            trace=(),
+            template=protocol.answer_prompt_template,
+        )
+        normalized = " ".join(rendered.split())
+        assert "Anchor your answer to the event's validity timeframe" in normalized
+        assert (
+            "Retrospective statements describing what happened or was felt during that event remain valid evidence"
+            in normalized
+        )
+        assert (
+            "Restrict to asserted_at (speech time) only when the question specifically asks what was stated or discussed"
+            in normalized
+        )
+        assert (
+            "Do not substitute subsequent reactions, later changed opinions, or states from unrelated timeframes"
+            in normalized
+        )
+        assert "prefer the speaker's specific verbatim terms" in normalized
+        assert (
+            "unless the question explicitly asks for a broader category" in normalized
+        )
+        assert (
+            "distinguish activities explicitly stated as personal hobbies" in normalized
+        )
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
-        "full-v26",
-        "full-v26-gemma-vertex",
-        "full-v26-codex-subscription",
+        "full-v38",
+        "full-v38-gemma-vertex",
+        "full-v38-codex-subscription",
+        "full-v38-glm",
     )
-    protocol = PROTOCOL_REGISTRY["full-v26"]
+    protocol = PROTOCOL_REGISTRY["full-v38"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v26"
+    assert protocol.name == "RS-LoCoMo-Full-v38"
     assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
     assert protocol.answer_agent_reasoning_effort == "none"
     assert protocol.judge_reasoning_effort == "none"
@@ -341,7 +514,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v26"]
+    assert selected == ["full-v38"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -479,12 +652,12 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
 
 
 def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a provider swap over identical v26 pins, so its scores are
-    an answer-agent comparison rather than a new benchmark identity."""
-    base = PROTOCOL_REGISTRY["full-v26"]
-    variant = PROTOCOL_REGISTRY["full-v26-gemma-vertex"]
+    """The variant is a reader-only provider swap over identical v38 pins, so its
+    scores are an answer-agent comparison rather than a new benchmark identity."""
+    base = PROTOCOL_REGISTRY["full-v38"]
+    variant = PROTOCOL_REGISTRY["full-v38-gemma-vertex"]
 
-    assert variant.name == "RS-LoCoMo-Full-v26-GemmaVertex"
+    assert variant.name == "RS-LoCoMo-Full-v38-GemmaVertex"
     assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
     assert variant.answer_agent_provider == "vertex"
     assert variant.answer_agent_reasoning_effort == "none"
@@ -522,7 +695,75 @@ def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
         base.judge_repetitions,
         base.answer_word_cap,
     )
-    assert DEFAULT_PROTOCOL_KEY == "full-v26"
+    assert DEFAULT_PROTOCOL_KEY == "full-v38"
+
+
+def test_glm_variant_swaps_only_the_ingest_generation_seats() -> None:
+    """The variant replays the R14 generation model under v38 pipeline pins, so
+    its scores are a new ingest-model family baseline, never Luna-v38 scores."""
+    base = PROTOCOL_REGISTRY["full-v38"]
+    variant = PROTOCOL_REGISTRY["full-v38-glm"]
+
+    assert variant.name == "RS-LoCoMo-Full-v38-GLM"
+    assert GLM_GENERATION_MODEL == "z-ai/glm-5.3-flash"
+    assert dict(variant.ingest_model_bindings) == dict(GLM_INGEST_MODEL_BINDINGS)
+    assert dict(base.ingest_model_bindings) == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    changed = {
+        name
+        for name in set(variant.ingest_model_bindings) | set(base.ingest_model_bindings)
+        if variant.ingest_model_bindings.get(name)
+        != base.ingest_model_bindings.get(name)
+    }
+    assert changed == {
+        "claim_extraction",
+        "entity_resolution",
+        "fact_adjudication",
+        "openrouter_reasoning_effort_map",
+        "relation_normalization",
+        "section_role",
+        "section_summary",
+        "skeleton_check",
+        "structure_fallback",
+    }
+    for name in changed - {"openrouter_reasoning_effort_map"}:
+        assert variant.ingest_model_bindings[name] == GLM_GENERATION_MODEL
+    assert (
+        variant.ingest_model_bindings["openrouter_reasoning_effort_map"]
+        == '{"z-ai/glm-5.3-flash": "minimal"}'
+    )
+    assert variant.answer_agent_model == base.answer_agent_model
+    assert variant.judge_model == base.judge_model
+    assert variant.answer_agent_provider == base.answer_agent_provider == "openrouter"
+    assert variant.judge_provider == base.judge_provider == "openrouter"
+    assert variant.answer_agent_reasoning_effort == base.answer_agent_reasoning_effort
+    assert variant.judge_reasoning_effort == base.judge_reasoning_effort
+    assert prompt_sha256(template=variant.answer_prompt_template) == prompt_sha256(
+        template=base.answer_prompt_template
+    )
+    assert prompt_sha256(template=variant.judge_prompt_template) == prompt_sha256(
+        template=base.judge_prompt_template
+    )
+    assert variant.answer_schema is base.answer_schema
+    assert variant.judge_schema is base.judge_schema
+    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
+    assert variant.surface_manifest_hash == base.surface_manifest_hash
+    assert (
+        variant.max_tool_calls_per_question,
+        variant.max_agent_calls_per_question,
+        variant.answer_reader_retry_budget,
+        variant.answer_agent_temperature,
+        variant.judge_temperature,
+        variant.judge_repetitions,
+        variant.answer_word_cap,
+    ) == (
+        base.max_tool_calls_per_question,
+        base.max_agent_calls_per_question,
+        base.answer_reader_retry_budget,
+        base.answer_agent_temperature,
+        base.judge_temperature,
+        base.judge_repetitions,
+        base.answer_word_cap,
+    )
 
 
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
@@ -563,14 +804,17 @@ def test_cli_composes_only_the_vertex_answer_seat(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
     built: list[VertexSettings] = []
 
     class _FakeVertex:
-        def __init__(self, *, settings: VertexSettings) -> None:
+        def __init__(
+            self, *, settings: VertexSettings, recorder: object = None
+        ) -> None:
             built.append(settings)
+            assert recorder is None
 
     monkeypatch.setattr(cli, "VertexModelProvider", _FakeVertex)
 
@@ -600,12 +844,12 @@ def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v26")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
     def refuse(**_values: object) -> object:  # pragma: no cover
-        raise AssertionError("Vertex must not be composed for full-v26")
+        raise AssertionError("Vertex must not be composed for full-v38")
 
     monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
@@ -620,7 +864,7 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A missing project id is caught before any stage work or paid call."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-gemma-vertex")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-gemma-vertex")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
 
@@ -630,10 +874,10 @@ def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
 
 def test_codex_subscription_variant_pins_both_generation_seats() -> None:
     """The experimental variant changes provider controls, not LoCoMo logic."""
-    base = PROTOCOL_REGISTRY["full-v26"]
-    variant = PROTOCOL_REGISTRY["full-v26-codex-subscription"]
+    base = PROTOCOL_REGISTRY["full-v38"]
+    variant = PROTOCOL_REGISTRY["full-v38-codex-subscription"]
 
-    assert variant.name == "RS-LoCoMo-Full-v26-CodexSubscription"
+    assert variant.name == "RS-LoCoMo-Full-v38-CodexSubscription"
     assert variant.answer_agent_model == "gpt-5.6-luna"
     assert variant.judge_model == "gpt-5.6-luna"
     assert variant.answer_agent_provider == "codex_subscription"
@@ -654,7 +898,7 @@ def test_cli_codex_answer_and_judge_need_no_openrouter_key(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An already-ingested run can evaluate solely through local Codex auth."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v26-codex-subscription")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-codex-subscription")
     monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
 
     answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
@@ -723,3 +967,25 @@ def test_discriminated_schema_branches_carry_only_their_own_keys() -> None:
     }
     assert set(branches["answer"]["required"]) == {"action", "answer"}
     assert schema["discriminator"]["propertyName"] == "action"
+
+
+def test_chat_routing_transport_settings_leave_fingerprints_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider rotation must not move the surface or catalog fingerprints.
+
+    The benchmark pins models, not hosts: ordering, throttle budgets, and the
+    ZDR flag change neither the tool catalog hash nor the surface hash.
+    """
+    baseline_catalog = tool_catalog_sha256()
+    baseline_surface = EXPECTED_SURFACE_MANIFEST_HASH
+
+    monkeypatch.setenv(
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER", "deepinfra,relace,wafer"
+    )
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_THROTTLE_RETRIES", "7")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S", "5.0")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_ZDR", "true")
+
+    assert tool_catalog_sha256() == baseline_catalog
+    assert EXPECTED_SURFACE_MANIFEST_HASH == baseline_surface

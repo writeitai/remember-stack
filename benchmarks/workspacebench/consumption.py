@@ -7,29 +7,26 @@ from typing import Final
 
 from benchmarks.workspacebench.protocol import CONSUMPTION_INSTRUCTION_VERSION
 
-MEMORY_CONSUMPTION_INSTRUCTION: Final = """# RememberStack Workspace-Bench memory consumption (v1.1.0)
+MEMORY_CONSUMPTION_INSTRUCTION: Final = """# RememberStack Workspace-Bench memory consumption (v1.2.0)
 
 You still have the complete native workspace filesystem. RememberStack is an
 augmentation, not a replacement filesystem. Produce the required output
 artifacts by inspecting and editing local files.
 
-When Remember MCP tools are listed for this session, use only those listed
-tools to locate, relate, and verify workspace information:
+The `remember` MCP server is a read-only memory of this workspace. Use only
+the tools it lists:
 
-- `resolve_entity` maps a name to canonical entity candidates.
-- `claims_and_sources_context` retrieves high-recall current claims and source
-  chunks (what sources said).
-- `facts_context` retrieves current or historical adjudicated facts.
-- `combined_context` returns `ContextBundle/v2` with separate
-  `claims_and_sources` and `facts` child envelopes — two complete authorities,
-  never a blended result list.
-- Open-query tools (`query_sql` and the other listed query tools) only when
-  they appear in the tool list.
+- To find files, call `search_documents` with a few words describing what
+  you need. Each result's `source_path` or `file_name` names the file; open
+  that file in the workspace and read it there.
+- For facts, entities, and quoted evidence across files, use the context and
+  entity tools (`combined_context`, `claims_and_sources_context`,
+  `facts_context`, `resolve_entity`); `adjacent_chunks` widens a returned
+  passage, and the query tools are there when listed.
 
 Rules:
-- Do not call `ingest` or `pipeline_readiness`; they are not available.
-- Do not upload task outputs, conversation state, or generated files into memory.
-- Treat memory results as nominations. Confirm load-bearing facts against the
+- Memory cannot be changed from this session; do not try to ingest or upload.
+- Treat memory results as leads. Confirm load-bearing facts against the
   native files before writing outputs.
 - Do not search the web, spawn subagents, or call MCP servers other than
   `remember`.

@@ -16,7 +16,7 @@ instructions: |
      RELEASED package ships under the D76 names (questions.md §11a): product RememberStack,
      dist/import rememberstack, CLI remember, canonical home remember.dev.
   2. Container images are published (GHCR) and a CI-TESTED docker-compose self-host profile
-     exists (Postgres + MinIO + api + worker); a quickstart brings up a working deployment
+     exists (Postgres + S3-compatible object store + api + worker); a quickstart brings up a working deployment
      (the ten-minute quickstart is a release gate).
   3. The client surface is exactly: query (SDK/CLI/MCP), lineage-aware ingest (source_kind/
      source_ref/source_modified_at/versioning_mode on push; writes through E0), connector

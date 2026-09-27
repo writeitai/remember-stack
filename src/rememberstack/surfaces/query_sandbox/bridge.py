@@ -107,6 +107,8 @@ FACTS_AS_OF_COLUMNS: Final = (
     "applied_valid_at",
     "applied_believed_at",
     "identity_regime",
+    "valid_precision",
+    "temporal_match",
 )
 FACTS_AS_OF_COLUMN_TYPES: Final = (
     "uuid",
@@ -128,6 +130,8 @@ FACTS_AS_OF_COLUMN_TYPES: Final = (
     "text",
     "timestamptz",
     "timestamptz",
+    "text",
+    "text",
     "text",
 )
 FACTS_AS_OF_ROWS_MAX: Final = 1000

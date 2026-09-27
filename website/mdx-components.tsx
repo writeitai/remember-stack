@@ -1,6 +1,10 @@
 import type { MDXComponents } from "mdx/types";
-import type { AnchorHTMLAttributes } from "react";
+import type { AnchorHTMLAttributes, HTMLAttributes } from "react";
 import Link from "next/link";
+import { AppliesTo } from "@/components/mdx/AppliesTo";
+import { Callout } from "@/components/mdx/Callout";
+import { Cloud } from "@/components/mdx/Cloud";
+import { Tab, Tabs } from "@/components/mdx/Tabs";
 
 // Route internal links through next/link so they navigate client-side and pick
 // up `trailingSlash: true` (avoiding a GitHub Pages 301 on every doc link).
@@ -21,7 +25,7 @@ function MdxAnchor({
   return (
     <a
       href={href}
-      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
+          {...(external ? { target: "_blank", rel: "noopener noreferrer" } : {})}
       {...props}
     >
       {children}
@@ -29,8 +33,47 @@ function MdxAnchor({
   );
 }
 
+function MdxLead({
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLParagraphElement>) {
+  return (
+    <p className={["lead-statement", className].filter(Boolean).join(" ")} {...props}>
+      {children}
+    </p>
+  );
+}
+
+function MdxLeadBlock({
+  children,
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={["not-prose", "lead-statement-block", className]
+        .filter(Boolean)
+        .join(" ")}
+      {...props}
+    >
+      {children}
+    </div>
+  );
+}
+
 // Required by @next/mdx. Global MDX element styling is handled by the
 // `prose` classes on the docs <article>.
 export function useMDXComponents(components: MDXComponents): MDXComponents {
-  return { ...components, a: MdxAnchor };
+  return {
+    ...components,
+    a: MdxAnchor,
+    Lead: MdxLead,
+    LeadBlock: MdxLeadBlock,
+    AppliesTo,
+    Callout,
+    Cloud,
+    Tabs,
+    Tab,
+  };
 }

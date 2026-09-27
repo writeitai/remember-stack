@@ -64,6 +64,16 @@ def test_require_api_auth_without_bind_refuses_to_start() -> None:
         resolve_selfhost_api_auth(settings=settings)
 
 
+def test_require_api_auth_accepts_a_plain_token() -> None:
+    """API_BEARER_TOKEN alone is a perimeter; no BIND or issuer is needed."""
+    settings = SelfHostSettings(
+        deployment_id=_DEPLOYMENT_B,
+        require_api_auth=True,
+        api_bearer_token=SecretStr(_SECRET),
+    )
+    assert resolve_selfhost_api_auth(settings=settings) is not None
+
+
 def test_empty_require_api_auth_string_is_false() -> None:
     """Compose may pass REQUIRE_API_AUTH=; that must not fail settings parse."""
     settings = SelfHostSettings.model_validate(

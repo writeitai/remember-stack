@@ -18,16 +18,18 @@ from rememberstack.core.chunker import is_anchor
 from rememberstack.core.chunker import pack_blocks
 from rememberstack.core.consumption_skill import CONSUMPTION_SKILL_VERSION
 from rememberstack.core.consumption_skill import render_consumption_skill
+from rememberstack.core.context_references import attempted_context_refs
+from rememberstack.core.context_references import MAX_CONTEXT_REFS
 from rememberstack.core.conversion import ConversionRouter
 from rememberstack.core.conversion import Converter
 from rememberstack.core.conversion import entire_document_labeling
+from rememberstack.core.conversion import FileHintConverter
 from rememberstack.core.conversion import LaneCheckpointConverter
 from rememberstack.core.conversion import LaneCheckpointStore
 from rememberstack.core.conversion import LaneUsageRecorder
 from rememberstack.core.conversion import MarkdownPassthroughConverter
 from rememberstack.core.conversion import PASSTHROUGH_CONVERTER_VERSION
 from rememberstack.core.conversion import STOCK_CONVERSION_ROUTE_NAMES
-from rememberstack.core.conversion import stock_passthrough_routes
 from rememberstack.core.core_manifest import CORE_MANIFEST
 from rememberstack.core.core_manifest import CoreManifest
 from rememberstack.core.core_manifest import EntityTypeDefinition
@@ -67,6 +69,15 @@ from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.section_snap import SECTION_ROLES
 from rememberstack.core.section_snap import snap_sections
+from rememberstack.core.selection_references import claimify_input_hash
+from rememberstack.core.selection_references import REFERENCE_POLICY_VERSION
+from rememberstack.core.source_passages import build_passage_catalog
+from rememberstack.core.source_passages import canonicalize_spans
+from rememberstack.core.source_passages import EvidenceSpan
+from rememberstack.core.source_passages import MAX_EVIDENCE_SPANS
+from rememberstack.core.source_passages import PassageCatalog
+from rememberstack.core.source_passages import remap_evidence_spans
+from rememberstack.core.source_passages import resolve_source_refs
 from rememberstack.core.storage_routing import HOT_MIME_PREFIXES
 from rememberstack.core.storage_routing import storage_class_for
 from rememberstack.core.structure_skeleton import analyze_skeleton
@@ -92,6 +103,10 @@ __all__ = (
     "extraction_input_hash",
     "is_anchor",
     "pack_blocks",
+    "attempted_context_refs",
+    "MAX_CONTEXT_REFS",
+    "claimify_input_hash",
+    "REFERENCE_POLICY_VERSION",
     "EMBEDDING_INPUT_POLICY_VERSION",
     "render_embedding_input",
     "CORE_MANIFEST",
@@ -111,7 +126,7 @@ __all__ = (
     "PASSTHROUGH_CONVERTER_VERSION",
     "STOCK_CONVERSION_ROUTE_NAMES",
     "entire_document_labeling",
-    "stock_passthrough_routes",
+    "FileHintConverter",
     "PredicateDefinition",
     "block_hash",
     "blockize",
@@ -123,6 +138,13 @@ __all__ = (
     "source_identity_hash",
     "SECTION_ROLES",
     "snap_sections",
+    "EvidenceSpan",
+    "MAX_EVIDENCE_SPANS",
+    "PassageCatalog",
+    "build_passage_catalog",
+    "canonicalize_spans",
+    "remap_evidence_spans",
+    "resolve_source_refs",
     "analyze_skeleton",
     "deterministic_section_role",
     "LONG_TITLE",

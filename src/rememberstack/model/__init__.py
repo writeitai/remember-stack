@@ -42,6 +42,7 @@ from rememberstack.model.claims import ClaimValidKind
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import DecisionRecord
 from rememberstack.model.claims import DecisionType
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.claims import FactForEmbedding
 from rememberstack.model.claims import FactForLabeling
 from rememberstack.model.claims import FactLabelResponse
@@ -52,11 +53,16 @@ from rememberstack.model.claims import SelectionDropReason
 from rememberstack.model.claims import SelectionOutcome
 from rememberstack.model.claims import SelectionResponse
 from rememberstack.model.claims import SelectionVerdict
+from rememberstack.model.claims import SourceReferenceCard
+from rememberstack.model.client import ADJACENT_CHUNKS_MAX_WINDOW
+from rememberstack.model.client import ADJACENT_CHUNKS_MIN_WINDOW
+from rememberstack.model.client import AdjacentChunksRequest
 from rememberstack.model.client import CapabilityReadiness
 from rememberstack.model.client import ConnectorCreate
 from rememberstack.model.client import ConnectorDescriptor
 from rememberstack.model.client import ConnectorNotFoundError
 from rememberstack.model.client import DeploymentBuildInfo
+from rememberstack.model.client import DocumentDeletion
 from rememberstack.model.client import DocumentPage
 from rememberstack.model.client import DocumentStatus
 from rememberstack.model.client import DocumentStatusFilter
@@ -94,6 +100,7 @@ from rememberstack.model.conversion import ConverterManifest
 from rememberstack.model.conversion import ConverterUsageEvent
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import DerivedAsset
+from rememberstack.model.conversion import FileHints
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import ManifestComponent
 from rememberstack.model.conversion import NormalizedRegion
@@ -113,6 +120,7 @@ from rememberstack.model.deployment import DeploymentBootstrapInput
 from rememberstack.model.deployment import DeploymentBootstrapResult
 from rememberstack.model.deployment import DeploymentConflictError
 from rememberstack.model.documents import ConvertSource
+from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import DocumentVersionNotFoundError
 from rememberstack.model.documents import IngestedVersion
@@ -312,8 +320,6 @@ from rememberstack.model.processing import BackfillSeedResult
 from rememberstack.model.processing import BudgetParked
 from rememberstack.model.processing import ClaimedWork
 from rememberstack.model.processing import CostBudget
-from rememberstack.model.processing import CostBudgetStatus
-from rememberstack.model.processing import CostTierSpend
 from rememberstack.model.processing import DeferReason
 from rememberstack.model.processing import EnqueueOutcome
 from rememberstack.model.processing import EnqueueWork
@@ -364,8 +370,11 @@ from rememberstack.model.sections import SkeletonStats
 from rememberstack.model.sections import SkeletonVerdict
 from rememberstack.model.sections import SnappedSection
 from rememberstack.model.sections import StructureRouteTag
+from rememberstack.model.spend_lease import ReadEmbeddingCost
+from rememberstack.model.spend_lease import record_embedding_usage
 from rememberstack.model.spend_lease import SpendLeaseRefused
 from rememberstack.model.spend_lease import SpendLeaseUnavailable
+from rememberstack.model.spend_lease import track_read_embedding_cost
 from rememberstack.model.telemetry import TelemetryAttribute
 from rememberstack.model.telemetry import TelemetryEvent
 
@@ -413,8 +422,6 @@ __all__ = (
     "ConnectorCreate",
     "ConnectorDescriptor",
     "CostBudget",
-    "CostBudgetStatus",
-    "CostTierSpend",
     "CurrencyLedgerAudit",
     "CurrencyMismatch",
     "ConnectorNotFoundError",
@@ -422,6 +429,7 @@ __all__ = (
     "ConversionCoverage",
     "ConversionError",
     "ConversionResult",
+    "FileHints",
     "ConverterLaneError",
     "ConverterManifest",
     "ConverterUsageEvent",
@@ -457,6 +465,7 @@ __all__ = (
     "DeploymentBootstrapInput",
     "DeploymentBootstrapResult",
     "DeploymentConflictError",
+    "DocumentNotFoundError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
     "DeploymentBuildInfo",
@@ -469,6 +478,7 @@ __all__ = (
     "EntityCandidate",
     "EntityRef",
     "Envelope",
+    "EvidenceSpan",
     "GraphEdge",
     "GraphNode",
     "GraphPath",
@@ -495,8 +505,11 @@ __all__ = (
     "ForgetRedactionRequiredError",
     "ForgetTargetNotFoundError",
     "ForgottenSourceError",
+    "ReadEmbeddingCost",
+    "record_embedding_usage",
     "SpendLeaseRefused",
     "SpendLeaseUnavailable",
+    "track_read_embedding_cost",
     "Freshness",
     "Grain",
     "IdentityRegime",
@@ -548,9 +561,13 @@ __all__ = (
     "PackedChunk",
     "PerimeterCredential",
     "PipelineComponent",
+    "DocumentDeletion",
     "DocumentPage",
     "DocumentStatus",
     "DocumentStatusFilter",
+    "ADJACENT_CHUNKS_MAX_WINDOW",
+    "ADJACENT_CHUNKS_MIN_WINDOW",
+    "AdjacentChunksRequest",
     "SearchRequest",
     "DocumentSummary",
     "DocumentVersionSummary",
@@ -602,6 +619,7 @@ __all__ = (
     "SelectionOutcome",
     "SelectionDropReason",
     "SelectionResponse",
+    "SourceReferenceCard",
     "SelectionVerdict",
     "LifecycleReport",
     "CurrencyTransition",

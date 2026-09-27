@@ -13,8 +13,13 @@ import pytest
 
 from rememberstack.adapters.codex_subscription import _CodexTurn
 from rememberstack.adapters.codex_subscription import _run_codex_turn
+from rememberstack.adapters.codex_subscription import CodexSubscriptionAuditError
+from rememberstack.adapters.codex_subscription import (
+    CodexSubscriptionInfrastructureError,
+)
 from rememberstack.adapters.codex_subscription import CodexSubscriptionModelProvider
 from rememberstack.adapters.codex_subscription import CodexSubscriptionProviderError
+from rememberstack.adapters.codex_subscription import CodexTurnPolicy
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderInvalidResponseError
@@ -64,8 +69,12 @@ def test_generate_validates_schema_and_records_subscription_accounting() -> None
     captured: list[tuple[ModelRequest, dict[str, object]]] = []
 
     def run_turn(
-        *, request: ModelRequest, output_schema: dict[str, object]
+        *,
+        request: ModelRequest,
+        output_schema: dict[str, object],
+        policy: CodexTurnPolicy,
     ) -> _CodexTurn:
+        assert policy == CodexTurnPolicy()
         captured.append((request, output_schema))
         return _turn()
 
@@ -119,7 +128,7 @@ def test_failed_turn_preserves_reported_usage() -> None:
     )
 
     with pytest.raises(
-        CodexSubscriptionProviderError, match="model overloaded"
+        CodexSubscriptionInfrastructureError, match="model overloaded"
     ) as caught:
         provider.generate(request=_request(), response_type=_Verdict)
 
@@ -140,7 +149,7 @@ def test_failed_turn_without_usage_preserves_the_provider_error() -> None:
     )
 
     with pytest.raises(
-        CodexSubscriptionProviderError, match="operator canceled"
+        CodexSubscriptionInfrastructureError, match="operator canceled"
     ) as caught:
         provider.generate(request=_request(), response_type=_Verdict)
 
@@ -155,7 +164,9 @@ def test_sdk_runner_errors_preserve_the_original_reason() -> None:
 
     provider = CodexSubscriptionModelProvider(turn_runner=fail_turn)
 
-    with pytest.raises(CodexSubscriptionProviderError, match="context window exceeded"):
+    with pytest.raises(
+        CodexSubscriptionInfrastructureError, match="context window exceeded"
+    ):
         provider.generate(request=_request(), response_type=_Verdict)
 
 
@@ -175,6 +186,261 @@ def test_agent_actions_are_rejected_even_if_a_final_response_exists() -> None:
 
     with pytest.raises(CodexSubscriptionProviderError, match="disallowed agent action"):
         provider.generate(request=_request(), response_type=_Verdict)
+
+
+def test_native_policy_accepts_bounded_content_reads_and_one_mcp_server(
+    tmp_path: Path,
+) -> None:
+    """An explicit ablation policy admits only audited content-bearing actions."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    policy = CodexTurnPolicy(
+        corpus_root=corpus,
+        sandbox="full_access",
+        allowed_runtime_item_types=frozenset(
+            {"CommandExecutionThreadItem", "McpToolCallThreadItem"}
+        ),
+        allowed_mcp_server="rememberstack_locomo",
+        allowed_mcp_tools=frozenset({"facts_context"}),
+        content_mcp_tools=frozenset({"facts_context"}),
+        max_runtime_actions=8,
+        require_content_action=True,
+    )
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=policy,
+        turn_runner=lambda **_values: _turn(
+            item_types=("McpToolCallThreadItem", "AgentMessageThreadItem"),
+            runtime_actions=(
+                {
+                    "item_type": "McpToolCallThreadItem",
+                    "payload": {
+                        "server": "rememberstack_locomo",
+                        "tool": "facts_context",
+                        "status": "completed",
+                        "error": None,
+                    },
+                },
+            ),
+        ),
+    )
+
+    generated = provider.generate(request=_request(), response_type=_Verdict)
+
+    assert generated.output.label == "CORRECT"
+
+
+def test_no_match_search_counts_as_a_content_attempt(tmp_path: Path) -> None:
+    """A completed POSIX search with exit code one may support Unknown."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=CodexTurnPolicy(
+            corpus_root=corpus,
+            sandbox="full_access",
+            allowed_runtime_item_types=frozenset({"CommandExecutionThreadItem"}),
+            max_runtime_actions=8,
+            require_content_action=True,
+        ),
+        turn_runner=lambda **_values: _turn(
+            item_types=("CommandExecutionThreadItem", "AgentMessageThreadItem"),
+            runtime_actions=(
+                {
+                    "item_type": "CommandExecutionThreadItem",
+                    "payload": {
+                        "command": "rg missing corpus",
+                        "commandActions": [
+                            {
+                                "type": "search",
+                                "command": "rg missing corpus",
+                                "path": "corpus",
+                            }
+                        ],
+                        "status": "completed",
+                        "exitCode": 1,
+                    },
+                },
+            ),
+        ),
+    )
+
+    assert provider.generate(request=_request(), response_type=_Verdict).output.label
+
+
+@pytest.mark.parametrize(
+    ("actions", "message"),
+    (
+        (
+            (
+                {
+                    "item_type": "McpToolCallThreadItem",
+                    "payload": {
+                        "server": "another_server",
+                        "tool": "facts_context",
+                        "status": "completed",
+                    },
+                },
+            ),
+            "out-of-profile MCP",
+        ),
+        (
+            (
+                {
+                    "item_type": "CommandExecutionThreadItem",
+                    "payload": {
+                        "command": "pwd",
+                        "commandActions": [{"type": "listFiles", "command": "pwd"}],
+                        "status": "completed",
+                        "exitCode": 0,
+                    },
+                },
+            ),
+            "without a content-bearing read",
+        ),
+    ),
+)
+def test_native_policy_rejects_wrong_mcp_or_zero_content(
+    tmp_path: Path, actions: tuple[dict[str, object], ...], message: str
+) -> None:
+    """A final response cannot bypass its profile or the content-read guard."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=CodexTurnPolicy(
+            corpus_root=corpus,
+            sandbox="full_access",
+            allowed_runtime_item_types=frozenset(
+                {"CommandExecutionThreadItem", "McpToolCallThreadItem"}
+            ),
+            allowed_mcp_server="rememberstack_locomo",
+            allowed_mcp_tools=frozenset({"facts_context"}),
+            content_mcp_tools=frozenset({"facts_context"}),
+            max_runtime_actions=8,
+            require_content_action=True,
+        ),
+        turn_runner=lambda **_values: _turn(
+            item_types=tuple(
+                [str(action["item_type"]) for action in actions]
+                + ["AgentMessageThreadItem"]
+            ),
+            runtime_actions=actions,
+        ),
+    )
+
+    with pytest.raises(CodexSubscriptionProviderError, match=message):
+        provider.generate(request=_request(), response_type=_Verdict)
+
+
+def test_native_policy_rejects_more_than_eight_actions(tmp_path: Path) -> None:
+    """The native inner loop shares the canonical eight-action ceiling."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    action = {
+        "item_type": "CommandExecutionThreadItem",
+        "payload": {
+            "command": "rg Alice corpus",
+            "commandActions": [
+                {"type": "search", "command": "rg Alice corpus", "path": "corpus"}
+            ],
+            "status": "completed",
+            "exitCode": 0,
+        },
+    }
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=CodexTurnPolicy(
+            corpus_root=corpus,
+            sandbox="full_access",
+            allowed_runtime_item_types=frozenset({"CommandExecutionThreadItem"}),
+            max_runtime_actions=8,
+            require_content_action=True,
+        ),
+        turn_runner=lambda **_values: _turn(
+            item_types=(*("CommandExecutionThreadItem" for _ in range(9)),),
+            runtime_actions=tuple(action for _ in range(9)),
+        ),
+    )
+
+    with pytest.raises(CodexSubscriptionProviderError, match="action limit"):
+        provider.generate(request=_request(), response_type=_Verdict)
+
+
+@pytest.mark.parametrize(
+    ("item_type", "payload", "message"),
+    (
+        ("WebSearchThreadItem", {"query": "gold answers"}, "disallowed agent action"),
+        ("DynamicToolCallThreadItem", {"tool": "lookup"}, "disallowed agent action"),
+        (
+            "CollabAgentToolCallThreadItem",
+            {"tool": "spawnAgent"},
+            "disallowed agent action",
+        ),
+        ("FileChangeThreadItem", {"changes": []}, "disallowed agent action"),
+    ),
+)
+def test_native_policy_rejects_web_dynamic_subagent_and_file_change_actions(
+    tmp_path: Path, item_type: str, payload: dict[str, object], message: str
+) -> None:
+    """The experiment refuses every runtime action outside read/search/list/MCP."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=CodexTurnPolicy(
+            corpus_root=corpus,
+            sandbox="full_access",
+            allowed_runtime_item_types=frozenset({"CommandExecutionThreadItem"}),
+            max_runtime_actions=8,
+            require_content_action=True,
+        ),
+        turn_runner=lambda **_values: _turn(
+            item_types=(item_type, "AgentMessageThreadItem"),
+            runtime_actions=({"item_type": item_type, "payload": payload},),
+        ),
+    )
+
+    with pytest.raises(CodexSubscriptionProviderError, match=message):
+        provider.generate(request=_request(), response_type=_Verdict)
+
+
+def test_native_policy_audits_unknown_shell_classification_for_human_review(
+    tmp_path: Path,
+) -> None:
+    """A normal shell pipeline is not mistaken for proof of a prohibited write."""
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    provider = CodexSubscriptionModelProvider(
+        turn_policy=CodexTurnPolicy(
+            corpus_root=corpus,
+            sandbox="full_access",
+            allowed_runtime_item_types=frozenset({"CommandExecutionThreadItem"}),
+            max_runtime_actions=8,
+            require_content_action=True,
+        ),
+        turn_runner=lambda **_values: _turn(
+            item_types=("CommandExecutionThreadItem", "AgentMessageThreadItem"),
+            runtime_actions=(
+                {
+                    "item_type": "CommandExecutionThreadItem",
+                    "payload": {
+                        "command": "cd corpus && rg Alice .",
+                        "commandActions": [
+                            {"type": "unknown", "command": "cd corpus && rg Alice ."}
+                        ],
+                        "status": "completed",
+                        "exitCode": 0,
+                    },
+                },
+            ),
+        ),
+    )
+
+    generated = provider.generate(request=_request(), response_type=_Verdict)
+
+    assert generated.output.label == "CORRECT"
+    assert provider.last_runtime_actions[0]["payload"] == {
+        "command": "cd corpus && rg Alice .",
+        "commandActions": [{"type": "unknown", "command": "cd corpus && rg Alice ."}],
+        "status": "completed",
+        "exitCode": 0,
+    }
 
 
 def test_runtime_audit_records_every_item_and_action_before_rejection(
@@ -218,6 +484,25 @@ def test_runtime_audit_records_every_item_and_action_before_rejection(
     assert len(records[0]["prompt_sha256"]) == 64
 
 
+def test_runtime_audit_write_failure_has_a_distinct_fatal_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An ablation can stop instead of scoring a turn whose audit was lost."""
+    provider = CodexSubscriptionModelProvider(
+        turn_runner=lambda **_values: _turn(),
+        audit_path=tmp_path / "unwritable" / "audit.jsonl",
+    )
+    monkeypatch.setattr(
+        "rememberstack.adapters.codex_subscription.os.open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(CodexSubscriptionAuditError, match="could not record") as error:
+        provider.generate(request=_request(), response_type=_Verdict)
+
+    assert error.value.usage is not None
+
+
 @pytest.mark.parametrize(
     "turn",
     (
@@ -247,7 +532,7 @@ def test_embedding_is_explicitly_out_of_scope() -> None:
 
 
 def test_official_sdk_wiring_is_keyless_isolated_and_uses_total_usage(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The real SDK boundary receives every security and accounting pin."""
     import openai_codex
@@ -293,27 +578,40 @@ def test_official_sdk_wiring_is_keyless_isolated_and_uses_total_usage(
 
         def thread_start(self, **kwargs: object) -> _Thread:
             calls["thread_start"] = kwargs
+            cwd = Path(str(kwargs["cwd"]))
+            calls["corpus_target"] = (cwd / "corpus").resolve(strict=True)
             return _Thread()
 
     monkeypatch.setattr(openai_codex, "Codex", _Codex)
 
+    corpus = tmp_path / "p3"
+    corpus.mkdir()
+    policy = CodexTurnPolicy(
+        corpus_root=corpus,
+        sandbox="full_access",
+        config_overrides=('mcp_servers.test.command="remember"',),
+    )
     turn = _run_codex_turn(
-        request=_request(), output_schema={"type": "object", "properties": {}}
+        request=_request(),
+        output_schema={"type": "object", "properties": {}},
+        policy=policy,
     )
 
     assert calls["refresh_token"] is False
     config = calls["config"]
     assert isinstance(config, openai_codex.CodexConfig)
     assert config.client_name == "rememberstack_locomo"
+    assert config.config_overrides == policy.config_overrides
+    assert calls["corpus_target"] == corpus.resolve()
     thread_start = calls["thread_start"]
     assert isinstance(thread_start, dict)
     assert thread_start["approval_mode"] is openai_codex.ApprovalMode.deny_all
-    assert thread_start["sandbox"] is openai_codex.Sandbox.read_only
+    assert thread_start["sandbox"] is openai_codex.Sandbox.full_access
     assert thread_start["ephemeral"] is True
     assert "base_instructions" not in thread_start
     run = calls["run"]
     assert isinstance(run, dict)
-    assert run["sandbox"] is openai_codex.Sandbox.read_only
+    assert run["sandbox"] is openai_codex.Sandbox.full_access
     assert turn.tokens_in == 30
     assert turn.tokens_out == 20
     assert turn.item_types == ("AgentMessageThreadItem",)

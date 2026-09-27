@@ -32,6 +32,7 @@ from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ProjectionCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import CorpusFsBuilder
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("46000000-0000-0000-0000-000000000001")
@@ -51,7 +52,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real mount proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:

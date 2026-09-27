@@ -126,7 +126,10 @@ re-run on a version change; downstream E1/E2/P3 invalidation keys include `struc
 versions, so a converter or structurer bump reprocesses exactly the affected documents.
 
 Re-ingesting an identical file is a `content_hash` no-op (this is the *only* surviving "dedup" — as
-idempotency, never a value tier, per D25). **A changed file from a watched source is a new
+idempotency, never a value tier, per D25) — except that identical bytes arriving under a different
+name, title or path are a **metadata observation**: no version is created and the lineage's
+`title` is unchanged; a `document_names` row is added so `search_documents` (D134) finds the file
+under its new name. **A changed file from a watched source is a new
 *version* of its lineage** (D55): connectors debounce rapid edits to one ingested version per
 stability window; unchanged chunks of the new version **reuse** their prior extraction and
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to
@@ -160,19 +163,20 @@ gates everything downstream:
   sequence from `document.md` downstream of every route, emitting `blocks.json` — see
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
-- **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → dedicated OCR
-  plus an independent vision-LLM description call for every supported image, without a
-  classifier or conditional lane budgets (D115; `media_design.md` §2); office / html /
-  email → **markitdown**; plain
-  text → passthrough. (This generalizes the common practice of
-  *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
-  bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
-  block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;
-  standalone image that is a *picture* → **VLM description** + OCR of visible text, behind a
-  document-vs-picture discriminator (MIME alone cannot tell a scanned page from a photo).
-  Media converters are versioned like every other — an ASR/VLM upgrade is a
-  `converter_version` bump, flowing the processing-driven lifecycle ruleset
+- **Routing by format family (D133).** An engine-shipped **format registry** maps every
+  recognized family to a posture — **full** reading, **profile** (a description of a data
+  file, not its rows), or **card** (a deterministic file card) — and to the converter
+  implementing it. Deployments overlay
+  the registry (add or override routes, for example provider-backed ones); they never replace
+  it. The shipped families, detection order and profiles are bound in
+  [`workspace_formats_design.md`](workspace_formats_design.md) (D138); the framework and
+  locator kinds in [`format_conversion_design.md`](format_conversion_design.md). **Media
+  routes (D65/D115),** bound in `media_design.md` §2, run when a deployment configures their
+  providers; by default images, audio and video get cards (D138): audio → **diarized ASR**
+  (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
+  keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
+  independent vision-LLM description call. Converters are versioned — a model or parser
+  upgrade is a `converter_version` bump, flowing the processing-driven lifecycle ruleset
   (`evidence_lifecycle_design.md` §3).
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
@@ -191,8 +195,10 @@ gates everything downstream:
   configured route table. Adding one route cannot release other unsupported
   formats. A worker that still lacks the route parks the item again and refunds
   its just-started attempt; converter content errors remain ordinary failures.
-  This handles configuration skew without a dead-letter loop. Matching follows
-  the router's exact MIME lookup. The admission and managed text-classification
+  This handles configuration skew without a dead-letter loop. Matching uses
+  the registry's normalized routing key (D133). Parking covers recognized families
+  whose converter needs an unconfigured provider or is not yet built; every file is
+  stored (D138). The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps
@@ -275,6 +281,10 @@ whole corpus as it grows (a single document cannot know the global tree).
 
 ### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
 
+> **D138:** a representation with no claim-eligible range (search-only text, a data profile, a
+> card) takes only the deterministic skeleton: no model call for skeleton checks, roles or
+> summaries. Model-written structure is for prose.
+
 The shipped route is a **single schema-constrained LLM call** over up to `max_prompt_chars`
 of `document.md` (default 200K; documents under `min_blocks_for_llm` skip the call) returning
 the entire tree — every span, role, and summary — in one response, with char offsets snapped
@@ -318,6 +328,31 @@ unchanged):
   disambiguation, resolved by deterministic search — never raw character offsets; an anchor
   that resolves ambiguously or not at all degrades to the enclosing parent, mirroring the
   snap's degrade-to-parent rule.
+- **Fallback section run-merging (D137):** When models propose section anchors in conversational
+  transcripts or dialogue documents, individual dialogue turns (e.g. Joanna asking "So what's
+  your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62)
+  are frequently proposed as section headings. If unresolved, each turn becomes an isolated
+  single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`,
+  `_neighbour_text`) inspects surrounding context only within the *same section*, this splits
+  question turns from their answers, breaking cross-turn anaphora resolution (D131).
+  *Rule:* In `resolve_fallback_skeleton()`, contiguous runs of single-block leaf sections are
+  identified. If followed by an immediate next leaf section without subsections, the run is merged
+  forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+  If at the end of the document or followed by a section with subsections, the run collapses into a
+  single merged section spanning `[run_start, run_end]`. In all cases, the merged section is titled
+  by the proposal at `run_start` (its first block), so title, heading level, and starting position
+  remain aligned without in-place mutation. Sections with subsections are never absorbed and never
+  absorb runs, protecting hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+  *Costs and Boundaries:*
+  1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat
+     sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE`
+     title. Hierarchy protection relies on the model emitting subsections.
+  2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single
+     section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+  3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and
+     the answer begins the next section, or a single-block turn is stranded at document end without
+     an answer, run-merging does not bridge across multi-block sections. Such cross-boundary
+     dialogue remains a documented boundary of section-scoped context.
 - **Skeleton sanity check (2026-07-28 addition, revised after Grok + Codex review): a judge,
   never a proposer.** Density can look healthy while the parsed tree is nonsense — a
   complicated print template whose running headers, TOC pages, or scrambled heading order
@@ -495,6 +530,9 @@ summaries are consumed (Selection drop quality, prefix quality, #150 scorecard c
 in prose.
 
 ## 4A. Cross-references — the `crossref` sub-worker
+
+> **D138:** for a representation with no claim-eligible range, cross-reference detection stays
+> deterministic; the ambiguous residue is left unresolved instead of going to a model.
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
 live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints

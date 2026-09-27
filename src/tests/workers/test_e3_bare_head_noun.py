@@ -2,9 +2,14 @@
 
 from uuid import uuid4
 
+from rememberstack.adapters.openrouter import _strict_json_schema
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.model import ClaimForNormalization
+from rememberstack.model.relations import EntityRef
+from rememberstack.model.relations import NormalizationResponse
+from rememberstack.model.relations import ObservationCandidate
+from rememberstack.model.relations import RelationCandidate
 from rememberstack.workers.e3 import _NORMALIZE_PROMPT
 from tests.workers.e3_test_doubles import _claim
 from tests.workers.e3_test_doubles import _handler
@@ -31,6 +36,78 @@ def test_prompt_forbids_bare_head_nouns() -> None:
     assert "FIFA 23" in _NORMALIZE_PROMPT
 
 
+def test_prompt_requires_both_observation_and_relation_arrays() -> None:
+    """Both lists must be present, including when one kind has no output."""
+    assert (
+        'Return one JSON object containing both "observations" and "relations".'
+        in _NORMALIZE_PROMPT
+    )
+    assert "Both values must be arrays." in _NORMALIZE_PROMPT
+    assert "Use [] when a kind has no output; never omit either field." in (
+        _NORMALIZE_PROMPT
+    )
+    format_at = _NORMALIZE_PROMPT.index("OUTPUT FORMAT")
+    timestamp_at = _NORMALIZE_PROMPT.index("SOURCE TIMESTAMP:")
+    assert format_at < timestamp_at
+
+
+def test_prompt_names_every_nested_normalizer_field() -> None:
+    """Declared nested fields are named; nullable surface stays required on the wire."""
+    nested = (
+        "Each observation contains context_refs, statement, subject, "
+        "and uses_claim_window.\n"
+        "Each relation contains context_refs, object, predicate, subject, "
+        "and uses_claim_window.\n"
+        "Every entity reference in subject, object, or context_refs contains "
+        "both name and surface.\n"
+        "Use surface=null when the claim spelling matches the canonical name; "
+        "otherwise use the exact claim spelling.\n"
+        "Use context_refs=[] when there are no context references. "
+        "uses_claim_window is always true or false.\n"
+        "Include every field, even when its value is null or an empty array.\n\n"
+        "SOURCE TIMESTAMP:"
+    )
+    assert nested in _NORMALIZE_PROMPT
+    root_at = _NORMALIZE_PROMPT.index(
+        'Return one JSON object containing both "observations" and "relations".'
+    )
+    nested_at = _NORMALIZE_PROMPT.index(
+        "Each observation contains context_refs, statement, subject, "
+        "and uses_claim_window."
+    )
+    timestamp_at = _NORMALIZE_PROMPT.index("SOURCE TIMESTAMP:")
+    assert root_at < nested_at < timestamp_at
+    assert tuple(ObservationCandidate.model_fields) == (
+        "subject",
+        "statement",
+        "uses_claim_window",
+        "context_refs",
+    )
+    assert tuple(RelationCandidate.model_fields) == (
+        "subject",
+        "predicate",
+        "object",
+        "uses_claim_window",
+        "context_refs",
+    )
+    assert tuple(EntityRef.model_fields) == ("name", "surface")
+    omitted = EntityRef(name="Nate")
+    assert omitted.surface is None
+    schema = _strict_json_schema(NormalizationResponse)
+    defs = schema.get("$defs") or schema.get("definitions") or {}
+    entity_ref = defs["EntityRef"]
+    assert set(entity_ref["required"]) == {"name", "surface"}
+    surface = entity_ref["properties"]["surface"]
+    assert "default" not in surface
+    assert {"type": "null"} in surface["anyOf"]
+    assert set(defs["ObservationCandidate"]["required"]) == set(
+        ObservationCandidate.model_fields
+    )
+    assert set(defs["RelationCandidate"]["required"]) == set(
+        RelationCandidate.model_fields
+    )
+
+
 def test_normalize_drops_game_relation_without_resolve() -> None:
     """Legal types still drop when an endpoint is the noun ``game``."""
     payload = {
@@ -47,14 +124,9 @@ def test_normalize_drops_game_relation_without_resolve() -> None:
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
     handler._normalize_claim(
-        created_relations=[],
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim(),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
+        version_ids=(uuid4(),),
         meter=NoopCostMeter(),
     )
     assert resolver.calls == []
@@ -76,20 +148,15 @@ def test_normalize_resolves_fifa_23() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    created: list[str] = []
     handler._normalize_claim(
-        created_relations=created,
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="James played FIFA 23 after dinner."),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
+        version_ids=(uuid4(),),
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["James", "FIFA 23"]
-    assert len(facts.upserts) == 1
+    assert len(facts.applications.staged) == 1
+    assert facts.upserts == []
 
 
 def test_normalize_drops_game_observation_without_resolve() -> None:
@@ -102,14 +169,9 @@ def test_normalize_drops_game_observation_without_resolve() -> None:
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
     handler._normalize_claim(
-        created_relations=[],
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim(),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
+        version_ids=(uuid4(),),
         meter=NoopCostMeter(),
     )
     assert resolver.calls == []
@@ -130,20 +192,17 @@ def test_works_for_between_people_is_not_dropped() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"works_for": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    created: list[str] = []
     handler._normalize_claim(
-        created_relations=created,
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="Alice works for me."),
-        predicates={"works_for": None},
-        prompt_lines="works_for",
+        version_ids=(uuid4(),),
         meter=NoopCostMeter(),
     )
     assert [ref.name for ref in resolver.calls] == ["Alice", "Me"]
-    assert facts.upserts[0]["predicate"] == "works_for"
+    assert facts.applications.published is not None
+    assert facts.applications.published[0].relations[0].predicate == "works_for"
+    assert facts.applications.staged[0]["kind"] == "relation"
+    assert facts.upserts == []
 
 
 def test_normalize_passes_source_surface_to_resolve() -> None:
@@ -161,19 +220,14 @@ def test_normalize_passes_source_surface_to_resolve() -> None:
     resolver = RecordingResolver()
     facts = RecordingFacts(predicates={"related_to": None})
     handler = _handler(provider=provider, resolver=resolver, facts=facts)
-    created: list[str] = []
     handler._normalize_claim(
-        created_relations=created,
-        observations_by_entity={},
-        staged_observations=None,
-        profile_entity_ids=set(),
         deployment_id=uuid4(),
         claim=_claim_with(claim_text="James opened the App after dinner."),
-        predicates={"related_to": None},
-        prompt_lines="related_to",
+        version_ids=(uuid4(),),
         meter=NoopCostMeter(),
     )
     assert resolver.calls[1].name == "Application"
     assert resolver.calls[1].surface == "App"
     assert resolver.calls[1].mention_surface() == "App"
-    assert len(facts.upserts) == 1
+    assert len(facts.applications.staged) == 1
+    assert facts.upserts == []

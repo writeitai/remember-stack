@@ -22,6 +22,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.postgres_p1 import _configure_p1_connection
+from rememberstack.adapters.postgres_p1 import EmbeddingModelChangedError
 from rememberstack.adapters.postgres_p1 import P1SearchUnavailableError
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
@@ -35,6 +36,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import FactCatalog
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -275,7 +277,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D94 adapter proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -645,11 +647,13 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
     with database_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time"
+                "UPDATE relations SET valid_from = :from_time, valid_until = :to_time,"
+                " valid_precision='instant', window_claim_ids=ARRAY[:claim]::uuid[]"
                 " WHERE relation_id = :fact"
             ),
             {
                 "fact": seeded["two_anchor_fact"],
+                "claim": seeded["both_claim"],
                 "from_time": _NOW - timedelta(days=10),
                 "to_time": _NOW - timedelta(days=2),
             },
@@ -679,7 +683,8 @@ def test_chunk_source_shape_and_fact_time_filter_before_limit(
         with database_engine.begin() as connection:
             connection.execute(
                 text(
-                    "UPDATE relations SET valid_from = NULL, valid_until = NULL"
+                    "UPDATE relations SET valid_from = NULL, valid_until = NULL,"
+                    " valid_precision='unknown', window_claim_ids='{}'"
                     " WHERE relation_id = :fact"
                 ),
                 {"fact": seeded["two_anchor_fact"]},
@@ -749,6 +754,43 @@ def test_setup_backfill_gate_tracks_the_exact_entity_channel(
         index.configure_channels(deployment_id=_DEPLOYMENT_ID)
 
 
+def test_setup_refuses_a_new_embedding_model_once_vectors_exist(
+    database_engine: Engine, seeded: dict[str, object]
+) -> None:
+    """Stored vectors pin the model; an empty deployment may still switch."""
+    index = seeded["index"]
+    assert isinstance(index, PostgresP1Index)
+    index.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    switched = PostgresP1Index(engine=database_engine, embedding_model="other/model")
+    with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
+        switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    # The stamps decide, not the channel: channels already published under
+    # the new model do not make the old vectors acceptable.
+    switched.configure_channels(deployment_id=_DEPLOYMENT_ID)
+    try:
+        with pytest.raises(EmbeddingModelChangedError, match=_MODEL):
+            switched.require_stored_embedding_model(deployment_id=_DEPLOYMENT_ID)
+    finally:
+        index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+
+    empty_deployment = UUID("5f000000-0000-0000-0000-000000000096")
+    DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
+        deployment_input=DeploymentBootstrapInput(
+            deployment_id=empty_deployment,
+            slug="postgres-p1-empty",
+            name="PostgreSQL P1 empty deployment",
+            default_language="en",
+            raw_bucket="mem://raw",
+            artifacts_bucket="mem://artifacts",
+            corpusfs_bucket="mem://corpusfs",
+        )
+    )
+    PostgresP1Index(engine=database_engine, embedding_model=_MODEL).configure_channels(
+        deployment_id=empty_deployment
+    )
+    switched.require_stored_embedding_model(deployment_id=empty_deployment)
+
+
 def test_ranked_search_never_crosses_deployments(
     database_engine: Engine, seeded: dict[str, object]
 ) -> None:
@@ -794,7 +836,7 @@ def test_ranked_search_never_crosses_deployments(
                     "UPDATE entities SET profile_summary = :summary,"
                     " embedding = CAST(:embedding AS vector),"
                     " embedding_model = :model,"
-                    " embedding_input_policy_version = 'entity-profile-v2',"
+                    " embedding_input_policy_version = 'entity-profile-v3:dated-history',"
                     " embedding_text_hash = 'search-scope-proof'"
                     " WHERE deployment_id = :deployment AND entity_id = :entity"
                 ),

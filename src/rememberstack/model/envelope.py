@@ -19,6 +19,9 @@ from pydantic import Field
 from pydantic import model_validator
 
 from rememberstack.model.adjudication import TranscriptEntry
+from rememberstack.model.claims import ClaimValidPrecision
+from rememberstack.model.claims import EvidenceSpan
+from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.model.queue import UTCDateTime
 
 
@@ -175,6 +178,7 @@ class Validity(BaseModel):
 
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 
@@ -222,7 +226,7 @@ class EntityCandidate(BaseModel):
 
     entity_id: UUID
     canonical_name: str
-    tier: str  # which resolution tier surfaced it (T0 in the skeleton)
+    tier: str  # T0 exact, T1 trigram, T2 phonetic, or T3 embedding
     context_hits: int = 0
 
 
@@ -272,13 +276,21 @@ class FactResult(BaseModel):
     label: str
     evidence_count: int
     validity: Validity
+    temporal_match: TemporalMatch = TemporalMatch.POSSIBLE
     contradiction_group: UUID | None = None  # the raw group id (S23)
     contradiction: Contradiction | None = None  # the surfaced co-members (S23)
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
 
 
 class EvidenceResult(BaseModel):
-    """One evidence-grain record: a claim with its provenance anchors."""
+    """One evidence-grain record: a claim with its provenance anchors.
+
+    ``source_span`` / ``char_start`` / ``char_end`` are the immutable origin
+    of the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.
+    ``evidence_spans`` is the complete body support for the same origin
+    occurrence, in that chunk's representation. Current-version remapped
+    positions live on ``memory_v1.claim_occurrences_live``.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -289,13 +301,49 @@ class EvidenceResult(BaseModel):
     source_span: str
     char_start: int
     char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     is_attributed: bool
     is_current_testimony: bool
-    asserted_at: UTCDateTime | None = None
-    claim_valid_from: UTCDateTime | None = None
-    claim_valid_until: UTCDateTime | None = None
-    claim_valid_precision: str = "unknown"
-    claim_valid_kind: str | None = None
+    asserted_at: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "When the source made this statement (the message was sent, the "
+            "page was published). Any relative phrase still present in "
+            "claim_text is relative to this time."
+        ),
+    )
+    claim_valid_from: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "Start of when the claim says it happened or was true, as the "
+            "source asserted it. A date the extractor could resolve is also "
+            "written into claim_text. Null when claim_valid_precision is "
+            "unknown."
+        ),
+    )
+    claim_valid_until: UTCDateTime | None = Field(
+        default=None,
+        description=(
+            "End of when the claim says it happened or was true, as the source "
+            "asserted it. Null for an open-ended state or unknown precision."
+        ),
+    )
+    claim_valid_precision: str = Field(
+        default="unknown",
+        description=(
+            "How exact the bounds are: instant, day, month, quarter, year, open "
+            "(known start, ongoing), or unknown (no usable source date)."
+        ),
+    )
+    claim_valid_kind: str | None = Field(
+        default=None,
+        description=(
+            "What the bounds describe: event_time = when the claimed event "
+            "happened; effective_period or proposition_validity = when the "
+            "claimed state was true; measurement_period = the period a claimed "
+            "figure covers."
+        ),
+    )
     document_title: str | None = None
     source_kind: str | None = None
     corroboration_count: int | None = Field(default=None, ge=1)
@@ -388,6 +436,7 @@ class GraphEdge(BaseModel):
     evidence_count: int
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
@@ -457,6 +506,7 @@ class AggregateBucket(BaseModel):
 
     key: str | None
     count: int = Field(ge=0)
+    possible_count: int = Field(default=0, ge=0)
     entity_id: UUID | None = None
 
 
@@ -475,6 +525,7 @@ class AggregateReport(BaseModel):
     form: str
     buckets: tuple[AggregateBucket, ...] = ()
     total: int = Field(ge=0)
+    possible_total: int = Field(default=0, ge=0)
     bounded_by: str | None = None
 
 

@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.testing import RecordingTaskQueue
 from rememberstack.adapters.testing import RecordingTelemetry
 from rememberstack.model import CostBudget
+from rememberstack.model import DeferReason
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EnqueueWork
 from rememberstack.model import LaneRouteError
@@ -41,6 +42,7 @@ from rememberstack.workers import DeadLetterReplayer
 from rememberstack.workers import HandlerOutcome
 from rememberstack.workers import HandlerRegistry
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("74000000-0000-0000-0000-000000000001")
@@ -57,7 +59,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -492,6 +494,16 @@ def test_budget_park_emits_one_worker_event_without_running_handler(
             .one()
         )
     assert state == {"status": "pending", "defer_reason": "budget", "attempts": 0}
+    report = OperationalCatalog(
+        engine=database_engine, settings=OperationalSettings()
+    ).inspect(deployment_id=_DEPLOYMENT_ID)
+    parked = [
+        (route.status, route.count)
+        for route in report.routes
+        if route.stage is PipelineStage.CONVERT
+        and route.defer_reason is DeferReason.BUDGET
+    ]
+    assert parked == [("pending", 1)]
 
 
 @pytest.mark.parametrize(

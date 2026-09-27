@@ -32,8 +32,6 @@ from sqlalchemy.engine import RowMapping
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
 from rememberstack.model import CostBudget
-from rememberstack.model import CostBudgetStatus
-from rememberstack.model import CostTierSpend
 from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
@@ -48,6 +46,12 @@ from rememberstack.model import WorkNotFoundError
 from rememberstack.model import WorkNotRunningError
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.catalog_contract import lane_is_valid
+from rememberstack.spine.fact_adjudication import active_adjudicator_versions
+from rememberstack.spine.fact_adjudication import active_flush_version
+from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_applications import register_version_applications_on
+from rememberstack.spine.fact_applications import version_applications_ready_on
 
 
 class WorkLedgerSettings(BaseSettings):
@@ -169,60 +173,6 @@ class WorkLedger:
             )
             return _claimed_work(row=started)
 
-    def budget_status(self, *, deployment_id: UUID) -> tuple[CostBudgetStatus, ...]:
-        """Return current spend and parked work for every configured deployment budget."""
-        statuses: list[CostBudgetStatus] = []
-        with self._engine.connect() as connection:
-            for budget in self._settings.budgets:
-                if budget.deployment_id != deployment_id:
-                    continue
-                spend = _budget_window_spend(connection=connection, budget=budget)
-                tier_rows = connection.execute(
-                    _BUDGET_TIER_SPEND,
-                    {
-                        "deployment_id": budget.deployment_id,
-                        "stage": budget.stage,
-                        "lane": budget.lane,
-                        "window_started_at": spend.started_at,
-                        "window_ends_at": spend.ends_at,
-                    },
-                ).mappings()
-                tiers = tuple(
-                    CostTierSpend(
-                        tier=cast(str | None, row["tier"]),
-                        cost_usd=_decimal(row["cost_usd"]),
-                    )
-                    for row in tier_rows
-                )
-                parked_work = int(
-                    connection.execute(
-                        _BUDGET_PARKED_COUNT,
-                        {
-                            "deployment_id": budget.deployment_id,
-                            "stage": budget.stage,
-                            "lane": budget.lane,
-                        },
-                    ).scalar_one()
-                )
-                remaining = max(Decimal(0), budget.ceiling_usd - spend.spent_usd)
-                statuses.append(
-                    CostBudgetStatus(
-                        deployment_id=budget.deployment_id,
-                        stage=budget.stage,
-                        lane=budget.lane,
-                        window_seconds=budget.window_seconds,
-                        window_started_at=spend.started_at,
-                        window_ends_at=spend.ends_at,
-                        ceiling_usd=budget.ceiling_usd,
-                        spent_usd=spend.spent_usd,
-                        remaining_usd=remaining,
-                        exhausted=spend.spent_usd >= budget.ceiling_usd,
-                        parked_work=parked_work,
-                        tiers=tiers,
-                    )
-                )
-        return tuple(statuses)
-
     def complete(
         self, *, processing_id: UUID, follow_up: tuple[EnqueueWork, ...] = ()
     ) -> tuple[EnqueueOutcome, ...]:
@@ -246,6 +196,83 @@ class WorkLedger:
                 enqueue_on(connection=connection, work=work) for work in follow_up
             )
 
+    def complete_chunk_selection(
+        self,
+        *,
+        processing_id: UUID,
+        barrier: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+    ) -> tuple[EnqueueOutcome, ...]:
+        """Complete Selection and atomically open Claimify after all results exist."""
+        from rememberstack.model import ProcessingTarget
+        from rememberstack.spine.selection_catalog import require_extraction_sources_on
+        from rememberstack.workers.base import SelectionChunkBarrier
+
+        if not isinstance(barrier, SelectionChunkBarrier):
+            raise TypeError("barrier must be SelectionChunkBarrier")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            chunk_id = connection.execute(
+                _SELECT_TARGET_ID, {"processing_id": processing_id}
+            ).scalar_one()
+            require_extraction_sources_on(
+                connection=connection,
+                deployment_id=barrier.deployment_id,
+                chunk_ids=(chunk_id,),
+            )
+            connection.execute(
+                _ADVISORY_LOCK_REPRESENTATION,
+                {"representation_id": barrier.representation_id},
+            )
+            if (
+                connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+                == 0
+            ):
+                raise WorkNotRunningError("Selection work is no longer running")
+            outcomes = [
+                enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            params = {
+                "deployment_id": barrier.deployment_id,
+                "representation_id": barrier.representation_id,
+                "chunker_version": barrier.chunker_version,
+                "extractor_version": barrier.extractor_version,
+            }
+            missing = connection.execute(
+                _SELECTION_BARRIER_MISSING, params
+            ).scalar_one()
+            if missing:
+                return tuple(outcomes)
+            chunk_ids = connection.execute(
+                text("""
+                SELECT chunk_id FROM chunks WHERE representation_id=:representation_id
+                  AND chunker_version=:chunker_version ORDER BY ordinal
+            """),
+                params,
+            ).scalars()
+            for target_id in chunk_ids:
+                outcomes.append(
+                    enqueue_on(
+                        connection=connection,
+                        work=EnqueueWork(
+                            deployment_id=barrier.deployment_id,
+                            target_kind=ProcessingTarget.CHUNK,
+                            target_id=target_id,
+                            stage=PipelineStage.GROUND_CLAIMS,
+                            component_version=barrier.extractor_version,
+                            content_hash=barrier.content_hash,
+                            lane=barrier.lane,
+                            payload={
+                                "version_id": str(barrier.version_id),
+                                "representation_id": str(barrier.representation_id),
+                                "chunk_id": str(target_id),
+                            },
+                        ),
+                    )
+                )
+            return tuple(outcomes)
+
     def complete_chunk_extract(
         self,
         *,
@@ -256,7 +283,7 @@ class WorkLedger:
         """D84: mark one chunk extract succeeded and maybe enqueue normalize.
 
         After this row is succeeded in the same transaction, require every chunk
-        of the representation to have a succeeded extract_claims row at the
+        of the representation to have a succeeded ground_claims row at the
         extractor version **and** claim/decision/occurrence extract evidence.
         Only then enqueue version-level ``normalize_relations`` (idempotent).
         """
@@ -695,20 +722,34 @@ class WorkLedger:
                     "work can be budget-parked"
                 )
 
-    def park_no_route(self, *, processing_id: UUID, attempt: int) -> None:
+    def park_no_route(self, *, processing_id: UUID, attempt: int, mime: str) -> None:
         """Return a convert claim that found no route before doing work (D117).
 
         Only the matching running convert attempt can transition. The unused
         claim is refunded, historical errors remain, and no retry is scheduled.
+
+        ``mime`` is the stored MIME the handler found unroutable. An ingest
+        may meanwhile have replaced it with a routable one and released the
+        parked rows — which excludes this running claim. The park therefore
+        locks the content row (the lock that replacement takes) and parks
+        only if the MIME is unchanged; otherwise the claim returns to the
+        queue unparked and is announced, so it converts with the new MIME.
         """
         with self._engine.begin() as connection:
-            updated = connection.execute(
-                _PARK_NO_ROUTE, {"processing_id": processing_id, "attempt": attempt}
-            ).rowcount
-            if updated != 1:
+            parked = (
+                connection.execute(
+                    _PARK_NO_ROUTE,
+                    {"processing_id": processing_id, "attempt": attempt, "mime": mime},
+                )
+                .scalars()
+                .all()
+            )
+            if len(parked) != 1:
                 raise WorkNotRunningError(
                     f"processing row {processing_id} is not the running convert attempt"
                 )
+            if parked[0] is None:
+                connection.execute(_WAKE, {"processing_id": str(processing_id)})
 
     def resume_no_route(
         self, *, deployment_id: UUID, routable_mimes: Collection[str]
@@ -916,7 +957,7 @@ def _extract_barrier_ready(
             "representation_id": representation_id,
             "chunker_version": chunker_version,
             "extractor_version": extractor_version,
-            "stage": PipelineStage.EXTRACT_CLAIMS.value,
+            "stage": PipelineStage.GROUND_CLAIMS.value,
         },
     ).scalar_one()
     return int(ready) == int(expected)
@@ -942,8 +983,7 @@ def _enqueue_claim_normalize_fanout(
     """
     from rememberstack.model import ProcessingTarget
 
-    # Lazy import: workers.e3 does not import WorkLedger at module load.
-    from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+    # OBS_FLUSH_VERSION generation is resolved via active_flush_version.
 
     rows = (
         connection.execute(
@@ -961,6 +1001,7 @@ def _enqueue_claim_normalize_fanout(
     )
     if not rows:
         # Empty extract: skip claim grain; open empty obs-flush → super + embed.
+        adjudication_engine = FactAdjudicationSettings().engine
         return _enqueue_entity_obs_flush_fanout(
             connection=connection,
             deployment_id=deployment_id,
@@ -969,7 +1010,7 @@ def _enqueue_claim_normalize_fanout(
             chunker_version=chunker_version,
             extractor_version=extractor_version,
             normalize_component_version=normalize_component_version,
-            obs_flush_component_version=OBS_FLUSH_VERSION,
+            obs_flush_component_version=active_flush_version(adjudication_engine),
             content_hash=content_hash,
             lane=lane,
             doc_id=None,
@@ -1009,6 +1050,7 @@ def _enqueue_claim_normalize_fanout(
         extractor_version=extractor_version,
         normalize_version=normalize_component_version,
     ):
+        adjudication_engine = FactAdjudicationSettings().engine
         outcomes.extend(
             _enqueue_entity_obs_flush_fanout(
                 connection=connection,
@@ -1018,7 +1060,7 @@ def _enqueue_claim_normalize_fanout(
                 chunker_version=chunker_version,
                 extractor_version=extractor_version,
                 normalize_component_version=normalize_component_version,
-                obs_flush_component_version=OBS_FLUSH_VERSION,
+                obs_flush_component_version=active_flush_version(adjudication_engine),
                 content_hash=content_hash,
                 lane=lane,
                 doc_id=UUID(str(doc_id)),
@@ -1064,6 +1106,31 @@ def _enqueue_entity_obs_flush_fanout(
     ).first()
     if existing is not None:
         return []
+
+    adjudication_engine = FactAdjudicationSettings().engine
+    expected_flush = active_flush_version(adjudication_engine)
+    active_rel, active_obs = active_adjudicator_versions(adjudication_engine)
+
+    if (
+        normalize_component_version != FACT_NORMALIZER_VERSION
+        or obs_flush_component_version != expected_flush
+    ):
+        raise ValueError(
+            "obsolete fact application generation cannot open the D118 barrier"
+        )
+    register_version_applications_on(
+        connection=connection,
+        parameters={
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "representation_id": representation_id,
+            "chunker_version": chunker_version,
+            "extractor_version": extractor_version,
+            "normalizer_version": normalize_component_version,
+            "relation_version": active_rel,
+            "observation_version": active_obs,
+        },
+    )
 
     entity_rows = (
         connection.execute(
@@ -1227,7 +1294,43 @@ def _entity_obs_flush_barrier_ready(
             "obs_flush_version": obs_flush_version,
         },
     ).scalar_one()
-    return int(ready) == int(expected)
+    adjudication_engine = FactAdjudicationSettings().engine
+    expected_flush = active_flush_version(adjudication_engine)
+    active_rel, active_obs = active_adjudicator_versions(adjudication_engine)
+
+    if (
+        int(ready) != int(expected)
+        or normalizer_version != FACT_NORMALIZER_VERSION
+        or obs_flush_version != expected_flush
+    ):
+        return False
+    state = (
+        connection.execute(
+            text("""SELECT representation_id,chunker_version,extractor_version
+        FROM obs_flush_version_state WHERE deployment_id=:deployment_id AND version_id=:version_id
+          AND normalizer_version=:normalizer_version"""),
+            {
+                "deployment_id": deployment_id,
+                "version_id": version_id,
+                "normalizer_version": normalizer_version,
+            },
+        )
+        .mappings()
+        .one()
+    )
+    return version_applications_ready_on(
+        connection=connection,
+        parameters={
+            "deployment_id": deployment_id,
+            "version_id": version_id,
+            "normalizer_version": normalizer_version,
+            "representation_id": state["representation_id"],
+            "chunker_version": state["chunker_version"],
+            "extractor_version": state["extractor_version"],
+            "relation_version": active_rel,
+            "observation_version": active_obs,
+        },
+    )
 
 
 def _normalize_claim_barrier_ready(
@@ -1437,11 +1540,26 @@ _PROMOTE_TO_STEADY = text(
 
 _PARK_NO_ROUTE = text(
     """
+    WITH stored AS (
+        SELECT c.mime
+        FROM processing_state p
+        JOIN document_versions v
+          ON v.deployment_id = p.deployment_id AND v.version_id = p.target_id
+        JOIN content_objects c
+          ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
+        WHERE p.processing_id = :processing_id
+        FOR SHARE OF c
+    )
     UPDATE processing_state
-    SET status = 'pending', defer_reason = 'no_route',
+    SET status = 'pending',
+        defer_reason = CASE
+            WHEN (SELECT mime FROM stored) IS DISTINCT FROM :mime THEN NULL
+            ELSE 'no_route'::processing_defer_reason
+        END,
         attempts = attempts - 1, started_at = NULL, not_before = now()
     WHERE processing_id = :processing_id AND status = 'running'
       AND stage = 'convert' AND attempts = :attempt AND attempts > 0
+    RETURNING defer_reason::text
     """
 )
 
@@ -1621,32 +1739,6 @@ _BUDGET_WINDOW_SPEND = text(
     """
 )
 
-_BUDGET_TIER_SPEND = text(
-    """
-    SELECT tier, COALESCE(sum(cost_usd), 0) AS cost_usd
-    FROM cost_ledger
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND occurred_at >= :window_started_at
-      AND occurred_at < :window_ends_at
-    GROUP BY tier
-    ORDER BY tier NULLS FIRST
-    """
-)
-
-_BUDGET_PARKED_COUNT = text(
-    """
-    SELECT count(*)
-    FROM processing_state
-    WHERE deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND status = 'pending'
-      AND defer_reason = 'budget'
-    """
-)
-
 _SELECT_FOR_COST = text(
     """
     SELECT deployment_id, status, stage, lane, attempts,
@@ -1773,6 +1865,7 @@ _BARRIER_READY_CHUNKS = text(
      AND p.status = 'succeeded'
     WHERE c.representation_id = :representation_id
       AND c.chunker_version = :chunker_version
+      AND c.claimify_input_hash IS NOT NULL
       AND (
             EXISTS (
                 SELECT 1 FROM claims cl
@@ -1908,3 +2001,19 @@ _COUNT_OBS_FLUSH_UNITS_SUCCEEDED = text(
       AND u.normalizer_version = :normalizer_version
     """
 )
+
+
+_SELECTION_BARRIER_MISSING = text("""
+    SELECT EXISTS(
+      SELECT 1 FROM chunks c
+      WHERE c.representation_id=:representation_id AND c.chunker_version=:chunker_version
+        AND (NOT EXISTS(SELECT 1 FROM selection_results s
+                         WHERE s.deployment_id=:deployment_id AND s.chunk_id=c.chunk_id
+                           AND s.extractor_version=:extractor_version
+                           AND s.selection_input_hash=c.extraction_input_hash)
+          OR NOT EXISTS(SELECT 1 FROM processing_state p
+                         WHERE p.deployment_id=:deployment_id AND p.target_kind='chunk'
+                           AND p.target_id=c.chunk_id AND p.stage='extract_claims'
+                           AND p.component_version=:extractor_version AND p.status='succeeded'))
+    )
+""")

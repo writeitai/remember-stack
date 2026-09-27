@@ -37,7 +37,6 @@ from benchmarks.workspacebench.models import UpstreamInspection
 from benchmarks.workspacebench.pair import run_pair
 from benchmarks.workspacebench.preflight import run_preflight
 from benchmarks.workspacebench.protocol import FAKE_CANARY_SECRET
-from benchmarks.workspacebench.protocol import REQUIRED_ASSURED_TOOLS
 from benchmarks.workspacebench.protocol import TARGET_OUTPUT_DIR
 from benchmarks.workspacebench.protocol import UPSTREAM_COMMIT
 from benchmarks.workspacebench.runner import run_agent
@@ -46,9 +45,9 @@ from benchmarks.workspacebench.supervisor import SupervisedProcessResult
 from benchmarks.workspacebench.task_contract import local_task_contract
 import pytest
 
-from remember.mcp_memory_tools import MEMORY_WRITE_TOOL_NAMES
-from remember.query_sandbox.mcp_tools import OPEN_QUERY_TOOL_NAMES
-from remember.remote_mcp import MCP_PROTOCOL_VERSION
+from remember.mcp_engine import MCP_PROTOCOL_VERSION
+from remember.mcp_tools import memory_tools
+from remember.mcp_tools import render_tools_list
 
 HIDDEN_SENTINEL = "HIDDEN_RUBRIC_SENTINEL"
 
@@ -122,8 +121,15 @@ def _receipt(
     )
 
 
+def _read_only_tools() -> list[dict[str, object]]:
+    """Main's current read-only catalogue, as `remember mcp --read-only` lists it."""
+    return render_tools_list(
+        memory_tools(), project=False, path_ingest=True, read_only=True
+    )
+
+
 def _tool_names() -> list[str]:
-    return [*REQUIRED_ASSURED_TOOLS, *OPEN_QUERY_TOOL_NAMES]
+    return [str(item["name"]) for item in _read_only_tools()]
 
 
 def _stdio_mcp_runner(
@@ -136,14 +142,7 @@ def _stdio_mcp_runner(
         for key in env:
             assert "token" not in key.lower()
             assert "authorization" not in key.lower()
-    tools = [
-        {
-            "name": name,
-            "description": name,
-            "inputSchema": {"type": "object", "properties": {}},
-        }
-        for name in _tool_names()
-    ]
+    tools = _read_only_tools()
     stdout = (
         json.dumps(
             {
@@ -360,10 +359,8 @@ def test_mcp_discovery_launches_stdio_and_binds_allowlist(tmp_path: Path) -> Non
     assert "--token" not in argv
     assert "initialize" in str(seen["stdin"])
     assert "tools/list" in str(seen["stdin"])
-    names = {item.name for item in discovery.listed_tools}
-    assert names.isdisjoint(MEMORY_WRITE_TOOL_NAMES)
-    assert set(REQUIRED_ASSURED_TOOLS) <= names
-    assert set(OPEN_QUERY_TOOL_NAMES) <= names
+    assert discovery.enabled_tools == tuple(_tool_names())
+    assert {"ingest", "delete_document"}.isdisjoint(discovery.enabled_tools)
     assert discovery.write_tools_present is False
     assert discovery.discovered_over_stdio is True
     assert discovery.catalog_sha256
@@ -1146,101 +1143,72 @@ def test_duplicate_mcp_tool_names_are_rejected() -> None:
         )
 
 
-def test_required_assured_tools_match_canonical_registry_and_descriptors() -> None:
-    """Workspace-Bench preflight pins the shipping registry, not a local copy."""
+def test_memory_arm_binds_the_discovered_read_only_catalogue() -> None:
+    """The real read-only engine catalogue is the pin; nothing is hard-coded."""
     from benchmarks.workspacebench.consumption import MEMORY_CONSUMPTION_INSTRUCTION
     from benchmarks.workspacebench.mcp import bind_listed_tools
-    from benchmarks.workspacebench.mcp import canonical_assured_operation_names
-    from benchmarks.workspacebench.models import ToolDescriptorRecord
+    from benchmarks.workspacebench.mcp import in_process_stdio_roundtrip
+    import httpx
 
-    from rememberstack.model import AssuredOperationName
-    from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
-    from rememberstack.surfaces.operation_surface import operation_descriptors
+    from remember.client import MemoryClient
+    from remember.mcp_engine import EngineMcpServer
+    from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+    from remember.mcp_tools import OPERATION_TOOL_NAMES
 
-    registry_names = canonical_assured_operation_names()
-    enum_names = tuple(name.value for name in AssuredOperationName)
-    descriptors = operation_descriptors(operations=CANONICAL_OPERATIONS)
-    descriptor_names = tuple(descriptor.name for descriptor in descriptors)
-    assert REQUIRED_ASSURED_TOOLS == registry_names
-    assert REQUIRED_ASSURED_TOOLS == (
-        "resolve_entity",
-        "claims_and_sources_context",
-        "facts_context",
-        "combined_context",
+    served = {definition.name: definition.tool_version for definition in memory_tools()}
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/deployment"
+        return httpx.Response(200, json={"tools": served})
+
+    client = MemoryClient(
+        client=httpx.Client(
+            base_url="http://engine.test", transport=httpx.MockTransport(respond)
+        )
     )
-    assert set(REQUIRED_ASSURED_TOOLS) == set(enum_names)
-    assert descriptor_names == REQUIRED_ASSURED_TOOLS
-    combined = next(
-        operation
-        for operation in CANONICAL_OPERATIONS
-        if operation.name is AssuredOperationName.COMBINED_CONTEXT
-    )
-    assert combined.result_contract == "context_bundle_v2"
-    properties = combined.result_schema.get("properties")
-    assert isinstance(properties, dict)
-    assert "claims_and_sources" in properties
-    assert "facts" in properties
-    for name in REQUIRED_ASSURED_TOOLS:
-        assert f"`{name}`" in MEMORY_CONSUMPTION_INSTRUCTION
-    assert "`ContextBundle/v2`" in MEMORY_CONSUMPTION_INSTRUCTION
-    assert "`claims_and_sources` and `facts` child envelopes" in (
-        MEMORY_CONSUMPTION_INSTRUCTION
+    records = in_process_stdio_roundtrip(
+        server=EngineMcpServer(client=client, read_only=True, path_ingest=True)
     )
     discovery = bind_listed_tools(
-        records=tuple(
-            ToolDescriptorRecord(
-                name=descriptor.name,
-                description=descriptor.description,
-                input_schema=descriptor.input_schema,
-            )
-            for descriptor in descriptors
-        ),
-        api_origin="http://127.0.0.1:18000",
-        discovered_over_stdio=True,
+        records=records, api_origin="http://127.0.0.1:18000", discovered_over_stdio=True
     )
-    assert discovery.assured_operations == REQUIRED_ASSURED_TOOLS
-    assert discovery.enabled_tools == REQUIRED_ASSURED_TOOLS
+    expected = tuple(
+        definition.name for definition in memory_tools() if not definition.mutates
+    )
+    assert discovery.enabled_tools == expected
+    assert {"search_documents", "adjacent_chunks"} <= set(expected)
+    assert discovery.assured_operations == OPERATION_TOOL_NAMES
+    assert discovery.open_query_tools == OPEN_QUERY_TOOL_NAMES
+    assert "`search_documents`" in MEMORY_CONSUMPTION_INSTRUCTION
 
 
-def test_stale_assured_catalog_is_rejected() -> None:
-    """A catalog that still advertises renamed operations fails preflight."""
+def test_catalog_missing_search_documents_is_rejected() -> None:
     from benchmarks.workspacebench.mcp import bind_listed_tools
     from benchmarks.workspacebench.mcp import McpDiscoveryError
     from benchmarks.workspacebench.models import ToolDescriptorRecord
 
-    with pytest.raises(
-        McpDiscoveryError, match="required read tools missing from MCP catalog"
-    ):
+    with pytest.raises(McpDiscoveryError, match="missing from MCP catalog: search"):
         bind_listed_tools(
-            records=(
-                ToolDescriptorRecord(name="resolve_entity"),
-                ToolDescriptorRecord(name="testimony_context"),
-                ToolDescriptorRecord(name="fact_context"),
-                ToolDescriptorRecord(name="answer_context"),
+            records=tuple(
+                ToolDescriptorRecord(name=name)
+                for name in _tool_names()
+                if name != "search_documents"
             ),
             api_origin="http://127.0.0.1:18000",
             discovered_over_stdio=True,
         )
 
 
-def test_registry_name_drift_fails_catalog_binding(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A later registry rename must fail Workspace-Bench catalog binding."""
-    from benchmarks.workspacebench import mcp as mcp_mod
+@pytest.mark.parametrize("extra", ["ingest", "delete_document", "not_a_memory_tool"])
+def test_catalog_with_non_read_only_tool_is_rejected(extra: str) -> None:
     from benchmarks.workspacebench.mcp import bind_listed_tools
     from benchmarks.workspacebench.mcp import McpDiscoveryError
     from benchmarks.workspacebench.models import ToolDescriptorRecord
 
-    monkeypatch.setattr(
-        mcp_mod,
-        "canonical_assured_operation_names",
-        lambda: ("resolve_entity", "renamed_context"),
-    )
-    with pytest.raises(McpDiscoveryError, match="drifted from the canonical registry"):
+    with pytest.raises(McpDiscoveryError, match="outside the read-only catalogue"):
         bind_listed_tools(
             records=tuple(
-                ToolDescriptorRecord(name=name) for name in REQUIRED_ASSURED_TOOLS
+                ToolDescriptorRecord(name=name) for name in [*_tool_names(), extra]
             ),
             api_origin="http://127.0.0.1:18000",
             discovered_over_stdio=True,

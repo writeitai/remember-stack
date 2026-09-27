@@ -24,6 +24,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentConflictError
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("20000000-0000-0000-0000-000000000001")
@@ -41,7 +42,7 @@ def database_engine() -> Iterator[Engine]:
 
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
 
     engine = create_engine(database_url)
@@ -190,6 +191,44 @@ def test_deployment_conflicts_are_typed_and_do_not_mutate_state(
             )
         )
     assert _state_hash(engine=database_engine) == expected_hash
+
+
+def test_sole_deployment_refuses_a_second_row(database_engine: Engine) -> None:
+    """A self-host database keeps one deployment: a new id and slug fail loudly."""
+    deployment_input = _deployment_input()
+    bootstrapper = DeploymentBootstrapper(engine=database_engine)
+    bootstrapper.bootstrap_deployment(
+        deployment_input=deployment_input, sole_deployment=True
+    )
+    bootstrapper.bootstrap_deployment(
+        deployment_input=deployment_input, sole_deployment=True
+    )
+    expected_hash = _state_hash(engine=database_engine)
+
+    with pytest.raises(DeploymentConflictError, match=str(_DEPLOYMENT_ID)):
+        bootstrapper.bootstrap_deployment(
+            deployment_input=deployment_input.model_copy(
+                update={
+                    "deployment_id": UUID("20000000-0000-0000-0000-000000000003"),
+                    "slug": "another-deployment",
+                }
+            ),
+            sole_deployment=True,
+        )
+    assert _state_hash(engine=database_engine) == expected_hash
+
+
+def test_conflict_names_the_changed_fields(database_engine: Engine) -> None:
+    """The operator learns which recorded value their settings changed."""
+    deployment_input = _deployment_input()
+    bootstrapper = DeploymentBootstrapper(engine=database_engine)
+    bootstrapper.bootstrap_deployment(deployment_input=deployment_input)
+    with pytest.raises(DeploymentConflictError, match="default_language, name"):
+        bootstrapper.bootstrap_deployment(
+            deployment_input=deployment_input.model_copy(
+                update={"name": "Renamed", "default_language": "de"}
+            )
+        )
 
 
 def test_changed_core_definition_conflicts_without_other_mutation(

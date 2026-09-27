@@ -1,24 +1,8 @@
 # Retrieval Design — the Query Machine
 
-> **Binding D114 amendment (2026-09-07).** The assured retrieval names are
-> `claims_and_sources_context`, `facts_context`, and `combined_context`.
-> `ContextBundle/v2` exposes `claims_and_sources` and `facts`; no former-name
-> aliases ship. The authority boundaries and algorithms below are unchanged.
-
-> **Binding D110 amendment (2026-09-07).** D110 §§5–6 require checked cache text/vector freshness and explicit temporal-membership uncertainty when an endpoint basis is erased. Current aggregates and absence cannot turn omitted uncertain facts into complete counts or confident negatives; D107 source/occurrence clocks remain.
-> Contract: [temporal writes and lifecycle](temporal_write_and_lifecycle_design.md).
-
-> **Binding D107 amendment (2026-09-03).** Testimony grouping keys on the full
-> D41 tuple (or `asserted_at` when unknown) and `EvidenceResult` lists every
-> grouped member's times; the fact-grain `Validity`, `GraphEdge`, the
-> `memory_v1` fact views and the open-query confirmation rows gain
-> per-endpoint bases, temporal kind and the occurrence window (additive), and
-> because the envelope schema is shared, `resolve_entity@2`,
-> `claims_and_sources_context@2`, `facts_context@3` and `combined_context@4` roll; P1
-> accepts is-about claim filters and an `occurs` fact mode;
-> `aggregate(form="timeline")` buckets by occurrence with an explicit
-> `undated` bucket; "current" is the single evaluated-at predicate of §7.1.
-> Contract: `temporal_clocks_design.md` §7.
+> **D118 amendment (2026-09-07; effective when merged).** Use one chosen fact window, existing time modes, precision and explicit possible matches for unknown dates (§5). Dual windows, fact kinds, erased-basis states and temporal cache certificates are superseded.
+> [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
+> Conflicting temporal rules in the historical body below are superseded by that map.
 
 > **Binding D98 amendment (2026-08-27).** The graph channel reads live
 > PostgreSQL authority views. Fixed one-hop server statements use SQL/PGQ;
@@ -87,8 +71,9 @@ be **composable, self-describing, and honest**:
 
 - **Composable** — a small set of typed, orthogonal primitives (§3) that agents chain; assured
   operations (§4) are frozen compositions, not new capabilities.
-- **Self-describing** — the system teaches its consumers: MCP tool descriptions render from
-  the assured-operation registry; a shipped **consumption skill** (§8) teaches the memory model itself.
+- **Self-describing** — the system teaches its consumers: MCP tool descriptions are defined
+  once in the public `remember.mcp_tools` catalogue, from which the assured-operation registry
+  takes its agent-facing fields (D136); a shipped **consumption skill** (§8) teaches the memory model itself.
 - **Honest** — every response carries a machine-readable account of its own limitations:
   grain, freshness, contradictions, truncation, and a typed taxonomy of "no" (§5, §6).
 
@@ -166,6 +151,7 @@ never trigger anything** — all K/E triggering originates from writes).
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
 | `hydrate` | ids, depth: record \| evidence \| sources \| bytes, locator? | the §2 confirmation hop + progressive deepening: record → evidence rows + claims → documents → GCS handles. At `depth=bytes` an optional **source locator** (D65) scopes the fetch to a time interval / region, returning a seekable, codec-aware segment (§7 — unmounted parity for media) | S5, S59, all |
 | `source_open` | version_id, representation_id?, locator?, accept? | **the look-at-it operation** (D115, `media_design.md` §4a): an `evidence`-grain envelope that *delivers* the source in the client's perceptual content channels — image, audio, or keyframes-plus-audio, never a bare link — with a `content_manifest[]` pairing each content block to its role, hash, `original`/`agent_rendition` origin, transforms, locator, and untrusted label. Shares `hydrate depth=bytes`'s serving path, resolution, and authorization; a separate name because "let me look at it" is a different agent intent from record deepening. A locator returns overview **plus** high-detail region or interval; absent, an image returns itself while a recording returns its preview material only (an excerpt nobody asked for is a claim about what mattered). `accept` declares consumable MIME types because no protocol declares them; an empty intersection with the served set is a typed `boundary` (§5) | S5, S59 |
+| `search_documents` | query?, filters? (family, authors, recipients, created/modified ranges, language, thread_ref, doc_ids), k → documents | **find files** (D134, `document_metadata_and_search_design.md` §3): matches every observed file name, title and source path by trigram/BM25 on `document_names` and content by the document's best `chunk_search` hit, fused by rank; results are documents judged by their current version (or any live version with `versions: all`); filters on the general document metadata. Each result carries the document, version, general metadata, overview, status, and access handles (P3 path, `source_open`). Several people matching one name are listed, not guessed | — |
 | `transcript` | relation \| observation \| entity \| k_page → its decision history (recent-first bound; see amendment below) | adjudications, resolution decisions, compile provenance — the audit trail as a first-class query ("why do we believe…") | S8, S32, S35 |
 | `delta` | since T, scope?, kinds? → changed evidence / pages | the change feed as a query (new / capped / invalidated / recompiled) | S13, S14, S30 |
 | `pages_about` | entity \| key → K pages (+ freshness/flags) | **the K routing index read backwards**: the rule-key inverted index built for write-side routing doubles as the reader's discovery index — which pages exist about X, mechanically | S31, S45 |
@@ -203,6 +189,15 @@ one configured current attestation; it carries no copied generation/filter scala
 **Claim-channel filters (D80 decision):** claim rows **do not** carry message filter copies.
 Recipes that need channel/author/time on claim hits **join** claim → origin chunk (or document
 location facts). Do not invent per-claim scalar inheritance in the first implementation.
+
+**Document filters (D134).** `search` accepts a `documents` filter over the general document
+metadata (family, authors, recipients, created/modified ranges, language, thread, explicit
+`doc_ids`). Chunks match by their document version; claims when a live occurrence
+(`chunk_claims`) lies in a matching version — for inclusion this refines the origin-chunk join
+above, because a claim reused across versions (D56) has one occurrence per version; the returned
+claim evidence is still its origin; relations and observations when at least one live supporting claim comes from a
+matching document, with returned evidence limited to those claims. The filter is applied inside
+the ranked statement, before the top-k cut. `document_metadata_and_search_design.md` §4.
 
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs
@@ -285,9 +280,13 @@ the control-plane tables in
    enforcement mechanism.
 2. **The eval harness measures per operation.** Recall@k per operation per scenario class
    (D22's retrieval half); operation versions make regressions attributable.
-3. **MCP tools render from the closed registry** — the assured tool list is the four
-   platform-owned rows (name/description/parameters), exactly as extraction prompts render
-   from the ontology registry. Customer-authored behavior belongs in the saved-query registry
+3. **The four assured operations are the only intent tools.** They are four entries of the
+   shared MCP catalogue `remember.mcp_tools` (D136,
+   [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)),
+   which defines their name, description and parameters once; the registry rows take those
+   fields from it. The catalogue's other entries are infrastructure, not intent tools:
+   `ingest`, `pipeline_readiness`, `delete_document`, `source_open` and the seven open-query
+   tools. Customer-authored behavior belongs in the saved-query registry
    and never becomes a top-level intent tool merely by inserting a row.
 
 Assured operations never add base capability — anything they do is composed from §3 and the
@@ -426,7 +425,8 @@ provenance records, association intact:
   `derivation_kind` (asr | acoustic_events | vlm_description | ocr | shot_notes | …) and
   **`evidence_mode`**:
   `source_expression` (a fallible rendering of speech/symbols present in the source — a
-  transcript sentence, OCR'd text), `model_observation` (the model's account of what the
+  transcript sentence, OCR'd text), `computed` (a deterministic library's derivation from
+  source values — a row count, a date span; D133), `model_observation` (the model's account of what the
   source *shows* — "the image shows a red valve"), or `model_interpretation` (the model's
   reading *into* the source — "the speaker sounds hesitant"). Inherited deterministically
   from the converter's mode-homogeneous labeled ranges (a claim spanning modes takes the
@@ -488,11 +488,14 @@ authored pages, `_index.md`/`llms.txt` orientation). Markdown is what navigation
 originals are reachable deliberately (S56, S59).
 
 **API / CLI / MCP:** the primitives of §3, the four closed assured operations of §4, and the
-open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders only the four
-platform-owned assured descriptors as intent tools, plus `source_open` — the one §3 primitive
-MCP exposes directly, because its whole purpose (D115) is to be *found and chosen* by an agent
-that has just been handed a source handle, and a primitive an agent cannot discover cannot be
-the answer to "let me look at it"; reusable patterns remain discoverable `examples.*` saved
+open-query/saved-query infrastructure in `open_query_space_design.md`. MCP renders the full
+shared catalogue (`remember.mcp_tools`, D136): the four platform-owned assured descriptors as
+the only *intent* tools, and as infrastructure the write and readiness tools, the seven
+open-query tools, and `source_open` and `search_documents` — the two §3 primitives MCP exposes
+directly, because each answers an intent an agent must be able to *find and choose* (D115: "let
+me look at it"; D134: "find the file"), and a primitive an agent cannot discover cannot be the
+answer to either; reusable patterns
+remain discoverable `examples.*` saved
 queries rather than becoming tools. CLI mirrors the API 1:1 (agents shell out);
 the API is the one place authorization is enforced for query-engine reads (§9). The clean target
 uses `GET /operations`, `POST /operations/{name}`, SDK
@@ -607,6 +610,7 @@ aggregation is **not** an interactive capability (an unbounded GROUP BY over 10�
 denial-of-service against the spine); the escape hatch is the batch surface. Cross-entity
 numeric range scans over observation *values* remain a stated `boundary` (S29) — the D43
 price, revisited only if a structured value column is ever added.
+
 
 **The batch surface (S53).** `scan` streams filtered exports (relations of a scope, claims of
 a doc-set, the delta feed) under a separate resource pool and no interactive latency promise.

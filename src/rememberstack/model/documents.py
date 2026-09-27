@@ -62,6 +62,9 @@ class DocumentUpload(BaseModel):
     mime: NonEmptyString
     content: bytes
     title: str | None = None
+    source_path: str | None = None
+    """Where the file lives at its source (a folder path, a URL), as observed
+    now; recorded per version in D134 document metadata and names."""
 
 
 class UploadRecord(BaseModel):
@@ -84,6 +87,13 @@ class UploadRecord(BaseModel):
     source_version_ref: str | None = None
     sync_cycle_id: UUID | None = None
     ingested_by: IngestPrincipal | None = None
+    file_name: str | None = None
+    """The file name observed with these bytes (D134 metadata and names)."""
+    declared_title: str | None = None
+    """The title the caller declared, if any; ``title`` above is the lineage
+    title, which falls back to the file stem."""
+    source_path: str | None = None
+    """The source location observed with these bytes (D134)."""
 
 
 class ConvertSource(BaseModel):
@@ -96,8 +106,13 @@ class ConvertSource(BaseModel):
     version_id: UUID
     content_hash: str
     mime: str
+    byte_size: int | None = None
     raw_uri: str
     title: str | None
+    file_name: str | None = None
+    """The file name recorded in the version's D134 metadata (D138 hints)."""
+    source_path: str | None = None
+    """The source path recorded in the version's D134 metadata."""
 
 
 class RepresentationRecord(BaseModel):
@@ -131,6 +146,9 @@ class StructureSource(BaseModel):
     representation_id: UUID
     blocks_uri: str
     markdown_uri: str
+    conversion_uri: str | None = None
+    """The converter manifest; its range labels decide whether structuring
+    may call models (D138 §1). None only for legacy rows without one."""
     title: str | None
     source_kind: str
 
@@ -159,6 +177,14 @@ class DocumentVersionNotFoundError(Exception):
     """A stage referenced a document version the spine does not know."""
 
 
+class DocumentNotFoundError(LookupError):
+    """No live document lineage has this id in the deployment.
+
+    Raised for an id the deployment never held and for a document that is
+    already deleted: from a caller's point of view both are absent (D135).
+    """
+
+
 class RepresentationNotFoundError(Exception):
     """A stage referenced a document representation the spine does not know."""
 
@@ -174,6 +200,7 @@ class SourceItem(BaseModel):
     deleted: bool = False
     filename: str = ""
     mime: str = "text/markdown"
+    source_path: str | None = None  # where the item lives in the source (D134)
 
 
 class SyncCycleSummary(BaseModel):

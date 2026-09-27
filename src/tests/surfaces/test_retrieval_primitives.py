@@ -37,6 +37,8 @@ from rememberstack.model import RankedItem
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
+from tests.database_reset import reset_database
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("51000000-0000-0000-0000-000000000001")
@@ -59,6 +61,7 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         """Never called by these primitives."""
         return ()
@@ -75,9 +78,11 @@ class _NullSearchIndex:
         """Never called by these primitives."""
         return ()
 
-    def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ) -> dict[str, P1ChunkText]:
         """Never called by these primitives."""
-        return {}
+        raise NotImplementedError
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
@@ -95,7 +100,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for real primitive proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -114,11 +119,12 @@ class _Corpus:
         self.rel: dict[str, UUID] = {}
         self.obs: dict[str, UUID] = {}
         self.art: dict[str, UUID] = {}
+        self.claim_ids: dict[str, UUID] = {}
         with engine.begin() as connection:
             self._entities(connection)
+            self._claims(connection)
             self._relations(connection)
             self._observations(connection)
-            self._claims(connection)
             self._decisions(connection)
             self._knowledge(connection)
 
@@ -176,9 +182,9 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, valid_from,"
-                " valid_until, ingested_at, invalidated_at)"
+                " valid_until, valid_precision, window_claim_ids, ingested_at, invalidated_at)"
                 " VALUES (:r, :d, :s, :p, :o, 'toy', :label, :ec, :vf, :vu,"
-                " :ing, :inv)"
+                " :precision, CAST(:witnesses AS uuid[]), :ing, :inv)"
             ),
             {
                 "r": relation_id,
@@ -190,6 +196,8 @@ class _Corpus:
                 "ec": evidence,
                 "vf": _OLD,
                 "vu": valid_until,
+                "precision": "open" if valid_until is None else "instant",
+                "witnesses": [self.claim_ids["old_claim"]],
                 "ing": ingested_at,
                 "inv": invalidated_at,
             },
@@ -300,6 +308,7 @@ class _Corpus:
         self, connection: object, key: str, text_value: str, ingested_at: datetime
     ) -> None:
         claim_id = uuid4()
+        self.claim_ids[key] = claim_id
         connection.execute(  # type: ignore[attr-defined]
             text(
                 "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
@@ -895,14 +904,14 @@ def test_aggregate_count_and_group_forms(corpus: _Corpus) -> None:
         deployment_id=_DEPLOYMENT_ID, form="count", subject_entity_id=alice
     )
     assert count.aggregate is not None
-    assert count.aggregate.total == 3  # works_for Acme, works_on Beacon, Contoso
+    assert count.aggregate.total == 2  # current: Acme and Beacon; Contoso is history
 
     by_predicate = engine.aggregate(
         deployment_id=_DEPLOYMENT_ID, form="group_by_predicate", subject_entity_id=alice
     )
     assert by_predicate.aggregate is not None
     buckets = {b.key: b.count for b in by_predicate.aggregate.buckets}
-    assert buckets == {"works_for": 2, "works_on": 1}
+    assert buckets == {"works_for": 1, "works_on": 1}
 
     by_object = engine.aggregate(
         deployment_id=_DEPLOYMENT_ID,
@@ -912,7 +921,7 @@ def test_aggregate_count_and_group_forms(corpus: _Corpus) -> None:
     )
     assert by_object.aggregate is not None
     objects = {b.key for b in by_object.aggregate.buckets}
-    assert objects == {"Acme", "Contoso"}
+    assert objects == {"Acme"}
     assert all(b.entity_id is not None for b in by_object.aggregate.buckets)
 
 
@@ -1064,3 +1073,80 @@ def test_scan_and_aggregate_reject_nonpositive_bounds(corpus: _Corpus) -> None:
         next(engine.scan(deployment_id=_DEPLOYMENT_ID, kind="relation", batch_size=0))
     with pytest.raises(ValueError, match="limit"):
         engine.aggregate(deployment_id=_DEPLOYMENT_ID, form="count", limit=0)
+
+
+class _AdjacentSearchIndex(_NullSearchIndex):
+    """Scoped search index that hydrates chunk bodies for adjacent_chunks testing."""
+
+    def chunk_texts(
+        self, *, deployment_id: str, chunk_ids: tuple[str, ...], **_: object
+    ) -> dict[str, P1ChunkText]:
+        return {
+            cid: P1ChunkText(
+                chunk_id=UUID(cid), section_role="body", indexed_text=f"Text for {cid}"
+            )
+            for cid in chunk_ids
+        }
+
+
+def test_adjacent_chunks_window_and_ordering(corpus: _Corpus) -> None:
+    """adjacent_chunks returns surrounding chunks ordered by ordinal within window."""
+    engine = QueryEngine(
+        engine=corpus.engine,
+        search_index=_AdjacentSearchIndex(),
+        model_provider=FakeModelProvider(generate_payloads={}),
+        embedding_model="toy",
+    )
+    chunk_ids = tuple(uuid4() for _ in range(5))
+    with corpus.engine.begin() as connection:
+        lineage = seed_live_document_lineage(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            chunk_ids=chunk_ids,
+            label="adjacent-test",
+        )
+
+    # Window 1 around middle chunk (ordinal 2) -> ordinals 1, 2, 3
+    result_w1 = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk_ids[2], window=1
+    )
+    assert result_w1.grain == "evidence"
+    assert result_w1.negative is None
+    assert [c.chunk_id for c in result_w1.chunks] == [
+        lineage.chunk_ids[1],
+        lineage.chunk_ids[2],
+        lineage.chunk_ids[3],
+    ]
+
+    # Window 2 around middle chunk (ordinal 2) -> ordinals 0, 1, 2, 3, 4
+    result_w2 = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk_ids[2], window=2
+    )
+    assert [c.chunk_id for c in result_w2.chunks] == list(lineage.chunk_ids)
+
+    # Window 1 around boundary chunk (ordinal 0) -> ordinals 0, 1
+    result_edge = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk_ids[0], window=1
+    )
+    assert [c.chunk_id for c in result_edge.chunks] == [
+        lineage.chunk_ids[0],
+        lineage.chunk_ids[1],
+    ]
+
+    # Unknown chunk -> Negative UNKNOWN_ENTITY
+    unknown_result = engine.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=uuid4(), window=1
+    )
+    assert unknown_result.negative is not None
+    assert unknown_result.negative.kind == NegativeKind.UNKNOWN_ENTITY
+    assert len(unknown_result.chunks) == 0
+
+    # Window parameter validation
+    with pytest.raises(ValueError, match="window must be between"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk_ids[0], window=0
+        )
+    with pytest.raises(ValueError, match="window must be between"):
+        engine.adjacent_chunks(
+            deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk_ids[0], window=3
+        )

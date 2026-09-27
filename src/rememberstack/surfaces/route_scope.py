@@ -11,7 +11,8 @@ but D62 permits a browser to do only the first. The method tells you nothing
 about which is which.
 
 So the mapping is enumerated by hand, and the default for anything not
-enumerated is ``WRITE``.
+enumerated is ``WRITE``. ``DELETE /documents/{doc_id}`` (D135) is deliberately
+left to that default: removing a document is a write, whatever the method.
 
 ## The direction failure runs
 
@@ -48,10 +49,12 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         ("GET", r"^/hydrate/relation/[^/]+$"),
         ("GET", r"^/search/claims$"),
         ("GET", r"^/search/chunks$"),
-        # The body-carrying forms of the same two reads. A search does not
+        ("GET", r"^/chunks/[^/]+/adjacent$"),
+        # The body-carrying forms of the reads. A search or chunk retrieval does not
         # become a write by moving its terms out of the request line (D59).
         ("POST", r"^/search/claims$"),
         ("POST", r"^/search/chunks$"),
+        ("POST", r"^/chunks/adjacent$"),
         # POST, and still a read: the argument shape does not fit a query
         # string. This is exactly the case the method-based rule gets wrong.
         ("POST", r"^/graph/neighborhood$"),
@@ -72,6 +75,12 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # browser credential needs most: without it the app can show counts
         # but never which document they refer to.
         ("GET", r"^/documents$"),
+        # search_documents (D134): a read whose filters do not fit a query
+        # string, like the other body-carrying reads above.
+        ("POST", r"^/documents/search$"),
+        # Build revision and model bindings: what this deployment is, not what
+        # it holds. `remember doctor` checks it with whatever token it has.
+        ("GET", r"^/deployment$"),
     )
 )
 

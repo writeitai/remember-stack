@@ -29,7 +29,7 @@ in the task workspace or arm case directory during the tested Codex turn.
 | `python -m benchmarks.workspacebench preflight` | none (optional local Codex `account/read`) | implemented; synthetic tests. MCP discovery launches `python -m remember mcp --read-only` over stdio and uses ambient `remember login` credentials. Structural canary only. |
 | `python -m benchmarks.workspacebench run-agent` | none | dry envelopes only. CLI `--execute` is rejected; `run-pair` is the only supported live entry. Tests may still inject `run_agent`. |
 | `python -m benchmarks.workspacebench run-pair` | live Codex only with `--execute` | implemented; tests inject stdio MCP, live canary, and turn runners. `--execute` requires `--task-dir`, cannot skip account/MCP/office, and requires a passing live canary before either task arm. |
-| `remember mcp --read-only` | none | implemented; `tools/list` filters reserved write names even when an assured operation collides; direct hidden write calls stay rejected |
+| `remember mcp --read-only` | none | shipping D136 engine mode (not added by this harness): lists only `memory:read` catalogue tools the deployment serves and refuses write calls. Preflight binds the discovered list as the memory arm's `enabled_tools` |
 | Official judge command builder | none | implemented; requires `--task-dir` and `--eval-yaml`. Does **not** invoke the paid judge |
 | Host-local office skill staging | none | implemented; copies each pinned `evaluation/skills/office/<name>` to workspace `.agents/skills/<name>` (discoverable `SKILL.md` children) and checks `soffice` / `pdftoppm` |
 
@@ -76,7 +76,11 @@ post-leakage runner files. It never mutates that checkout.
 Handoff only (future cloud job; this adapter consumes the receipt):
 
 1. Inventory and hash the complete role workspace (`tree_digest`).
-2. Ingest through ordinary E0 with the pinned conversion/router configuration.
+2. Ingest through ordinary E0 with the pinned conversion/router configuration,
+   giving every file its workspace-relative path as the ingest `source_path`
+   field (`MemoryClient.ingest(..., source_path="docs/plan.xlsx")` or the
+   `POST /ingest` form field), so `search_documents` results name a file the
+   agent can open in its local copy.
 3. Wait for the declared version IDs and required readiness coordinates
    (`pipeline`, `p1`, and `live_graph`, which together support the four
    assured read operations `resolve_entity`, `claims_and_sources_context`,
@@ -125,18 +129,31 @@ and `--execute` fail closed. The adapter asks the official runtime for account
 type `chatgpt` under the disposable home. It never reads, copies, parses,
 logs, or names `auth.json` in prompts, workspaces, argv, traces, or artifacts.
 
-### 4. Tunnel and ambient Remember login
+### 4. Tunnel and ambient Remember credential
+
+Preflight and the memory arm run `remember mcp --read-only --api-url <origin>`
+(engine mode). A key stored by the `remember` CLI is sent only to the engine
+URL stored beside it, to its issuer, or to the deployment its issuer resolves
+for it; any other `--api-url` is refused before a request is made. So:
 
 ```bash
+# SSH tunnel to a self-hosted engine: store the tunnel URL with the engine key.
 ssh -N -L 18000:127.0.0.1:8000 user@remember-host
-remember login --api-url http://127.0.0.1:18000
+REMEMBER_CONFIG_DIR=~/.config/remember-wsb \
+  remember setup --self-hosted --api-url http://127.0.0.1:18000 --api-key … \
+  --dir /tmp/wsb-setup-scratch
+
+# Direct cloud access: sign in; the receipt origin must be the deployment the
+# issuer resolves for this key.
+remember login
 ```
 
-Device grant still talks to `--token-host` (default `https://api.remember.dev`).
-`--api-url` only overrides the advertised data-plane origin so MCP can target
-the tunnel.
+`REMEMBER_CONFIG_DIR` is on the subprocess allowlist, so a dedicated config
+directory keeps the benchmark key apart from day-to-day credentials.
+`REMEMBER_API_KEY` is not passed through (secret-shaped variables are
+dropped).
 
-Ambient query-only token preferred. The Workspace-Bench CLI does **not**
+Ambient query-only key preferred. The Workspace-Bench CLI does **not**
 construct a `MemoryClient` and does **not** pass a token in argv, environment,
 prompt, workspace, or artifacts. Spawned Remember MCP and Codex app-server
 processes receive a sanitized environment (executables, TLS, locale, `HOME`,
@@ -151,8 +168,8 @@ environment. The trusted env process may momentarily inherit the parent
 environment; argv contains no secrets and no auth-cache path. They keep using
 the operator's credential stores (keyring for Codex, `remember login` files
 for MCP); this adapter does not read or copy those files.
-`remember mcp --read-only --api-url …` resolves `remember login` credentials
-itself.
+`remember mcp --read-only --api-url …` resolves the stored Remember
+credential itself.
 
 ### 5. No-spend preflight (implemented)
 
@@ -268,7 +285,11 @@ Credentials must not appear in prompts, workspaces, generated Codex config,
 command-line arguments, traces, result envelopes, or judge views. Remember MCP
 uses ambient operator credentials. The memory arm registers
 `python -m remember mcp --read-only` with `enabled_tools` bound to the
-preflight stdio catalog. The native arm registers no Remember MCP server and
+preflight stdio catalog: whatever `memory:read` tools the deployment serves
+(`search_documents`, `adjacent_chunks`, the assured operations,
+`pipeline_readiness`, open-query tools). Preflight requires
+`search_documents` and the four assured operations, rejects any write or
+non-catalogue tool, and fingerprints the catalog into the protocol identity. The native arm registers no Remember MCP server and
 no Remember config-dir variables. User Codex config, global instructions,
 hooks, plugins, skills, and arbitrary user MCP cannot enter either arm: the
 run uses a disposable `CODEX_HOME` plus OS-keyring ChatGPT credentials, not

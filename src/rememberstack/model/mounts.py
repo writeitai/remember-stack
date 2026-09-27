@@ -12,7 +12,11 @@ _MountLocator = Annotated[str, Field(min_length=1)]
 
 
 class PublishedMounts(BaseModel):
-    """Locations for the exact P3, artifact, raw, and Plane-K read-only views."""
+    """Locations for the P3, artifact, raw and (when configured) Plane-K views.
+
+    ``knowledge`` is absent unless a Plane-K checkout root was supplied: an
+    always-empty placeholder directory would only mislead a browsing agent.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -20,5 +24,5 @@ class PublishedMounts(BaseModel):
     p3: _MountLocator
     artifacts: _MountLocator
     raw: _MountLocator
-    knowledge: _MountLocator
+    knowledge: _MountLocator | None = None
     read_only: Literal[True]

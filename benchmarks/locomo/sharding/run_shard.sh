@@ -25,7 +25,7 @@ run_dir=$2
 dataset_path=$3
 python_bin=${LOCOMO_PYTHON:-.venv/bin/python}
 tier=${LOCOMO_TIER:-publication}
-protocol=${LOCOMO_PROTOCOL:-full-v26}
+protocol=${LOCOMO_PROTOCOL:-full-v38}
 mount_root=${LOCOMO_MOUNT_ROOT:-$run_dir/.mounts}
 max_documents=${LOCOMO_MAX_DOCUMENTS:-100}
 max_questions=${LOCOMO_MAX_QUESTIONS:-1540}
@@ -40,6 +40,7 @@ backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
 extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}
+ground_claim_workers=${LOCOMO_GROUND_CLAIM_WORKERS:-8}
 normalize_relation_workers=${LOCOMO_NORMALIZE_RELATION_WORKERS:-6}
 adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}
 embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
@@ -59,28 +60,48 @@ backup_python() {
     "$python_bin" "$@"
 }
 
-# RS-LoCoMo-Full-v26's non-secret ingest identity. Override ambient self-host
-# defaults so every shard runs the exact Luna/Qwen pipeline the protocol checks.
-export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_E1_PREFIX_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OBS_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OBS_FRONTIER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
-export REMEMBERSTACK_P1_LABEL_MODEL=openai/gpt-5.6-luna
-export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
-unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
-export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
-unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
-export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
+# The protocol's non-secret ingest identity. Override ambient self-host
+# defaults so every shard runs the exact pipeline the protocol checks.
+# full-v38-glm swaps only the generation seats to GLM (embeddings, pipeline,
+# prompts, budgets, answer, and judge stay canonical) and routes chat through
+# the ordered shortlist with fallbacks so D127 rotation can engage; pinning
+# CHAT_PROVIDER_ONLY would leave rotation nowhere to advance to.
+if [[ "$protocol" == "full-v38-glm" ]]; then
+  glm_model=z-ai/glm-5.3-flash
+  export REMEMBERSTACK_STRUCTURER_MODEL="$glm_model"
+  export REMEMBERSTACK_SKELETON_CHECK_MODEL="$glm_model"
+  export REMEMBERSTACK_ROLE_MODEL="$glm_model"
+  export REMEMBERSTACK_SUMMARY_MODEL="$glm_model"
+  export REMEMBERSTACK_E2_EXTRACT_MODEL="$glm_model"
+  export REMEMBERSTACK_E3_NORMALIZE_MODEL="$glm_model"
+  export REMEMBERSTACK_OBS_SMALL_MODEL="$glm_model"
+  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_FACT_MODEL="$glm_model"
+  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
+  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
+  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"z-ai/glm-5.3-flash":"minimal"}'
+  export REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER=deepinfra,relace,wafer
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+else
+  export REMEMBERSTACK_STRUCTURER_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_SKELETON_CHECK_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_ROLE_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_SUMMARY_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_E2_EXTRACT_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_E3_NORMALIZE_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_OBS_SMALL_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_P1_EMBEDDING_MODEL=qwen/qwen3-embedding-8b
+  export REMEMBERSTACK_FACT_MODEL=openai/gpt-5.6-luna
+  export REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER=nebius
+  unset REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
+  export REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS=32000
+  unset REMEMBERSTACK_OPENROUTER_REASONING_EFFORT
+  export REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP='{"openai/gpt-5.6-luna":"high"}'
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+  unset REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER
+fi
 export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
 [[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
@@ -121,6 +142,7 @@ for value in \
   "$drain_timeout_seconds" \
   "$drain_poll_seconds" \
   "$extract_claim_workers" \
+  "$ground_claim_workers" \
   "$normalize_relation_workers" \
   "$adjudicate_observation_workers" \
   "$embed_claim_workers"; do
@@ -141,17 +163,13 @@ attest_worker_environment() {
     REMEMBERSTACK_SKELETON_CHECK_MODEL
     REMEMBERSTACK_ROLE_MODEL
     REMEMBERSTACK_SUMMARY_MODEL
-    REMEMBERSTACK_E1_EMBEDDING_MODEL
-    REMEMBERSTACK_E1_PREFIX_MODEL
     REMEMBERSTACK_E2_EXTRACT_MODEL
     REMEMBERSTACK_E3_NORMALIZE_MODEL
-    REMEMBERSTACK_OBS_EMBEDDING_MODEL
     REMEMBERSTACK_OBS_SMALL_MODEL
-    REMEMBERSTACK_OBS_FRONTIER_MODEL
-    REMEMBERSTACK_ADJUDICATOR_SMALL_MODEL
-    REMEMBERSTACK_ADJUDICATOR_FRONTIER_MODEL
     REMEMBERSTACK_P1_EMBEDDING_MODEL
-    REMEMBERSTACK_P1_LABEL_MODEL
+    REMEMBERSTACK_FACT_MODEL
+    REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY
+    REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER
     REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER
     REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER
     REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS
@@ -186,7 +204,7 @@ bind_benchmark_api() {
   port=${published##*:}
   [[ "$port" =~ ^[1-9][0-9]*$ ]] && ((port <= 65535)) ||
     die "could not resolve the Compose API host port: $published"
-  export REMEMBERSTACK_API_URL="http://127.0.0.1:$port"
+  export REMEMBER_API_URL="http://127.0.0.1:$port"
   log "benchmark-api status=bound port=$port"
 }
 
@@ -341,6 +359,7 @@ require_verified_final_backup() {
 start_existing_store() {
   "${compose[@]}" up --detach --wait --no-recreate \
     --scale "worker-extract-claims=$extract_claim_workers" \
+    --scale "worker-ground-claims=$ground_claim_workers" \
     --scale "worker-normalize-relations=$normalize_relation_workers" \
     --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
     --scale "worker-embed-claim=$embed_claim_workers"
@@ -474,6 +493,7 @@ for sample_id in "${pending_samples[@]}"; do
     log "sample=$sample_id stage=stack status=starting"
     "${compose[@]}" up --detach --wait \
       --scale "worker-extract-claims=$extract_claim_workers" \
+      --scale "worker-ground-claims=$ground_claim_workers" \
       --scale "worker-normalize-relations=$normalize_relation_workers" \
       --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
       --scale "worker-embed-claim=$embed_claim_workers"

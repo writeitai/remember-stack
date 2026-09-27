@@ -5,12 +5,15 @@ build-backend = "hatchling.build"
 [project]
 name = "rememberstack"
 version = "0.17.0"
-description = "DEPRECATED: RememberStack is now distributed as 'remember' on PyPI and container 'remember-stack' on GHCR."
+description = "RETIRED: install 'remember' from PyPI or use the 'remember-stack' container."
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
     { name = "WriteIt.ai s.r.o.", email = "info@writeit.ai" },
+]
+classifiers = [
+    "Development Status :: 7 - Inactive",
 ]
 dependencies = [
     "remember>=0.17.0",

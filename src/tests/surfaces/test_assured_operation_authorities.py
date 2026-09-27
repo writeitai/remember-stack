@@ -10,6 +10,8 @@ from uuid import uuid4
 import pytest
 
 from rememberstack.adapters import PostgresP1Index
+from rememberstack.model import ResolutionThresholds
+from rememberstack.model import ResolverConfig
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.surfaces.query_engine import _configure_facts_context_connection
@@ -26,6 +28,10 @@ from rememberstack.surfaces.query_engine import _facts_context_confirmation_batc
 from rememberstack.surfaces.query_engine import _FACTS_CONTEXT_CONTRADICTION_MEMBERS
 from rememberstack.surfaces.query_engine import _RESOLVE_CONTEXT_HITS
 from rememberstack.surfaces.query_engine import _RESOLVE_T0
+from rememberstack.surfaces.query_engine import _RESOLVE_T1_T2
+from rememberstack.surfaces.query_engine import QUERY_RESOLVE_CANDIDATE_LIMIT
+from rememberstack.surfaces.query_engine import QUERY_RESOLVE_T3_FLOOR
+from rememberstack.surfaces.query_engine import QUERY_RESOLVE_TRIGRAM_FLOOR
 
 
 def test_public_catalog_is_exactly_the_four_assured_operations() -> None:
@@ -40,13 +46,26 @@ def test_public_catalog_is_exactly_the_four_assured_operations() -> None:
 
 def test_entity_resolution_uses_memory_v1_identity_and_adjacency() -> None:
     """Resolution does not recreate survivor or current-edge predicates."""
-    identity_sql = str(_RESOLVE_T0)
+    identity_sql = "\n".join((str(_RESOLVE_T0), str(_RESOLVE_T1_T2)))
     adjacency_sql = str(_RESOLVE_CONTEXT_HITS)
     assert "memory_v1.entity_aliases_current" in identity_sql
     assert "memory_v1.entities_current" in identity_sql
+    assert "normalized_lemma = :lemma" in str(_RESOLVE_T0)
+    assert "daitch_mokotoff" in str(_RESOLVE_T1_T2)
+    assert "similarity(alias.normalized_lemma, :lemma) >= :floor" in str(_RESOLVE_T1_T2)
     assert "FROM aliases" not in identity_sql
+    assert "T4" not in identity_sql
     assert "memory_v1.graph_edges_current" in adjacency_sql
     assert "FROM relations" not in adjacency_sql
+    assert QUERY_RESOLVE_TRIGRAM_FLOOR == float(
+        ResolverConfig.model_fields["trigram_floor"].default
+    )
+    assert QUERY_RESOLVE_CANDIDATE_LIMIT == int(
+        ResolverConfig.model_fields["blocking_limit"].default
+    )
+    assert QUERY_RESOLVE_T3_FLOOR == float(
+        ResolutionThresholds.model_fields["t3_reject"].default
+    )
 
 
 def test_facts_context_uses_fact_and_contradiction_authorities() -> None:

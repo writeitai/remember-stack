@@ -3,11 +3,13 @@
 from enum import StrEnum
 from typing import Annotated
 from typing import Final
+from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 from rememberstack.model.queue import UTCDateTime
 
@@ -128,12 +130,29 @@ class SelectionCandidate(BaseModel):
         return SelectionDropReason(self.outcome.value.removeprefix(_DROP_PREFIX))
 
 
+class SourceReferenceCard(BaseModel):
+    """One source-backed referent Selection introduced in the target chunk.
+
+    The name is orientation, not evidence. ``source_refs`` cites engine-supplied
+    passage labels from the same catalog D119 uses for claim evidence. The model
+    never writes quote strings or character offsets. Local aliases are allowed
+    only when the shown source itself establishes them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: _NonEmpty
+    aliases: tuple[str, ...] = ()
+    source_refs: tuple[_NonEmpty, ...]
+
+
 class SelectionResponse(BaseModel):
-    """The Selection call's structured output: every judged candidate."""
+    """The Selection call's structured output: judged candidates and referents."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     candidates: tuple[SelectionCandidate, ...]
+    references: tuple[SourceReferenceCard, ...] = ()
 
 
 class AddedContext(BaseModel):
@@ -146,19 +165,44 @@ class AddedContext(BaseModel):
     source_ref: str | None = None
 
 
-class CandidateClaim(BaseModel):
-    """One decontextualized, decomposed claim before the deterministic gate.
+class EvidenceSpan(BaseModel):
+    """One half-open character range in a single immutable representation (D119)."""
 
-    Optional D41 valid-time fields are nullable typed scalars only — no free-form
-    objects — so the OpenRouter strict-schema adapter can constrain the model
-    without raising ``StrictSchemaError``. Most claims have no stated world-time;
-    leave ``valid_*`` at null/unknown in that case.
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    char_start: int = Field(ge=0)
+    char_end: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _end_after_start(self) -> Self:
+        if self.char_end <= self.char_start:
+            raise ValueError("char_end must be greater than char_start")
+        return self
+
+
+class CandidateClaim(BaseModel):
+    """One decontextualized claim before the deterministic grounding gate.
+
+    The model cites engine-supplied source passage labels in ``source_refs``
+    (first citation is the origin). Optional D41 valid-time fields are nullable
+    typed scalars only — no free-form objects — so the OpenRouter strict-schema
+    adapter can constrain the model without raising ``StrictSchemaError``. Most
+    claims have no stated world-time; leave ``valid_*`` at null/unknown in that
+    case.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     claim_text: _NonEmpty
-    source_span: _NonEmpty
+    source_refs: tuple[_NonEmpty, ...] = Field(
+        min_length=1,
+        max_length=8,
+        description=(
+            "Ordered labels from the provided SOURCE PASSAGES list. The first "
+            "label is the origin and must be a TARGET origin-eligible passage. "
+            "Further labels are supporting passages in the same document version."
+        ),
+    )
     added_context: tuple[AddedContext, ...] = ()
     entailment_self_verdict: bool
     is_attributed: bool = False
@@ -186,6 +230,14 @@ class CandidateClaim(BaseModel):
             "missing or unrepresentable time. Part-of-day uncertainty is not an instant."
         ),
     )
+    own_document_name: str | None = Field(
+        default=None,
+        description=(
+            "Only when the claim replaced a reference to its own document "
+            "(this report, the attached spreadsheet): the exact document name "
+            "written into claim_text in its place. Null for every other claim."
+        ),
+    )
 
 
 class ClaimifyResponse(BaseModel):
@@ -210,6 +262,7 @@ class ClaimRecord(BaseModel):
     source_span: _NonEmpty
     char_start: int = Field(ge=0)
     char_end: int = Field(ge=0)
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
     added_context: tuple[AddedContext, ...]
     is_attributed: bool
     entailment_self_verdict: bool
@@ -221,6 +274,23 @@ class ClaimRecord(BaseModel):
     claim_valid_until: UTCDateTime | None = None
     claim_valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     claim_valid_kind: ClaimValidKind | None = None
+    # D134: [start, end) of the document's own name Claimify wrote into
+    # claim_text in place of a self-reference; None for every other claim.
+    own_document_name_start: int | None = Field(default=None, ge=0)
+    own_document_name_end: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _own_document_name_span_is_a_range(self) -> Self:
+        start, end = self.own_document_name_start, self.own_document_name_end
+        if (start is None) != (end is None):
+            raise ValueError("own_document_name span needs both ends or neither")
+        if (
+            start is not None
+            and end is not None
+            and not start < end <= len(self.claim_text)
+        ):
+            raise ValueError("own_document_name span must be a range in claim_text")
+        return self
 
 
 class DecisionType(StrEnum):
@@ -274,6 +344,9 @@ class FactForLabeling(BaseModel):
     predicate: _NonEmpty
     object_name: _NonEmpty
     status: _NonEmpty
+    valid_from: UTCDateTime | None = None
+    valid_until: UTCDateTime | None = None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
 
 
 class FactForEmbedding(BaseModel):
@@ -286,6 +359,7 @@ class FactForEmbedding(BaseModel):
     status: _NonEmpty
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 
@@ -300,6 +374,7 @@ class ObservationForEmbedding(BaseModel):
     status: _NonEmpty
     valid_from: UTCDateTime | None
     valid_until: UTCDateTime | None
+    valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     ingested_at: UTCDateTime
     invalidated_at: UTCDateTime | None
 

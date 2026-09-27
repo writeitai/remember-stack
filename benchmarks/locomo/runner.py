@@ -51,6 +51,7 @@ from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import PreflightProbe
 from benchmarks.locomo.model import PreparedDocument
 from benchmarks.locomo.model import ProtocolKey
+from benchmarks.locomo.model import ProtocolName
 from benchmarks.locomo.model import QuestionManifest
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import RetrievedClaim
@@ -67,7 +68,6 @@ from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
-from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
@@ -78,6 +78,7 @@ from benchmarks.locomo.protocol import official_f1
 from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import protocol_for_key
 from benchmarks.locomo.protocol import protocol_for_name
+from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
@@ -93,6 +94,8 @@ from benchmarks.locomo.retrieval import query_result_failure
 from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 from benchmarks.locomo.retrieval import tool_catalog_sha256
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
 from rememberstack.adapters.openrouter import OpenRouterProviderError
@@ -112,8 +115,6 @@ from rememberstack.model import ToolDescriptor
 from rememberstack.ports import ModelProviderPort
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.result import QueryResult
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 _logger = logging.getLogger(__name__)
 
@@ -257,8 +258,13 @@ def _readiness_matches_protocol(
     readiness: PipelineReadinessReport,
     version_ids: set[UUID],
     repository_revision: str,
+    protocol_name: ProtocolName = PROTOCOL_NAME,
 ) -> bool:
-    """Check exact E/P generations, model bindings, completion, and code identity."""
+    """Check exact E/P generations, model bindings, completion, and code identity.
+
+    Model bindings come from the prepared protocol, so ingest-model variants
+    check their own pins instead of the canonical module-global map.
+    """
     versions_ready = all(
         version.ready
         and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
@@ -288,7 +294,8 @@ def _readiness_matches_protocol(
         and capabilities_ready
         and readiness.document_binding_generation
         == EXPECTED_DOCUMENT_BINDING_GENERATION
-        and readiness.model_bindings == dict(EXPECTED_INGEST_MODEL_BINDINGS)
+        and readiness.model_bindings
+        == dict(protocol_for_name(protocol_name).ingest_model_bindings)
         and repository_revision
         and readiness.build_revision == repository_revision
     )
@@ -421,10 +428,14 @@ def ingest_sample(
             serving=build.build_revision,
             when=_INGEST_STAGE,
         )
-        _require_current_ingest_bindings(model_bindings=build.model_bindings)
+        _require_current_ingest_bindings(
+            model_bindings=build.model_bindings,
+            protocol_name=context.configuration.protocol_name,
+        )
         if build.document_binding_generation != EXPECTED_DOCUMENT_BINDING_GENERATION:
             raise ExecutionGuardError(
-                "deployment document binding generation differs from RS-LoCoMo-Full-v26"
+                "deployment document binding generation differs from"
+                f" {context.configuration.protocol_name}"
             )
         _require_current_query_surface(context=context, client=client)
         _require_exact_live_ingests(
@@ -438,8 +449,8 @@ def ingest_sample(
         )
         # A bad credential must not be discovered only once the pipeline starts
         # dead-lettering. Skipped on a full resume: nothing is left to upload.
-        # The binding the E1 stage will actually use, per the deployment.
-        embedding_model = build.model_bindings.get("chunk_embedding", "")
+        # The embedding model every stage will actually use, per the deployment.
+        embedding_model = build.model_bindings.get("p1_embedding", "")
         if not embedding_model:
             raise ExecutionGuardError(
                 "the deployment did not report an embedding model binding, so the"
@@ -584,10 +595,12 @@ def answer_sample(
         readiness=readiness,
         version_ids=set(version_ids),
         repository_revision=context.configuration.repository_revision,
+        protocol_name=context.configuration.protocol_name,
     ):
         raise ExecutionGuardError(
             "the deployment did not report the exact completed"
-            " RS-LoCoMo-Full-v26 pipeline, live graph, and fresh P3 projection"
+            f" {context.configuration.protocol_name} pipeline, live graph,"
+            " and fresh P3 projection"
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
@@ -1211,7 +1224,7 @@ def _validate_run(
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
-        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v26")
+        raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v38")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
         raise BenchmarkRunError("run manifest item hash changed")
     if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
@@ -1221,7 +1234,7 @@ def _validate_run(
     if manifest.tier != configuration.tier:
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
-        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v26")
+        raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v38")
     if configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
@@ -1468,10 +1481,12 @@ def _require_matching_revision(*, prepared: str, serving: str, when: str) -> Non
         )
 
 
-def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
+def _require_current_ingest_bindings(
+    *, model_bindings: dict[str, str], protocol_name: ProtocolName
+) -> None:
     """Fail before upload unless the deployment serves the pinned ingest models."""
 
-    expected = dict(EXPECTED_INGEST_MODEL_BINDINGS)
+    expected = dict(protocol_for_name(protocol_name).ingest_model_bindings)
     if model_bindings != expected:
         mismatches = sorted(
             name
@@ -1479,7 +1494,7 @@ def _require_current_ingest_bindings(*, model_bindings: dict[str, str]) -> None:
             if model_bindings.get(name) != expected.get(name)
         )
         raise ExecutionGuardError(
-            "deployment ingest model bindings differ from RS-LoCoMo-Full-v26: "
+            f"deployment ingest model bindings differ from {protocol_name}: "
             + ", ".join(mismatches)
         )
 
@@ -1671,6 +1686,9 @@ def _answer_one(
     answer_reader_retry_budget: int = ANSWER_READER_RETRY_BUDGET,
     answer_word_cap: int | None = None,
     answer_schema: AnswerStepSchema = AnswerAgentStep,
+    answer_prompt_template: str | None = None,
+    mcp_tool_shape: bool = False,
+    require_content_before_answer: bool = False,
     p3: P3Mount | None = None,
     p3_error: str | None = None,
     question_trace: QuestionTrace | None = None,
@@ -1713,6 +1731,12 @@ def _answer_one(
             trace=tuple(trace),
             answer_word_cap=answer_word_cap,
             guard_feedback=guard_feedback,
+            template=(
+                answer_prompt_template
+                if answer_prompt_template is not None
+                else protocol_for_name(state.protocol_name).answer_prompt_template
+            ),
+            mcp_tool_shape=mcp_tool_shape,
         )
         agent_observation = (
             None
@@ -1971,11 +1995,12 @@ def _answer_one(
                 )
             answer = step.answer or ""
             guarded_terminal = False
-            if _is_unknown(answer=answer) and not _has_content_bearing_attempt(
-                trace=trace
-            ):
+            unknown_answer = _is_unknown(answer=answer)
+            if (
+                require_content_before_answer or unknown_answer
+            ) and not _has_content_bearing_attempt(trace=trace):
                 reader_attempts += 1
-                unknown_guard_retries += 1
+                unknown_guard_retries += int(unknown_answer)
                 can_continue = (
                     agent_call_count < max_agent_calls_per_question
                     and prior_calls + agent_call_count < max_agent_calls
@@ -1989,12 +2014,39 @@ def _answer_one(
                             outcome="guarded_unknown",
                         )
                     guard_feedback = (
-                        'Terminal "Unknown" was rejected because the trace contains '
+                        "The terminal answer was rejected because the trace contains "
                         "only identity or metadata reads. Call one content-bearing "
-                        "testimony, fact, context, primitive, row-returning query, "
-                        "or P3 search/read operation before answering Unknown."
+                        "testimony, fact, context, row-returning query, or P3 "
+                        "search/read operation before answering."
                     )
                     continue
+                if require_content_before_answer:
+                    if agent_observation is not None:
+                        agent_observation.finish(
+                            usage=response.usage,
+                            latency_ms=call_latency_ms,
+                            outcome="invalid_response",
+                        )
+                    return _failed_answer(
+                        question=question,
+                        kind="invalid_response",
+                        message=(
+                            "answer agent exhausted its call budget without a "
+                            "content-bearing retrieval"
+                        ),
+                        retrieval_latency_ms=tool_latency_ms,
+                        retrieval_succeeded=_trace_succeeded(trace=trace),
+                        agent_call_count=agent_call_count,
+                        reader_attempts=reader_attempts,
+                        first_step_retries=first_step_retries,
+                        unknown_guard_retries=unknown_guard_retries,
+                        reader_latency_ms=agent_latency_ms,
+                        claims=_claims_from_trace(
+                            trace=tuple(trace), doc_sessions=doc_sessions
+                        ),
+                        tool_calls=tuple(trace),
+                        usages=tuple(usages),
+                    )
                 guarded_terminal = True
             if answer_word_cap is not None and len(answer.split()) > answer_word_cap:
                 if agent_observation is not None:
@@ -2576,6 +2628,7 @@ def _has_content_bearing_attempt(*, trace: list[ToolCallRecord]) -> bool:
         "lookup_observations",
         "search_claims",
         "search_chunks",
+        "adjacent_chunks",
         "hydrate_relation",
         "p3_search",
         "p3_read",

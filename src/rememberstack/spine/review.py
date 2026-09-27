@@ -24,6 +24,9 @@ from rememberstack.model import ReviewItem
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.clustering import apply_merge
+from rememberstack.spine.fact_applications import application_block
+from rememberstack.spine.fact_applications import application_fence
+from rememberstack.spine.lifecycle import LIVE_CARRIAGE_SQL
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 
 REVIEW_RECONCILIATION_NAMESPACE: Final = UUID("5e51e77e-0000-4000-8000-000000000000")
@@ -141,6 +144,11 @@ class ReviewQueue:
         events: tuple[UUID, ...] = ()
         affected_entity_ids: tuple[UUID, ...] = ()
         with self._engine.begin() as connection:
+            with application_fence(connection=connection, deployment_id=deployment_id):
+                connection.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtextextended(:key,0))"),
+                    {"key": f"{deployment_id}:identity-epoch"},
+                )
             item = self._claim_item(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -247,6 +255,9 @@ class ReviewQueue:
         fact_kind: str
         fact_id: UUID
         with self._engine.begin() as connection:
+            relation_ids, observation_ids = _lock_support_review(
+                connection=connection, deployment_id=deployment_id, review_id=review_id
+            )
             item = self._claim_item(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -284,6 +295,17 @@ class ReviewQueue:
                         claim_id=claim_id,
                         review_id=review_id,
                     )
+                    for affected_kind, ids in (
+                        ("relation", relation_ids),
+                        ("observation", observation_ids),
+                    ):
+                        for affected_id in ids:
+                            if (affected_kind, affected_id) != (fact_kind, fact_id):
+                                self._recount(
+                                    connection=connection,
+                                    fact_kind=affected_kind,
+                                    fact_id=affected_id,
+                                )
                 elif verdict == "invalidate_fact":
                     self._invalidate_fact(
                         connection=connection,
@@ -306,8 +328,8 @@ class ReviewQueue:
             try:
                 refresher.refresh_for_facts(
                     deployment_id=deployment_id,
-                    relation_ids=(fact_id,) if fact_kind == "relation" else (),
-                    observation_ids=(fact_id,) if fact_kind == "observation" else (),
+                    relation_ids=relation_ids,
+                    observation_ids=observation_ids,
                     meter=self._meter,
                     call_key=f"profile:review:{review_id}",
                 )
@@ -344,6 +366,15 @@ class ReviewQueue:
             fact_id=fact_id,
             claim_id=claim_id,
         )
+        if connection.execute(
+            _CLAIM_DELETED, {"claim_id": claim_id, "deployment_id": deployment_id}
+        ).scalar_one():
+            # D135: deletion is the source acting. Restoring testimony that no
+            # live version carries would bring a deleted document back.
+            raise ReviewDecisionError(
+                f"claim {claim_id} belongs to a deleted document or version;"
+                " its support cannot be restored"
+            )
         doc_id = connection.execute(
             _CLAIM_DOC, {"claim_id": claim_id, "deployment_id": deployment_id}
         ).scalar_one()
@@ -549,6 +580,100 @@ class ReviewQueue:
         )
 
 
+def _lock_support_review(
+    *, connection: Connection, deployment_id: UUID, review_id: UUID
+) -> tuple[tuple[UUID, ...], tuple[UUID, ...]]:
+    """Take ordinary fact locks before the review row, preserving retry ordering."""
+    with application_fence(connection=connection, deployment_id=deployment_id):
+        connection.execute(
+            text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key,0))"),
+            {"key": f"{deployment_id}:identity-epoch"},
+        )
+        row = (
+            connection.execute(
+                text(
+                    "SELECT candidate FROM review_queue WHERE deployment_id=:dep AND review_id=:id AND item_kind='support_withdrawn'"
+                ),
+                {"dep": deployment_id, "id": review_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            raise ReviewDecisionError("support review does not exist")
+        candidate = row["candidate"]
+        kind = candidate.get("fact_kind")
+        if kind not in ("relation", "observation"):
+            raise ReviewDecisionError("invalid support review fact plane")
+        fact_id, claim_id = UUID(candidate["fact_id"]), UUID(candidate["claim_id"])
+        params = {"dep": deployment_id, "fact": fact_id, "claim": claim_id}
+        # D135: serialize with document deletion BEFORE any deletion check or
+        # currency write. A deletion takes the lineage row, then its version
+        # rows, then claims; a verdict takes the same rows in the same order
+        # (shared), so either the deletion commits first and the verdict sees
+        # it, or the verdict commits first and the deletion retires what it
+        # restored.
+        connection.execute(_LOCK_CLAIM_LINEAGE, params)
+        connection.execute(_LOCK_CLAIM_VERSIONS, params)
+        table = "relations" if kind == "relation" else "observations"
+        subject = connection.execute(
+            text(
+                f"SELECT subject_entity_id FROM {table} WHERE deployment_id=:dep AND {kind}_id=:fact"
+            ),
+            params,
+        ).scalar_one_or_none()
+        if subject is None:
+            raise ReviewDecisionError("support review fact no longer exists")
+        with application_block(
+            connection=connection,
+            deployment_id=deployment_id,
+            subject_entity_id=subject,
+        ):
+            if (
+                connection.execute(
+                    text(
+                        "SELECT claim_id FROM claims WHERE deployment_id=:dep AND claim_id=:claim FOR UPDATE"
+                    ),
+                    params,
+                ).scalar_one_or_none()
+                is None
+            ):
+                raise ReviewDecisionError("support review source no longer exists")
+            affected: dict[str, tuple[UUID, ...]] = {}
+            for plane, fact_table in (
+                ("relation", "relations"),
+                ("observation", "observations"),
+            ):
+                affected[plane] = tuple(
+                    connection.execute(
+                        text(f"""
+                    SELECT f.{plane}_id FROM {fact_table} f
+                    WHERE f.deployment_id=:dep AND (
+                        (:kind=:plane AND f.{plane}_id=:fact) OR EXISTS (
+                            SELECT 1 FROM {plane}_evidence e
+                            WHERE e.deployment_id=:dep AND e.{plane}_id=f.{plane}_id
+                              AND e.claim_id=:claim))
+                    ORDER BY f.{plane}_id FOR UPDATE OF f
+                """),
+                        {**params, "kind": kind, "plane": plane},
+                    ).scalars()
+                )
+            locked = (
+                connection.execute(
+                    _SELECT_ITEM_LOCKED,
+                    {"deployment_id": deployment_id, "review_id": review_id},
+                )
+                .mappings()
+                .one()
+            )
+            if locked["candidate"] != candidate:
+                raise ReviewDecisionError(
+                    "support review changed; retry with fresh inputs"
+                )
+
+    return affected["relation"], affected["observation"]
+
+
 _SELECT_PENDING = text(
     """
     SELECT review_id, item_kind::text AS item_kind, candidate, blast_radius,
@@ -625,6 +750,51 @@ _CLOSE_REVIEW = text(
     WHERE review_id = :review_id
     """
 ).bindparams(bindparam("history_entry", type_=JSON))
+
+_LOCK_CLAIM_LINEAGE = text(
+    """
+    SELECT d.doc_id FROM documents d
+    JOIN claims cl ON cl.deployment_id = d.deployment_id AND cl.doc_id = d.doc_id
+    WHERE cl.deployment_id = :dep AND cl.claim_id = :claim
+    FOR SHARE OF d
+    """
+)
+
+_LOCK_CLAIM_VERSIONS = text(
+    """
+    SELECT v.version_id FROM document_versions v
+    JOIN chunks c ON c.version_id = v.version_id
+    JOIN claims cl ON cl.deployment_id = c.deployment_id
+    WHERE cl.deployment_id = :dep AND cl.claim_id = :claim
+      AND (c.chunk_id = cl.chunk_id
+           OR c.chunk_id IN (SELECT cc.chunk_id FROM chunk_claims cc
+                             WHERE cc.claim_id = cl.claim_id))
+    ORDER BY v.version_id
+    FOR SHARE OF v
+    """
+)
+
+_CLAIM_DELETED = text(
+    f"""
+    SELECT EXISTS (
+               SELECT 1 FROM documents dd
+               WHERE dd.doc_id = cl.doc_id AND dd.deleted_at IS NOT NULL
+           )
+        OR (
+            EXISTS (
+                SELECT 1 FROM chunks ac
+                JOIN document_versions av ON av.version_id = ac.version_id
+                WHERE ac.chunk_id = cl.chunk_id
+                   OR ac.chunk_id IN (SELECT acc.chunk_id FROM chunk_claims acc
+                                      WHERE acc.claim_id = cl.claim_id)
+            )
+            AND NOT {LIVE_CARRIAGE_SQL}
+        )
+    FROM claims cl
+    WHERE cl.claim_id = :claim_id AND cl.deployment_id = :deployment_id
+    """
+)
+"""A claim of a deleted lineage, or one only deleted versions carry (D135)."""
 
 _CLAIM_DOC = text(
     """

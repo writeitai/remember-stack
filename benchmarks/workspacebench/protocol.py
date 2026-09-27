@@ -30,7 +30,7 @@ CODEX_REASONING_EFFORT: Final = "high"
 CODEX_CLIENT_NAME: Final = "rememberstack_workspacebench"
 CODEX_CLIENT_TITLE: Final = "RememberStack Workspace-Bench"
 CODEX_SERVICE_NAME: Final = "rememberstack-workspacebench"
-CONSUMPTION_INSTRUCTION_VERSION: Final = "1.1.0"
+CONSUMPTION_INSTRUCTION_VERSION: Final = "1.2.0"
 MCP_SERVER_NAME: Final = "remember"
 MCP_READ_ONLY_ARGS: Final[tuple[str, ...]] = ("mcp", "--read-only")
 # Starting points to measure, not committed performance constants.
@@ -56,16 +56,6 @@ SDK_TIMEOUT_PARTIAL_EVENTS: Final = (
 DEFAULT_ARM_ORDER: Final[tuple[Literal["native"], Literal["memory"]]] = (
     "native",
     "memory",
-)
-
-# Closed D87 catalog, in canonical registry order. Preflight/catalog binding
-# compares this pin to CANONICAL_OPERATIONS so a later rename cannot keep
-# Workspace-Bench on stale names. Do not derive this tuple at runtime.
-REQUIRED_ASSURED_TOOLS: Final[tuple[str, ...]] = (
-    "resolve_entity",
-    "claims_and_sources_context",
-    "facts_context",
-    "combined_context",
 )
 
 EVALUATION_ONLY_METADATA_KEYS: Final[frozenset[str]] = frozenset(

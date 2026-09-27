@@ -534,18 +534,33 @@ class KnowledgeControlPlane:
     ) -> None:
         """Refresh subtree and scope expansions after their inputs move."""
         with self._engine.begin() as connection:
-            rows = connection.execute(
-                _SELECT_DERIVED_RULES, {"deployment_id": deployment_id}
-            ).mappings()
-            for row in rows:
-                if KnowledgeRuleKind(str(row["rule_kind"])) not in kinds:
-                    continue
-                self._replace_rule_keys(
-                    connection=connection,
-                    deployment_id=deployment_id,
-                    rule_id=row["rule_id"],
-                    params=_parse_rule(row=row),
-                )
+            self.rematerialize_derived_rule_keys_on(
+                connection=connection, deployment_id=deployment_id, kinds=kinds
+            )
+
+    def rematerialize_derived_rule_keys_on(
+        self,
+        *,
+        connection: Connection,
+        deployment_id: UUID,
+        kinds: tuple[KnowledgeRuleKind, ...] = (
+            KnowledgeRuleKind.ENTITY_SUBTREE,
+            KnowledgeRuleKind.SCOPE_INTERESTS,
+        ),
+    ) -> None:
+        """Refresh existing derived keys within a caller's atomic cutover transaction."""
+        rows = connection.execute(
+            _SELECT_DERIVED_RULES, {"deployment_id": deployment_id}
+        ).mappings()
+        for row in rows:
+            if KnowledgeRuleKind(str(row["rule_kind"])) not in kinds:
+                continue
+            self._replace_rule_keys(
+                connection=connection,
+                deployment_id=deployment_id,
+                rule_id=row["rule_id"],
+                params=_parse_rule(row=row),
+            )
 
     def input_snapshot(
         self, *, artifact_id: UUID, context: KnowledgeCompileContext
@@ -4465,7 +4480,8 @@ _SELECT_SUBTREE_MEMBERS = text(
         WHERE r.deployment_id = :deployment_id
           AND r.predicate = 'part_of'
           AND r.invalidated_at IS NULL
-          AND r.valid_until IS NULL
+          AND r.valid_from <= statement_timestamp()
+          AND (r.valid_precision = 'open' OR r.valid_until > statement_timestamp())
     )
     SELECT entity_id FROM members ORDER BY entity_id
     """
@@ -4578,6 +4594,7 @@ _FACT_COLUMNS_RELATION = """
     r.relation_id AS fact_id,
     r.valid_from,
     r.valid_until,
+    r.valid_precision::text AS valid_precision,
     r.invalidated_at,
     r.evidence_count,
     r.contradict_count,
@@ -4589,6 +4606,7 @@ _FACT_COLUMNS_OBSERVATION = """
     o.observation_id AS fact_id,
     o.valid_from,
     o.valid_until,
+    o.valid_precision::text AS valid_precision,
     o.invalidated_at,
     o.evidence_count,
     o.contradict_count,
@@ -4604,7 +4622,7 @@ _SELECT_FACT_SHEET_RELATIONS = text(
                subject.canonical_name || ' ' || replace(r.predicate, '_', ' ')
                  || ' ' || object.canonical_name
            ) AS label,
-           r.valid_from, r.valid_until, r.ingested_at, r.invalidated_at,
+           r.valid_from, r.valid_until, r.valid_precision::text, r.ingested_at, r.invalidated_at,
            r.evidence_count, r.contradict_count, r.contradiction_group
     FROM relations r
     JOIN entities subject
@@ -4624,7 +4642,7 @@ _SELECT_FACT_SHEET_OBSERVATIONS = text(
     SELECT 'observation' AS kind,
            o.observation_id AS fact_id,
            COALESCE(NULLIF(btrim(o.obs_label), ''), o.statement) AS label,
-           o.valid_from, o.valid_until, o.ingested_at, o.invalidated_at,
+           o.valid_from, o.valid_until, o.valid_precision::text, o.ingested_at, o.invalidated_at,
            o.evidence_count, o.contradict_count, o.contradiction_group
     FROM observations o
     WHERE o.deployment_id = :deployment_id

@@ -40,6 +40,9 @@ def _fact(
             "label": label,
             "valid_from": valid_from,
             "valid_until": valid_until,
+            "valid_precision": "day"
+            if valid_from is not None or valid_until is not None
+            else "unknown",
             "ingested_at": datetime(2026, 1, 1, tzinfo=UTC),
             "invalidated_at": invalidated_at,
             "evidence_count": evidence_count,
@@ -107,6 +110,7 @@ def _snapshot() -> tuple[
             fact_id=fact.fact_id,
             valid_from=fact.valid_from,
             valid_until=fact.valid_until,
+            valid_precision=fact.valid_precision,
             invalidated_at=fact.invalidated_at,
             evidence_count=fact.evidence_count,
             contradict_count=fact.contradict_count,
@@ -140,18 +144,20 @@ def test_render_is_byte_stable_and_matches_each_section_query() -> None:
     )
 
     assert first == second
-    assert first.current_relation_count == 1
+    assert first.relation_count == 2
     assert first.observation_count == 5
     assert first.contradiction_group_count == 1
     assert "Alice \\| works for Acme" in first.markdown
     assert f"relation:{facts[0].fact_id}" in first.markdown
-    assert f"relation:{facts[1].fact_id}" not in first.markdown
+    assert f"relation:{facts[1].fact_id}" in first.markdown
+    assert "date incomplete" in first.markdown
+    assert "saved snapshot" in first.markdown
     assert "Headcount was 500" in first.markdown
-    assert "| ended |" in first.markdown
+    assert "| after window |" in first.markdown
     assert "Retracted estimate" in first.markdown
     assert "| invalidated |" in first.markdown
     assert "Scheduled state" in first.markdown
-    assert "| not yet valid |" in first.markdown
+    assert "| before window |" in first.markdown
     assert first.markdown.index("$5M") < first.markdown.index("$7M")
     assert f"`{_GROUP_ID}`" in first.markdown
     assert "7 candidates · 0 citations" in first.markdown

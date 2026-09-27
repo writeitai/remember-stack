@@ -108,8 +108,11 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 #: caught: not by the machine, but by the edit being visible.
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
+        ("DELETE", "/documents/{doc_id}"),
+        ("GET", "/chunks/{chunk_id}/adjacent"),
         ("GET", "/deployment"),
         ("GET", "/documents"),
+        ("POST", "/documents/search"),
         ("GET", "/hydrate/relation/{relation_id}"),
         ("GET", "/lookup/observations"),
         ("GET", "/lookup/relations"),
@@ -122,6 +125,7 @@ _SURFACE: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/search/chunks"),
         ("GET", "/search/claims"),
         ("GET", "/transcript/relation/{relation_id}"),
+        ("POST", "/chunks/adjacent"),
         ("POST", "/graph/citation-path"),
         ("POST", "/graph/neighborhood"),
         ("POST", "/graph/path"),
@@ -157,6 +161,8 @@ _CAPABILITY_PORTS = frozenset(
         "connectors",
         "pipeline_readiness",
         "documents",
+        "document_search",
+        "deletion",
         "graph",
         "build_info",
     }
@@ -167,7 +173,7 @@ _CAPABILITY_PORTS = frozenset(
 #: A body-size cap changes how a request is handled, not what the deployment
 #: can do. Keeping the two lists apart is what lets the signature check be
 #: exhaustive: every optional parameter must be one or the other, deliberately.
-_POLICY_PARAMETERS = frozenset({"ingest_body_max_bytes"})
+_POLICY_PARAMETERS = frozenset({"ingest_body_max_bytes", "direct_admission"})
 
 
 def test_every_optional_capability_is_classified() -> None:
@@ -261,7 +267,12 @@ def test_the_schema_carries_the_shapes_those_routes_answer_with() -> None:
     door.
     """
     schemas = _exported().get("components", {}).get("schemas", {})
-    for name in ("DocumentPage", "DocumentSummary", "DocumentVersionSummary"):
+    for name in (
+        "DocumentPage",
+        "DocumentSummary",
+        "DocumentVersionSummary",
+        "AdjacentChunksRequest",
+    ):
         assert name in schemas, f"{name} is missing from the published schema"
     assert "SearchRequest" in schemas, (
         "SearchRequest is missing; the POST search bodies would generate untyped"

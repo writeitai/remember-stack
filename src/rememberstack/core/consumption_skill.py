@@ -15,7 +15,7 @@ from rememberstack.model import PublishedMounts
 from rememberstack.model import RenderedConsumptionSkill
 
 #: Bumped for the D87 four-operation clean cut and context contracts.
-CONSUMPTION_SKILL_VERSION: Final = "3.0.0"
+CONSUMPTION_SKILL_VERSION: Final = "4.0.0"
 
 
 def render_consumption_skill(
@@ -211,8 +211,52 @@ def _time_and_media() -> str:
         'Do not collapse these into "the timestamp":\n\n'
         "- a source locator such as `start_ms` says **where in a file** evidence "
         "occurs;\n"
-        "- `valid_from` / `valid_until` say **when a fact held in the world**;\n"
+        "- `valid_from` / `valid_until` on a fact say **when a fact held in the "
+        "world**;\n"
         "- `ingested_at` / `believed_at` say **when the system knew it**.\n\n"
+        "Evidence rows (claims) carry two source-asserted times. Read them as:\n\n"
+        "- `asserted_at`: **when the source made this statement** (the message "
+        "was sent, the page was published). It is the reference point for any "
+        'relative phrase still present in `claim_text`, such as "last week".\n'
+        "- `claim_valid_from` / `claim_valid_until`: **when the claim says it "
+        "happened or was true**, as the source asserted it. `claim_valid_kind` "
+        "names which: `event_time` = when the claimed event happened; "
+        "`effective_period` or `proposition_validity` = when the claimed state "
+        "was true; `measurement_period` = the period a claimed figure covers. "
+        "`claim_valid_precision` (`instant`, `day`, `month`, `quarter`, `year`, "
+        "`open`, `unknown`) says how exact the bounds are; `unknown` means the "
+        "source gave no usable world-time and the bounds are null.\n\n"
+        "When extraction could resolve a relative phrase against the source's "
+        "own date, the absolute date is already written into `claim_text` "
+        '("printed the screenplay on 2022-01-21") and repeated in the bounds. '
+        "When `claim_text` still contains a relative phrase, the extractor could "
+        "not resolve it: interpret it relative to `asserted_at` and do not "
+        "invent more precision than the source gives.\n\n"
+        "Temporal filtering and event anchoring:\n\n"
+        "- On `facts_context`, pass explicit `time` arguments when inquiries target a specific "
+        'milestone, point in time, or interval: `time: {"mode": "at", "at": "<ISO-timestamp>"}` '
+        'for point-in-time state; `time: {"mode": "overlap", "from": "<start>", "to": "<end>"}` '
+        'for interval overlap; `time: {"mode": "history"}` for achievements, biography, and '
+        '\'has ever\' questions (including completed intervals); and `time: {"mode": "current"}` '
+        "(default) for what holds at evaluation time.\n"
+        "- When querying open SQL on `claims`, filter with `asserted_at` (speech time) or "
+        "`claim_valid_from` / `claim_valid_until` (event validity).\n"
+        "- When evaluating evidence for questions tied to a specific event, milestone, or timeframe, anchor by "
+        "the event's validity timeframe (`valid_from` / `valid_until` or temporal filtering) rather than blending "
+        "in states or beliefs from different time periods. Retrospective statements describing what happened or was felt "
+        "during the event remain valid evidence. Restrict to `asserted_at` (speech time) only when the question specifically "
+        "asks what was discussed or stated during a particular conversation or dialogue timeframe.\n\n"
+        "Fact `valid_precision` preserves "
+        "the accepted granularity (`instant`, `day`, `month`, `quarter`, `year`, "
+        "`open`, `unknown`). Missing endpoints stay unknown; only `open` "
+        "means an explicitly ongoing interval (known start, no recorded end). "
+        "Undated facts are clean prose without bracket annotations. "
+        "A `temporal_match: possible` "
+        "result is relevant but insufficiently dated for a confirmed temporal "
+        "count. Report it separately, and never claim a top-k or truncated "
+        "response is exhaustive. Claim `asserted_at` is when the source spoke, "
+        "not a fallback fact date. Never confuse speech time with real-world "
+        "event validity (`valid_from` / `valid_until`).\n\n"
         "Live graph traversal shares PostgreSQL authority and has no snapshot"
         " generation. Its bounded-work status still matters: inspect truncation"
         " before treating absence as exhaustive.\n\n"
@@ -256,13 +300,14 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
             "orientation, readable artifacts, and query operations."
         )
     else:
-        availability = (
-            "The four read-only mounts are available:\n\n"
-            f"- P3 corpus tree: `{mounts.p3}`\n"
-            f"- E0 artifacts: `{mounts.artifacts}`\n"
-            f"- raw originals (off the navigation path; audited): `{mounts.raw}`\n"
-            f"- plane K checkout: `{mounts.knowledge}`"
-        )
+        views = [
+            f"- P3 corpus tree: `{mounts.p3}`",
+            f"- E0 artifacts: `{mounts.artifacts}`",
+            f"- raw originals (off the navigation path; audited): `{mounts.raw}`",
+        ]
+        if mounts.knowledge is not None:
+            views.append(f"- plane K checkout: `{mounts.knowledge}`")
+        availability = "These read-only mounts are available:\n\n" + "\n".join(views)
     return (
         "## Filesystem first when mounts exist\n\n"
         f"{availability}\n\n"
@@ -279,13 +324,14 @@ def _working_rules() -> str:
     """End with a compact operational checklist for the consuming agent."""
     return (
         "## Before acting on a memory answer\n\n"
-        "1. Did I use facts, not claims, for a current-truth question?\n"
-        "2. Did I keep fact, evidence, and compiled grains labeled separately?\n"
-        "3. For graph traversal, did I inspect the terminal work-budget status?\n"
-        "4. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
+        "1. Did I resolve named entities first with `resolve_entity`?\n"
+        "2. Did I answer established-truth questions from the fact layer (`facts_context` or `facts_current`), falling back to claims only for missing info or verbatim quotes?\n"
+        "3. Did I keep fact, evidence, and compiled grains labeled separately?\n"
+        '4. Did I interpret event dates using `valid_from` / `valid_until` rather than speech time (`asserted_at`) or system time (`ingested_at`), and apply temporal filtering (with mode "at", "overlap", or "history") when inquiries target specific milestones, events, or timeframes?\n'
+        "5. For graph traversal, did I inspect the terminal work-budget status?\n"
+        "6. Did I inspect caps, drops, truncation, contradictions, and withdrawn "
         "support?\n"
-        "5. Did I keep world-validity and system-belief clocks paired?\n"
-        "6. Did I hydrate to evidence or raw source when the stakes required it?"
+        "7. Did I hydrate to evidence or raw source when the stakes required it?"
     )
 
 

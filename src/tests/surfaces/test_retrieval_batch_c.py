@@ -50,6 +50,7 @@ from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-000000000001")
@@ -65,7 +66,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for Batch C proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -643,10 +644,10 @@ class _Corpus:
                 "INSERT INTO relations (relation_id, deployment_id,"
                 " subject_entity_id, predicate, object_entity_id,"
                 " normalizer_version, fact_label, evidence_count, contradict_count,"
-                " valid_from, valid_until, ingested_at, invalidated_at) VALUES"
+                " valid_from, valid_until, ingested_at, invalidated_at, valid_precision, window_claim_ids) VALUES"
                 " (:fact, :deployment, :subject, :predicate, :object, 'batch-c',"
                 " :label, :supports, :contradicts, :valid_from, :valid_until,"
-                " :ingested_at, :invalidated_at)"
+                " :ingested_at, :invalidated_at, CAST(:precision AS claim_valid_precision), :witnesses)"
             ),
             {
                 "fact": fact_id,
@@ -659,6 +660,14 @@ class _Corpus:
                 "contradicts": contradict_count,
                 "valid_from": valid_from,
                 "valid_until": valid_until,
+                "precision": "unknown"
+                if valid_from is None and valid_until is None
+                else "open"
+                if valid_until is None
+                else "instant",
+                "witnesses": []
+                if valid_from is None and valid_until is None
+                else [self.claims["support-new-same-lineage"]],
                 "ingested_at": ingested_at,
                 "invalidated_at": invalidated_at,
             },
@@ -984,6 +993,16 @@ def test_default_facts_context_obeys_the_real_live_graph_clock_contract(
     corpus: _Corpus,
 ) -> None:
     """The current recipe gives the production graph its operation-entry clocks."""
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET valid_from='2020-01-01Z',valid_precision='open',window_claim_ids=ARRAY[:claim]::uuid[] WHERE relation_id=:id"
+            ),
+            {
+                "id": corpus.relation_id,
+                "claim": corpus.claims["support-new-same-lineage"],
+            },
+        )
     engine, _index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = GraphQueries(engine=corpus.engine, deployment_id=_DEPLOYMENT_ID)
 
@@ -997,6 +1016,14 @@ def test_default_facts_context_obeys_the_real_live_graph_clock_contract(
 
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.relation_id,)
     assert corpus.subject_id in {node.entity_id for node in answer.nodes}
+
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE relations SET valid_from=NULL,valid_precision='unknown',window_claim_ids='{}' WHERE relation_id=:id"
+            ),
+            {"id": corpus.relation_id},
+        )
 
 
 def test_default_facts_context_supplies_paired_clocks_for_at_time(

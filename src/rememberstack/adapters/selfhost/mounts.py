@@ -98,7 +98,7 @@ class LocalMountPublisher:
         self._admission = admission
 
     def publish(self, *, deployment_id: UUID) -> PublishedMounts:
-        """Publish and return the exact four read-only deployment views."""
+        """Publish and return the deployment's read-only views."""
         self._admission.assert_available(deployment_id=deployment_id)
         for store_root in (self._artifacts_root, self._raw_root, self._knowledge_root):
             if store_root is not None and not store_root.is_dir():
@@ -119,8 +119,12 @@ class LocalMountPublisher:
             # stubs carry an explicit pointer. Provider mounts must audit
             # reads; AuditedRawReader audits programmatic local access.
             raw=str(self._view(base=base, name="raw", real=self._raw_root)),
-            knowledge=str(
-                self._view(base=base, name="knowledge", real=self._knowledge_root)
+            # Plane K is served only from a real checkout; an empty
+            # placeholder would advertise a view that has no content.
+            knowledge=(
+                None
+                if self._knowledge_root is None
+                else str(self._knowledge_root.resolve())
             ),
             read_only=True,
         )
@@ -244,10 +248,14 @@ def _point(*, link: Path, target: Path) -> None:
     """Atomically point the mount path at a versioned directory.
 
     A symlink swapped with `os.replace` is atomic on POSIX: a reader either
-    sees the old snapshot or the new one, never a missing path.
+    sees the old snapshot or the new one, never a missing path. The link is
+    relative (the target is a sibling), so a tree published inside a
+    container stays valid when the host sees the bind mount at another path.
     """
     staging_link = link.with_name(f".{link.name}-{uuid4().hex[:8]}")
-    staging_link.symlink_to(target, target_is_directory=True)
+    staging_link.symlink_to(
+        os.path.relpath(target, link.parent), target_is_directory=True
+    )
     if link.exists() and not link.is_symlink():
         shutil.rmtree(link)  # a legacy real directory: replaced once
     os.replace(staging_link, link)

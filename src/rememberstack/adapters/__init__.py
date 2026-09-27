@@ -4,17 +4,34 @@ from typing import TYPE_CHECKING
 
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.adapters.codex_subscription import CodexSubscriptionAccessError
+from rememberstack.adapters.codex_subscription import CodexSubscriptionAuditError
+from rememberstack.adapters.codex_subscription import (
+    CodexSubscriptionInfrastructureError,
+)
 from rememberstack.adapters.codex_subscription import CodexSubscriptionModelProvider
 from rememberstack.adapters.codex_subscription import CodexSubscriptionProviderError
+from rememberstack.adapters.codex_subscription import CodexTurnPolicy
 from rememberstack.adapters.codex_writer import CodexAgentAdapterSettings
 from rememberstack.adapters.codex_writer import CodexCLIAgentAdapter
 from rememberstack.adapters.codex_writer import CodexCLIWriterAdapter
 from rememberstack.adapters.codex_writer import CodexWriterAdapterSettings
+from rememberstack.adapters.generation_recorder import build_generation_recorder
+from rememberstack.adapters.generation_recorder import GenerationRecord
+from rememberstack.adapters.generation_recorder import GenerationRecorder
+from rememberstack.adapters.generation_recorder import LangfuseRecorderSettings
+from rememberstack.adapters.generation_recorder import OtelSpanRecorder
 from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
 from rememberstack.adapters.postgres_p1 import PostgresP1Index
 from rememberstack.adapters.routed import ModelRoutedProvider
+from rememberstack.adapters.typesafe import ConfigurationError
+from rememberstack.adapters.typesafe import (
+    ConfigurationError as TypeSafeConfigurationError,
+)
+from rememberstack.adapters.typesafe import TypeSafeProviderError
+from rememberstack.adapters.typesafe import TypeSafeSettings
+from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.adapters.vertex import VertexAccessError
 from rememberstack.adapters.vertex import VertexModelProvider
 from rememberstack.adapters.vertex import VertexProviderError
@@ -42,9 +59,16 @@ __all__ = (
     "CodexCLIWriterAdapter",
     "CodexAgentAdapterSettings",
     "CodexSubscriptionAccessError",
+    "CodexSubscriptionAuditError",
+    "CodexSubscriptionInfrastructureError",
     "CodexSubscriptionModelProvider",
     "CodexSubscriptionProviderError",
+    "CodexTurnPolicy",
     "CodexWriterAdapterSettings",
+    "GenerationRecord",
+    "GenerationRecorder",
+    "LangfuseRecorderSettings",
+    "OtelSpanRecorder",
     "MARKITDOWN_CONVERTER_VERSION",
     "MarkitdownConverter",
     "ImageDescriptionSettings",
@@ -53,10 +77,16 @@ __all__ = (
     "MistralOcrSettings",
     "ModelRoutedProvider",
     "build_conversion_routes",
+    "build_generation_recorder",
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",
     "PostgresP1Index",
+    "ConfigurationError",
+    "TypeSafeConfigurationError",
+    "TypeSafeProviderError",
+    "TypeSafeSettings",
+    "TypeSafeSystemOneClient",
     "VertexAccessError",
     "VertexModelProvider",
     "VertexProviderError",

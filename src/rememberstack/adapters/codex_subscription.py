@@ -3,7 +3,8 @@
 This benchmark-only adapter deliberately delegates authentication to Codex.
 It never reads ``~/.codex/auth.json``, never handles a bearer token, and never
 accepts an API key. Every generation uses a fresh ephemeral, read-only Codex
-thread with approvals denied and a turn-scoped JSON Schema.
+thread with approvals denied and a turn-scoped JSON Schema by default. An
+explicit benchmark policy may instead admit audited local actions.
 """
 
 from collections.abc import Callable
@@ -16,6 +17,7 @@ from pathlib import Path
 import tempfile
 import time
 from typing import cast
+from typing import Literal
 from typing import Protocol
 from typing import TYPE_CHECKING
 from typing import TypeVar
@@ -48,14 +50,56 @@ _ALLOWED_ITEM_TYPES = frozenset(
 _RUNTIME_RESULT_FIELDS = frozenset(
     {"aggregatedOutput", "contentItems", "output", "result", "results"}
 )
+_COMMAND_ITEM = "CommandExecutionThreadItem"
+_MCP_ITEM = "McpToolCallThreadItem"
+
+
+@dataclass(frozen=True)
+class CodexTurnPolicy:
+    """Optional native-action contract for one audited Codex generation seat.
+
+    The default preserves the ordinary adapter: an empty scratch directory,
+    read-only sandboxing, and no runtime actions. LoCoMo retrieval ablations opt
+    into a P3 corpus, full-access shell, and optionally one MCP server. This is
+    an experiment policy, not a security boundary.
+    """
+
+    corpus_root: Path | None = None
+    sandbox: Literal["read_only", "full_access"] = "read_only"
+    config_overrides: tuple[str, ...] = ()
+    allowed_runtime_item_types: frozenset[str] = frozenset()
+    allowed_mcp_server: str | None = None
+    allowed_mcp_tools: frozenset[str] = frozenset()
+    content_mcp_tools: frozenset[str] = frozenset()
+    max_runtime_actions: int = 0
+    require_content_action: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject internally contradictory action policies before a paid call."""
+        if self.max_runtime_actions < 0:
+            raise ValueError("max_runtime_actions must be non-negative")
+        if self.corpus_root is not None and not self.corpus_root.is_dir():
+            raise ValueError("corpus_root must identify a directory")
+        if self.allowed_mcp_tools and self.allowed_mcp_server is None:
+            raise ValueError("allowed MCP tools require one allowed MCP server")
+        if self.content_mcp_tools - self.allowed_mcp_tools:
+            raise ValueError("content MCP tools must be a subset of allowed MCP tools")
 
 
 class CodexSubscriptionProviderError(ProviderCallError):
     """The local Codex runtime could not complete an allowed generation."""
 
 
-class CodexSubscriptionAccessError(CodexSubscriptionProviderError):
+class CodexSubscriptionInfrastructureError(CodexSubscriptionProviderError):
+    """The Codex runtime or its subscription seat is unavailable."""
+
+
+class CodexSubscriptionAccessError(CodexSubscriptionInfrastructureError):
     """Codex is not authenticated with an eligible ChatGPT subscription."""
+
+
+class CodexSubscriptionAuditError(CodexSubscriptionInfrastructureError):
+    """The required local runtime-action audit could not be persisted."""
 
 
 @dataclass(frozen=True)
@@ -75,7 +119,11 @@ class TurnRunner(Protocol):
     """Execute one Codex turn without exposing SDK types to the provider."""
 
     def __call__(
-        self, *, request: ModelRequest, output_schema: dict[str, object]
+        self,
+        *,
+        request: ModelRequest,
+        output_schema: dict[str, object],
+        policy: CodexTurnPolicy,
     ) -> _CodexTurn:
         """Return the isolated turn's response and accounting facts."""
         ...
@@ -97,12 +145,20 @@ class CodexSubscriptionModelProvider:
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
         audit_path: Path | None = None,
         audit_stage: str = "generation",
+        turn_policy: CodexTurnPolicy | None = None,
     ) -> None:
         """Create an adapter with injectable turn and clock seams for tests."""
         self._turn_runner = turn_runner or _run_codex_turn
         self._monotonic_ns = monotonic_ns
         self._audit_path = audit_path
         self._audit_stage = audit_stage
+        self._turn_policy = turn_policy or CodexTurnPolicy()
+        self._last_runtime_actions: tuple[dict[str, object], ...] = ()
+
+    @property
+    def last_runtime_actions(self) -> tuple[dict[str, object], ...]:
+        """Return the most recent turn's result-free action audit."""
+        return self._last_runtime_actions
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
@@ -121,29 +177,35 @@ class CodexSubscriptionModelProvider:
         started = self._monotonic_ns()
         try:
             turn = self._turn_runner(
-                request=request, output_schema=_strict_json_schema(response_type)
+                request=request,
+                output_schema=_strict_json_schema(response_type),
+                policy=self._turn_policy,
             )
         except CodexSubscriptionProviderError:
             raise
         except Exception as error:
-            raise CodexSubscriptionProviderError(
+            raise CodexSubscriptionInfrastructureError(
                 f"Codex subscription generation failed: {error}"
             ) from error
         latency_ms = max(0, (self._monotonic_ns() - started) // 1_000_000)
+        self._last_runtime_actions = turn.runtime_actions
         self._record_runtime_audit(request=request, turn=turn, latency_ms=latency_ms)
         if turn.status != "completed":
             detail = turn.error_message or f"turn ended with status {turn.status!r}"
             usage = _optional_usage(
                 turn=turn, model=request.model, latency_ms=latency_ms
             )
-            raise CodexSubscriptionProviderError(
+            raise CodexSubscriptionInfrastructureError(
                 f"Codex subscription generation failed: {detail}", usage=usage
             )
         usage = _usage(turn=turn, model=request.model, latency_ms=latency_ms)
+        allowed_item_types = _ALLOWED_ITEM_TYPES | (
+            self._turn_policy.allowed_runtime_item_types
+        )
         disallowed = tuple(
             item_type
             for item_type in turn.item_types
-            if item_type not in _ALLOWED_ITEM_TYPES
+            if item_type not in allowed_item_types
         )
         if disallowed:
             raise CodexSubscriptionProviderError(
@@ -151,6 +213,7 @@ class CodexSubscriptionModelProvider:
                 + ", ".join(disallowed),
                 usage=usage,
             )
+        self._validate_runtime_actions(turn=turn, usage=usage)
         if turn.final_response is None:
             raise ProviderInvalidResponseError(
                 "Codex subscription generation returned no final response", usage=usage
@@ -163,6 +226,43 @@ class CodexSubscriptionModelProvider:
                 usage=usage,
             ) from error
         return GeneratedResponse(output=output, usage=usage)
+
+    def _validate_runtime_actions(
+        self, *, turn: _CodexTurn, usage: ProviderCallUsage
+    ) -> None:
+        """Enforce the configured action count, MCP boundary, and read attempt."""
+        policy = self._turn_policy
+        if len(turn.runtime_actions) > policy.max_runtime_actions:
+            raise CodexSubscriptionProviderError(
+                "Codex subscription generation exceeded its runtime-action limit",
+                usage=usage,
+            )
+        for action in turn.runtime_actions:
+            item_type = action.get("item_type")
+            if item_type == _COMMAND_ITEM:
+                continue
+            if item_type != _MCP_ITEM:
+                continue
+            payload = action.get("payload")
+            if not isinstance(payload, dict):
+                raise CodexSubscriptionProviderError(
+                    "Codex MCP action omitted its auditable payload", usage=usage
+                )
+            if (
+                payload.get("server") != policy.allowed_mcp_server
+                or payload.get("tool") not in policy.allowed_mcp_tools
+            ):
+                raise CodexSubscriptionProviderError(
+                    "Codex subscription generation called an out-of-profile MCP tool",
+                    usage=usage,
+                )
+        if policy.require_content_action and not _has_content_action(
+            actions=turn.runtime_actions, policy=policy
+        ):
+            raise CodexSubscriptionProviderError(
+                "Codex subscription generation finished without a content-bearing read",
+                usage=usage,
+            )
 
     def _record_runtime_audit(
         self, *, request: ModelRequest, turn: _CodexTurn, latency_ms: int
@@ -198,7 +298,7 @@ class CodexSubscriptionModelProvider:
             with os.fdopen(descriptor, "ab") as audit_file:
                 audit_file.write(encoded)
         except OSError as error:
-            raise CodexSubscriptionProviderError(
+            raise CodexSubscriptionAuditError(
                 f"could not record Codex runtime audit: {error}",
                 usage=_optional_usage(
                     turn=turn, model=request.model, latency_ms=latency_ms
@@ -237,7 +337,7 @@ def _optional_usage(
 
 
 def _run_codex_turn(
-    *, request: ModelRequest, output_schema: dict[str, object]
+    *, request: ModelRequest, output_schema: dict[str, object], policy: CodexTurnPolicy
 ) -> _CodexTurn:
     """Invoke the official SDK without exposing its authentication material."""
     try:
@@ -247,7 +347,7 @@ def _run_codex_turn(
         from openai_codex import Sandbox
         from openai_codex.generated.v2_all import ReasoningEffort
     except ImportError as error:
-        raise CodexSubscriptionProviderError(
+        raise CodexSubscriptionInfrastructureError(
             "Codex subscription generation requires the benchmark extra: "
             "uv sync --extra benchmark"
         ) from error
@@ -259,10 +359,18 @@ def _run_codex_turn(
             f"Codex does not support reasoning effort {request.reasoning_effort!r}"
         ) from error
 
+    sandbox = (
+        Sandbox.full_access if policy.sandbox == "full_access" else Sandbox.read_only
+    )
     with tempfile.TemporaryDirectory(prefix="remember-locomo-codex-") as scratch:
+        if policy.corpus_root is not None:
+            (Path(scratch) / "corpus").symlink_to(
+                policy.corpus_root.resolve(strict=True), target_is_directory=True
+            )
         with Codex(
             CodexConfig(
                 cwd=scratch,
+                config_overrides=policy.config_overrides,
                 client_name="rememberstack_locomo",
                 client_title="RememberStack LoCoMo",
             )
@@ -280,16 +388,14 @@ def _run_codex_turn(
                 cwd=scratch,
                 ephemeral=True,
                 model=request.model,
-                sandbox=Sandbox.read_only,
+                sandbox=sandbox,
                 service_name="rememberstack-locomo",
             )
             result = thread.run(
                 request.prompt,
                 effort=effort,
                 output_schema=cast("JsonObject", output_schema),
-                # The pinned SDK serializes this turn policy as readOnly with
-                # networkAccess=false; the thread-level preset matches it.
-                sandbox=Sandbox.read_only,
+                sandbox=sandbox,
             )
 
     total_usage = None if result.usage is None else result.usage.total
@@ -331,3 +437,38 @@ def _without_runtime_results(*, value: object) -> object:
     if isinstance(value, list):
         return [_without_runtime_results(value=item) for item in value]
     return value
+
+
+def _has_content_action(
+    *, actions: tuple[dict[str, object], ...], policy: CodexTurnPolicy
+) -> bool:
+    """Return whether Codex completed one filesystem or MCP content read."""
+    for action in actions:
+        payload = action.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        item_type = action.get("item_type")
+        if item_type == _COMMAND_ITEM:
+            if payload.get("status") != "completed":
+                continue
+            command_actions = payload.get("commandActions")
+            exit_code = payload.get("exitCode")
+            if isinstance(command_actions, list) and any(
+                isinstance(command_action, dict)
+                and (
+                    (command_action.get("type") == "read" and exit_code == 0)
+                    or (command_action.get("type") == "search" and exit_code in {0, 1})
+                    or (command_action.get("type") == "unknown" and exit_code in {0, 1})
+                )
+                for command_action in command_actions
+            ):
+                return True
+        if (
+            item_type == _MCP_ITEM
+            and payload.get("server") == policy.allowed_mcp_server
+            and payload.get("tool") in policy.content_mcp_tools
+            and payload.get("status") == "completed"
+            and payload.get("error") is None
+        ):
+            return True
+    return False

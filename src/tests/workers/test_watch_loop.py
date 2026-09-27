@@ -43,6 +43,7 @@ from rememberstack.workers import SyncCycleRunner
 from rememberstack.workers import SyncSettings
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("c1000000-0000-0000-0000-000000000001")
@@ -59,7 +60,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -227,6 +228,19 @@ def test_edit_becomes_a_new_version_of_the_same_lineage(rig: _WatchRig) -> None:
     assert all(row["status"] == "ready" for row in versions)
     assert all(row["sync_cycle_id"] is not None for row in versions)
     assert all(row["source_modified_at"] is not None for row in versions)
+    with rig.engine.connect() as connection:
+        observed_names = connection.execute(
+            text(
+                "SELECT m.file_name, m.source_path FROM document_metadata m"
+                " JOIN document_versions v ON v.version_id = m.version_id"
+                " ORDER BY v.version_no"
+            )
+        ).all()
+    # D134: every version records the file name and path it was observed at
+    assert [tuple(row) for row in observed_names] == [
+        ("roster.md", "roster.md"),
+        ("roster.md", "roster.md"),
+    ]
     assert mode == "living"  # the edit-in-place heuristic
     assert current == 2
 

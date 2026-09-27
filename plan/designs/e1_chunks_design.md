@@ -1,5 +1,11 @@
 # E1 — Blocks, Sections, Chunks (Design)
 
+
+> **D119 amendment (2026-09-14):** [coherent multi-span claim extraction](multi_span_claim_extraction_design.md)
+> governs coherent claim granularity, complete evidence spans and version-specific
+> remapping. D56 claim-ID reuse remains mandatory; single anchors describe origins,
+> not complete multi-span support. Design acceptance is not shipped implementation.
+
 How a converted document becomes the units the system embeds, extracts from, and anchors
 claims to — and how those units survive document edits. Binding design for decisions
 **D57–D58**, building on D94 (PostgreSQL-native P1), D25 (no value gate), D32 (grounding offsets),
@@ -61,8 +67,10 @@ returns plain Markdown; docling/PyMuPDF-class tools expose richer structure) —
 1. **Converters produce `document.md` + a source map + derived assets + a manifest** (refines
    D38; generalized by D65 — the *page map* is the paper case of the source map). Mistral OCR:
    concatenate `pages[].markdown`, recording each page's char-range — the page map falls out
-   of concatenation. markitdown: Markdown, no source map (emails/HTML have no pages — the
-   locator is nullable). Media routes (ASR, VLM description — `media_design.md` §2) emit
+   of concatenation. Pageless formats (HTML, email, office documents) map to `source_range` or
+   `line_range` locators; structured formats to `sheet_range` / `table_region` /
+   `json_pointer` (D133, `format_conversion_design.md` §7). A converter that cannot map a range
+   names it in `coverage.gaps` rather than omitting the map. Media routes (ASR, VLM description — `media_design.md` §2) emit
    time-range / image-region locators the same way. Tools that expose real layout use it to
    render *better-segmented Markdown* (true paragraph breaks, correctly fenced tables) —
    structure informs rendering; it never bypasses the next step.
@@ -203,6 +211,11 @@ by **semchunk** (the imposed constraint, kept as the packer) to the token budget
   becomes its own oversized chunk rather than being split mid-row; a pathological giant
   paragraph falls back to deterministic sentence-splitting.
 - **Never cross a section boundary** (§3 makes this well-defined).
+- **Never mix extraction eligibility** (D133). The extraction eligibility policy marks some
+  `derivation_kind`s as searchable but not claim-extracted (a data profile's structure
+  tables). A chunk boundary is forced wherever eligibility changes between blocks, so every
+  chunk is wholly eligible or wholly ineligible; `chunks.extraction_eligible` records it and
+  E2 schedules Selection only for eligible chunks (`format_conversion_design.md` §4.5).
 - **No overlap — rejected outright**, three reasons in order of severity: (1) overlap
   **double-extracts** — the same sentence in two chunks yields duplicate claims *within one
   generation*, re-polluting the evidence counting D54 just fixed, and doubles extraction cost
@@ -323,9 +336,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
   facts + extractor_version + structurer_version)` — where **stable header facts** are the
-  deterministic document metadata the E2 bundle feeds the extractor: title, source kind,
-  source-modified/published date, language (from `documents`/`document_versions`; never
-  LLM-derived) — **no LLM *output* participates in the
+  deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
+  (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
+  the old one), source kind, source-modified/published date, language (from
+  `documents`/`document_versions`/`document_metadata`; never LLM-derived) — **no LLM *output* participates in the
   key** (refines D56's original sketch, which had let the section path and prefix in — a key
   no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
   `structurer_version` — a stable config string, not LLM output — closes the context-drift

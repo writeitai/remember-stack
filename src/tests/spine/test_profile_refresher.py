@@ -26,6 +26,7 @@ from rememberstack.spine.profile_refresher import _acquire_profile_lock
 from rememberstack.spine.profile_refresher import _locked_profile_state
 from rememberstack.spine.profile_refresher import profile_refresh_targets
 from rememberstack.spine.settings import load_database_settings
+from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("b1000000-0000-0000-0000-000000000001")
@@ -95,7 +96,7 @@ def database_engine() -> Iterator[Engine]:
         pytest.skip("REMEMBERSTACK_DATABASE_URL is required for profile proofs")
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -518,54 +519,46 @@ def test_refresh_targets_include_nested_redirect_intermediates(
     assert set(targets) == {_FIRST_ENTITY, _SECOND_ENTITY, root}
 
 
-def test_capped_fact_cannot_outrank_the_open_current_profile(
+def test_profile_keeps_dated_history_beside_an_open_fact(
     database_engine: Engine,
 ) -> None:
-    """A still-evidenced superseded relation is not current identity evidence."""
-    replacement = uuid4()
-    with database_engine.begin() as connection:
-        connection.execute(
-            text(
-                "UPDATE entities SET canonical_name = 'Acme' WHERE entity_id = :entity"
-            ),
-            {"entity": _SECOND_ENTITY},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
-                " normalized_name) VALUES (:entity, :deployment, 'Globex', 'globex')"
-            ),
-            {"entity": replacement, "deployment": _DEPLOYMENT_ID},
-        )
-        connection.execute(
-            text(
-                "INSERT INTO relations (relation_id, deployment_id,"
-                " subject_entity_id, predicate, object_entity_id, valid_until,"
-                " evidence_count, normalizer_version) VALUES"
-                " (:old, :deployment, :subject, 'works_for', :old_object, now(),"
-                " 10, 'profile-test'),"
-                " (:current, :deployment, :subject, 'works_for', :new_object, NULL,"
-                " 1, 'profile-test')"
-            ),
-            {
-                "old": uuid4(),
-                "current": uuid4(),
-                "deployment": _DEPLOYMENT_ID,
-                "subject": _FIRST_ENTITY,
-                "old_object": _SECOND_ENTITY,
-                "new_object": replacement,
-            },
-        )
-    provider = FakeModelProvider()
+    """A profile is a dated history summary, so a completed job remains visible."""
+    from tests.fact_application_support import WriterCase
 
+    case = WriterCase(engine=database_engine)
+    _, first = case.stage(day=10, kind="relation", predicate="works_for")
+    case.decide(
+        decision={
+            "target": {"new_handle": "old"},
+            "new_facts": [{"handle": "old", "assertion_application_id": str(first)}],
+        }
+    )
+    case.apply(app=first)
+    claim, app = case.stage(day=12, kind="relation", predicate="works_for")
+    case.decide(
+        decision={
+            "target": {"new_handle": "current"},
+            "new_facts": [{"handle": "current", "assertion_application_id": str(app)}],
+            "window": {
+                "window": {
+                    "valid_from": "2022-05-12T00:00:00Z",
+                    "valid_precision": "open",
+                },
+                "supporting_claim_ids": [str(claim)],
+            },
+        }
+    )
+    case.apply(app=app)
+    provider = FakeModelProvider()
     result = EntityProfileRefresher(
         engine=database_engine,
         model_provider=provider,
         embedding_model="profile-embed-test",
-    ).refresh(deployment_id=_DEPLOYMENT_ID, entity_id=_FIRST_ENTITY)
-
-    assert result.salient_facts == ("Jan works for Globex",)
-    assert "Acme" not in provider.embedded_texts[0]
+    ).refresh(deployment_id=case.dep, entity_id=case.subject)
+    assert len(result.salient_facts) == 2
+    assert any("2022-05-10" in fact for fact in result.salient_facts)
+    assert any("since 2022-05-12" in fact for fact in result.salient_facts)
+    assert all("(valid:" in fact for fact in result.salient_facts)
 
 
 def test_backfill_batches_active_entities_and_debounces_on_retry(

@@ -105,6 +105,7 @@ EXPECTED_ENUMS: Final = (
 )
 EXPECTED_TABLES: Final = (
     "aliases",
+    "application_context_bindings",
     "canary_cases",
     "chunk_claims",
     "chunk_search",
@@ -118,6 +119,9 @@ EXPECTED_TABLES: Final = (
     "deployments",
     "document_crossrefs",
     "document_entity_bindings",
+    "document_metadata",
+    "document_names",
+    "document_people",
     "document_representations",
     "document_skeleton_checks",
     "document_sections",
@@ -129,6 +133,8 @@ EXPECTED_TABLES: Final = (
     "eval_runs",
     "extension_packs",
     "forget_manifests",
+    "fact_applications",
+    "normalization_outputs",
     "golden_claim_labels",
     "golden_pairs",
     "grounding_audits",
@@ -153,6 +159,7 @@ EXPECTED_TABLES: Final = (
     "observation_adjudications",
     "observation_evidence",
     "observations",
+    "perimeter_state",
     "pipeline_component_versions",
     "predicates",
     "processing_state",
@@ -171,6 +178,7 @@ EXPECTED_TABLES: Final = (
     "saved_query_versions",
     "scope_interests",
     "scopes",
+    "selection_results",
     "surface_cost_ledger",
     "surface_cost_meter_state",
     "testimony_currency_events",
@@ -182,6 +190,7 @@ EXPECTED_INDEXES: Final = (
     "ix_aliases_lemma_dm",
     "ix_aliases_lemma_exact",
     "ix_aliases_lemma_trgm",
+    "ix_application_context_entity",
     "ix_chunkclaims_claim",
     "ix_chunk_search_bm25",
     "ix_chunk_search_embedding_hnsw",
@@ -206,6 +215,12 @@ EXPECTED_INDEXES: Final = (
     "ix_cxd_chunk",
     "ix_cxd_drops",
     "ix_docreps_version",
+    "ix_document_metadata_family",
+    "ix_document_metadata_thread",
+    "ix_document_names_bm25",
+    "ix_document_names_trgm",
+    "ix_document_people_address",
+    "ix_document_people_name",
     "ix_documents_entity",
     "ix_documents_live",
     "ix_docversions_doc",
@@ -265,6 +280,8 @@ EXPECTED_INDEXES: Final = (
     "ix_sections_doc",
     "ix_sections_parent",
     "ix_sections_role",
+    "ix_selection_results_representation",
+    "ix_selection_results_reuse",
     "ix_skeleton_checks_representation",
     "ix_structure_generations_representation",
     "ix_surface_cost_export",
@@ -336,14 +353,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
-EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 75,
-    "f": 123,
-    "n": 538,
-    "p": 70,
-    "u": 35,
-    "x": 1,
-}
+EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 99, "f": 137, "n": 598, "p": 78, "u": 39}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -358,6 +368,7 @@ DECISION_OBJECTS: Final = {
     "D54": ("testimony_currency_events", "ix_claims_current"),
     "D55": ("document_versions", "document_representations"),
     "D56": ("chunks", "chunk_claims"),
+    "D119": ("chunk_claims",),
     "D57": ("document_sections", "document_representations"),
     "D65": ("documents", "document_versions", "document_representations"),
     "D67": ("processing_state", "cost_ledger", "ix_procstate_due"),
@@ -381,6 +392,16 @@ DECISION_OBJECTS: Final = {
         "ix_claims_current_bm25",
     ),
     "D102": ("document_entity_bindings",),
+    "D122": ("selection_results",),
+    "D123": ("application_context_bindings",),
+    "D134": (
+        "document_metadata",
+        "document_names",
+        "document_people",
+        "ix_document_names_trgm",
+        "ix_document_names_bm25",
+    ),
+    "D136": ("perimeter_state",),
 }
 
 
@@ -591,7 +612,7 @@ def verify_schema(connection: Connection) -> CatalogInventory:
         )
     )
     required_constraint_fragments = (
-        "exclude using gist",
+        "unique (deployment_id, claim_id, normalizer_version, output_kind, output_ordinal, adjudicator_version)",
         "num_nonnulls(claim_lineage_id, relation_id, doc_id) = 1",
         "(claim_lineage_id is null) = (claim_chunk_content_hash is null)",
         "num_nonnulls(artifact_id, subscription_id) = 1",

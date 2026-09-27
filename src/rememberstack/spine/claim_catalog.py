@@ -14,13 +14,19 @@ from sqlalchemy import JSON
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from rememberstack.core.source_passages import origin_span_from_record
+from rememberstack.core.source_passages import spans_as_json
+from rememberstack.core.source_passages import spans_from_json
 from rememberstack.model import ClaimForEmbedding
 from rememberstack.model import ClaimForNormalization
 from rememberstack.model import ClaimRecord
 from rememberstack.model import DecisionRecord
+from rememberstack.model import EvidenceSpan
 from rememberstack.model.occurrence_provenance import OccurrenceProvenance
 from rememberstack.model.occurrence_provenance import ReusedClaimAnchor
 from rememberstack.ports.p1_index import CLAIM_INPUT_POLICY
+from rememberstack.spine.selection_catalog import require_extraction_sources_on
+from rememberstack.spine.selection_catalog import SelectionCatalog
 
 
 class ClaimCatalog:
@@ -29,6 +35,7 @@ class ClaimCatalog:
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine
+        self.selections = SelectionCatalog(engine=engine)
 
     def chunk_already_extracted(
         self, *, chunk_id: UUID, extractor_version: str
@@ -56,6 +63,7 @@ class ClaimCatalog:
         doc_id: UUID,
         version_id: UUID,
         extraction_input_hash: str,
+        claimify_input_hash: str | None = None,
     ) -> UUID | None:
         """The D56 reuse lookup: an already-extracted chunk with the same key.
 
@@ -67,7 +75,8 @@ class ClaimCatalog:
         processing (a queued v2 must not adopt a fast v3's claims), and two
         identical runs WITHIN one version keep their own extractions — their
         bundles can differ in section role, which the key deliberately omits
-        (roles are LLM output). The nearest earlier version wins.
+        (roles are LLM output). The nearest earlier version wins. A deleted
+        version is never a reuse source (D135).
         """
         with self._engine.connect() as connection:
             return connection.execute(
@@ -77,16 +86,17 @@ class ClaimCatalog:
                     "doc_id": doc_id,
                     "version_id": version_id,
                     "extraction_input_hash": extraction_input_hash,
+                    "claimify_input_hash": claimify_input_hash,
                 },
             ).scalar_one_or_none()
 
     def claims_for_occurrence_reuse(
         self, *, chunk_id: UUID
     ) -> tuple[ReusedClaimAnchor, ...]:
-        """Prior occurrence identities and verbatim spans for target re-anchoring.
+        """Prior occurrence identities and evidence spans for window remapping.
 
-        ``source_span`` is the immutable claim text slice; prior char offsets
-        belong to the prior document.md and are deliberately not returned.
+        Prior absolute offsets belong to the prior document.md and must be
+        translated through content-identical extraction windows, never copied.
         """
         with self._engine.connect() as connection:
             rows = (
@@ -96,7 +106,12 @@ class ClaimCatalog:
                 .mappings()
                 .all()
             )
-        return tuple(ReusedClaimAnchor.model_validate(dict(row)) for row in rows)
+        anchors: list[ReusedClaimAnchor] = []
+        for row in rows:
+            payload = dict(row)
+            payload["evidence_spans"] = spans_from_json(payload.get("evidence_spans"))
+            anchors.append(ReusedClaimAnchor.model_validate(payload))
+        return tuple(anchors)
 
     def attach_reused_claims(
         self,
@@ -105,6 +120,8 @@ class ClaimCatalog:
         chunk_id: UUID,
         prior_chunk_id: UUID,
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
+        evidence_spans: Mapping[UUID, tuple[EvidenceSpan, ...]] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> int:
         """Re-attach a prior chunk's claims to a new version's chunk (D56/F4).
 
@@ -121,9 +138,26 @@ class ClaimCatalog:
         empty).
         """
         with self._engine.begin() as connection:
+            if claimify_input_hash is not None:
+                require_extraction_sources_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    chunk_ids=(chunk_id, prior_chunk_id),
+                )
             prior_links = connection.execute(
                 _COUNT_CHUNK_CLAIMS, {"chunk_id": prior_chunk_id}
             ).scalar_one()
+            if claimify_input_hash is not None:
+                existing = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
+                    ),
+                    {"chunk_id": chunk_id},
+                ).scalar_one()
+                if existing is not None:
+                    if existing != claimify_input_hash:
+                        raise ValueError("Claimify completion has different inputs")
+                    return prior_links
             if prior_links:
                 claim_ids = connection.execute(
                     _SELECT_DISTINCT_CHUNK_CLAIM_IDS, {"chunk_id": prior_chunk_id}
@@ -133,6 +167,15 @@ class ClaimCatalog:
                     provenance = (
                         None if occurrences is None else occurrences.get(claim_uuid)
                     )
+                    spans = (
+                        None
+                        if evidence_spans is None
+                        else evidence_spans.get(claim_uuid)
+                    )
+                    if not spans:
+                        raise ValueError(
+                            f"reused claim {claim_uuid} has no remapped evidence spans"
+                        )
                     connection.execute(
                         _INSERT_CHUNK_CLAIM,
                         _chunk_claim_params(
@@ -140,8 +183,21 @@ class ClaimCatalog:
                             chunk_id=chunk_id,
                             claim_id=claim_uuid,
                             provenance=provenance,
+                            evidence_spans=spans,
                         ),
                     )
+            if claimify_input_hash is not None:
+                if not prior_links:
+                    copied = connection.execute(
+                        _COPY_CHUNK_DECISIONS,
+                        {"chunk_id": chunk_id, "prior_chunk_id": prior_chunk_id},
+                    ).rowcount
+                    if not copied:
+                        raise ValueError("reused extraction has no terminal evidence")
+                connection.execute(
+                    _STAMP_CLAIMIFY,
+                    {"chunk_id": chunk_id, "input_hash": claimify_input_hash},
+                )
         return prior_links
 
     def copy_reused_decisions(self, *, chunk_id: UUID, prior_chunk_id: UUID) -> int:
@@ -248,6 +304,7 @@ class ClaimCatalog:
         claims: tuple[ClaimRecord, ...],
         decisions: tuple[DecisionRecord, ...],
         occurrences: Mapping[UUID, OccurrenceProvenance] | None = None,
+        claimify_input_hash: str | None = None,
     ) -> None:
         """Land one chunk's claims, occurrence links, and decisions atomically.
 
@@ -258,7 +315,25 @@ class ClaimCatalog:
         """
         if not claims and not decisions:
             return
+        owner = claims[0] if claims else decisions[0]
         with self._engine.begin() as connection:
+            if claimify_input_hash is not None:
+                require_extraction_sources_on(
+                    connection=connection,
+                    deployment_id=owner.deployment_id,
+                    chunk_ids=(owner.chunk_id,),
+                )
+                # A retry or concurrent helper cannot publish a second set of claims.
+                existing = connection.execute(
+                    text(
+                        "SELECT claimify_input_hash FROM chunks WHERE chunk_id=:chunk_id FOR UPDATE"
+                    ),
+                    {"chunk_id": owner.chunk_id},
+                ).scalar_one()
+                if existing is not None:
+                    if existing != claimify_input_hash:
+                        raise ValueError("Claimify completion has different inputs")
+                    return
             for claim in claims:
                 payload = claim.model_dump(mode="json")
                 payload["added_context"] = [
@@ -275,10 +350,19 @@ class ClaimCatalog:
                         chunk_id=claim.chunk_id,
                         claim_id=claim.claim_id,
                         provenance=provenance,
+                        evidence_spans=claim.evidence_spans
+                        or origin_span_from_record(
+                            char_start=claim.char_start, char_end=claim.char_end
+                        ),
                     ),
                 )
             for decision in decisions:
                 connection.execute(_INSERT_DECISION, decision.model_dump(mode="json"))
+            if claimify_input_hash is not None:
+                connection.execute(
+                    _STAMP_CLAIMIFY,
+                    {"chunk_id": owner.chunk_id, "input_hash": claimify_input_hash},
+                )
 
 
 _SELECT_EXTRACTED = text(
@@ -307,8 +391,14 @@ _SELECT_PRIOR_EXTRACTED = text(
     WHERE c.deployment_id = :deployment_id
       AND c.doc_id = :doc_id
       AND c.extraction_input_hash = :extraction_input_hash
+      AND (CAST(:claimify_input_hash AS text) IS NULL
+           OR c.claimify_input_hash = :claimify_input_hash)
       AND cv.version_no < (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
+      -- deleted testimony is never reused: its claims lost currency when
+      -- the version was deleted, and re-attaching them would leave the new
+      -- version silently testifying nothing (D135)
+      AND cv.deleted_at IS NULL
       AND (EXISTS (SELECT 1 FROM chunk_claims x WHERE x.chunk_id = c.chunk_id)
            OR EXISTS (SELECT 1 FROM claim_extraction_decisions d
                       WHERE d.chunk_id = c.chunk_id))
@@ -334,11 +424,11 @@ _SELECT_DISTINCT_CHUNK_CLAIM_IDS = text(
 
 _SELECT_CLAIMS_FOR_OCCURRENCE_REUSE = text(
     """
-    SELECT DISTINCT cl.claim_id, cl.source_span
+    SELECT DISTINCT ON (cl.claim_id) cl.claim_id, cc.evidence_spans
     FROM claims cl
     JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
     WHERE cc.chunk_id = :chunk_id
-    ORDER BY cl.claim_id
+    ORDER BY cl.claim_id, cc.created_at
     """
 )
 
@@ -350,14 +440,19 @@ _INSERT_CLAIM = text(
         is_attributed, anchor_ok, window_membership_ok,
         entailment_self_verdict, kept_flagged, extractor_version,
         asserted_at,
-        claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind
+        claim_valid_from, claim_valid_until, claim_valid_precision, claim_valid_kind,
+        own_document_name_span
     ) VALUES (
         :claim_id, :deployment_id, :doc_id, :chunk_id, :section_id,
         :claim_text, :source_span, :char_start, :char_end, :added_context,
         :is_attributed, true, true,
         :entailment_self_verdict, :kept_flagged, :extractor_version,
         :asserted_at,
-        :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind
+        :claim_valid_from, :claim_valid_until, :claim_valid_precision, :claim_valid_kind,
+        CASE WHEN CAST(:own_document_name_start AS integer) IS NULL THEN NULL
+             ELSE int4range(CAST(:own_document_name_start AS integer),
+                            CAST(:own_document_name_end AS integer))
+        END
     )
     """
 ).bindparams(bindparam("added_context", type_=JSON))
@@ -366,17 +461,20 @@ _INSERT_CHUNK_CLAIM = text(
     """
     INSERT INTO chunk_claims (
         deployment_id, chunk_id, claim_id,
-        derivation_kind, evidence_mode, source_locators
+        derivation_kind, evidence_mode, source_locators, evidence_spans
     )
     SELECT :deployment_id, :chunk_id, :claim_id,
-           :derivation_kind, :evidence_mode, :source_locators
+           :derivation_kind, :evidence_mode, :source_locators, :evidence_spans
     WHERE NOT EXISTS (
         SELECT 1 FROM chunk_claims existing
         WHERE existing.chunk_id = :chunk_id
           AND existing.claim_id = :claim_id
     )
     """
-).bindparams(bindparam("source_locators", type_=JSON(none_as_null=True)))
+).bindparams(
+    bindparam("source_locators", type_=JSON(none_as_null=True)),
+    bindparam("evidence_spans", type_=JSON),
+)
 
 _INSERT_DECISION = text(
     """
@@ -414,7 +512,10 @@ _COPY_CHUNK_DECISIONS = text(
 _SELECT_CLAIMS_FOR_CHUNKS = text(
     """
     SELECT cl.claim_id, cl.deployment_id, cl.doc_id, cl.chunk_id, cl.claim_text,
-           cl.is_attributed, cl.extractor_version
+           cl.is_attributed, cl.extractor_version, cl.asserted_at, cl.claim_valid_from,
+           cl.claim_valid_until, cl.claim_valid_precision::text, cl.claim_valid_kind::text,
+           lower(cl.own_document_name_span) AS own_document_name_start,
+           upper(cl.own_document_name_span) AS own_document_name_end
     FROM claims cl
     JOIN chunk_claims cc ON cc.claim_id = cl.claim_id
     WHERE cc.chunk_id = ANY(:chunk_ids)
@@ -425,7 +526,10 @@ _SELECT_CLAIMS_FOR_CHUNKS = text(
 _SELECT_CLAIM_FOR_NORMALIZE = text(
     """
     SELECT claim_id, deployment_id, doc_id, chunk_id, claim_text, is_attributed,
-           extractor_version
+           extractor_version, asserted_at, claim_valid_from, claim_valid_until,
+           claim_valid_precision::text, claim_valid_kind::text,
+           lower(own_document_name_span) AS own_document_name_start,
+           upper(own_document_name_span) AS own_document_name_end
     FROM claims
     WHERE claim_id = :claim_id
     """
@@ -475,6 +579,7 @@ def _chunk_claim_params(
     chunk_id: UUID,
     claim_id: UUID,
     provenance: OccurrenceProvenance | None,
+    evidence_spans: tuple[EvidenceSpan, ...],
 ) -> dict[str, object]:
     """Bind occurrence columns; absent provenance stays SQL NULL, not passthrough."""
     locators: list[dict[str, object]] | None = None
@@ -482,6 +587,8 @@ def _chunk_claim_params(
         locators = [
             locator.model_dump(mode="json") for locator in provenance.source_locators
         ]
+    if not evidence_spans:
+        raise ValueError("occurrence evidence_spans must be nonempty")
     return {
         "deployment_id": deployment_id,
         "chunk_id": chunk_id,
@@ -489,4 +596,10 @@ def _chunk_claim_params(
         "derivation_kind": None if provenance is None else provenance.derivation_kind,
         "evidence_mode": None if provenance is None else provenance.evidence_mode,
         "source_locators": locators,
+        "evidence_spans": spans_as_json(evidence_spans),
     }
+
+
+_STAMP_CLAIMIFY = text(
+    "UPDATE chunks SET claimify_input_hash=:input_hash WHERE chunk_id=:chunk_id"
+)

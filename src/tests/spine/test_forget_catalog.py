@@ -3,6 +3,7 @@
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -18,13 +19,19 @@ from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.model import DecisionRecord
+from rememberstack.model import DecisionType
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import ForgetInProgressError
 from rememberstack.model import ForgetManifest
 from rememberstack.model import ForgetManifestStatus
+from rememberstack.model import SelectionResponse
 from rememberstack.ports import ForgetManifestPort
+from rememberstack.spine import ClaimCatalog
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import ForgetCatalog
+from rememberstack.spine.selection_catalog import SelectionCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import HardForgetHandler
 from rememberstack.workers import HardForgetReadiness
@@ -321,15 +328,19 @@ def test_shared_survivor_profile_rebuild_removes_forgotten_phrase(
             {"deployment": _DEPLOYMENT_ID, "entity": _SHARED_ENTITY_ID},
         ).one()
     assert _TOKEN not in str(survivor_row.profile_summary)
-    assert "shared observation" in str(survivor_row.profile_summary)
+    assert "control claim" in str(survivor_row.profile_summary)
     assert survivor_row[1] is True
-    assert survivor_row.embedding_input_policy_version == "entity-profile-v2"
+    assert (
+        survivor_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
+    )
     assert survivor_row.embedding_text_hash != embedding_text_hash(old_input)
     assert _TOKEN not in str(absorbed_row.profile_summary)
-    assert "shared observation" in str(absorbed_row.profile_summary)
+    assert "control claim" in str(absorbed_row.profile_summary)
     assert absorbed_row[1] is True
     assert absorbed_row.embedding_model == "profile-test"
-    assert absorbed_row.embedding_input_policy_version == "entity-profile-v2"
+    assert (
+        absorbed_row.embedding_input_policy_version == "entity-profile-v3:dated-history"
+    )
     assert absorbed_row.embedding_text_hash != embedding_text_hash(old_input)
 
 
@@ -513,6 +524,59 @@ def _seed_documents(*, connection: Connection) -> None:
             ),
             {"rep": representation_id, "d": _DEPLOYMENT_ID, "version": version_id},
         )
+    for version_id, doc_id, marker in (
+        (_TARGET_VERSION_ID, _TARGET_DOC_ID, _TOKEN),
+        (_CONTROL_VERSION_ID, _CONTROL_DOC_ID, "control"),
+    ):
+        # D134 metadata, people and observed names are source-bearing.
+        connection.execute(
+            text(
+                "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                " family, file_name, source_path, title, thread_ref, extra,"
+                " metadata_mapping_version) VALUES (:d, :version, :doc, 'text',"
+                " :file_name, :path, :marker, :marker, CAST(:extra AS jsonb),"
+                " 'test')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "doc": doc_id,
+                "file_name": f"{marker}.txt",
+                "path": f"folder/{marker}",
+                "marker": marker,
+                "extra": json.dumps({"reply_to": marker}),
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_people (deployment_id, version_id, role,"
+                " ordinal, display_name, address, normalized_name,"
+                " normalized_address, provenance) VALUES (:d, :version, 'author',"
+                " 0, :marker, :address, :marker, :address, 'source')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "marker": marker,
+                "address": f"{marker}@example.com",
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_names (deployment_id, version_id,"
+                " observed_at, file_name, title, source_path, name_text, origin)"
+                " VALUES (:d, :version, now(), :file_name, :marker, :path,"
+                " :name_text, 'ingest')"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "version": version_id,
+                "file_name": f"{marker}.txt",
+                "marker": marker,
+                "path": f"folder/{marker}",
+                "name_text": f"{marker}.txt {marker} folder/{marker}",
+            },
+        )
     connection.execute(
         text(
             """
@@ -653,14 +717,15 @@ def _seed_evidence(*, connection: Connection) -> None:
         connection.execute(
             text(
                 "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
-                " source_locators, created_at) VALUES (:d, :chunk, :claim,"
-                " :locators, :at)"
+                " source_locators, evidence_spans, created_at)"
+                " VALUES (:d, :chunk, :claim, :locators, CAST(:spans AS jsonb), :at)"
             ),
             {
                 "d": _DEPLOYMENT_ID,
                 "chunk": chunk_id,
                 "claim": claim_id,
                 "locators": f'[{{"marker":"{body}"}}]',
+                "spans": '[{"char_start": 0, "char_end": 1}]',
                 "at": _NOW,
             },
         )
@@ -1217,6 +1282,9 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
             == 1
         )
         assert _count(connection, "chunk_claims", "claim_id", _TARGET_CLAIM_ID) == 0
+        for table in ("document_metadata", "document_people", "document_names"):
+            assert _count(connection, table, "version_id", _TARGET_VERSION_ID) == 0
+            assert _count(connection, table, "version_id", _CONTROL_VERSION_ID) == 1
         assert (
             _count(connection, "claim_extraction_decisions", "doc_id", _TARGET_DOC_ID)
             == 0
@@ -1260,7 +1328,7 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert exclusive_embedding == (None, None, None, None)
         assert connection.execute(
             text(
-                "SELECT embedding IS NOT NULL FROM entities"
+                "SELECT embedding IS NULL FROM entities"
                 " WHERE deployment_id = :d AND entity_id = :entity"
             ),
             {"d": _DEPLOYMENT_ID, "entity": _CONTROL_ENTITY_ID},
@@ -1365,6 +1433,18 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
                 " UNION ALL SELECT profile_summary FROM entities WHERE deployment_id = :d"
                 " UNION ALL SELECT page_summary FROM knowledge_artifacts"
                 "   WHERE deployment_id = :d"
+                " UNION ALL SELECT file_name FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT source_path FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT title FROM document_metadata WHERE deployment_id = :d"
+                " UNION ALL SELECT extra::text FROM document_metadata"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT display_name FROM document_people"
+                "   WHERE deployment_id = :d"
+                " UNION ALL SELECT address FROM document_people WHERE deployment_id = :d"
+                " UNION ALL SELECT name_text FROM document_names"
+                "   WHERE deployment_id = :d"
                 ") residual WHERE value LIKE '%' || :token || '%'"
             ),
             {"d": _DEPLOYMENT_ID, "token": _TOKEN},
@@ -1393,3 +1473,188 @@ def _deployment_rows(*, connection: Connection, table: str) -> int:
             {"d": _DEPLOYMENT_ID},
         ).scalar_one()
     )
+
+
+def test_mutable_fact_payloads_and_date_witnesses_are_erased(
+    seeded_engine: Engine,
+) -> None:
+    """Old manifests also remove new source outputs and mixed-source model payloads."""
+    from uuid import uuid4
+
+    catalog = ForgetCatalog(engine=seeded_engine)
+    catalog.prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
+    )
+    manifest = catalog.inventory_and_store_manifest(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=_TARGET_DOC_ID,
+        forget_id=_FORGET_ID,
+        requested_at=_NOW,
+    )
+    # Simulate restoring a store with D118 rows under an earlier portable inventory.
+    own, surviving = uuid4(), uuid4()
+    with seeded_engine.begin() as connection:
+        for claim, app, phrase in (
+            (_TARGET_CLAIM_ID, own, _TOKEN),
+            (_CONTROL_CLAIM_ID, surviving, "independent assertion"),
+        ):
+            connection.execute(
+                text("""INSERT INTO normalization_outputs
+                (deployment_id,claim_id,normalizer_version,output,accepted_outputs)
+                VALUES(:dep,:claim,'forget-test',jsonb_build_object('observations',
+                    jsonb_build_array(jsonb_build_object('statement',CAST(:phrase AS text)))), '[]')"""),
+                {"dep": _DEPLOYMENT_ID, "claim": claim, "phrase": phrase},
+            )
+            connection.execute(
+                text("""INSERT INTO fact_applications(application_id,deployment_id,
+                claim_id,normalizer_version,output_kind,output_ordinal,adjudicator_version,
+                subject_entity_id,attempt_id,input_hash,input_claim_ids,prepared,decision)
+                VALUES(:id,:dep,:claim,'forget-test','observation',0,'forget-test',:subject,
+                :attempt,'hash',CAST(:claims AS uuid[]),jsonb_build_object('source',CAST(:phrase AS text)),
+                jsonb_build_object('rationale',CAST(:phrase AS text)))"""),
+                {
+                    "id": app,
+                    "dep": _DEPLOYMENT_ID,
+                    "claim": claim,
+                    "subject": _SHARED_ENTITY_ID,
+                    "attempt": uuid4(),
+                    "claims": [_TARGET_CLAIM_ID, _CONTROL_CLAIM_ID],
+                    "phrase": _TOKEN,
+                },
+            )
+        for chunk, representation, phrase, app in (
+            (_TARGET_CHUNK_ID, _TARGET_REPRESENTATION_ID, _TOKEN, own),
+            (
+                _CONTROL_CHUNK_ID,
+                _CONTROL_REPRESENTATION_ID,
+                "independent reference",
+                surviving,
+            ),
+        ):
+            connection.execute(
+                text("""INSERT INTO selection_results
+                    (deployment_id,chunk_id,representation_id,extractor_version,
+                     selection_input_hash,output,cards)
+                    VALUES (:dep,:chunk,:rep,'forget-test','hash',
+                      jsonb_build_object('source',CAST(:phrase AS text)),
+                      jsonb_build_array(jsonb_build_object('quote',CAST(:phrase AS text))))"""),
+                {
+                    "dep": _DEPLOYMENT_ID,
+                    "chunk": chunk,
+                    "rep": representation,
+                    "phrase": phrase,
+                },
+            )
+            connection.execute(
+                text("""INSERT INTO application_context_bindings
+                    (deployment_id,application_id,ordinal,entity_id,resolver_decision_id)
+                    VALUES (:dep,:app,0,:entity,:decision)"""),
+                {
+                    "dep": _DEPLOYMENT_ID,
+                    "app": app,
+                    "entity": _SHARED_ENTITY_ID,
+                    "decision": uuid4(),
+                },
+            )
+        connection.execute(
+            text("""UPDATE observations SET valid_from='2022-01-01Z',
+            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[])
+            WHERE observation_id=:id"""),
+            {"claims": [_TARGET_CLAIM_ID], "id": _SHARED_OBSERVATION_ID},
+        )
+    catalog.accept_and_enqueue(manifest=manifest)
+    catalog.scrub_postgres(manifest=manifest)
+    catalog.scrub_postgres(manifest=manifest)
+    catalog.verify_postgres_scrubbed(manifest=manifest)
+    with seeded_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM fact_applications WHERE application_id=:id"),
+                {"id": own},
+            ).scalar_one()
+            == 0
+        )
+        assert connection.execute(
+            text("SELECT chunk_id FROM selection_results WHERE deployment_id=:dep"),
+            {"dep": _DEPLOYMENT_ID},
+        ).scalars().all() == [_CONTROL_CHUNK_ID]
+        assert connection.execute(
+            text(
+                "SELECT application_id FROM application_context_bindings WHERE deployment_id=:dep"
+            ),
+            {"dep": _DEPLOYMENT_ID},
+        ).scalars().all() == [surviving]
+        row = connection.execute(
+            text(
+                "SELECT attempt_id,prepared,decision,input_claim_ids FROM fact_applications WHERE application_id=:id"
+            ),
+            {"id": surviving},
+        ).one()
+        assert tuple(row) == (None, None, None, [_CONTROL_CLAIM_ID])
+        row = connection.execute(
+            text(
+                "SELECT valid_from,valid_until,valid_precision,window_claim_ids,statement FROM observations WHERE observation_id=:id"
+            ),
+            {"id": _SHARED_OBSERVATION_ID},
+        ).one()
+        assert tuple(row[:4]) == (None, None, "unknown", [])
+        assert _TOKEN not in row[4]
+
+
+@pytest.mark.parametrize("phase", ("selection", "claimify"))
+def test_late_extraction_response_cannot_publish_after_forget_starts(
+    seeded_engine: Engine, phase: str
+) -> None:
+    """Both actual publication APIs reject a response after forget was prepared."""
+    catalog = ForgetCatalog(engine=seeded_engine)
+    catalog.prepare(
+        deployment_id=_DEPLOYMENT_ID, doc_id=_TARGET_DOC_ID, forget_id=_FORGET_ID
+    )
+    with pytest.raises(ForgetInProgressError):
+        if phase == "selection":
+            SelectionCatalog(engine=seeded_engine).freeze(
+                deployment_id=_DEPLOYMENT_ID,
+                representation_id=_TARGET_REPRESENTATION_ID,
+                chunk_id=_TARGET_CHUNK_ID,
+                extractor_version="forget-test",
+                input_hash="hash",
+                selection=SelectionResponse(candidates=()),
+                cards=(),
+                diagnostics=(),
+                truncated=False,
+            )
+        else:
+            ClaimCatalog(engine=seeded_engine).record_extraction(
+                claims=(),
+                decisions=(
+                    DecisionRecord(
+                        decision_id=_FORGET_ID,
+                        deployment_id=_DEPLOYMENT_ID,
+                        doc_id=_TARGET_DOC_ID,
+                        chunk_id=_TARGET_CHUNK_ID,
+                        claim_id=None,
+                        decision_type=DecisionType.CLAIMIFY_OMITTED,
+                        source_span=_TOKEN,
+                        reason=None,
+                        edit_detail=None,
+                        protected_class=None,
+                        extractor_version="forget-test",
+                    ),
+                ),
+                claimify_input_hash="hash",
+            )
+    with seeded_engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM selection_results")
+            ).scalar_one()
+            == 0
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM claim_extraction_decisions WHERE extractor_version='forget-test'"
+                )
+            ).scalar_one()
+            == 0
+        )

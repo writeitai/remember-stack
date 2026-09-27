@@ -8,6 +8,7 @@ against the live spine (D48), every answer carrying the D49 envelope.
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import json
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -46,14 +47,13 @@ from rememberstack.spine import EntityRegistry
 from rememberstack.spine import FactCatalog
 from rememberstack.spine import ForgetCatalog
 from rememberstack.spine import LifecycleCatalog
-from rememberstack.spine import ObservationAdjudicator
-from rememberstack.spine import ObservationSettings
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
-from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
+from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import build_api
 from rememberstack.surfaces import QueryEngine
@@ -76,9 +76,11 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 from tests.t4_test_doubles import match_first_t4_candidate
+from tests.workers.e3_test_doubles import same_fact_application_answer
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("a0000000-0000-0000-0000-000000000001")
@@ -115,12 +117,12 @@ _PAYLOADS: dict[str, dict[str, object]] = {
         "claims": [
             {
                 "claim_text": "Alice Novak joined Acme in 2024.",
-                "source_span": "Alice Novak joined Acme in 2024.",
+                "source_refs": ["S1"],
                 "entailment_self_verdict": True,
             },
             {
                 "claim_text": "Alice Novak works for Acme.",
-                "source_span": "Alice Novak works for Acme as an engineer.",
+                "source_refs": ["S3"],
                 "entailment_self_verdict": True,
             },
         ]
@@ -145,6 +147,21 @@ _PAYLOADS: dict[str, dict[str, object]] = {
 
 def _provider_response(prompt: str, type_name: str) -> dict[str, object]:
     """Serve canned chain payloads and a dynamic valid T4 selection."""
+    if type_name == "PromptFactDecision":
+        answer = same_fact_application_answer(prompt=prompt)
+        inputs = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
+        incoming = next(
+            item
+            for item in inputs["assertions"]
+            if item["handle"] == inputs["incoming_assertion"]
+        )
+        # This retrieval fixture gives the writer an explicit chosen open window;
+        # claim raw-date tests below remain independent of fact interpretation.
+        answer["window"] = {
+            "window": {"valid_from": "2024-01-01T00:00:00Z", "valid_precision": "open"},
+            "supporting_claims": [incoming["claim"]],
+        }
+        return answer
     if type_name == "T4Selection":
         return match_first_t4_candidate(prompt, type_name)
     return _PAYLOADS[type_name]
@@ -177,7 +194,7 @@ def database_engine() -> Iterator[Engine]:
         )
     config = Config(str(_ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
-    command.downgrade(config=config, revision="base")
+    reset_database(config=config)
     command.upgrade(config=config, revision="head")
     engine = create_engine(database_url)
     try:
@@ -267,28 +284,30 @@ class _ApiRig:
                 model_provider=self.provider,
                 chunk_index=self.p1,
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )
-        registry.register(
-            stage=PipelineStage.EXTRACT_CLAIMS,
-            handler=ExtractClaimsHandler(
-                catalog=claim_catalog,
-                chunk_catalog=chunk_catalog,
-                artifact_store=artifact_store,
-                model_provider=self.provider,
-                settings=E2Settings(),
-                chunker_version=generation,
-            ),
+        extraction = ExtractClaimsHandler(
+            catalog=claim_catalog,
+            chunk_catalog=chunk_catalog,
+            artifact_store=artifact_store,
+            model_provider=self.provider,
+            settings=E2Settings(),
+            chunker_version=generation,
         )
+        registry.register(stage=PipelineStage.EXTRACT_CLAIMS, handler=extraction)
+        registry.register(stage=PipelineStage.GROUND_CLAIMS, handler=extraction)
         facts = FactCatalog(engine=engine)
         profile_refresher = EntityProfileRefresher(
             engine=engine,
             model_provider=self.provider,
             embedding_model=P1Settings().embedding_model,
         )
-        obs_adjudicator = ObservationAdjudicator(
-            engine=engine, model_provider=self.provider, settings=ObservationSettings()
+        obs_adjudicator = FactAdjudicator(
+            engine=engine,
+            model_provider=self.provider,
+            settings=FactAdjudicationSettings(),
         )
         registry.register(
             stage=PipelineStage.NORMALIZE_RELATIONS,
@@ -326,9 +345,7 @@ class _ApiRig:
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=SupersessionSettings(),
+                    engine=engine, model_provider=self.provider
                 ),
                 profile_refresher=profile_refresher,
             ),
@@ -358,6 +375,7 @@ class _ApiRig:
         registry.register(
             stage=PipelineStage.LABEL_RELATION,
             handler=LabelFactsHandler(
+                profile_refresher=profile_refresher,
                 facts=FactCatalog(engine=engine),
                 model_provider=self.provider,
                 fact_index=self.p1,
@@ -396,6 +414,7 @@ class _ApiRig:
             PipelineStage.CHUNK,
             PipelineStage.EMBED_CHUNK,
             PipelineStage.EXTRACT_CLAIMS,
+            PipelineStage.GROUND_CLAIMS,
             PipelineStage.NORMALIZE_RELATIONS,
             PipelineStage.ADJUDICATE_OBSERVATIONS,
             PipelineStage.ADJUDICATE_SUPERSESSION,
@@ -552,9 +571,77 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     assert relations["grain"] == "fact"
     (fact,) = relations["facts"]
     assert fact["label"] == "Alice Novak works for Acme"
+    assert fact["validity"]["valid_from"] is not None
     assert fact["evidence_count"] == 1
     assert fact["validity"]["invalidated_at"] is None
     assert relations["freshness"]["pg_live_ts"] is not None
+
+
+def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
+    """G28: a lookup never returns an unbounded list; a cap is disclosed."""
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id,"
+                " normalizer_version, evidence_count, ingested_at, valid_from,"
+                " valid_precision, window_claim_ids) VALUES"
+                " (:relation_id, :deployment_id, :subject_id, 'member_of',"
+                " :object_id, 'g28', 1, now(), '2024-01-01Z', 'open',"
+                " ARRAY[:claim]::uuid[])"
+            ),
+            {
+                "relation_id": uuid4(),
+                "claim": uuid4(),
+                "deployment_id": _DEPLOYMENT_ID,
+                "subject_id": alice["entity_id"],
+                "object_id": acme["entity_id"],
+            },
+        )
+    capped = rig.client.get(
+        "/lookup/relations", params={"subject_entity_id": alice["entity_id"], "k": 1}
+    ).json()
+    assert len(capped["facts"]) == 1
+    assert capped["truncation"]["truncated"] is True
+    assert capped["truncation"]["returned"] == 1
+    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    assert capped["truncation"]["total_is_exact"] is False
+
+    unfiltered = rig.client.get("/lookup/relations").json()
+    assert len(unfiltered["facts"]) == 2
+    assert unfiltered["truncation"] is None
+
+
+def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) -> None:
+    """G28: the direct entity read is capped by `k` like the semantic one."""
+    acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version,"
+                " evidence_count, ingested_at)"
+                " SELECT :observation_id, deployment_id, subject_entity_id,"
+                " 'Acme is based in Prague.', normalizer_version, 1, now()"
+                " FROM observations WHERE subject_entity_id = :entity_id LIMIT 1"
+            ),
+            {"observation_id": uuid4(), "entity_id": acme["entity_id"]},
+        )
+    capped = rig.client.get(
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 1}
+    ).json()
+    assert len(capped["facts"]) == 1
+    assert capped["truncation"]["truncated"] is True
+    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    whole = rig.client.get(
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 2}
+    ).json()
+    assert len(whole["facts"]) == 2
+    assert whole["truncation"] is None
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:
@@ -607,8 +694,28 @@ def test_s5_sources_via_the_hydration_chain(rig: _ApiRig) -> None:
     assert source["markdown_uri"].endswith("/document.md")
 
 
+def _clear_uncalibrated_entity_profiles(*, rig: _ApiRig) -> None:
+    """Remove fake vectors so negative canaries exercise an honest T3 miss."""
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE entities SET profile_summary = NULL, embedding = NULL,"
+                " embedding_model = NULL, embedding_input_policy_version = NULL,"
+                " embedding_text_hash = NULL"
+                " WHERE deployment_id = :deployment"
+            ),
+            {"deployment": _DEPLOYMENT_ID},
+        )
+
+
 def test_s39_negative_taxonomy_distinguishes_unknown_from_empty(rig: _ApiRig) -> None:
-    """S39: unknown entity vs known entity with no facts are typed differently."""
+    """S39: unknown entity vs known entity with no facts are typed differently.
+
+    Profile vectors written by the deterministic fake embedder are not a
+    calibrated similarity space, so this proof clears them. A string miss
+    with no admissible embedding neighbor stays `unknown_entity`.
+    """
+    _clear_uncalibrated_entity_profiles(rig=rig)
     unknown = rig.client.get("/resolve", params={"name": "Contoso"}).json()
     assert unknown["negative"]["kind"] == "unknown_entity"
     assert unknown["entities"] == []
@@ -714,12 +821,13 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
                 text(
                     "INSERT INTO relations (relation_id, deployment_id,"
                     " subject_entity_id, predicate, object_entity_id,"
-                    " normalizer_version, evidence_count, ingested_at) VALUES"
+                    " normalizer_version, evidence_count, ingested_at, valid_from, valid_precision, window_claim_ids) VALUES"
                     " (:relation_id, :deployment_id, :subject_id, :predicate,"
-                    " :object_id, 's51-spike', 1, now())"
+                    " :object_id, 's51-spike', 1, now(), '2024-01-01Z', 'open', ARRAY[:claim]::uuid[])"
                 ),
                 {
                     "relation_id": relation_id,
+                    "claim": claim_id,
                     "deployment_id": _DEPLOYMENT_ID,
                     "subject_id": subject_id,
                     "predicate": predicate,
@@ -988,7 +1096,7 @@ def test_expired_valid_window_is_not_a_current_fact(rig: _ApiRig) -> None:
         connection.execute(
             text(
                 "UPDATE relations SET valid_from = '2020-01-01+00',"
-                " valid_until = '2021-01-01+00'"
+                " valid_until = '2021-01-01+00', valid_precision='year'"
             )
         )
     answer = rig.client.get(
@@ -1062,6 +1170,10 @@ def test_wp17_skeleton_eval_suite_runs_green_and_blocks_on_breakage(
     from rememberstack.model import EvalSuite
     from rememberstack.workers import P1Settings as _P1Settings
 
+    # The deterministic fake embedder is not a calibrated similarity space;
+    # without this fixture normalization every arbitrary unknown can exceed
+    # the production T3 floor against an unrelated entity profile.
+    _clear_uncalibrated_entity_profiles(rig=rig)
     seed_skeleton_canaries(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
     seed_skeleton_canaries(  # idempotent: re-seeding never duplicates
         engine=rig.engine, deployment_id=_DEPLOYMENT_ID
