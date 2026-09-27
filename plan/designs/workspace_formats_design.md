@@ -43,7 +43,7 @@ Search-only uses D133 §4.5's eligibility mechanism: converters label every rang
 `derivation_kind`; the eligibility policy lists the kinds that are never claim-extracted; E1 cuts
 chunks where eligibility changes and E2 schedules Selection only for eligible chunks. The
 ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
-`profile_sample` and `file_card`. Everything else a converter emits is prose.
+`profile_sample`, `file_card` and `pdf_page_status`. Everything else a converter emits is prose.
 
 ## 3. Detection and routing
 
@@ -86,7 +86,9 @@ provider ceiling give one effective pre-OCR limit of 50 MB.
 
 ## 4. The family table
 
-Text is read in full up to **1 MB**; beyond that, the head/tail profile of §5.2.
+Text-converter families are read in full up to **1 MB**; beyond that, they use
+the head/tail profile of §5.2. PDFs use their OCR limit in §3 and are never
+sent to a head/tail profile.
 
 | Family | Extensions | Converter | Outcome |
 |---|---|---|---|
@@ -143,10 +145,11 @@ column and file names are all in the text) and by `search_documents`.
 
 ### 5.2 Head/tail profile for large text
 
-Any text-read family (prose, code, config, logs) over 1 MB gets: line count, byte size, the first
+Any text-converter family (prose text, code, config, logs) over 1 MB gets: line count, byte size, the first
 50 lines and the last 20 lines, each line cut to 500 characters. `large_text`, search-only. A
 379 MB tab-separated data file whose extension is `.txt`, or a 2 MB JSON export, is described,
-not read.
+not read. PDFs do not use this profile: every PDF at or below its effective
+pre-OCR limit is OCR'd in full, even when its byte size exceeds 1 MB.
 
 ## 6. Cards
 
@@ -175,22 +178,35 @@ stored and served as always (D51); the agent opens it with its own tools.
   one process per file, a fresh temporary profile directory per call
   (`-env:UserInstallation=file:///<tmp>`), a 120-second limit, no network. A deployment without
   LibreOffice parks those extensions under D117 until it is installed.
-- **PDF.** The converter OCRs every page, whether the PDF is born-digital,
-  scanned or mixed, and renders one page-located reading in `document.md`.
+- **PDF.** Before OCR, the converter counts source pages from the PDF's
+  structural page tree, without reading any text layer. An invalid or
+  encrypted PDF whose pages cannot be counted fails with a typed reason and
+  no reading. The converter OCRs every counted page, whether the PDF is
+  born-digital, scanned or mixed, and renders one page-located reading in
+  `document.md`.
   It never inspects a text layer to choose a route, extracts text from that
   layer instead of OCR, or falls back to it after OCR failure. A successful
   OCR page with no visible text is recorded as empty; a failed or unreadable
   page is an explicit coverage gap/failure, never a silently omitted page.
+  A successful OCR response with no visible text gets a `## Page N` marker
+  in `document.md`, mapped to that page and labeled `pdf_page_status` /
+  `computed`, which is extraction-ineligible. If the OCR response omits any
+  counted page index, the converter records those indexes in its failure
+  details and fails the version without publishing a partial reading. A
+  whole-document provider-limit failure also fails the version; neither
+  failure produces a card or `document.md` reading.
   The provider requirement is part of the registry entry; without a configured
   OCR provider the file parks under D117. An **accepted PDF page** is a source
-  page in a valid PDF admitted under §3's effective pre-OCR limit. The engine
+  page in a valid PDF whose structural page count is known and that passed
+  §3's effective pre-OCR limit. The engine
   records only `scan_page` with quantity equal to that source page count,
-  including empty OCR pages and response gaps; an admission failure has zero
-  accepted pages. Provider-reported `pages_processed` is diagnostic evidence,
-  not this quantity. The separate managed cloud maps the same count to one
+  including empty OCR pages and missing response indexes; an admission
+  failure has zero accepted pages. Provider-reported `pages_processed` is
+  diagnostic evidence, not this quantity. The separate managed cloud maps the same count to one
   `doc-scan` receipt and does not add a `doc-text` charge for the PDF; that
   mapping requires a cloud implementation change. The source map retains one
-  `page` locator per page when conversion succeeds, and the
+  `page` locator per page when conversion succeeds, including the empty-page
+  status marker, and the
   converter/route version pins the representation for re-conversion.
 - **Email.** Python's `email` package; the plain-text part, or HTML converted with markitdown.
 - **Notebook.** JSON cells in order; outputs are dropped.
@@ -230,10 +246,14 @@ end-to-end check across the real 89-extension workspace.
 
 PDF fixtures include born-digital, scanned and mixed pages; each accepted page
 must have an OCR attempt and, on success, a page locator, with no text-layer
-bypass on empty OCR or provider failure. Test an overlay attempting to route
+bypass on empty OCR or provider failure. Test a 2 MB PDF below the effective
+OCR limit: it is OCR'd in full, not head/tail profiled. Test an overlay attempting to route
 PDFs to text extraction; it must be rejected. Test a PDF over the effective
 pre-OCR limit: the original is stored, the version fails with a typed reason,
 and no card or `document.md` reading exists. Test a PDF with a text-layer page,
-an empty OCR page and a response gap: engine `scan_page` quantity is the source
-page count, no engine `doc-scan` appears, and the cloud mapping produces that
+an empty OCR page and a missing response index: the empty page gets a
+page-located, extraction-ineligible status marker; the missing index fails
+the version with a typed reason and no partial reading. Engine `scan_page`
+quantity is the structural source page count, never provider `pages_processed`;
+no engine `doc-scan` appears, and the cloud mapping produces that
 same quantity as `doc-scan` without `doc-text` in the separate cloud follow-up.

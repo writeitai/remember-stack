@@ -125,8 +125,10 @@ idempotency, D25), enqueues `convert`. May never mutate a raw object (immutable,
 
 ### 4.2 `convert` — deterministic router (+ OCR model inference where routed)
 
-Routes by input type per deployment config (D38): digital PDF → text extraction; scanned/complex
-→ OCR (Mistral OCR / docling / marker); office/html/email → markitdown; text → passthrough.
+Routes by input type per deployment config (D38). **PDF route superseded by D139:**
+every admitted PDF page goes through OCR, including pages with a text layer;
+the historical digital-versus-scanned split does not apply. Office/html/email
+route to markitdown; text passes through.
 Emits `document.md` + `conversion.json` whose **page/char offsets are load-bearing** (D32
 grounding spans, chunk positions). OCR is model inference inside a deterministic control flow —
 the worker routes and validates; it judges nothing. `converter_version` bump re-converts the

@@ -45,7 +45,7 @@ document's general metadata).
 |---|---|---|
 | **full** | A complete reading of the content — claim-extracted for prose, search-only for code, config and logs | Documents, slides, email, OCR-derived PDF readings, notes; code and configuration |
 | **profile** | A deterministic description of a data file — its structure and a few head rows, never its rows (§4) | Spreadsheets, delimited files, datasets; text over the reading limit |
-| **card** | A short deterministic **file card**: name, path, detected type, size, and what the format declares cheaply (§6) | Media, archives, images without configured providers, unknown bytes, oversized files |
+| **card** | A short deterministic **file card**: name, path, detected type, size, and what the format declares cheaply (§6) | Media, archives, images without configured providers, unknown bytes, oversized non-PDF files; a PDF over its effective pre-OCR limit fails conversion (§2.1) |
 
 Which family gets which posture, and which families are search-only, is bound in
 [`workspace_formats_design.md`](workspace_formats_design.md) §2 and §4 (D138).
@@ -86,6 +86,9 @@ the effective pre-OCR limit; admission failures contribute zero. The PDF
 family records only `scan_page` with quantity equal to that source page count,
 including text-layer pages, empty OCR pages and response gaps. A provider's
 `pages_processed` field is diagnostic rather than the billable quantity. The
+converter counts source pages from the PDF page tree before OCR without reading
+any text layer; a missing page index in the OCR response is a typed conversion
+failure, not a discount from the source page count. The
 separate managed cloud maps the same count to `doc-scan`, without also
 charging `doc-text`; implementing that receipt mapping belongs to the cloud.
 

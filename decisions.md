@@ -6596,6 +6596,10 @@ format registry and deployment overlays cannot select a PDF text-layer
 extraction route or split pages into text and scan routes. A PDF produces one
 OCR-derived reading with page locators and honest coverage; an unreadable or
 failed page is a visible gap/failure, never a silent text-layer fallback.
+The converter counts pages from the PDF page tree before OCR, without reading
+its text layer. Successful empty pages get page-located, extraction-ineligible
+status markers; a missing page in the OCR response fails conversion with a
+typed reason and no partial reading.
 The PDF has one effective pre-OCR size limit: the lower of the family reading
 limit and the configured provider's input ceiling. Exceeding it leaves the
 original stored but fails the version with a typed limit reason, without a
@@ -6612,8 +6616,9 @@ scanned and mixed PDFs. D115 establishes the analogous always-OCR rule for
 standalone images, not an earlier PDF-specific mandate; no earlier
 PDF-specific owner statement was found in this repo.
 
-**Consequences.** An accepted PDF page is a source page in a valid PDF admitted
-under the effective pre-OCR limit for OCR processing. The quantity is the
+**Consequences.** An accepted PDF page is a source page in a valid PDF whose
+structural page count is known and that passed the effective pre-OCR limit for
+OCR processing. The quantity is the
 source page count, including pages with selectable text, successful empty OCR,
 or an OCR response gap; admission failures contribute zero pages. OCR cost
 therefore scales with every accepted page. The engine records only the

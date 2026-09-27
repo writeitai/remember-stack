@@ -57,7 +57,13 @@ Provider `pages_processed` is diagnostic. The managed cloud follow-up maps
 that same count to `doc-scan`, with no duplicate `doc-text` charge. An implementation
 test should include born-digital, scanned and mixed PDFs and verify an OCR
 attempt and page locator for each page, including a page whose OCR text is
-empty. Provider failures must not silently invoke text extraction.
+empty. The converter obtains the source page count from the structural PDF
+page tree before OCR, without reading any text layer. An empty OCR page gets
+an extraction-ineligible, page-located status marker. A missing response page
+index fails the version without a partial reading, but does not reduce the
+accepted source page count. Provider failures must not silently invoke text
+extraction. The 1 MB head/tail profile applies only to text-converter
+families, never PDFs.
 
 The current implementation has a `mistral_ocr` converter for PDFs but no
 engine-shipped PDF route in the self-host default table; PDFs without an
