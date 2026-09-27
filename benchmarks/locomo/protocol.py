@@ -253,10 +253,16 @@ the authority for conversation-specific claims. Never seek or inspect benchmark
 reference solutions, reference evidence labels, or evaluator artifacts. You have a budget
 of at most 8 tool calls per question. Before concluding that the deployment does not contain
 the answer, consult claims_and_sources_context unless you have already queried it or
-combined_context, or have exhausted your tool call budget. If after checking fact and source
-layers the deployment genuinely does not contain the answer, finish with "Unknown". The final
-answer must be the shortest phrase that fully names the requested entities/values, no explanations
-or reasoning.{answer_word_cap_instruction}
+combined_context, or have exhausted your tool call budget.
+
+When retrieved evidence establishes facts, constraints, or relationships relevant to the
+question, use sound reasoning to derive the answer that follows from them, even when the answer
+is not stated verbatim. For deductive questions involving negative constraints (e.g. finding pets,
+foods, or options that avoid stated allergies, conflicts, or restrictions), deduce the compatible
+choices, categories, or examples that satisfy the stated constraints using sound reasoning rather
+than answering "Unknown". Finish with "Unknown" only when reasonable retrieval within the tool budget
+yields no supported evidence, direction, or deduction. The final answer must be the shortest
+phrase that fully names the requested entities/values, no explanations or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
@@ -272,12 +278,23 @@ indicates that the outcome is independent of the condition, answer "Likely
 yes". Use "Unknown" only when the evidence gives no direction about that
 dependency.
 
+When evaluating conversational transcripts, preserve conversational adjacency pairs:
+interpret responsive turns together with the question or prompt that elicited them. When a
+reply or affirmative turn (e.g. "Yep!", "Yes!", "Definitely", direct confirmation) is retrieved
+without the preceding question context, inspect the surrounding passage or use adjacent_chunks
+with its chunk_id to recover the preceding turn before drawing a conclusion.
+
 When a question asks about a preference or superlative (such as what someone enjoys "most",
 "best", or considers their "favorite" or "primary" choice), identify what the speaker specifically
 singled out or affirmed in response to an inquiry about their preference, rather than pooling all
 casually mentioned items or categories. Evaluate statements in conversational context: when a speaker
 responds directly to an inquiry about a favorite or preference by highlighting a specific title, activity,
 or item, recognize that responsive affirmation as their indicated choice.
+
+When asked what a work (book, series, movie, or game) is about, identify the supported plot
+premise, central subject, setting, creatures, or core theme (including from attached image
+interpretations or descriptions). Prefer concrete content over evaluative praise unless the
+question asks about style or quality.
 
 When answering questions about what someone loves, enjoys, does, or experienced, prefer
 the speaker's specific verbatim terms rather than generalizing or abstracting to a broader umbrella
@@ -311,11 +328,6 @@ If a retrieved conversation turn or passage ends on an unanswered question or
 reference directly relevant to the target topic (e.g. one speaker asking about it),
 inspect the immediately following turn(s) or surrounding session before concluding
 that the information is missing or answering prematurely.
-
-For deductive questions involving negative constraints (e.g. finding options
-that avoid stated allergies, conflicts, or restrictions), deduce the compatible
-choices from the stated constraints using sound reasoning rather than answering
-"Unknown".
 
 Loop discipline: never repeat a tool call with the same tool AND the same
 arguments. If a tool yields nothing useful, change the arguments meaningfully or switch tools rather than retrying
