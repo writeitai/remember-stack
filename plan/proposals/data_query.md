@@ -30,7 +30,7 @@ format; the cost is a second stored copy, accepted because the alternative
 re-parses the original on every query.
 
 **`data_query` is a direct retrieval primitive**, bound in
-[`retrieval_design.md`](retrieval_design.md) §3:
+[`retrieval_design.md`](../designs/retrieval_design.md) §3:
 
 ```
 data_query(version_id, representation_id?, sql, params?) → envelope (evidence grain) carrying DataQueryResult/v1

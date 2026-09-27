@@ -73,15 +73,15 @@ binaries. Three levers keep it bounded without hiding anything:
    and embedded (findable by search) but not claim-extracted. D133 §4.5 already has the
    mechanism (extraction eligibility by `derivation_kind`); this extends it from one section of
    a profile to whole families.
-2. **Profiles, not rows.** A 296 MB CSV becomes a few kilobytes of profile. D133's size rule
-   (≤200 rows and ≤20,000 characters read in full) stays.
+2. **Profiles, not rows.** A 296 MB CSV becomes a few kilobytes of profile, and so does a
+   ten-row spreadsheet: data files are always profiled (§8).
 3. **Cards for opaque bytes.** A 689 MB git LFS object costs one tiny card.
 
 ## 5. Where building it changes D133
 
 | D133 said | Building it for coding agents shows | D138 does |
 |---|---|---|
-| A profile's overview is written by one model call per file | 7,253 spreadsheets × one call is real cost, and a coding agent gets more from exact column names and head rows than from a paragraph | No model overview. Profiles are deterministic. The existing E2 pass over the profile's eligible sections (heading, identifying values, formulas) still yields claims about the file. |
+| A profile's overview is written by one model call per file | 7,253 spreadsheets × one call is real cost, and a coding agent gets more from exact column names and head rows than from a paragraph | No model overview and no claim extraction: profiles are deterministic and search-only (§8). |
 | Sample rows are shown to the model and never stored | The agent writing pandas code benefits most from seeing a few real rows | Store a small head sample (≤5 rows per table, cells truncated) in a search-only section. |
 | `data_query` runs SQL over normalized Parquet copies | Coding agents compute on the original file directly; the profile's path, sheet and column names are what they need | `data_query` leaves the system; its reviewed design becomes a proposal with an adoption trigger. |
 | Containers expand into child documents | Ten archives in 23k files; expansion needs its own stage, schema and forget rules | Archives get a card that lists their members. Expansion leaves the system; its reviewed design becomes a proposal. |
