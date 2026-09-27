@@ -173,10 +173,12 @@ def test_stock_routes_cover_every_family_with_a_converter() -> None:
         assert STOCK_CONVERSION_ROUTE_NAMES[family.mime] == family.converter
     for file_name in ("photo.heic", "clip.mkv", "backup.tar.xz", "old.7z"):
         assert STOCK_CONVERSION_ROUTE_NAMES[_detect(file_name)] == "card"
-    # families whose converter is not built yet park, except the Office Open
-    # XML documents, which keep their markitdown route
+    # families whose converter is not built yet park, and so do the formats
+    # LibreOffice converts first; the Office Open XML documents keep their
+    # markitdown route
     assert "application/msword" not in STOCK_CONVERSION_ROUTE_NAMES
-    assert "text/csv" not in STOCK_CONVERSION_ROUTE_NAMES
+    assert _detect("sheet.ods") not in STOCK_CONVERSION_ROUTE_NAMES
+    assert STOCK_CONVERSION_ROUTE_NAMES["text/csv"] == "table"
     assert STOCK_CONVERSION_ROUTE_NAMES[_DOCX] == "markitdown"
 
 
