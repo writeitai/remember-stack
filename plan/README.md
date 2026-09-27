@@ -47,7 +47,10 @@ findings and reuse constraints. Implementation is not implied by design acceptan
 
 For which file formats the engine accepts and what it produces from each — the format
 registry, full/profile/card postures and extraction eligibility — see
-[D133 format conversion](designs/format_conversion_design.md); for finding files and
+[D133 format conversion](designs/format_conversion_design.md), with D139's
+**OCR on every accepted PDF page** in
+[the workspace family design](designs/workspace_formats_design.md#7-office-pdf-email-and-notebook-details);
+for finding files and
 filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
 The families actually shipped for workspaces, and how they serve coding agents, are
 [D138 workspace formats](designs/workspace_formats_design.md).

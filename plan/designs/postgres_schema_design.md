@@ -1204,7 +1204,7 @@ CREATE TABLE document_representations (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   version_id      uuid NOT NULL,               -- composite FK below → document_versions: a representation reads ONE snapshot
   -- route + component identity (what produced this reading — the reuse key with content_hash):
-  route           text NOT NULL,               -- router route taken (digital_pdf | ocr | markitdown | asr_diarized | video_asr_keyframes | image_description | …, D38/D65)
+  route           text NOT NULL,               -- router route taken (pdf_ocr | markitdown | asr_diarized | video_asr_keyframes | image_description | …, D38/D65/D139)
   converter_name  text,
   converter_version text,                      -- LOGICAL FK → pipeline_component_versions; a bump creates a NEW representation (never mutates this one)
   blockizer_version text,                      -- LOGICAL FK → pipeline_component_versions; blocks = f(document.md, blockizer_version) (D57)

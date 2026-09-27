@@ -4,6 +4,10 @@
 **Binding outcome:** [workspace formats design](../designs/workspace_formats_design.md) (D138),
 which realizes D133 ([format conversion](../designs/format_conversion_design.md)) for the
 families a real workspace contains.
+**PDF supersession (D139, 2026-09-27):** The historical statements below about
+“PDFs with text” and cards for all oversized files no longer apply to PDFs.
+The current PDF family OCRs every admitted page; a PDF over its effective
+pre-OCR limit leaves a failed version with no card or `document.md` reading.
 
 ## 1. The question
 

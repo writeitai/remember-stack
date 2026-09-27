@@ -2,10 +2,11 @@
 
 **Status:** D133, accepted 2026-09-23; binding when merged.
 
-> **Refined by D138 (2026-09-27).** The shipped family set, detection order (§2.2),
+> **Refined by D138 (2026-09-27), and D139 for PDFs.** The shipped family set, detection order (§2.2),
 > profile content (§4) and cards for unrecognized bytes are bound in
 > [`workspace_formats_design.md`](workspace_formats_design.md). Row-level queries and container
 > expansion are not part of the system (§4.6, §5); their reviewed designs are proposals.
+> Every accepted PDF page goes through OCR, as bound by D139 and the PDF family entry there.
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md).
 **Refines:** D38 (router), D65 (converter contract and locators), D117
 (parking scope), D132 (text-flavour routing), D54 (counting identity), D74
@@ -42,9 +43,9 @@ document's general metadata).
 
 | Posture | What `document.md` holds | Used for |
 |---|---|---|
-| **full** | A complete reading of the content — claim-extracted for prose, search-only for code, config and logs | Documents, slides, email, PDF text, notes; code and configuration |
+| **full** | A complete reading of the content — claim-extracted for prose, search-only for code, config and logs | Documents, slides, email, OCR-derived PDF readings, notes; code and configuration |
 | **profile** | A deterministic description of a data file — its structure and a few head rows, never its rows (§4) | Spreadsheets, delimited files, datasets; text over the reading limit |
-| **card** | A short deterministic **file card**: name, path, detected type, size, and what the format declares cheaply (§6) | Media, archives, images without configured providers, unknown bytes, oversized files |
+| **card** | A short deterministic **file card**: name, path, detected type, size, and what the format declares cheaply (§6) | Media, archives, images without configured providers, unknown bytes, oversized non-PDF files; a PDF over its effective pre-OCR limit fails conversion (§2.1) |
 
 Which family gets which posture, and which families are search-only, is bound in
 [`workspace_formats_design.md`](workspace_formats_design.md) §2 and §4 (D138).
@@ -72,7 +73,7 @@ setting one route never removes the others. Every file is stored. Outcomes:
 |---|---|
 | Bytes a declaration contradicts (D132) | Refused with a typed error |
 | Bytes not recognized as any family | Stored; a `binary` card (D138 §6) |
-| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2) |
+| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF: its effective pre-OCR limit is the lower of the family limit and provider input ceiling, and exceeding it fails the version with a typed reason, no card and no `document.md` reading |
 | Family recognized but its converter not built | Stored; conversion parks with `no_route` (D117) until it is |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |
@@ -80,7 +81,16 @@ setting one route never removes the others. Every file is stored. Outcomes:
 `cost_class` is a label the metering port receives (`text`, `scan_page`,
 `image`, `audio_minute`, `video_minute`, `data_profile`, `archive`, `card`).
 The engine never prices; a deployment's metering maps labels to prices
-(D61).
+(D61). An accepted PDF page is a source page in a valid PDF admitted under
+the effective pre-OCR limit; admission failures contribute zero. The PDF
+family records only `scan_page` with quantity equal to that source page count,
+including text-layer pages, empty OCR pages and response gaps. A provider's
+`pages_processed` field is diagnostic rather than the billable quantity. The
+converter counts source pages from the PDF page tree before OCR without reading
+any text layer; a missing page index in the OCR response is a typed conversion
+failure, not a discount from the source page count. The
+separate managed cloud maps the same count to `doc-scan`, without also
+charging `doc-text`; implementing that receipt mapping belongs to the cloud.
 
 ### 2.2 Detection and precedence
 
@@ -230,7 +240,9 @@ name, a CAD file's declared units). Labels: `file_card` / `source_expression`
 for copied names and metadata strings, `computed` for sizes and counts.
 Coverage is `policy="card"`, `complete=False`. The card makes the file
 discoverable (its name and metadata feed `search_documents`, D134); the original is
-served as always (D51).
+served as always (D51). A PDF above its effective pre-OCR limit leaves the
+original stored and its version failed with a typed reason; it receives no
+card or `document.md` reading.
 
 ## 7. New locator kinds
 
@@ -261,6 +273,8 @@ version and representation):
 - The converter contract's shape (D65): profiles and cards are ordinary
   `document.md` + source map + derived assets + manifest.
 - D117 parking for families whose converter needs an unconfigured provider.
+- The PDF family's mandatory OCR route (D139): every accepted page, including
+  one with a text layer, passes through OCR; deployment overlays cannot bypass it.
 - D132's byte classes and object storage classes, with its refusals limited to
   declarations the bytes contradict (D138 §3).
 - The media routes and their binding details (`media_design.md` §2).
