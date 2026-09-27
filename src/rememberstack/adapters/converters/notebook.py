@@ -9,6 +9,7 @@ only at block boundaries.
 """
 
 import json
+import re
 from typing import Any
 from typing import Final
 
@@ -20,6 +21,9 @@ from rememberstack.model import ConverterManifest
 from rememberstack.model import DerivationRange
 from rememberstack.model import ManifestComponent
 from rememberstack.model.document_metadata import DocumentMetadata
+
+_LANGUAGE: Final = re.compile(r"[\w+#.-]+")
+"""A code-fence info word: python, c++, c#, f#, objective-c, …"""
 
 NOTEBOOK_CONVERTER_VERSION: Final = "notebook-2026.09"
 """Pins the notebook route: cell rendering, labels, dropped outputs, title."""
@@ -113,7 +117,7 @@ def _convert(*, content: bytes) -> ConversionResult:
 
 def _source(*, cell: dict[str, Any]) -> str:
     """A cell's source, stored as one string or a list of lines."""
-    source = cell.get("source", "")
+    source = cell.get("source") or ""
     if isinstance(source, list):
         return "".join(str(line) for line in source)
     return str(source)
@@ -128,7 +132,7 @@ def _language(*, notebook: dict[str, Any]) -> str:
         section = metadata.get(key)
         if isinstance(section, dict):
             name = section.get("name" if key == "language_info" else "language")
-            if isinstance(name, str) and name.isidentifier():
+            if isinstance(name, str) and _LANGUAGE.fullmatch(name):
                 return name
     return ""
 

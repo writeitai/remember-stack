@@ -20,6 +20,7 @@ from typing import Final
 from xml.etree.ElementTree import Element
 from xml.etree.ElementTree import ParseError
 import zipfile
+import zlib
 
 from defusedxml import DefusedXmlException
 from defusedxml import ElementTree
@@ -37,6 +38,7 @@ from pptx.slide import Slide
 
 from rememberstack.adapters.converters.libreoffice import convert_with_libreoffice
 from rememberstack.adapters.converters.time_limit import run_with_time_limit
+from rememberstack.adapters.converters.zip_budget import require_zip_within_budget
 from rememberstack.core import entire_document_labeling
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import family_named
@@ -132,13 +134,14 @@ class OfficeConverter:
     ) -> ConversionResult:
         """Render a Word document with markitdown."""
         warnings: list[str] = []
+        require_zip_within_budget(content=content, what="Word document")
         metadata = _core_metadata(content=content, warnings=warnings)
         try:
             result = self._markitdown.convert_stream(
                 io.BytesIO(content),
                 stream_info=StreamInfo(mimetype=_DOCX, extension=".docx"),
             )
-        except MarkItDownException as err:
+        except (MarkItDownException, zipfile.BadZipFile, zlib.error) as err:
             raise ConversionError("the Word document could not be read") from err
         document_md = result.text_content
         components.append(
@@ -165,6 +168,7 @@ def _presentation(
 ) -> ConversionResult:
     """Read a presentation slide by slide; each slide is one page locator."""
     warnings: list[str] = []
+    require_zip_within_budget(content=content, what="presentation")
     metadata = _core_metadata(content=content, warnings=warnings)
     components.append(
         _component(name="python-pptx", version=package_version("python-pptx"))
@@ -177,7 +181,14 @@ def _presentation(
             _slide_markdown(number=number, slide=slide)
             for number, slide in enumerate(presentation.slides, start=1)
         ]
-    except (PythonPptxError, KeyError, ValueError, XMLSyntaxError) as err:
+    except (
+        PythonPptxError,
+        KeyError,
+        ValueError,
+        XMLSyntaxError,
+        zipfile.BadZipFile,
+        zlib.error,
+    ) as err:
         raise ConversionError("the presentation could not be read") from err
     document_md = ""
     source_map: list[SourceMapEntry] = []
@@ -212,7 +223,9 @@ def _presentation(
 def _slide_markdown(*, number: int, slide: Slide) -> str:
     """One slide as a ``## Slide N: title`` section with its text and notes."""
     title_shape = slide.shapes.title
-    title = _clean(text=title_shape.text_frame.text) if title_shape is not None else ""
+    title = (
+        " ".join(title_shape.text_frame.text.split()) if title_shape is not None else ""
+    )
     title_id = title_shape.shape_id if title_shape is not None else None
     parts = [f"## Slide {number}" + (f": {title}" if title else "")]
     parts.extend(
@@ -292,10 +305,8 @@ def _core_metadata(*, content: bytes, warnings: list[str]) -> DocumentMetadata |
             if "docProps/core.xml" not in package.namelist():
                 return None
             core_xml = package.read("docProps/core.xml")
-    except zipfile.BadZipFile as err:
-        raise ConversionError(
-            "the file is not an Office Open XML package (not a zip archive)"
-        ) from err
+    except (zipfile.BadZipFile, zlib.error) as err:
+        raise ConversionError("the Office package could not be read") from err
     try:
         root = ElementTree.fromstring(core_xml)
     except (ParseError, DefusedXmlException) as err:

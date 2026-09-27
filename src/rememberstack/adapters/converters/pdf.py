@@ -21,7 +21,7 @@ from typing import Final
 
 import pypdfium2
 
-from rememberstack.adapters.converters.time_limit import run_with_time_limit
+from rememberstack.adapters.converters import time_limit
 from rememberstack.core import Converter
 from rememberstack.core import entire_document_labeling
 from rememberstack.model import ConversionCoverage
@@ -79,8 +79,15 @@ class PdfConverter:
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Convert one PDF from its text layer, or by OCR when it is a scan."""
-        reading = run_with_time_limit(
-            work=lambda: _read_pdf(content=content), what="PDF text extraction"
+        if b"%PDF-" not in content[:1024]:
+            raise ConversionError("the file is not a PDF (no %PDF- header)")
+        if not _PDFIUM_LOCK.acquire(timeout=time_limit.CONVERTER_TIME_LIMIT_S):
+            raise ConversionError(
+                "pdfium is still held by an earlier PDF that overran its time limit"
+            )
+        reading = time_limit.run_with_time_limit(
+            work=lambda: _read_pdf_and_release(content=content),
+            what="PDF text extraction",
         )
         metadata = _info_metadata(info=reading.info)
         empty_pages = [
@@ -90,7 +97,7 @@ class PdfConverter:
         ]
         if self._ocr is not None and len(empty_pages) * 2 > len(reading.pages):
             result = self._ocr.convert(content=content, mime=mime)
-            return result.model_copy(update={"metadata": metadata})
+            return result.model_copy(update={"metadata": metadata or result.metadata})
         document_md = ""
         source_map: list[SourceMapEntry] = []
         for number, text in enumerate(reading.pages, start=1):
@@ -139,28 +146,37 @@ class PdfConverter:
         )
 
 
+def _read_pdf_and_release(*, content: bytes) -> _PdfReading:
+    """Read the PDF, then release the pdfium lock the caller acquired.
+
+    The lock is released by the reading thread itself, so a read abandoned
+    at the time limit keeps pdfium locked until it really finishes.
+    """
+    try:
+        return _read_pdf(content=content)
+    finally:
+        _PDFIUM_LOCK.release()
+
+
 def _read_pdf(*, content: bytes) -> _PdfReading:
-    """Every page's text layer and the Info dictionary, under the pdfium lock."""
-    if b"%PDF-" not in content[:1024]:
-        raise ConversionError("the file is not a PDF (no %PDF- header)")
-    with _PDFIUM_LOCK:
-        try:
-            document = pypdfium2.PdfDocument(content)
-        except pypdfium2.PdfiumError as err:
-            raise ConversionError(f"the PDF could not be opened: {err}") from err
-        try:
-            pages: list[str] = []
-            for index in range(len(document)):
-                page = document[index]
-                text_page = page.get_textpage()
-                pages.append(text_page.get_text_range().replace("\r\n", "\n"))
-                text_page.close()
-                page.close()
-            info = document.get_metadata_dict(skip_empty=True)
-        except pypdfium2.PdfiumError as err:
-            raise ConversionError(f"the PDF could not be read: {err}") from err
-        finally:
-            document.close()
+    """Every page's whole text layer and the Info dictionary."""
+    try:
+        document = pypdfium2.PdfDocument(content)
+    except pypdfium2.PdfiumError as err:
+        raise ConversionError(f"the PDF could not be opened: {err}") from err
+    try:
+        pages: list[str] = []
+        for index in range(len(document)):
+            page = document[index]
+            text_page = page.get_textpage()
+            pages.append(text_page.get_text_bounded().replace("\r\n", "\n"))
+            text_page.close()
+            page.close()
+        info = document.get_metadata_dict(skip_empty=True)
+    except pypdfium2.PdfiumError as err:
+        raise ConversionError(f"the PDF could not be read: {err}") from err
+    finally:
+        document.close()
     return _PdfReading(pages=tuple(pages), info=info)
 
 

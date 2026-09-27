@@ -147,7 +147,11 @@ def _header(*, message: EmailMessage, name: str) -> str:
 def _attachment_lines(*, message: EmailMessage) -> list[str]:
     """One line per attachment: its file name and decoded size."""
     lines: list[str] = []
-    for part in message.iter_attachments():
+    root_is_attachment = (
+        not message.is_multipart() and message.get_content_disposition() == "attachment"
+    )
+    parts = [message] if root_is_attachment else message.iter_attachments()
+    for part in parts:
         payload = part.get_payload(decode=True)
         size = len(payload) if isinstance(payload, bytes) else len(part.as_bytes())
         lines.append(f"- {part.get_filename() or 'unnamed'} ({size:,} bytes)")

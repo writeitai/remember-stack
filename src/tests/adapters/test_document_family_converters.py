@@ -22,7 +22,9 @@ import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
 from rememberstack.adapters.converters import libreoffice
+from rememberstack.adapters.converters import pdf
 from rememberstack.adapters.converters import time_limit
+from rememberstack.adapters.converters import zip_budget
 from rememberstack.adapters.converters.card import CardConverter
 from rememberstack.adapters.converters.email_message import EmailConverter
 from rememberstack.adapters.converters.markitdown import MarkitdownConverter
@@ -40,6 +42,7 @@ from rememberstack.model import ConverterManifest
 from rememberstack.model import FileHints
 from rememberstack.model import ManifestComponent
 from rememberstack.model import PageLocator
+from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.document_metadata import DocumentPerson
 
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -101,7 +104,7 @@ def test_slide_shows_and_templates_read_like_a_pptx(kind: str) -> None:
 
 def test_corrupt_presentation_fails_with_a_typed_error() -> None:
     """Bytes that are not an OOXML package fail; nothing falls back."""
-    with pytest.raises(ConversionError, match="not an Office Open XML package"):
+    with pytest.raises(ConversionError, match="not a readable zip package"):
         OfficeConverter().convert(content=b"not a zip at all", mime=_PPTX)
     broken = _with_replaced_member(
         content=_pptx(),
@@ -111,6 +114,42 @@ def test_corrupt_presentation_fails_with_a_typed_error() -> None:
     )
     with pytest.raises(ConversionError, match="presentation could not be read"):
         OfficeConverter().convert(content=broken, mime=_PPTX)
+
+
+def test_slide_title_whitespace_is_collapsed_in_the_heading() -> None:
+    """A title with line breaks still makes a one-line ``## Slide`` heading."""
+    deck = Presentation()
+    slide = deck.slides.add_slide(deck.slide_layouts[5])
+    assert slide.shapes.title is not None
+    slide.shapes.title.text = "Budget\nreview   2026"
+    buffer = io.BytesIO()
+    deck.save(buffer)
+    result = OfficeConverter().convert(content=buffer.getvalue(), mime=_PPTX)
+    assert "## Slide 1: Budget review 2026\n" in result.document_md
+
+
+def test_zip_packages_over_the_expansion_budget_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declared uncompressed sizes are checked before OOXML/EPUB parsing."""
+    monkeypatch.setattr(zip_budget, "MAX_UNCOMPRESSED_MEMBER_BYTES", 100)
+    with pytest.raises(ConversionError, match="member larger than"):
+        OfficeConverter().convert(content=_pptx(), mime=_PPTX)
+    monkeypatch.setattr(zip_budget, "MAX_UNCOMPRESSED_MEMBER_BYTES", 10**9)
+    monkeypatch.setattr(zip_budget, "MAX_UNCOMPRESSED_TOTAL_BYTES", 100)
+    with pytest.raises(ConversionError, match="expands to more than"):
+        OfficeConverter().convert(content=_docx(), mime=_DOCX)
+    with pytest.raises(ConversionError, match="expands to more than"):
+        MarkitdownConverter().convert(content=_epub(), mime="application/epub+zip")
+
+
+def test_damaged_zip_member_is_a_typed_failure() -> None:
+    """A member whose compressed bytes are corrupt fails as ConversionError."""
+    content = bytearray(_pptx())
+    start = content.index(b"ppt/presentation.xml") + len(b"ppt/presentation.xml")
+    content[start + 20 : start + 60] = b"\xff" * 40
+    with pytest.raises(ConversionError):
+        OfficeConverter().convert(content=bytes(content), mime=_PPTX)
 
 
 # --- office: Word ------------------------------------------------------------
@@ -181,6 +220,23 @@ def test_legacy_format_without_soffice_is_a_typed_failure(
         OfficeConverter().convert(content=b"{\\rtf1 hi}", mime="application/rtf")
 
 
+def test_libreoffice_is_killed_at_the_time_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A hanging soffice is killed and the conversion fails, typed."""
+    fake = tmp_path / "soffice"
+    fake.write_text("#!/bin/sh\nsleep 30\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(libreoffice.shutil, "which", lambda _name: str(fake))
+    monkeypatch.setattr(libreoffice, "CONVERTER_TIME_LIMIT_S", 0.5)
+    started = time.monotonic()
+    with pytest.raises(ConversionError, match="did not convert"):
+        libreoffice.convert_with_libreoffice(
+            content=b"{\\rtf1 hi}", source_extension="rtf", target="docx"
+        )
+    assert time.monotonic() - started < 10
+
+
 @pytest.mark.skipif(shutil.which("soffice") is None, reason=_SOFFICE_MISSING)
 def test_libreoffice_converts_rtf_to_a_word_reading() -> None:
     """An RTF file goes through soffice → docx → markitdown."""
@@ -238,6 +294,46 @@ def test_pdf_pages_get_page_locators_and_empty_pages_are_gaps() -> None:
     assert coverage.complete is False
     assert coverage.gaps == ("page 2 has no text layer",)
     _assert_prose(result=result)
+
+
+def test_pdf_text_keeps_supplementary_unicode_characters() -> None:
+    """Characters outside the BMP (here U+1D465, 𝑥) survive extraction."""
+    content = _pdf(pages=["AB"], to_unicode={"41": "D835DC65", "42": "0062"})
+    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
+    assert "## Page 1\n\n\U0001d465b" in result.document_md
+
+
+def test_fully_scanned_pdf_without_ocr_is_empty_with_every_page_a_gap() -> None:
+    """No OCR route: nothing is read, and every page is named as a gap."""
+    content = _pdf(pages=[None, None])
+    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
+    assert result.document_md == ""
+    assert result.manifest.coverage.gaps == (
+        "page 1 has no text layer",
+        "page 2 has no text layer",
+    )
+
+
+def test_ocr_metadata_is_kept_when_the_pdf_declares_none() -> None:
+    """Without an Info dictionary the OCR route's own metadata stays."""
+    ocr = _FakeOcr(metadata=DocumentMetadata(title="From OCR"))
+    result = PdfConverter(ocr=ocr).convert(
+        content=_pdf(pages=[None]), mime="application/pdf"
+    )
+    assert result.metadata == DocumentMetadata(title="From OCR")
+
+
+def test_pdf_fails_when_pdfium_is_still_held(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A stuck earlier conversion holding pdfium fails the next one, typed."""
+    monkeypatch.setattr(time_limit, "CONVERTER_TIME_LIMIT_S", 0.05)
+    assert pdf._PDFIUM_LOCK.acquire(timeout=1)  # pyright: ignore[reportPrivateUsage]
+    try:
+        with pytest.raises(ConversionError, match="still held"):
+            PdfConverter(ocr=None).convert(
+                content=_pdf(pages=["x"]), mime="application/pdf"
+            )
+    finally:
+        pdf._PDFIUM_LOCK.release()  # pyright: ignore[reportPrivateUsage]
 
 
 def test_pdf_info_dictionary_becomes_d134_metadata() -> None:
@@ -392,6 +488,18 @@ def test_html_only_email_is_converted_with_markitdown() -> None:
     assert result.metadata.thread_ref == "<only@acme.com>"
 
 
+def test_single_part_attachment_message_lists_its_root_part() -> None:
+    """A message whose only part is an attachment lists it; not complete."""
+    message = EmailMessage()
+    message["From"] = "alice@acme.com"
+    message["Subject"] = "Report"
+    message.set_content(b"%PDF-1.4 data", maintype="application", subtype="pdf")
+    message.add_header("Content-Disposition", "attachment", filename="report.pdf")
+    result = EmailConverter().convert(content=message.as_bytes(), mime="message/rfc822")
+    assert "## Attachments\n\n- report.pdf (13 bytes)" in result.document_md
+    assert result.manifest.coverage.complete is False
+
+
 def test_bytes_without_email_headers_fail() -> None:
     """A file with no From, To, Subject or Date is not an email."""
     with pytest.raises(ConversionError, match="not an email"):
@@ -435,6 +543,25 @@ def test_notebook_labels_fall_on_block_boundaries() -> None:
         blocks=blockize(document_md=result.document_md), ranges=ranges
     )
     assert eligibility == (True, True, False, True)
+
+
+def test_raw_cells_null_sources_and_other_languages() -> None:
+    """Raw cells are other_text; a null source is skipped; c++ fences."""
+    notebook = {
+        "metadata": {"language_info": {"name": "c++"}},
+        "cells": [
+            {"cell_type": "markdown", "source": None},
+            {"cell_type": "raw", "source": "raw text"},
+            {"cell_type": "code", "source": "int main() {}"},
+        ],
+    }
+    result = NotebookConverter().convert(
+        content=json.dumps(notebook).encode(), mime="application/x-ipynb+json"
+    )
+    assert "None" not in result.document_md
+    assert "```c++\nint main() {}" in result.document_md
+    kinds = [labeled.derivation_kind for labeled in result.manifest.derivation_ranges]
+    assert kinds == ["other_text", "code"]
 
 
 def test_invalid_notebook_fails_with_a_typed_error() -> None:
@@ -483,8 +610,9 @@ def test_a_converter_that_overruns_its_time_limit_fails(
 class _FakeOcr:
     """A stand-in OCR route that counts its calls."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, metadata: DocumentMetadata | None = None) -> None:
         self.calls = 0
+        self._metadata = metadata
 
     @property
     def name(self) -> str:
@@ -498,6 +626,7 @@ class _FakeOcr:
         self.calls += 1
         return ConversionResult(
             document_md="OCR text\n",
+            metadata=self._metadata,
             manifest=ConverterManifest(
                 components=(
                     ManifestComponent(
@@ -607,14 +736,34 @@ def _with_replaced_member(
     return buffer.getvalue()
 
 
-def _pdf(*, pages: list[str | None], info: dict[str, str] | None = None) -> bytes:
-    """A small valid PDF: one Helvetica text line per page (None = no text)."""
-    objects: dict[int, str] = {
-        1: "<< /Type /Catalog /Pages 2 0 R >>",
-        3: "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    }
-    kids: list[str] = []
+def _pdf(
+    *,
+    pages: list[str | None],
+    info: dict[str, str] | None = None,
+    to_unicode: dict[str, str] | None = None,
+) -> bytes:
+    """A small valid PDF: one Helvetica text line per page (None = no text).
+
+    ``to_unicode`` maps hex byte codes to UTF-16BE hex for a ToUnicode CMap.
+    """
+    font = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica"
+    objects: dict[int, str] = {1: "<< /Type /Catalog /Pages 2 0 R >>"}
     number = 4
+    if to_unicode:
+        pairs = "\n".join(f"<{code}> <{uni}>" for code, uni in to_unicode.items())
+        cmap = (
+            "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
+            "/CMapName /Adobe-Identity-UCS def /CMapType 2 def\n"
+            "1 begincodespacerange <00> <FF> endcodespacerange\n"
+            f"{len(to_unicode)} beginbfchar\n{pairs}\nendbfchar\n"
+            "endcmap CMapName currentdict /CMap defineresource pop end end"
+        )
+        objects[number] = f"<< /Length {len(cmap)} >>\nstream\n{cmap}\nendstream"
+        font += f" /ToUnicode {number} 0 R"
+        number += 1
+    objects[3] = font + " >>"
+    kids: list[str] = []
     for text in pages:
         stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET" if text else ""
         objects[number + 1] = (

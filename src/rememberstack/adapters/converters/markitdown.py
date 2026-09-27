@@ -2,6 +2,8 @@
 
 import io
 from typing import Final
+import zipfile
+import zlib
 
 from markitdown import MarkItDown
 from markitdown import StreamInfo
@@ -9,6 +11,7 @@ from markitdown._exceptions import MarkItDownException
 from markitdown.converters import EpubConverter
 
 from rememberstack.adapters.converters.time_limit import run_with_time_limit
+from rememberstack.adapters.converters.zip_budget import require_zip_within_budget
 from rememberstack.core import entire_document_labeling
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
@@ -50,7 +53,10 @@ class MarkitdownConverter:
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Convert one input via markitdown; its failures become typed failures."""
-        engine = self._epub if mime == _EPUB_MIME else self._markitdown
+        engine = self._markitdown
+        if mime == _EPUB_MIME:
+            require_zip_within_budget(content=content, what="EPUB book")
+            engine = self._epub
         try:
             result = run_with_time_limit(
                 work=lambda: engine.convert_stream(
@@ -58,7 +64,7 @@ class MarkitdownConverter:
                 ),
                 what="markitdown conversion",
             )
-        except MarkItDownException as err:
+        except (MarkItDownException, zipfile.BadZipFile, zlib.error) as err:
             raise ConversionError(f"markitdown could not convert {mime!r}") from err
         document_md = result.text_content
         title = (result.title or "").strip()

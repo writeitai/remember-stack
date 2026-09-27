@@ -161,7 +161,9 @@ seconds and fail the file with a timeout reason.
 `office` reads Word documents with markitdown and PowerPoint files slide by
 slide. Each slide becomes a `## Slide N` section with its title, text,
 tables and speaker notes, and search results from it point to that slide
-(as page N). It reads the document's title, author, created and modified
+(as page N). A Word, PowerPoint or EPUB file is a zip package; one that
+declares more than 500 MB of uncompressed content, or a single part over
+200 MB, fails conversion instead of being unpacked. It reads the document's title, author, created and modified
 dates from the file's properties, so they can be used in document filters
 ([`search_documents`](/docs/reference/mcp)). It does not read text inside
 images, and no macro or embedded object is run.
@@ -175,6 +177,11 @@ image includes LibreOffice's headless Writer, Impress and Calc. An engine
 run without `soffice` on its `PATH` has no route for these types: they are
 stored and parked with `no_route`, and released by
 `remember ops resume-no-route` once LibreOffice is installed.
+
+The engine does not cut LibreOffice off from the network: a document that
+links to remote images or files could make it try to fetch them. If that
+matters for your data, run the engine in a network that allows only the
+connections it needs.
 
 ## pdf
 

@@ -84,7 +84,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libreoffice-writer-nogui libreoffice-impress-nogui
+            libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui
       - name: Unit pack (no Postgres service)
         run: |
           mapfile -t paths < .github/ci/unit-paths.txt

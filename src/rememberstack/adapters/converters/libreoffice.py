@@ -48,6 +48,7 @@ def convert_with_libreoffice(
         source = work_dir / f"input.{source_extension}"
         source.write_bytes(content)
         output_dir = work_dir / "output"
+        output_dir.mkdir()
         command = [
             soffice,
             f"-env:UserInstallation={(work_dir / 'profile').as_uri()}",
@@ -70,7 +71,10 @@ def convert_with_libreoffice(
                 _, stderr = process.communicate(timeout=CONVERTER_TIME_LIMIT_S)
             except subprocess.TimeoutExpired as err:
                 # soffice starts helper processes; kill the whole group
-                os.killpg(process.pid, signal.SIGKILL)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass  # the group exited between the timeout and the kill
                 process.communicate()
                 raise ConversionError(
                     f"LibreOffice did not convert .{source_extension} to .{target} "
