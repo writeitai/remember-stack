@@ -19,9 +19,10 @@ Numbers below are starting points to measure, not committed constants.
 *framework* every format goes through: detection, the registry, the three
 postures, profile rules, extraction eligibility, and the new locators. It does **not** specify how any individual format is parsed or
 rendered. The family table in §3 is the **target coverage**, with starting
-values. **Each family is delivered on its own, through a dedicated family
-design, its own implementation, and its own test suite (§10)**, and a family
-is not supported until all three exist. Until then its files are recognized,
+values. **Each family is delivered on its own, through a family design (D138
+for the families it lists, a dedicated one otherwise), its own implementation,
+and its own test suite (§10)**, and a family is not supported until all three
+exist. Until then its files are recognized,
 stored and parked (D117), never half-converted.
 
 This design is the one home for *which formats the engine accepts and what
@@ -144,7 +145,9 @@ where a step says so.
    11. Otherwise **Markdown** when declared as Markdown (D132 rendering hint),
        else **plain text**.
 
-**Reference only (see the note above).** For families outside D138, this list fixes which families exist, the order in which they are tried and
+**Reference only (see the note above).** The detection order is D138 §3's; the signatures
+below are reference material a new family design may use to recognize its format. As written
+here, this list fixed which families exist, the order in which they are tried and
 the kind of evidence each uses. The precise signature, offsets and grammar
 for a family are specified and tested in that family's design (§10.1 item 3)
 and must be placed at the position given here; a family design that needs a
@@ -180,7 +183,8 @@ what it contains and how to query it, without memory ingesting its rows.
 
 What a profile contains, and when a data file is profiled, is bound in
 [`workspace_formats_design.md`](workspace_formats_design.md) §5 (D138): always a deterministic
-profile — structure, a five-row head sample, defined names — with no model call and no claim
+profile — structure, a five-row head sample (none for spreadsheets over 50 MB), defined names —
+with no model call and no claim
 extraction.
 
 ### 4.3 The `computed` evidence mode

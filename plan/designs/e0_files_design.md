@@ -167,11 +167,12 @@ gates everything downstream:
   recognized family to a posture — **full** reading, **profile** (a description of a data
   file, not its rows), or **card** (a deterministic file card) — and to the converter
   implementing it. Deployments overlay
-  the registry (turn families off, configure providers, lower limits); they never replace
+  the registry (add or override routes, for example provider-backed ones); they never replace
   it. The shipped families, detection order and profiles are bound in
   [`workspace_formats_design.md`](workspace_formats_design.md) (D138); the framework and
   locator kinds in [`format_conversion_design.md`](format_conversion_design.md). **Media
-  routes (D65/D115),** bound in `media_design.md` §2: audio → **diarized ASR**
+  routes (D65/D115),** bound in `media_design.md` §2, run when a deployment configures their
+  providers; by default images, audio and video get cards (D138): audio → **diarized ASR**
   (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
   keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
   independent vision-LLM description call. Converters are versioned — a model or parser
@@ -196,8 +197,8 @@ gates everything downstream:
   its just-started attempt; converter content errors remain ordinary failures.
   This handles configuration skew without a dead-letter loop. Matching uses
   the registry's normalized routing key (D133). Parking covers recognized families
-  whose converter needs an unconfigured provider; a family the deployment turned
-  off is refused at ingest. The admission and managed text-classification
+  whose converter needs an unconfigured provider or is not yet built; every file is
+  stored (D138). The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps

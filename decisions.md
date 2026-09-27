@@ -6177,7 +6177,9 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
 profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
 entirely** — `data_query` and container expansion are not part of the system; their reviewed
-designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`).
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`). D138 also
+replaces item 1's "turn families off": deployments add or override routes, and every file is
+stored.
 
 **Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
 PR #452, which this decision builds on.)
