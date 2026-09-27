@@ -133,8 +133,8 @@ search_documents(query?, filters?, k) → documents
     and old names, and a partial or misspelled name still finds it;
   - **content** — the existing `chunk_search` (D94), grouped by document:
     each document scores by its best-ranked chunk in the judged version.
-    A profiled file's overview and a document's top-level text are ordinary
-    chunks, so no second search index is needed.
+    A data file's profile, a card, and a document's top-level text are all
+    ordinary chunks, so no second search index is needed.
 - With filters only, results are ordered newest first by when the judged
   version was **ingested** (immutable per version), then by `doc_id`; the
   `created` range remains a filter. The keyset cursor pins the first call's
@@ -144,16 +144,14 @@ search_documents(query?, filters?, k) → documents
   Ranked queries (with `query`) return one page of `k` results.
 - **Each result** carries the document and version, `file_name`, `title`,
   family and posture, processing status, the general metadata, the overview
-  or summary, and how to reach it: its P3 path, `source_open`, and
-  `data_query` when it has query tables.
+  or summary, and how to reach it: its P3 path and `source_open`.
 - **People matching is disclosed.** When `authors: ["Alice"]` matches several
   distinct people ("Alice Novak <alice@acme.com>", "Alice Chen
   <achen@x.io>"), the result lists each matched person with a count, so the
   agent can narrow the filter instead of the engine guessing.
 
 It is exposed on the HTTP API, SDK, CLI and MCP: "find the file" is an
-intent an agent must be able to discover, like `source_open` (D115) and
-`data_query` (D133).
+intent an agent must be able to discover, like `source_open` (D115).
 
 ## 4. Document filters on `search`
 
@@ -187,7 +185,7 @@ are cut (the existing D94 rule), never by filtering a finished top-k.
 ## 5. Claims that talk about their own document name it
 
 When a passage refers to **its own document** — "this report", "the attached
-spreadsheet", "this document", or a data file's profile overview — Claimify
+spreadsheet", "this document" — Claimify
 writes the document's name into the claim instead of the bare reference:
 
 > source: "This report summarizes the 2025 audit findings."
@@ -223,10 +221,9 @@ writes the document's name into the claim instead of the bare reference:
 - **Claims are immutable.** A later rename does not rewrite them;
   `search_documents` finds the file by its current name and every version's
   name.
-- **Profiles and file cards produce claims this way.** A profile's overview
-  becomes "The workbook Q3_sales_2025.xlsx covers EU revenue by region for
-  2025", searchable by name. Structure sections still produce none (D133
-  §4.5).
+- **Only prose produces claims.** Data-file profiles and cards are
+  search-only (D138), so this rule applies to prose families; a profile or
+  card is found by its file name through search and `search_documents`.
 
 ## 6. A document's own name is not an entity
 
@@ -272,8 +269,8 @@ Nothing in this design reads or writes it.
   names from older versions; people disambiguation in the result.
 - Document filters on each `search` target, applied before the top-k cut
   (a matching document ranked below the unfiltered top-k is still returned).
-- Self-reference naming: "this report", "the attached spreadsheet", a
-  profile overview; a non-self claim gets no name; `own_document_name` is
+- Self-reference naming: "this report", "the attached spreadsheet"; a
+  non-self claim gets no name; `own_document_name` is
   dropped when it is not one of the document's names, occurs twice, or the
   whole name is already in the source span (a shared word such as "report"
   in "Annual Report" is accepted); a renamed new version does not reuse old

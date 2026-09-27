@@ -46,7 +46,7 @@ The [analysis](analysis/multi_span_claim_extraction.md) explains the LoCoMo
 findings and reuse constraints. Implementation is not implied by design acceptance.
 
 For which file formats the engine accepts and what it produces from each — the format
-registry, full/profile/expand/card postures, `data_query`, child documents — see
+registry, full/profile/card postures and extraction eligibility — see
 [D133 format conversion](designs/format_conversion_design.md); for finding files and
 filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
 The families actually shipped for workspaces, and how they serve coding agents, are

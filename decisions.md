@@ -1719,9 +1719,9 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
-**Refined by D133.** A container and its members count as one lineage: the counting key is
-`documents.counting_lineage_id` (the root container's lineage for a member), so the count is
-`COUNT(DISTINCT counting_lineage_id)`. Everything else in this entry remains binding.
+**Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
+counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
+the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
 
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
@@ -2829,9 +2829,8 @@ D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
 
-**Refined by D133 and D134.** Forgetting an uploaded container forgets every member expanded from
-it under the same manifest; a member is not forgotten on its own. D134's document metadata,
-people and observed-name rows are deleted with their lineage.
+**Refined by D134** (document metadata, people and observed-name rows are deleted with their
+lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -6175,10 +6174,11 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
 
-**Refined by D138.** The first shipped family set is D138's. Profiles are deterministic (no model
-overview) and store a small head sample; code, config, logs and cards are search-only;
-unrecognized bytes get a card instead of a refusal; `data_query` and container expansion are
-deferred. The registry, postures, profile rules and locators remain binding.
+**Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
+locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
+profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
+entirely** — `data_query` and container expansion are not part of the system; their reviewed
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`).
 
 **Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
 PR #452, which this decision builds on.)
@@ -6307,9 +6307,8 @@ are what sources declare, not verified facts.
 
 ## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
 
-**Refined by D133.** Once containers expand into members, deleting an uploaded container covers
-every member lineage expanded from it; a member's own `doc_id` is refused with an error naming its
-upload.
+**Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
+removed container expansion, so deletion stays exactly as written here.
 
 **Status:** accepted. **Date:** 2026-09-23.
 
@@ -6545,17 +6544,20 @@ coding agents that open files and compute on them.
 
 **Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
 what the file is, where it is and how it is shaped. One shipped registry routes 18 families by
-extension, then declared MIME, then content. Prose (markdown, text, HTML, email, word,
-presentation, PDF text layer) is read in full and claim-extracted. Code, config and logs are read
-in full but search-only. Spreadsheets, delimited files and statistical datasets get deterministic
-profiles (structure, 5-row head sample, identifying values, formulas) with no model call, or a
-full reading when small. Images (without configured providers), media, archives and unknown
-bytes get cards. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
+declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
+full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
+delimited files and statistical datasets always get a deterministic, search-only profile
+(structure, types from a 5-row head sample, defined names), never their rows and never a model
+call. Text over 1 MB gets a head/tail profile. Images (without configured providers), media,
+archives (with a bounded member listing) and unknown bytes get cards; oversized files are stored
+and carded. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
 Deployment route settings overlay the registry instead of replacing it.
 
 **Alternatives and consequences.** Rendering everything through markitdown, skipping files the
 tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
-(analysis §7). `data_query` and container expansion are deferred, not rejected. LibreOffice adds
+(analysis §7). `data_query` and container expansion leave the system; their reviewed designs are
+proposals with adoption triggers. LibreOffice adds
 several hundred megabytes to the engine image.
 
 **Authority:** [design](plan/designs/workspace_formats_design.md),

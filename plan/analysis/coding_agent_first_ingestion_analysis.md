@@ -83,8 +83,8 @@ binaries. Three levers keep it bounded without hiding anything:
 |---|---|---|
 | A profile's overview is written by one model call per file | 7,253 spreadsheets × one call is real cost, and a coding agent gets more from exact column names and head rows than from a paragraph | No model overview. Profiles are deterministic. The existing E2 pass over the profile's eligible sections (heading, identifying values, formulas) still yields claims about the file. |
 | Sample rows are shown to the model and never stored | The agent writing pandas code benefits most from seeing a few real rows | Store a small head sample (≤5 rows per table, cells truncated) in a search-only section. |
-| `data_query` runs SQL over normalized Parquet copies | Coding agents compute on the original file directly; the profile's path, sheet and column names are what they need | `data_query` and the Parquet copies are not built now (YAGNI). The D133 design stays the plan if agents without file access need it. |
-| Containers expand into child documents | Ten archives in 23k files; expansion needs its own stage, schema and forget rules | Archives get a card that lists their members. Expansion is not built now. |
+| `data_query` runs SQL over normalized Parquet copies | Coding agents compute on the original file directly; the profile's path, sheet and column names are what they need | `data_query` leaves the system; its reviewed design becomes a proposal with an adoption trigger. |
+| Containers expand into child documents | Ten archives in 23k files; expansion needs its own stage, schema and forget rules | Archives get a card that lists their members. Expansion leaves the system; its reviewed design becomes a proposal. |
 | Unrecognized bytes are refused (D132) | A workspace connector must account for every file; refusing a game save file drops it from memory and from the audit | Unrecognized bytes get a generic binary card. Refusal stays for bytes that contradict their declared type. |
 | One family per converter module | Many families share one reader (all code is text) | One `text` converter serves plain text, Markdown, code, config and logs; family decides eligibility. |
 | Image route requires OCR and vision providers | A deployment without those keys would park every image | Without providers, an image gets a card (dimensions, format); with them, the D115 route runs. |
@@ -109,3 +109,26 @@ under D117 until it is installed.
   ignore list is a separate policy decision; cards make them nearly free, so the audit keeps them.
 - **Keep the model-written overview for small data files only.** Adds a branch and a cost line
   for little benefit to a coding agent; revisit if search quality on data files proves weak.
+
+## 8. Review (2026-09-27)
+
+gpt-6-sol and Antigravity reviewed the first draft against the owner's lean/YAGNI brief and
+agreed on the main corrections, all adopted:
+
+- **Data files are always profiles and always search-only.** The first draft kept D133's
+  "full when small" rule and extracted claims from profile headings; at 7,253 spreadsheets that
+  is row ingestion and LLM cost by another name.
+- **Profiles lose identifying values, formula tracking and non-empty counts.** Each needs a
+  full scan; a coding agent computes them itself from the file. Types come from the head sample.
+- **Large JSON and large text share one head/tail profile** instead of a key-tree walk.
+- **D132 must not refuse unrecognized bytes** once it lands, or whole-workspace ingestion loses
+  files before they can get a card; oversized files get a card rather than a refusal.
+- **Archives:** tar has no central directory, so its listing is a bounded stream read;
+  standalone `.gz` gets a plain card.
+- **LibreOffice** needs a fresh profile directory per call to run concurrently, and D117
+  parking when absent.
+- **Office metadata and per-slide locators** need the office converter to read the OOXML
+  package itself; markitdown alone provides neither.
+- **"Deferred" is not a design state** (CLAUDE.md Rule 2): `data_query` and container expansion
+  were removed from the binding corpus into proposals, and D133/D134 reconciled.
+- More adjacent extensions were added to the registry.
