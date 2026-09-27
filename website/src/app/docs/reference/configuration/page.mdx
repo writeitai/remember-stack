@@ -221,7 +221,7 @@ See [File formats and converters](/docs/self-hosting/converters).
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | unset: the built-in table (text families → `text`; HTML, EPUB, `.docx`, `.pptx`, `.xlsx` → `markitdown`; images, media, archives, other files → `card`; [the table](/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Adds to or overrides entries of the built-in table. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |

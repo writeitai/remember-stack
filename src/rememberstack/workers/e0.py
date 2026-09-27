@@ -1059,7 +1059,8 @@ class StructureHandler:
                         if section.node_path != "0"
                         else None
                     )
-                    or "body"
+                    or "body",
+                    "summary": None,
                 }
             )
             for section in parsed

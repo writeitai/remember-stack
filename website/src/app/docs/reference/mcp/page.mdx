@@ -294,7 +294,7 @@ Alice") rather than asking about its content.
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
 | `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
-| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `family` | array of strings | no | Format families: `markdown`, `text`, `other_text`, `code`, `config`, `log`, `html`, `ebook`, `notebook`, `email`, `word`, `presentation`, `pdf`, `spreadsheet`, `delimited`, `dataset`, `image`, `media`, `archive`, `binary`. |
 | `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
 | `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
 | `language`, `thread_ref` | string | no | Exact match. |

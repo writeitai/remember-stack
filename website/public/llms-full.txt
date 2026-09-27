@@ -3087,41 +3087,52 @@ formats it can turn into Markdown.
 
 ## At a glance
 
+On a self-hosted deployment:
+
 | Format | As installed | With converters configured |
 |---|---|---|
-| Markdown (`.md`) | Yes | Yes |
-| Plain text (`.txt`) | Yes | Yes |
-| Chat logs and transcripts, as Markdown or text | Yes | Yes |
-| HTML | Yes | Yes |
-| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | Yes | Yes |
-| PDF, including scanned PDFs | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
-| PNG and JPEG images | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
-| Audio and video | No | No |
+| Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
+| Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
+| HTML, EPUB | Read; claims extracted | Same |
+| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
+| Text files of unknown kind | Read and searchable; no claims | Same |
+| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
+| Audio and video | File card | Same |
+| Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
+| Other binary files | File card | Same |
+| PDF, including scanned PDFs | Stored, not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| Legacy Office (`.doc`, `.ppt`, `.xls`, OpenDocument, `.rtf`) | Stored, not read | Same: save as `.docx`, `.pptx` or `.xlsx` first |
+| Email (`.eml`), notebooks (`.ipynb`), CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+gets a file card instead of a reading. A text file over 1 MB is described
+by its size, line count, first 50 and last 20 lines instead of read in
+full.
 
 ## Formats and converters
 
-A new self-hosted deployment converts Markdown, plain text, HTML, Word,
-PowerPoint and Excel files locally, with no API key. Other formats are
-accepted and stored, but they wait unprocessed until you add a converter
-for their type. The upload response tells you: its `parked` field is
+A new self-hosted deployment reads or cards every file locally, with no
+API key. Formats with no converter yet are accepted and stored, but they
+wait unprocessed. The upload response tells you: its `parked` field is
 `"no_route"`, and `remember ingest` prints a warning.
 
-To read PDFs and images, map each file type to a converter in
-`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
-converters](https://remember.dev/docs/self-hosting/converters) shows the setting, what each
-converter does and costs, and how to release files that were stored before
-you added a route.
+To read PDFs, or to read images instead of carding them, map their types
+to a converter in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats
+and converters](https://remember.dev/docs/self-hosting/converters) shows the setting, how the
+server recognizes each file, what each converter does and costs, and how
+to release files that were stored before you added a route.
 
 ## Send the right type
 
-The type sent with the upload decides which converter reads the file. The
-`remember` CLI, Python client and MCP `ingest` tool take it from the file
-extension, the same way on every Python installation: `.md` is
-`text/markdown`, `.txt` is `text/plain`, `.pdf` is `application/pdf`, and
-so on ([the full table](https://remember.dev/docs/guides/ingest-files#the-mime-type)). A file
-whose extension does not say what it is needs the type passed explicitly:
+A self-hosted deployment recognizes a file by its extension first. The type
+sent with the upload decides only when the name does not say what the file
+is; a text file with neither is searchable but no claims are extracted
+from it. The `remember` CLI, Python client and MCP `ingest` tool send a
+type taken from the extension ([the full
+table](https://remember.dev/docs/guides/ingest-files#the-mime-type)). A file whose extension
+does not say what it is needs the type passed explicitly:
 
 ```python
 client.ingest("notes/standup", mime="text/markdown")
@@ -3549,6 +3560,12 @@ name it does not know is sent as `application/octet-stream`. Pass `mime=`
 (or `--mime` on the CLI) to send a different type; an explicit value always
 wins.
 
+A self-hosted deployment decides the stored type itself: the file name's
+extension first, then the declared type when the name does not say, then
+the bytes ([how a family is chosen](https://remember.dev/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+The declared type matters for a file whose name has no recognized
+extension.
+
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
 does not change. Get the type right on the first send.
@@ -3690,13 +3707,17 @@ that to the user instead of waiting. See [Connect your coding agent](https://rem
 
 Every ingest is stored. Whether it is read depends on the MIME type.
 
-A fresh self-hosted deployment reads Markdown, plain text, HTML and
-Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`). A file
-with any other MIME type is stored and its processing is parked, not
-refused: the ingest succeeds with `"parked": "no_route"`, and the
-version waits until an operator adds a converter for its type. PDFs and
-images need converters that you configure with your own provider key.
-See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
+A fresh self-hosted deployment reads Markdown, plain text, HTML, EPUB and
+Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`), and extracts
+claims from them. Code, configuration, logs and unrecognized text are read
+and searchable, but no claims are extracted from them. Images, audio,
+video, archives and other binary files get a short file card (name, path,
+format, size; image dimensions; archive members). PDFs, legacy Office,
+email, notebook, CSV and data files are stored and their processing is
+parked, not refused: the ingest succeeds with `"parked": "no_route"`, and
+the version waits until a converter exists for its type. PDFs can be read
+with a converter you configure with your own provider key. See
+[File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
 `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`. Over that limit the API
@@ -6576,7 +6597,7 @@ it, set `REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN` and
 `REMEMBERSTACK_SELFHOST_API_PUBLISH_ADDRESS`
 ([Opening the API to other machines](https://remember.dev/docs/self-hosting/authentication#opening-the-api-to-other-machines)).
 
-To accept more than Markdown and plain text, set
+To read PDFs, or to read images with OCR instead of carding them, set
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` ([File formats and converters](https://remember.dev/docs/self-hosting/converters)).
 
 ## Settings fixed after the first start
@@ -6775,61 +6796,141 @@ Source: https://remember.dev/docs/self-hosting/converters
 # File formats and converters
 
 Before RememberStack can read a file, the `convert` worker turns it into
-Markdown. Which converter handles which file is a table you configure: a
-map from MIME type to converter name. A stock deployment converts
-Markdown, plain text, HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel
-(`.xlsx`) with no API key. Everything else, including PDFs and images, is
-stored and waits until you add a route for it; the ingest response says so
-at once with `"parked": "no_route"`.
+Markdown. Every arriving file is first sorted into a **format family**
+(Markdown, code, image, archive and so on), and the family decides which
+converter reads it. A stock deployment handles text, code, configuration,
+logs, HTML, EPUB, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`)
+with no API key, and describes images, audio, video, archives and unknown
+files with a short **file card**. PDFs, legacy Office files, email,
+notebooks, CSV and data files are stored and wait until a converter for
+them exists or you add a route; the ingest response says so at once with
+`"parked": "no_route"`.
+
+## How a file's family is chosen
+
+The server decides, in this order:
+
+1. **The file name.** The lower-cased extension picks the family (`.py` is
+   code, `.yaml` is configuration, `.tar.gz` is an archive). Files named
+   `README` or `LICENSE` are text; `Dockerfile`, `Makefile`, `Jenkinsfile`,
+   `Procfile`, `Containerfile`, `CODEOWNERS`, `BUILD` and `WORKSPACE` are
+   code; dotfiles such as `.gitignore`, `.editorconfig`, `.npmrc` and
+   `.env.local` are configuration.
+2. **The declared MIME type**, when the name does not decide. A specific
+   type the server knows (`text/markdown`, `application/pdf`, a type your
+   route table names) decides. `application/octet-stream` and `text/plain`
+   never do, because clients send them for anything.
+3. **The bytes.** A file that is valid UTF-8 with no NUL byte in its first
+   64 KiB is unrecognized text; anything else is a binary file.
+
+The stored MIME type is the family's (`text/x-code` for every code file,
+`text/x-config` for configuration, `text/x-log` for logs,
+`text/x-other-text` for unrecognized text, `application/octet-stream` for
+binary files). Formats that differ inside a family keep their own type:
+`.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
+reports the stored type in its `mime` field.
+
+## What each family becomes
+
+| Family | Extensions (examples) | Converter | Result |
+|---|---|---|---|
+| `markdown` | md, mdx, rst, adoc, org | `text` | The text; claims are extracted |
+| `text` | txt, srt, vtt, `README`, `LICENSE` | `text` | The text; claims are extracted |
+| `code` | py, js, ts, java, go, rs, c, sh, sql, css, `Dockerfile`, `Makefile` | `text` | The text, searchable; no claims |
+| `config` | json, jsonl, yaml, toml, ini, xml, svg, dotfiles | `text` | The text, searchable; no claims |
+| `log` | log, out, err, trace | `text` | The text, searchable; no claims |
+| `other_text` | unrecognized UTF-8 text | `text` | The text, searchable; no claims |
+| `html` | html, htm, xhtml | `markitdown` | The text; claims are extracted |
+| `ebook` | epub | `markitdown` | The text; claims are extracted |
+| `word` | docx (and docm, dotx) | `markitdown` | The text; claims are extracted |
+| `presentation` | pptx (and pptm, ppsx, potx) | `markitdown` | The text; claims are extracted |
+| `spreadsheet` | xlsx (and xlsm, xltx) | `markitdown` | The sheets as tables; claims are extracted |
+| `image` | png, jpg, gif, webp, tiff, bmp, heic, avif, psd | `card` | A file card with width, height and format |
+| `media` | wav, mp3, m4a, flac, mp4, mov, webm, mkv | `card` | A file card |
+| `archive` | zip, tar, tar.gz, 7z, rar, gz | `card` | A file card; zip and tar list their members |
+| `binary` | everything else | `card` | A file card |
+| `pdf`, `notebook`, `email`, `delimited`, `dataset` | pdf, ipynb, eml, csv, tsv, parquet, sav, … | none | Stored and parked (`no_route`) |
+| `word`, `presentation`, `spreadsheet` (legacy) | doc, odt, rtf, ppt, odp, xls, ods | none | Stored and parked (`no_route`) |
+
+"Searchable; no claims" means the file is chunked, embedded and found by
+search, but memory does not extract facts from it: a statement such as "the
+function returns a list" is not knowledge about your world, and extraction
+costs a model call per chunk. The structure step also makes no model call
+for these files.
+
+### The text converter
+
+`text` reads a file of up to 1 MB in full. It requires valid UTF-8; a file
+in another encoding fails conversion with a stated reason. A larger file is
+described instead of read: its line count, its size in bytes, and its first
+50 and last 20 lines, each cut to 500 characters. That description is
+searchable and never used for claims, so a 300 MB data table saved as
+`.txt`, or a 2 MB JSON export, costs a few kilobytes. Open the original for
+the rest.
+
+### File cards
+
+A card is a few lines of Markdown that make a file findable without reading
+it: its file name, source path, family, format and size in bytes. An image
+card adds the width, height and format read from the image header (the
+pixels are not decoded). A zip card lists up to 200 members with their
+sizes from the archive's directory, and says how many there are in total. A
+tar card (including `.tar.gz`, `.tar.bz2` and `.tar.xz`) lists up to 200
+members from a streamed read that stops after 200 members or 64 MB and then
+says the list is partial. Other archive formats get a card without a list.
+The original file is stored and served as always; an agent opens it with
+its own tools.
+
+Cards are searchable but never used for claims.
+
+### Size limits
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+is not read: it gets a file card that states the size limit it exceeded,
+whether or not a converter is configured for its type. Every file is
+stored whatever its size.
 
 ## The default table
 
-With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
+With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, every stored type of
+the families above routes to the converter named there: the six text MIME
+types (`text/markdown`, `text/plain`, `text/x-code`, `text/x-config`,
+`text/x-log`, `text/x-other-text`) to `text`; `text/html`,
+`application/epub+zip` and the `.docx`, `.pptx` and `.xlsx` types to
+`markitdown`; image, audio, video, archive and `application/octet-stream`
+types to `card`. Every one of these runs in the worker with no network call
+and no API key.
 
-| MIME type | Converter |
-|---|---|
-| `text/markdown` | `passthrough` |
-| `text/plain` | `passthrough` |
-| `text/html` | `markitdown` |
-| `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (`.docx`) | `markitdown` |
-| `application/vnd.openxmlformats-officedocument.presentationml.presentation` (`.pptx`) | `markitdown` |
-| `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`) | `markitdown` |
-
-`passthrough` keeps the text as it is. It requires valid UTF-8; a file in
-another encoding fails conversion. `markitdown` runs in the worker with no
-network call (see [markitdown](#markitdown)).
-
-PDFs and images are not in the default table: the converters that read
-them call a paid provider API with your own key. Add a route for them as
-shown below.
-
-The MIME type is the one sent with the upload. The `remember` CLI, Python
-client and MCP `ingest` tool take it from the file extension, the same way
-on every Python installation for the formats a route can name (the table is
-in [Ingest files](https://remember.dev/docs/guides/ingest-files#the-mime-type)), and fall back
-to `application/octet-stream`. Pass `--mime` (CLI) or `mime=` (Python) when
-the extension does not say what the file is. The match is exact:
-`text/markdown` and `text/x-markdown` are different keys.
+PDFs are not in the default table: the converter that reads them calls a
+paid provider API with your own key. Add a route for them as shown below.
 
 ## Add routes
 
-Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. It
-**replaces** the default table, so include the default routes again. This
-example adds PDFs and images:
+Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. Each entry
+**adds** a MIME type or **overrides** the converter of one in the default
+table; the rest of the table stays. This example reads PDFs with Mistral OCR
+and reads PNG and JPEG images with OCR plus a written description instead
+of carding them:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "markitdown", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "markitdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
 both read this variable. A route that names an unknown converter stops the
-`convert` worker at start with an error listing the four known names.
+`convert` worker at start with an error listing the known names.
+
+A declared MIME type your table names is also taken as the file's type when
+its name does not decide (step 2 above), so a route for a type of your own
+works for files sent with that type.
 
 | Converter | Runs | Accepts | Needs |
 |---|---|---|---|
-| `passthrough` | In the worker | Markdown and plain text | Nothing |
-| `markitdown` | In the worker | HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
+| `text` | In the worker | Markdown, text, code, configuration, logs | Nothing |
+| `card` | In the worker | Any file (describes it without reading it) | Nothing |
+| `markitdown` | In the worker | HTML, EPUB, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
+| `passthrough` | In the worker | Markdown and plain text, always read in full and always extracted | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
@@ -6844,6 +6945,9 @@ not read text inside embedded images.
 The image does not contain markitdown's PDF, audio or legacy Office
 (`.doc`, `.ppt`, `.xls`) packages, so a file of those types routed to
 `markitdown` fails conversion. Route PDFs to `mistral_ocr` instead.
+
+Office Open XML files are read with markitdown as documents and tables for
+now; spreadsheets are shown row by row and their claims are extracted.
 
 ## mistral_ocr
 
@@ -6921,15 +7025,19 @@ The command prints `{"released": [...]}` with the processing ids it
 released. It releases only work whose stored MIME type the current table
 covers; the rest stays parked. See [Operating the pipeline](https://remember.dev/docs/self-hosting/operating).
 
-If the file was simply sent with the wrong type, send the same bytes again
-with a type that has a route (`--mime text/markdown` on the CLI,
+If a file whose name has no recognized extension was sent with the wrong
+type, send the same bytes again with a type that has a route (`--mime text/markdown` on the CLI,
 `mime="text/markdown"` in Python). The new type replaces the unrouted one
 and the parked conversion is released without an operator step.
 
 ## Not supported yet
 
-RememberStack does not ingest audio, video or web addresses yet. To add a
-web page, download it and send the HTML.
+RememberStack does not read PDFs without an OCR route, legacy Office files
+(`.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`, `.xls`, `.ods`), email (`.eml`),
+Jupyter notebooks, CSV and TSV files, or data files (Parquet, SPSS, SAS,
+Stata, SQLite) yet: they are stored and parked. Audio and video get a file
+card; their speech is not transcribed. Web addresses are not fetched; to
+add a web page, download it and send the HTML.
 
 ---
 
@@ -7828,8 +7936,10 @@ work is parked with the reason `no_route`. It uses no attempts and makes no
 model calls. The ingest result reports it at once with
 `"parked": "no_route"`, and `remember ingest` prints a warning.
 
-A stock deployment routes Markdown, plain text, HTML, `.docx`, `.pptx` and
-`.xlsx`. PDFs and images need an OCR route with your own provider key. Add
+A stock deployment reads text, code, configuration, logs, HTML, EPUB,
+`.docx`, `.pptx` and `.xlsx`, and cards images, media, archives and unknown
+files. PDFs need an OCR route with your own provider key; legacy Office,
+email, notebook, CSV and data files have no converter yet. Add
 a route for the type as described in
 [File formats and converters](https://remember.dev/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
@@ -7842,41 +7952,28 @@ docker compose exec -T api \
 It prints `{"released": [...]}` with the processing ids it released. Work
 whose MIME type is still unrouted stays parked.
 
-### A Markdown file parked as `no_route`
+### A text file that yields no claims
 
-The MIME type is the one the upload declared, not something the engine
-detects. These uploads arrive with a type the default routes do not cover:
+The server picks a file's family from its name first, then from a specific
+declared type, then from its bytes
+([how a family is chosen](https://remember.dev/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+A file with no recognized extension, sent as `application/octet-stream` or
+`text/plain`, is valid text but of unknown kind: it is stored as
+`text/x-other-text`, which is searchable but never used for claims. Code,
+configuration and log files are searchable only by design.
 
-- a file or `filename` with no extension, or an extension the client does
-  not map and the sending machine's MIME table does not know:
-  `application/octet-stream`;
-- an older `remember` client on a Python installation that does not know
-  `.md`: `application/octet-stream`;
-- a `curl` call with a type such as `text/x-markdown`. The match is exact.
-
-Send the same file again with the right type:
-`remember ingest notes --mime text/markdown`, or `mime="text/markdown"` in
-Python. RememberStack stores identical bytes once, with the type of their
-first upload, but a type with no route is replaced by a later upload's
-type that has one, and every parked conversion of those bytes is released.
-The ingest result's `mime` shows the type now recorded.
-
-Alternatively, add a route for the type that was recorded, for example
-`"application/octet-stream": "passthrough"`, then run `resume-no-route`.
-`passthrough` needs valid UTF-8, so a binary file sent under that type
-fails conversion instead of waiting. To see which types were recorded:
+Send prose with an extension (`notes.md`, `notes.txt`) or declare its type
+on the first upload: `remember ingest notes --mime text/markdown`, or
+`mime="text/markdown"` in Python. RememberStack stores identical bytes once,
+with the type of their first upload; only a type with no route is replaced
+by a later upload's routable type. The ingest result's `mime` shows the
+type recorded. To see which types were recorded:
 
 ```bash
 docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 SELECT mime, count(*) FROM content_objects GROUP BY mime;
 SQL
 ```
-
-The current client sends `.md` and `.markdown` as `text/markdown` on
-every Python installation, and takes the type of bytes from their
-`filename`. For a file whose extension does not say what it is, pass the
-type: `remember ingest notes --mime text/markdown`, or `mime="text/markdown"`
-in Python.
 
 ### Dead letters
 
@@ -9310,7 +9407,7 @@ A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#doc
 
 | Field | Type | Meaning |
 |---|---|---|
-| `family` | array of strings | The document's format family: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office` or `other`. Any listed family matches. |
+| `family` | array of strings | The document's format family ([the families](https://remember.dev/docs/self-hosting/converters#what-each-family-becomes)): `markdown`, `text`, `other_text`, `code`, `config`, `log`, `html`, `ebook`, `notebook`, `email`, `word`, `presentation`, `pdf`, `spreadsheet`, `delimited`, `dataset`, `image`, `media`, `archive` or `binary`. Any listed family matches. |
 | `authors` | array of strings | A name or an address. Any listed term matches. |
 | `recipients` | array of strings | The same, for recipients. |
 | `created_from`, `created_to` | date-time with timezone | The date the document declares it was created or sent, inclusive. A document that declares no date does not match a range. |
@@ -9391,7 +9488,7 @@ what arrived since.
       "title": null,
       "source_path": "finance/2025",
       "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
-      "family": "office",
+      "family": "spreadsheet",
       "created_at": null,
       "modified_at": null,
       "language": null,
@@ -9424,19 +9521,19 @@ what arrived since.
 curl -s -X POST "$REMEMBER_API_URL/documents/search" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "q3 sales", "filters": {"family": ["office"]}, "k": 5}'
+  -d '{"query": "q3 sales", "filters": {"family": ["spreadsheet"]}, "k": 5}'
 ```
 
 ```python
 from remember import Client, DocumentSearchFilters
 
 memory = Client()
-page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("office",)))
+page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("spreadsheet",)))
 for result in page.documents:
     print(result.doc_id, result.file_name, result.matched_by)
 ```
 
-`remember documents search "q3 sales" --family office` prints the same page
+`remember documents search "q3 sales" --family spreadsheet` prints the same page
 as JSON.
 
 ## DELETE /documents/{doc_id}
@@ -14935,7 +15032,7 @@ there is no next page; without one they are newest ingested first and
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash
-remember documents search "q3 sales" --family office | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search "q3 sales" --family spreadsheet | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
 remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
 ```
 
@@ -15559,7 +15656,7 @@ Alice") rather than asking about its content.
 | Parameter | Type | Required | Limits |
 |---|---|---|---|
 | `query` | string | no | 1–4,096 characters. Words from the file name, title, source path or text. |
-| `family` | array of strings | no | Format families: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office`, `other`. |
+| `family` | array of strings | no | Format families: `markdown`, `text`, `other_text`, `code`, `config`, `log`, `html`, `ebook`, `notebook`, `email`, `word`, `presentation`, `pdf`, `spreadsheet`, `delimited`, `dataset`, `image`, `media`, `archive`, `binary`. |
 | `authors`, `recipients` | array of strings | no | Names or addresses; any listed term matches. |
 | `created_from`, `created_to`, `modified_from`, `modified_to` | string | no | ISO 8601 with a timezone, inclusive. |
 | `language`, `thread_ref` | string | no | Exact match. |
@@ -16103,7 +16200,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | Markdown and plain text → `passthrough`; HTML, `.docx`, `.pptx`, `.xlsx` → `markitdown` ([the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Replaces the default table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | unset: the built-in table (text families → `text`; HTML, EPUB, `.docx`, `.pptx`, `.xlsx` → `markitdown`; images, media, archives, other files → `card`; [the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Adds to or overrides entries of the built-in table. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |
@@ -16825,8 +16922,16 @@ absent from the current release; nothing here has a date.
 
 ## Ingest
 
-- **Audio and video.** RememberStack does not ingest audio or video yet; no
-  converter turns speech or video into text.
+- **Audio and video.** An audio or video file gets a file card (name, path,
+  format, size); no converter turns speech or video into text yet.
+- **PDFs without an OCR route, legacy Office, email, notebooks and data
+  files.** A self-hosted deployment stores `.pdf` (unless you route it to
+  `mistral_ocr`), `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`, `.xls`, `.ods`,
+  `.eml`, `.ipynb`, CSV/TSV and data files (Parquet, SPSS, SAS, Stata,
+  SQLite) and parks them as `no_route`; no built-in converter reads them
+  yet ([File formats and converters](https://remember.dev/docs/self-hosting/converters)).
+- **Spreadsheet profiles.** `.xlsx` files are read row by row with
+  markitdown; there is no compact sheet-and-column profile yet.
 - **URLs.** You cannot ingest a web page by its address; fetch the page
   yourself and upload the file.
 - **Connectors and watched folders.** Nothing pulls documents from another

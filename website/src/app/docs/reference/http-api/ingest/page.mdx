@@ -420,7 +420,7 @@ A [`DocumentSearchRequest`](/docs/reference/result-types#documentsearchrequest):
 
 | Field | Type | Meaning |
 |---|---|---|
-| `family` | array of strings | The document's format family: `text`, `markdown`, `html`, `pdf`, `image`, `audio`, `video`, `office` or `other`. Any listed family matches. |
+| `family` | array of strings | The document's format family ([the families](/docs/self-hosting/converters#what-each-family-becomes)): `markdown`, `text`, `other_text`, `code`, `config`, `log`, `html`, `ebook`, `notebook`, `email`, `word`, `presentation`, `pdf`, `spreadsheet`, `delimited`, `dataset`, `image`, `media`, `archive` or `binary`. Any listed family matches. |
 | `authors` | array of strings | A name or an address. Any listed term matches. |
 | `recipients` | array of strings | The same, for recipients. |
 | `created_from`, `created_to` | date-time with timezone | The date the document declares it was created or sent, inclusive. A document that declares no date does not match a range. |
@@ -501,7 +501,7 @@ what arrived since.
       "title": null,
       "source_path": "finance/2025",
       "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
-      "family": "office",
+      "family": "spreadsheet",
       "created_at": null,
       "modified_at": null,
       "language": null,
@@ -534,19 +534,19 @@ what arrived since.
 curl -s -X POST "$REMEMBER_API_URL/documents/search" \
   -H "Authorization: Bearer $REMEMBER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "q3 sales", "filters": {"family": ["office"]}, "k": 5}'
+  -d '{"query": "q3 sales", "filters": {"family": ["spreadsheet"]}, "k": 5}'
 ```
 
 ```python
 from remember import Client, DocumentSearchFilters
 
 memory = Client()
-page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("office",)))
+page = memory.search_documents("q3 sales", filters=DocumentSearchFilters(family=("spreadsheet",)))
 for result in page.documents:
     print(result.doc_id, result.file_name, result.matched_by)
 ```
 
-`remember documents search "q3 sales" --family office` prints the same page
+`remember documents search "q3 sales" --family spreadsheet` prints the same page
 as JSON.
 
 ## DELETE /documents/\{doc_id\}
