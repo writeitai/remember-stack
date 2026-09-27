@@ -234,7 +234,8 @@ name, a CAD file's declared units). Labels: `file_card` / `source_expression`
 for copied names and metadata strings, `computed` for sizes and counts.
 Coverage is `policy="card"`, `complete=False`. The card makes the file
 discoverable (its name and metadata feed `search_documents`, D134); the original is
-served as always (D51).
+served as always (D51). A PDF that exceeds its OCR route's admission limit
+fails conversion with a typed reason; it does not receive a successful card.
 
 ## 7. New locator kinds
 

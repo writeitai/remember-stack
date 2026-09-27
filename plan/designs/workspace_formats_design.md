@@ -150,7 +150,9 @@ declares cheaply:
   directory; for tar, the same from a streamed read that stops after 200 members or 64 MB
   scanned, saying the list is partial when it stops; other archive and compressed formats get the
   card without a listing;
-- **media, binary, oversized files** — the common fields, and for oversized files the reason.
+- **media, binary, oversized files other than PDFs** — the common fields, and
+  for oversized files the reason. An oversized PDF reports a typed conversion
+  failure under §3; it does not get a successful card.
 
 Label `file_card` / `computed`; coverage `policy="card"`, `complete=False`. The original is
 stored and served as always (D51); the agent opens it with its own tools.
