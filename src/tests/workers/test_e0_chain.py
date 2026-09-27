@@ -2128,6 +2128,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
     }
     with rig.engine.begin() as connection:
         connection.execute(text(statements[tombstone]), {"id": version.version_id})
+    assert version.mime is not None
     assert (
         rig.ledger.resume_no_route(
             deployment_id=_DEPLOYMENT_ID, routable_mimes={str(version.mime)}

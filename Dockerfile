@@ -40,6 +40,15 @@ ENV PATH="/app/.venv/bin:${PATH}" \
 
 WORKDIR /app
 
+# LibreOffice converts legacy and OpenDocument files (doc, odt, rtf, ppt, odp,
+# ods) to Office Open XML before they are read (D138 §7). Only the headless
+# writer, impress and calc components are installed; without them those
+# formats would park until a converter exists.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system app \
     && adduser --system --ingroup app \
         --home /var/lib/rememberstack --no-create-home app \

@@ -80,6 +80,11 @@ jobs:
         run: uv python install 3.13
       - name: Install dependencies (locked)
         run: uv sync --locked --python 3.13
+      - name: Install LibreOffice (D138 legacy office conversions)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui
       - name: Unit pack (no Postgres service)
         run: |
           mapfile -t paths < .github/ci/unit-paths.txt
