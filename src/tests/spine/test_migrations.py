@@ -1689,20 +1689,28 @@ def test_d138_downgrade_guard_protects_search_only_readings() -> None:
                 is False
             )
 
-        # a search-only reading refuses even before it is chunked
+        # a D138 reading refuses even before it is chunked: here a Markdown
+        # file over 1 MB, a large_text profile whose family stays prose
         with engine.begin() as connection:
             connection.execute(text("DELETE FROM chunks"))
-            connection.execute(text("UPDATE document_metadata SET family = 'code'"))
         with pytest.raises(RuntimeError, match="D138 downgrade requires"):
             command.downgrade(config=config, revision="p9_36_0057")
         assert _head_revision(database_url=database_url) == "p9_37_0058"
         with engine.connect() as connection:
             assert (
                 connection.execute(
-                    text("SELECT family FROM document_metadata")
+                    text("SELECT route FROM document_representations")
                 ).scalar_one()
-                == "code"
+                == "text"
             )
+
+        # a pre-D138 reading of the same prose file does not block
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE document_representations SET route = 'passthrough'")
+            )
+        command.downgrade(config=config, revision="p9_36_0057")
+        assert not eligibility_column_exists()
     finally:
         engine.dispose()
         reset_database(config=config)

@@ -12,8 +12,8 @@ Two changes for the workspace formats design (D138, realizing D133 §4.5):
   mapping ingest uses (``family_for_mime``).
 
 The downgrade restores the D134 family names with the p9_35 mapping and
-drops the columns, refusing when any chunk is ineligible or any D138
-search-only, profile or card reading exists, even before it is chunked:
+drops the columns, refusing when any chunk is ineligible or any reading by a
+D138 converter exists, even before it is chunked:
 dropping the flag would make E2 extract claims from code, logs and cards.
 """
 
@@ -81,18 +81,14 @@ WHERE v.deployment_id = m.deployment_id AND v.version_id = m.version_id
 _D138_READINGS_EXIST = """
 SELECT EXISTS (SELECT 1 FROM chunks WHERE NOT extraction_eligible)
     OR EXISTS (
-      SELECT 1
-      FROM document_representations r
-      LEFT JOIN document_metadata m
-        ON m.deployment_id = r.deployment_id AND m.version_id = r.version_id
-      WHERE r.route = 'card'
-         OR m.family IN ('other_text', 'code', 'config', 'log', 'delimited',
-                         'dataset', 'media', 'archive', 'binary')
+      SELECT 1 FROM document_representations
+      WHERE route IN ('text', 'card', 'office', 'pdf', 'email', 'notebook',
+                      'spreadsheet', 'table', 'dataset')
     )
 """
-"""Rows only D138 can have produced: an ineligible chunk, a card, or a
-reading of a family that is never claim-extracted. Before D138 no route
-existed for those families, so such a representation is always D138's."""
+"""Rows only D138 can have produced: an ineligible chunk, or any reading by a
+D138 converter. The route decides, not the family: a Markdown file over
+1 MB is a search-only large_text profile while its family stays prose."""
 
 
 def upgrade() -> None:
