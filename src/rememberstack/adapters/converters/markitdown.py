@@ -6,7 +6,9 @@ from typing import Final
 from markitdown import MarkItDown
 from markitdown import StreamInfo
 from markitdown._exceptions import MarkItDownException
+from markitdown.converters import EpubConverter
 
+from rememberstack.adapters.converters.time_limit import run_with_time_limit
 from rememberstack.core import entire_document_labeling
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
@@ -20,13 +22,21 @@ MARKITDOWN_CONVERTER_VERSION: Final = "markitdown-0.3"
 envelope emission and the D134 declared title. Bumped whenever library or output contract changes so
 replay never reuses artifacts from an older shape."""
 
+_EPUB_MIME: Final = "application/epub+zip"
+
 
 class MarkitdownConverter:
     """The default local route for structured text formats (html, office, email)."""
 
     def __init__(self) -> None:
-        """Build the converter once; markitdown instances are reusable."""
+        """Build the converters once; markitdown instances are reusable.
+
+        EPUB gets an instance that knows only EPUB: the general one would
+        read a broken book as a zip listing or plain text instead of failing.
+        """
         self._markitdown = MarkItDown(enable_plugins=False)
+        self._epub = MarkItDown(enable_builtins=False, enable_plugins=False)
+        self._epub.register_converter(EpubConverter())
 
     @property
     def name(self) -> str:
@@ -40,9 +50,13 @@ class MarkitdownConverter:
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """Convert one input via markitdown; its failures become typed failures."""
+        engine = self._epub if mime == _EPUB_MIME else self._markitdown
         try:
-            result = self._markitdown.convert_stream(
-                io.BytesIO(content), stream_info=StreamInfo(mimetype=mime)
+            result = run_with_time_limit(
+                work=lambda: engine.convert_stream(
+                    io.BytesIO(content), stream_info=StreamInfo(mimetype=mime)
+                ),
+                what="markitdown conversion",
             )
         except MarkItDownException as err:
             raise ConversionError(f"markitdown could not convert {mime!r}") from err

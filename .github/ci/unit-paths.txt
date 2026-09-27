@@ -127,3 +127,4 @@ src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
 src/tests/adapters/test_perimeter_trust.py
 src/tests/workers/test_self_reference_naming.py
+src/tests/adapters/test_document_family_converters.py
