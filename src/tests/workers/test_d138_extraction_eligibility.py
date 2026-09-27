@@ -373,7 +373,7 @@ def _structure(
     _write_representation(
         store=store,
         document_md=document_md,
-        ranges=_ranges((0, len(document_md), kind)),
+        ranges=_ranges((0, len(document_md), kind)) if document_md else (),
     )
     catalog = _ModelFreeStructureCatalog()
     StructureHandler(
@@ -401,10 +401,33 @@ def test_structure_makes_no_model_call_without_prose(tmp_path: Path) -> None:
     assert generation.summary_version is None
     assert generation.placement_path is None
     assert generation.roles_version == E0_RULE_ROLE_VERSION
+    # search-only text is one flat section: `#` lines are not headings
+    assert [section.node_path for section in generation.sections] == ["0"]
+    assert generation.sections[0].role == "body"
+    assert generation.sections[0].summary is None
+
+
+def test_cards_keep_their_heading_sections_without_models(tmp_path: Path) -> None:
+    """A card is converter-built Markdown: its headings stay sections."""
+    catalog = _structure(
+        tmp_path=tmp_path, document_md=_SECTIONED, kind="file_card", provider=_NoModel()
+    )
+    (generation,) = catalog.generations
+    assert generation.roles_version == E0_RULE_ROLE_VERSION
     roles = {section.title: section.role for section in generation.sections}
     assert roles["References"] == "references"
     assert roles["Setup"] == "body"
     assert all(section.summary is None for section in generation.sections)
+
+
+def test_an_empty_reading_makes_no_model_call(tmp_path: Path) -> None:
+    """An empty file (``__init__.py``) has no ranges and no blocks: no models."""
+    catalog = _structure(
+        tmp_path=tmp_path, document_md="", kind="code", provider=_NoModel()
+    )
+    (generation,) = catalog.generations
+    assert generation.summary_version is None
+    assert catalog.checks == []
 
 
 def test_structure_still_calls_models_for_prose(tmp_path: Path) -> None:
@@ -520,12 +543,14 @@ def test_convert_refuses_a_block_that_mixes_eligibility(tmp_path: Path) -> None:
 def test_convert_routes_an_oversized_file_to_the_card_with_hints(
     tmp_path: Path,
 ) -> None:
-    """Over the family limit, even an unrouted PDF is carded, named by its hints."""
+    """Over the family limit, even an unrouted PDF is carded, named by its hints,
+    whatever the route table maps unrecognized bytes to."""
     catalog = _ConvertCatalog(mime="application/pdf", byte_size=100_000_001)
     artifacts = _convert(
         tmp_path=tmp_path,
         catalog=catalog,
-        routes={"application/octet-stream": CardConverter()},
+        # the deployment maps unknown bytes elsewhere; oversized still cards
+        routes={"application/octet-stream": _MixedConverter()},
     )
     assert catalog.recorded is not None
     assert catalog.recorded.route == "card"

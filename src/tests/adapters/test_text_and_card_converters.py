@@ -9,11 +9,11 @@ import zipfile
 from PIL import Image
 import pytest
 
-from rememberstack.adapters.converters import card as card_module
 from rememberstack.adapters.converters.card import CardConverter
 from rememberstack.adapters.converters.card import MAX_LISTED_MEMBERS
 from rememberstack.adapters.converters.text import FULL_TEXT_LIMIT_BYTES
 from rememberstack.adapters.converters.text import TextConverter
+from rememberstack.core import file_card as card_module
 from rememberstack.core import FileHintConverter
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.model import ConversionError
@@ -45,6 +45,25 @@ def test_text_is_read_in_full_and_labelled_by_family(mime: str, kind: str) -> No
     )
     assert (labeled.start, labeled.end) == (0, len(result.document_md))
     assert result.manifest.coverage.complete
+
+
+def test_text_routed_from_an_unregistered_mime_is_search_only() -> None:
+    """An overlay route (application/x-custom → text) never yields prose."""
+    result = TextConverter().convert(content=b"notes\n", mime="application/x-custom")
+    (labeled,) = result.manifest.derivation_ranges
+    assert labeled.derivation_kind == "other_text"
+    html = TextConverter().convert(content=b"<p>x</p>\n", mime="text/html")
+    assert html.manifest.derivation_ranges[0].derivation_kind == "other_text"
+
+
+def test_large_text_validates_the_whole_input_as_utf8() -> None:
+    """Invalid bytes outside the shown lines still fail the version."""
+    lines = b"".join(f"row {index}\n".encode() for index in range(200_000))
+    middle = len(lines) // 2
+    corrupt = lines[:middle] + b"\xff" + lines[middle:]
+    assert len(corrupt) > FULL_TEXT_LIMIT_BYTES
+    with pytest.raises(ConversionError, match="not valid UTF-8"):
+        TextConverter().convert(content=corrupt, mime="text/x-log")
 
 
 def test_empty_text_has_no_ranges_and_invalid_utf8_fails_typed() -> None:
@@ -100,6 +119,7 @@ def test_head_tail_profile_reads_one_enormous_line_without_decoding_it() -> None
     content = b'{"rows": [' + b'"value", ' * 250_000 + b'"end"]}'
     result = TextConverter().convert(content=content, mime="text/x-config")
     assert "1 lines" in result.document_md
+    assert "All 1 lines are shown" in result.document_md
     assert "First 1 lines" in result.document_md
     assert "Last" not in result.document_md
     assert len(result.document_md) < 2_000
@@ -146,11 +166,13 @@ def test_image_card_reads_dimensions_from_the_header() -> None:
     assert "- Source path: unknown" in result.document_md
 
 
-def test_unreadable_image_card_says_why_instead_of_failing() -> None:
-    """A header Pillow cannot identify is stated on the card and warned."""
+def test_unreadable_image_formats_are_carded_but_corrupt_ones_fail() -> None:
+    """HEIC is unreadable by design (warned); a bad PNG header contradicts it."""
     result = CardConverter().convert(content=b"not an image", mime="image/heic")
-    assert "- Dimensions: not read (UnidentifiedImageError" in result.document_md
+    assert "- Dimensions: not read (this runtime cannot read" in result.document_md
     assert result.warnings and "image dimensions not read" in result.warnings[0]
+    with pytest.raises(ConversionError, match="not a readable image"):
+        CardConverter().convert(content=b"not an image", mime="image/png")
 
 
 def test_media_card_has_only_the_common_fields() -> None:
@@ -230,11 +252,55 @@ def test_tar_card_stops_once_the_scan_passes_the_byte_limit(
     assert "logs/002.log" not in result.document_md
 
 
-def test_unreadable_archive_card_states_the_listing_failure() -> None:
-    """Bytes that are not the archive they claim are stated, never silently empty."""
-    result = CardConverter().convert(content=b"PK-but-broken", mime="application/zip")
-    assert "Not listed: the zip archive could not be listed" in result.document_md
-    assert result.warnings
+def test_corrupt_archives_fail_and_zstd_tar_is_carded_unlisted() -> None:
+    """A zip or tar that is not one fails; zstd tar cannot be read here."""
+    with pytest.raises(ConversionError, match="not one"):
+        CardConverter().convert(content=b"PK-but-broken", mime="application/zip")
+    with pytest.raises(ConversionError, match="not a readable one"):
+        CardConverter().convert(content=b"\x1f\x8bgarbage", mime="application/x-tar")
+    zstd = CardConverter().convert(
+        content=b"\x28\xb5\x2f\xfd rest", mime="application/x-tar"
+    )
+    assert "Not listed: zstd-compressed tar" in zstd.document_md
+    assert zstd.warnings
+
+
+def test_a_compressed_pax_header_cannot_expand_past_the_scan_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound applies to decompressed bytes before tarfile parses a header."""
+    monkeypatch.setattr(card_module, "MAX_TAR_SCAN_BYTES", 50_000)
+    buffer = io.BytesIO()
+    with tarfile.open(
+        fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT
+    ) as archive:
+        info = tarfile.TarInfo(name="p" * 400_000)
+        info.size = 1
+        archive.addfile(info, io.BytesIO(b"x"))
+    probe = buffer.getvalue()
+    assert len(probe) < 5_000
+    result = CardConverter().convert(content=probe, mime="application/x-tar")
+    assert "the listing is partial" in result.document_md
+    assert len(result.document_md) < 2_000
+
+
+def test_member_paths_and_names_are_cut_and_kept_on_one_line() -> None:
+    """Long member paths are cut to 300 chars; newlines never leave a line."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("d/" + "n" * 1_000, "x")
+        archive.writestr("evil\n# heading", "x")
+    result = CardConverter().convert(
+        content=buffer.getvalue(),
+        mime="application/zip",
+        hints=FileHints(file_name="a\r\n# b.zip", source_path="x\ny"),
+    )
+    lines = result.document_md.splitlines()
+    assert lines[0] == "# a  # b.zip"
+    assert "- Source path: x y" in lines
+    assert "- d/" + "n" * 298 + " (1 bytes)" in lines
+    assert "- evil # heading (1 bytes)" in lines
+    assert not any(line.startswith("# heading") for line in lines)
 
 
 def test_other_archive_formats_get_the_card_without_a_listing() -> None:

@@ -434,7 +434,8 @@ def exceeds_reading_limit(*, mime: str, byte_size: int) -> bool:
 
 def _mime_for_file_name(*, file_name: str) -> str | None:
     """Step 1: named files, dotfiles, compound tar and the extension."""
-    name = PurePosixPath(file_name).name.lower()
+    # a Windows path names its file after the last backslash
+    name = PurePosixPath(file_name.replace("\\", "/")).name.lower()
     named = _NAMED_FILES.get(name)
     if named is not None:
         return _BY_NAME[named].mime

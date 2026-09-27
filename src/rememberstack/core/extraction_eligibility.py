@@ -35,6 +35,13 @@ INELIGIBLE_DERIVATION_KINDS: Final = frozenset(
 """Derivation kinds whose ranges are never claim-extracted (D138 §2)."""
 
 
+SEARCH_ONLY_TEXT_KINDS: Final = frozenset(
+    {"code", "config", "log", "other_text", "large_text"}
+)
+"""Ineligible kinds whose text is the file's own text, not a document built
+by a converter: its ``#`` lines are comments or data, never section headings."""
+
+
 class MixedEligibilityError(Exception):
     """One block carries both eligible and ineligible labelled ranges."""
 
@@ -70,4 +77,14 @@ def is_model_free(*, ranges: tuple[DerivationRange, ...]) -> bool:
     """
     return bool(ranges) and all(
         labeled.derivation_kind in INELIGIBLE_DERIVATION_KINDS for labeled in ranges
+    )
+
+
+def is_search_only_text(*, ranges: tuple[DerivationRange, ...]) -> bool:
+    """Whether every range is search-only text (code, config, logs, …).
+
+    Such a reading is structured as one flat section (D138 §1).
+    """
+    return bool(ranges) and all(
+        labeled.derivation_kind in SEARCH_ONLY_TEXT_KINDS for labeled in ranges
     )

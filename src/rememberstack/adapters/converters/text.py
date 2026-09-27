@@ -20,7 +20,7 @@ from rememberstack.model import ConverterManifest
 from rememberstack.model import DerivationRange
 from rememberstack.model import ManifestComponent
 
-TEXT_CONVERTER_VERSION: Final = "text-2026.09"
+TEXT_CONVERTER_VERSION: Final = "text-2026.09b"
 """Pins the text route: strict UTF-8, family labels, the head/tail profile."""
 
 FULL_TEXT_LIMIT_BYTES: Final = 1_000_000
@@ -30,6 +30,10 @@ HEAD_LINES: Final = 50
 TAIL_LINES: Final = 20
 LINE_CHARS: Final = 500
 """The head/tail profile's line counts and per-line cut (D138 §5.2)."""
+
+_PROSE_FAMILIES: Final = frozenset({"markdown", "text"})
+_SEARCH_ONLY_FAMILIES: Final = frozenset({"code", "config", "log", "other_text"})
+_VALIDATION_SLICE_BYTES: Final = 1_000_000
 
 _LINE_BYTES: Final = LINE_CHARS * 4
 """The most bytes 500 UTF-8 characters can take; longer lines are cut
@@ -59,8 +63,7 @@ class TextConverter:
             raise ConversionError(
                 f"input stored as {mime!r} is not valid UTF-8 text"
             ) from err
-        family = family_for_mime(mime=mime)
-        kind = "passthrough" if family.outcome == "prose" else family.name
+        kind = _derivation_kind(mime=mime)
         return ConversionResult(
             document_md=document_md,
             manifest=ConverterManifest(
@@ -82,16 +85,35 @@ class TextConverter:
         )
 
 
+def _derivation_kind(*, mime: str) -> str:
+    """The range label: prose families pass through, others are search-only.
+
+    Only the explicit prose families are extracted. Text reached through a
+    route from any other MIME (a deployment's own type, say) is labelled
+    ``other_text`` unless its family is itself a search-only text family.
+    """
+    family = family_for_mime(mime=mime).name
+    if family in _PROSE_FAMILIES:
+        return "passthrough"
+    return family if family in _SEARCH_ONLY_FAMILIES else "other_text"
+
+
 def _head_tail_profile(*, content: bytes, mime: str) -> ConversionResult:
     """Describe a large text file by its counts, first and last lines."""
+    _require_utf8(content=content)
     line_count = content.count(b"\n") + (0 if content.endswith(b"\n") else 1)
     head = _first_lines(content=content, count=HEAD_LINES)
     tail = _last_lines(content=content, count=min(TAIL_LINES, line_count - len(head)))
     family = family_for_mime(mime=mime).name
+    shown = (
+        f"Only the first {len(head)} and last {len(tail)} lines are shown"
+        if tail
+        else f"All {len(head)} lines are shown"
+    )
     summary = (
         f"Large {family} file: {line_count:,} lines, {len(content):,} bytes. "
-        f"Only the first {len(head)} and last {len(tail)} lines are shown, "
-        f"each cut to {LINE_CHARS} characters; open the original for the rest.\n\n"
+        f"{shown}, each cut to {LINE_CHARS} characters; "
+        "open the original for the rest.\n\n"
     )
     body = f"## First {len(head)} lines\n\n{_fenced(lines=head)}"
     if tail:
@@ -127,6 +149,17 @@ def _head_tail_profile(*, content: bytes, mime: str) -> ConversionResult:
             ),
         ),
     )
+
+
+def _require_utf8(*, content: bytes) -> None:
+    """Validate the whole input as UTF-8, one bounded slice at a time."""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="strict")
+    try:
+        for start in range(0, len(content), _VALIDATION_SLICE_BYTES):
+            decoder.decode(content[start : start + _VALIDATION_SLICE_BYTES])
+        decoder.decode(b"", final=True)
+    except UnicodeDecodeError as err:
+        raise ConversionError("large text file is not valid UTF-8 text") from err
 
 
 def _first_lines(*, content: bytes, count: int) -> list[str]:
