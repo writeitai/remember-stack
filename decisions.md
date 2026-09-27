@@ -954,6 +954,12 @@ change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
 
+**Partially superseded by D139 (2026-09-27).** The example route that extracts a
+digital PDF's text layer or selects OCR only for scanned/complex PDFs is replaced:
+every page of every accepted PDF goes through OCR. D133's registry refinement,
+the pluggable/versioned converter contract, and D57/D65's later contract and
+media refinements remain binding.
+
 **Refined by D133.** The operator-built MIME → converter table is replaced by an
 engine-shipped format registry (family → posture → converter) that deployments
 overlay rather than replace; routing keys are normalized. The pluggable, versioned
@@ -6173,6 +6179,13 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
 
+**Partially superseded by D139 (2026-09-27).** Any PDF-family route or
+deployment overlay that would read a text layer instead of OCR, or split PDF
+pages between text extraction and OCR, is replaced by OCR for every page of
+every accepted PDF. The format registry framework, family/posture mapping,
+extraction eligibility, locators, and D138's other refinements remain binding.
+No PDF-specific cost optimization can bypass this route.
+
 **Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
 locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
 profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
@@ -6536,6 +6549,11 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 
 ## D138. Coding-agent-first ingestion of workspace formats
 
+**Partially superseded by D139 (2026-09-27).** The PDF text-layer converter and
+the conditional OCR route in its family design are replaced by OCR on every
+accepted PDF page. Its other family routes, detection order, postures, profiles,
+cards, and metadata rules remain binding.
+
 **Status:** accepted. **Date:** 2026-09-27.
 
 **Context.** D133 bound the format framework but left each family to its own design. A matched
@@ -6563,3 +6581,40 @@ several hundred megabytes to the engine image.
 
 **Authority:** [design](plan/designs/workspace_formats_design.md),
 [analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).
+
+## D139. Every accepted PDF page goes through OCR
+
+**Status:** accepted. **Date:** 2026-09-27. **Supersedes:** the PDF routing
+clauses of D38, D133 and D138; their other contracts remain binding as noted
+inside those entries.
+
+**Decision.** The PDF family's converter sends **every page of every accepted
+PDF through OCR**, regardless of whether the page has selectable text. The
+format registry and deployment overlays cannot select a PDF text-layer
+extraction route or split pages into text and scan routes. A PDF produces one
+OCR-derived reading with page locators and honest coverage; an unreadable or
+failed page is a visible gap/failure, never a silent text-layer fallback.
+
+**Context and alternatives.** The owner restated the explicit requirement on
+2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
+The earlier D38 route for digital PDF text extraction and D138's text-layer
+converter with conditional OCR contradict it. Text-layer extraction and a
+per-page text-versus-scan split could save provider cost, but both violate the
+owner's requirement and yield different reading and layout behavior within a
+single document. OCR gives one consistent conversion path across born-digital,
+scanned and mixed PDFs. D115 establishes the analogous always-OCR rule for
+standalone images, not an earlier PDF-specific mandate; no earlier
+PDF-specific owner statement was found in this repo.
+
+**Consequences.** OCR cost scales with every accepted PDF page, including
+pages with selectable text and pages with no visible text. The engine's PDF
+metering uses the registry's `scan_page` cost class and page quantity; the
+separate managed cloud maps every accepted PDF page to its `doc-scan` charge.
+Conversion, source mapping and coverage stay in the engine under D60/D61.
+The PDF route needs a configured OCR provider and parks under D117 when it is
+unavailable. Converter and route changes require versioned re-conversion;
+tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[format framework](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/pdf_always_ocr.md).

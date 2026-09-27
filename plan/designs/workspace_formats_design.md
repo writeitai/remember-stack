@@ -1,11 +1,12 @@
 # Workspace formats — coding-agent-first ingestion (Design)
 
-**Status:** D138, accepted 2026-09-27; binding when merged.
+**Status:** D138, accepted 2026-09-27; PDF route superseded by D139; binding when merged.
 **Analysis:** [coding-agent-first ingestion](../analysis/coding_agent_first_ingestion_analysis.md).
 **Realizes:** D133 ([format conversion](format_conversion_design.md)) for the families a
 professional workspace contains; it is the family design set D133 §10 requires for them.
 **Refines D133:** deterministic, search-only profiles; cards for unrecognized bytes;
 extension-first detection; container expansion and `data_query` leave the system (§8).
+**PDF amendment:** D139 requires OCR for every page of every accepted PDF.
 **Composes with:** D134 (converters fill general document metadata).
 
 ## 1. Principle
@@ -66,10 +67,15 @@ they continue to step 1 and end, at worst, as a `binary` card.
 **Routing is the registry, overlaid.** The engine ships the family table below. A deployment's
 conversion-route setting **adds or overrides** entries (for example, routing images to the D115
 OCR-and-description converter once provider keys exist); it no longer replaces the table.
+The PDF invariant survives overlays: a PDF route must OCR every page and cannot
+be replaced by text-layer extraction or by a per-page split.
 
 **Size.** Every file is stored. A file larger than its family's reading limit gets a card that
-says why, instead of a reading or a refusal. Starting values: 100 MB for office documents and
-PDF, 200 MB for spreadsheets (profiled from sheet dimensions only above 50 MB).
+says why, instead of a reading or a refusal, except a PDF: a PDF over the OCR
+route's admission limit fails conversion with a typed limit reason while its
+original remains stored. A PDF card must never masquerade as a completed PDF
+reading. Starting values: 100 MB for office documents and PDF, 200 MB for
+spreadsheets (profiled from sheet dimensions only above 50 MB).
 
 ## 4. The family table
 
@@ -89,7 +95,7 @@ Text is read in full up to **1 MB**; beyond that, the head/tail profile of §5.2
 | `email` | eml | email | prose (headers and body; attachments listed by name and size) |
 | `word` | docx, docm, dotx, doc, odt, rtf | office (markitdown; LibreOffice converts doc, odt, rtf first) | prose |
 | `presentation` | pptx, pptm, ppsx, potx, ppt, odp | office (python-pptx per slide; LibreOffice converts ppt, odp first) | prose, one `page` locator per slide |
-| `pdf` | pdf | pdf (pypdfium2 text layer) | prose, one `page` locator per page |
+| `pdf` | pdf | OCR (every page; provider-backed) | prose, one `page` locator per page |
 | `spreadsheet` | xlsx, xlsm, xltx, xls, ods | spreadsheet (openpyxl; xlrd for xls; LibreOffice converts ods first) | profile |
 | `delimited` | csv, tsv, psv, tab | table | profile |
 | `dataset` | parquet, feather, arrow, sav, por, xpt, sas7bdat, dta, sqlite, sqlite3, db | dataset (pyarrow; pyreadstat; sqlite3 opened read-only) | profile |
@@ -159,9 +165,17 @@ stored and served as always (D51); the agent opens it with its own tools.
   one process per file, a fresh temporary profile directory per call
   (`-env:UserInstallation=file:///<tmp>`), a 120-second limit, no network. A deployment without
   LibreOffice parks those extensions under D117 until it is installed.
-- **PDF.** pypdfium2 extracts each page's text layer. Pages without text are named in
-  `coverage.gaps`; when an OCR route is configured (D133), a PDF whose pages are mostly without
-  text is routed to it instead.
+- **PDF.** The converter OCRs every page, whether the PDF is born-digital,
+  scanned or mixed, and renders one page-located reading in `document.md`.
+  It never inspects a text layer to choose a route, extracts text from that
+  layer instead of OCR, or falls back to it after OCR failure. A successful
+  OCR page with no visible text is recorded as empty; a failed or unreadable
+  page is an explicit coverage gap/failure, never a silently omitted page.
+  The provider requirement is part of the registry entry; without a configured
+  OCR provider the file parks under D117. The engine meters `scan_page` with
+  quantity equal to accepted PDF pages; a managed cloud maps every such page
+  to `doc-scan`. The source map retains one `page` locator per page, and the
+  converter/route version pins the representation for re-conversion.
 - **Email.** Python's `email` package; the plain-text part, or HTML converted with markitdown.
 - **Notebook.** JSON cells in order; outputs are dropped.
 
@@ -175,6 +189,8 @@ stored and served as always (D51); the agent opens it with its own tools.
   [data query](../proposals/data_query.md).
 - **D133 detection** (§2.2) is replaced by §3's order; D133's families not in §4 stay the
   registry's direction.
+- **D139 PDF route** replaces the text-layer and conditional OCR clauses in the
+  earlier D38/D133/D138 contracts; §4 and §7 bind the single OCR route.
 - **D134** keeps general metadata, `search_documents` and document filters. Only prose produces
   claims, so D134's self-reference naming applies to prose families.
 
@@ -195,3 +211,6 @@ fields and caps; the head/tail threshold; card fields and archive listing limits
 mapping; oversized-file cards; corrupt-file failures; LibreOffice conversions when `soffice` is
 installed (skipped with a stated reason otherwise). The Workspace-Bench ingestion audit is the
 end-to-end check across the real 89-extension workspace.
+PDF fixtures include born-digital, scanned and mixed pages; each accepted page
+must have an OCR attempt and page locator, with no text-layer bypass on empty
+OCR or provider failure.

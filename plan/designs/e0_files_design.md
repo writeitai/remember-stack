@@ -178,6 +178,10 @@ gates everything downstream:
   independent vision-LLM description call. Converters are versioned — a model or parser
   upgrade is a `converter_version` bump, flowing the processing-driven lifecycle ruleset
   (`evidence_lifecycle_design.md` §3).
+  **PDFs (D139) always use OCR for every accepted page**, including pages with
+  selectable text. The PDF route neither extracts text layers nor switches
+  between text extraction and OCR by page; an unconfigured OCR provider parks
+  conversion under D117.
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
@@ -763,7 +767,7 @@ derived → P3.
 
 1. Upload `acme-10k-2023.pdf` → **ingest**: raw bytes to the raw bucket, `content_hash`, a
    `documents` row.
-2. **convert**: router picks OCR (scanned PDF) → `document.md` + `conversion.json` (offsets) to
+2. **convert**: router OCRs every page of the PDF → `document.md` + `conversion.json` (offsets) to
    artifacts.
 3. **structure**: PageIndex builds the tree (sections, roles, spans, summaries) + a `placement` hint
    `/finance/annual-reports/2023/`; `pageindex.json` to artifacts, `document_sections` rows to
@@ -783,8 +787,9 @@ hint), **D40** (P3 corpus-filesystem projection), **D65** (media routes + genera
 canonical-text rule — binding home: `media_design.md`).
 
 Open spikes (measure before committing):
-1. **Conversion fidelity vs cost** — OCR is the expensive, quality-critical step; cheap-extract →
-   OCR-on-failure fallback chain? Measure on real PDFs.
+1. **Conversion fidelity and cost** — measure OCR reading order, layout fidelity
+   and page cost on born-digital, scanned and mixed PDFs. D139 keeps OCR
+   mandatory for every accepted page regardless of those measurements.
 2. **When to run the PageIndex tool vs. a synthetic root.** Every doc gets a `document_sections`
    structure either way (§4); measure where running the full tool earns its cost vs. a synthetic
    root — an implementation-routing question, not a contract gap.

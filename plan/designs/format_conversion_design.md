@@ -2,10 +2,11 @@
 
 **Status:** D133, accepted 2026-09-23; binding when merged.
 
-> **Refined by D138 (2026-09-27).** The shipped family set, detection order (§2.2),
+> **Refined by D138 (2026-09-27), and D139 for PDFs.** The shipped family set, detection order (§2.2),
 > profile content (§4) and cards for unrecognized bytes are bound in
 > [`workspace_formats_design.md`](workspace_formats_design.md). Row-level queries and container
 > expansion are not part of the system (§4.6, §5); their reviewed designs are proposals.
+> Every accepted PDF page goes through OCR, as bound by D139 and the PDF family entry there.
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md).
 **Refines:** D38 (router), D65 (converter contract and locators), D117
 (parking scope), D132 (text-flavour routing), D54 (counting identity), D74
@@ -42,7 +43,7 @@ document's general metadata).
 
 | Posture | What `document.md` holds | Used for |
 |---|---|---|
-| **full** | A complete reading of the content — claim-extracted for prose, search-only for code, config and logs | Documents, slides, email, PDF text, notes; code and configuration |
+| **full** | A complete reading of the content — claim-extracted for prose, search-only for code, config and logs | Documents, slides, email, OCR-derived PDF readings, notes; code and configuration |
 | **profile** | A deterministic description of a data file — its structure and a few head rows, never its rows (§4) | Spreadsheets, delimited files, datasets; text over the reading limit |
 | **card** | A short deterministic **file card**: name, path, detected type, size, and what the format declares cheaply (§6) | Media, archives, images without configured providers, unknown bytes, oversized files |
 
@@ -72,7 +73,7 @@ setting one route never removes the others. Every file is stored. Outcomes:
 |---|---|
 | Bytes a declaration contradicts (D132) | Refused with a typed error |
 | Bytes not recognized as any family | Stored; a `binary` card (D138 §6) |
-| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2) |
+| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF conversion fails with a typed limit reason rather than reporting a completed card |
 | Family recognized but its converter not built | Stored; conversion parks with `no_route` (D117) until it is |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |
@@ -80,7 +81,10 @@ setting one route never removes the others. Every file is stored. Outcomes:
 `cost_class` is a label the metering port receives (`text`, `scan_page`,
 `image`, `audio_minute`, `video_minute`, `data_profile`, `archive`, `card`).
 The engine never prices; a deployment's metering maps labels to prices
-(D61).
+(D61). The PDF family emits `scan_page` with quantity equal to the number
+of accepted PDF pages: a page with selectable text has the same OCR route and
+metering as a scanned page. The separate managed cloud maps that work to
+`doc-scan` per page.
 
 ### 2.2 Detection and precedence
 
@@ -261,6 +265,8 @@ version and representation):
 - The converter contract's shape (D65): profiles and cards are ordinary
   `document.md` + source map + derived assets + manifest.
 - D117 parking for families whose converter needs an unconfigured provider.
+- The PDF family's mandatory OCR route (D139): every accepted page, including
+  one with a text layer, passes through OCR; deployment overlays cannot bypass it.
 - D132's byte classes and object storage classes, with its refusals limited to
   declarations the bytes contradict (D138 §3).
 - The media routes and their binding details (`media_design.md` §2).
