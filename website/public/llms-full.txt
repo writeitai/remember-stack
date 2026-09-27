@@ -3094,7 +3094,9 @@ On a self-hosted deployment:
 | Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
 | Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
 | HTML, EPUB | Read; claims extracted | Same |
-| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`) | Read; claims extracted | Same |
+| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), CSV/TSV, data files (Parquet, Arrow, SPSS, SAS, Stata, SQLite) | [Profile](https://remember.dev/docs/self-hosting/converters#data-file-profiles): sheets, columns, counts and the first 5 rows; searchable, no claims | Same |
+| `.ods` | Profiled through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
 | `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
 | PDF with a text layer | Read page by page; claims extracted | Same |
 | Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
@@ -3106,11 +3108,11 @@ On a self-hosted deployment:
 | Audio and video | File card | Same |
 | Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
 | Other binary files | File card | Same |
-| `.xls`, `.ods`, CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
 A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
-gets a file card instead of a reading. A text file over 1 MB is described
+gets a file card instead of a reading; a spreadsheet over 50 MB is profiled
+from its sheet list and dimensions only. A text file over 1 MB is described
 by its size, line count, first 50 and last 20 lines instead of read in
 full.
 
@@ -3715,11 +3717,12 @@ that to the user instead of waiting. See [Connect your coding agent](https://rem
 Every ingest is stored. Whether it is read depends on the MIME type.
 
 A fresh self-hosted deployment reads Markdown, plain text, code and
-configuration files, HTML, EPUB, Word, PowerPoint, Excel (`.xlsx`), PDF,
-email (`.eml`) and Jupyter notebooks, and describes images, media and
-archives with a card. A file of a type it cannot read yet (CSV, data
-files, `.xls`, `.ods`) is stored and its processing is parked, not
-refused: the ingest succeeds with `"parked": "no_route"`, and the version
+configuration files, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`)
+and Jupyter notebooks, profiles spreadsheets, CSV and data files (their
+sheets, columns and first rows; no claims), and describes images, media and
+archives with a card. A file of a type it cannot read (the LibreOffice
+formats, when the engine runs without LibreOffice) is stored and its
+processing is parked, not refused: the ingest succeeds with `"parked": "no_route"`, and the version
 waits until an operator adds a converter for its type. Reading scanned
 PDFs and images with OCR needs converters that you configure with your
 own provider key.
@@ -6805,12 +6808,12 @@ Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Every arriving file is first sorted into a **format family**
 (Markdown, code, image, archive and so on), and the family decides which
 converter reads it. A stock deployment handles text, code, configuration,
-logs, HTML, EPUB, Word, PowerPoint, Excel (`.xlsx`), PDF, email (`.eml`)
-and Jupyter notebooks with no API key, and describes images, audio, video,
-archives and unknown files with a short **file card**. CSV and data files
-and `.xls`/`.ods` spreadsheets are stored and wait until a converter for
-them exists; the ingest response says so at once with
-`"parked": "no_route"`.
+logs, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`) and Jupyter
+notebooks with no API key, describes spreadsheets, CSV and data files with
+a **profile** of their shape and first rows, and describes images, audio,
+video, archives and unknown files with a short **file card**. Formats that
+need LibreOffice are stored and wait when the engine runs without it; the
+ingest response says so at once with `"parked": "no_route"`.
 
 ## How a file's family is chosen
 
@@ -6853,13 +6856,13 @@ reports the stored type in its `mime` field.
 | `pdf` | pdf | `pdf` | One section per page of the text layer; claims are extracted |
 | `email` | eml | `email` | Headers, body and attachment list; claims are extracted |
 | `notebook` | ipynb | `notebook` | Markdown cells (claims extracted) and code cells (searchable, no claims); outputs dropped |
-| `spreadsheet` | xlsx (and xlsm, xltx) | `markitdown` | The sheets as tables; claims are extracted |
+| `spreadsheet` | xlsx, xlsm, xltx, xls, ods (ods through LibreOffice) | `spreadsheet` | A profile; no claims |
+| `delimited` | csv, tsv, psv, tab | `table` | A profile; no claims |
+| `dataset` | parquet, feather, arrow, sav, por, xpt, sas7bdat, dta, sqlite, sqlite3, db | `dataset` | A profile; no claims |
 | `image` | png, jpg, gif, webp, tiff, bmp, heic, avif, psd | `card` | A file card with width, height and format |
 | `media` | wav, mp3, m4a, flac, mp4, mov, webm, mkv | `card` | A file card |
 | `archive` | zip, tar, tar.gz, 7z, rar, gz | `card` | A file card; zip and tar list their members |
 | `binary` | everything else | `card` | A file card |
-| `delimited`, `dataset` | csv, tsv, parquet, sav, … | none | Stored and parked (`no_route`) |
-| `spreadsheet` (legacy) | xls, ods | none | Stored and parked (`no_route`) |
 
 "Searchable; no claims" means the file is chunked, embedded and found by
 search, but memory does not extract facts from it. Such a file is one flat
@@ -6881,6 +6884,49 @@ described instead of read: its line count, its size in bytes, and its first
 searchable and never used for claims, so a 300 MB data table saved as
 `.txt`, or a 2 MB JSON export, costs a few kilobytes. Open the original for
 the rest.
+
+### Data-file profiles
+
+`spreadsheet`, `table` and `dataset` describe a data file instead of reading
+its rows, so an agent can find the right file, sheet and column and then
+open the original to compute on it. A profile holds:
+
+- the file name, family, format, size in bytes and number of sheets or tables;
+- for each sheet or table (up to 50; the rest are listed by name): its row
+  and column counts, and one line per column with its header, its position
+  (a spreadsheet column letter or a 1-based number) and a type guessed from
+  the sample rows (`integer`, `number`, `date`, `boolean`, `text` or
+  `empty`), up to 100 columns;
+- the first 5 data rows as a table, up to 30 columns, each cell cut to 80
+  characters;
+- for workbooks, the defined names and what they refer to (up to 50);
+- for delimited files, the delimiter, quote character and encoding.
+
+The header is the first non-empty row. Hidden sheets are marked, and a
+formula cell the file stores without a computed value is shown as its
+formula (`=A2+B2`). A workbook's size is what the file declares, marked as
+not verified; the sample is read past it, so a wrong declaration never cuts
+the sample short. Delimited files are counted in one streaming pass, so a
+quoted value that spans lines counts once; a single field over 10,000,000
+characters fails the file. SPSS `.por`, SAS `.xpt` and Arrow files do not
+record a row count where it can be read cheaply, and the profile says so.
+SQLite tables include generated columns, long values are cut before they
+are read, and views are listed by name. `.ods` is converted to `.xlsx` by
+[LibreOffice](#libreoffice) first.
+
+Some files are described with less: an `.xlsx` over 50 MB, or one whose
+shared-strings table expands past 100 MB, lists its sheets and declared
+dimensions only; an `.xls` over 10 MB lists its sheet names only, because
+reading any row loads the whole sheet. The profile says which applied. A
+delimited file that is not UTF-8 (or UTF-16 with a byte-order mark) is read
+as Latin-1, and the profile says so. `.xlsx` workbooks also supply their
+title, author, created and modified dates as document metadata. SQLite
+files are opened read-only.
+
+Profiles are searchable but never used for claims, and the structure step
+makes no model call for them. A file that is not valid for its type, or a
+profile that takes longer than 120 seconds, fails the version with the
+reason.
 
 ### File cards
 
@@ -6916,9 +6962,12 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, every stored type of
 the families above routes to the converter named there: the six text MIME
 types (`text/markdown`, `text/plain`, `text/x-code`, `text/x-config`,
 `text/x-log`, `text/x-other-text`) to `text`; `text/html`,
-`application/epub+zip` and the `.xlsx` type to `markitdown`; the Word and
-PowerPoint types to `office` (the `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp`
-types only when LibreOffice is installed, see [LibreOffice](#libreoffice));
+`application/epub+zip` to `markitdown`; the Word and PowerPoint types to
+`office` (the `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp` types only when
+LibreOffice is installed, see [LibreOffice](#libreoffice)); the `.xlsx` and
+`.xls` types to `spreadsheet` (`.ods` only with LibreOffice); `text/csv` and
+`text/tab-separated-values` to `table`; the Parquet, Arrow, SPSS, SAS,
+Stata and SQLite types to `dataset`;
 `application/pdf` to `pdf`; `message/rfc822` to `email`;
 `application/x-ipynb+json` to `notebook`; image, audio, video, archive and
 `application/octet-stream` types to `card`. Every one of these runs in the
@@ -6949,11 +6998,14 @@ works for files sent with that type.
 |---|---|---|---|
 | `text` | In the worker | Markdown, text, code, configuration, logs | Nothing |
 | `card` | In the worker | Any file (describes it without reading it) | Nothing |
-| `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`) | Nothing |
+| `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`, only when routed to it) | Nothing |
 | `office` | In the worker | Word and PowerPoint | LibreOffice for `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` |
 | `pdf` | In the worker | PDFs with a text layer | Nothing |
 | `email` | In the worker | `.eml` messages | Nothing |
 | `notebook` | In the worker | Jupyter notebooks | Nothing |
+| `spreadsheet` | In the worker | Excel (`.xlsx`, `.xlsm`, `.xltx`, `.xls`) and `.ods`, as a profile | LibreOffice for `.ods` |
+| `table` | In the worker | CSV, TSV and other delimited text, as a profile | Nothing |
+| `dataset` | In the worker | Parquet, Arrow, Feather, SPSS, SAS, Stata and SQLite files, as a profile | Nothing |
 | `passthrough` | In the worker | Markdown and plain text, always read in full and always extracted | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
@@ -6976,7 +7028,7 @@ images, and no macro or embedded object is run.
 ### LibreOffice
 
 `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp` are first converted to `.docx` or
-`.pptx` by LibreOffice (`soffice --headless`), one process per file with a
+`.pptx`, and `.ods` to `.xlsx`, by LibreOffice (`soffice --headless`), one process per file with a
 fresh temporary profile, stopped after 120 seconds. The published engine
 image includes LibreOffice's headless Writer, Impress and Calc. An engine
 run without `soffice` on its `PATH` has no route for these types: they are
@@ -7020,10 +7072,10 @@ first `# ` heading is the notebook's title.
 ## markitdown
 
 `markitdown` converts in the worker process, with no network call and no
-cost. It reads HTML, EPUB books and Excel (`.xlsx`) workbooks: text,
-headings, lists and tables. It does not read text inside embedded images.
-
-Excel workbooks are shown row by row and their claims are extracted.
+cost. It reads HTML and EPUB books: text, headings, lists and tables. It
+does not read text inside embedded images. A stock deployment profiles
+Excel workbooks with `spreadsheet` instead; a route that sends `.xlsx` to
+`markitdown` shows the sheets row by row and extracts claims from them.
 
 ## mistral_ocr
 
@@ -7108,9 +7160,7 @@ and the parked conversion is released without an operator step.
 
 ## Not supported yet
 
-RememberStack does not read `.xls` and `.ods` spreadsheets, CSV and TSV
-files, or data files (Parquet, SPSS, SAS, Stata, SQLite) yet: they are
-stored and parked. Scanned pages of a PDF are not read without an OCR
+Scanned pages of a PDF are not read without an OCR
 route. Audio and video get a file
 card; their speech is not transcribed. Web addresses are not fetched; to
 add a web page, download it and send the HTML.
@@ -8013,9 +8063,9 @@ model calls. The ingest result reports it at once with
 `"parked": "no_route"`, and `remember ingest` prints a warning.
 
 A stock deployment reads text, HTML, EPUB, Office, PDF, email and notebook
-files and cards images, media and archives; CSV, data files, `.xls` and
-`.ods` park, and so do `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp` when the
-engine runs without LibreOffice. Add
+files, profiles spreadsheets, CSV and data files, and cards images, media
+and archives; `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` and `.ods` park when
+the engine runs without LibreOffice. Add
 a route for the type as described in
 [File formats and converters](https://remember.dev/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
@@ -17000,13 +17050,8 @@ absent from the current release; nothing here has a date.
 
 - **Audio and video.** RememberStack stores audio and video and describes
   each file with a card, but no converter turns speech or video into text.
-- **CSV, data files and older spreadsheets.** `.csv`, `.tsv`, Parquet and
-  other data files, `.xls` and `.ods` are stored but not read; their
-  conversion is parked with `no_route`.
 - **Email attachments.** An `.eml` file's attachments are listed by name and
   size; they are not read.
-- **Spreadsheet profiles.** `.xlsx` files are read row by row with
-  markitdown; there is no compact sheet-and-column profile yet.
 - **URLs.** You cannot ingest a web page by its address; fetch the page
   yourself and upload the file.
 - **Connectors and watched folders.** Nothing pulls documents from another
@@ -17027,8 +17072,9 @@ absent from the current release; nothing here has a date.
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
 - **Metadata from other formats.** Word, PowerPoint, PDF and email files
-  give their title, people and dates; HTML, EPUB and notebooks give only a
-  title, and other formats give none.
+  give their title, people and dates, and `.xlsx` workbooks their title,
+  author and dates; HTML, EPUB and notebooks give only a title, and other
+  formats give none.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

@@ -40,6 +40,7 @@ from rememberstack.core.extraction_eligibility import is_model_free
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.format_registry import stock_route_names
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import FileHints
@@ -102,7 +103,7 @@ def _section(result: ConversionResult, kind: str) -> str:
 
 
 def test_stock_routes_send_data_files_to_their_profiles() -> None:
-    """Spreadsheets, delimited files and datasets route by default; ods parks."""
+    """Data files route by default; ods only where LibreOffice is installed."""
     routes = STOCK_CONVERSION_ROUTE_NAMES
     assert routes[_XLSX] == "spreadsheet"
     assert routes[_XLS] == "spreadsheet"
@@ -119,7 +120,8 @@ def test_stock_routes_send_data_files_to_their_profiles() -> None:
         "application/x-stata-dta",
     ):
         assert routes[mime] == "dataset", mime
-    assert _ODS not in routes
+    assert _ODS not in stock_route_names(libreoffice_available=False)
+    assert stock_route_names(libreoffice_available=True)[_ODS] == "spreadsheet"
     built = build_conversion_routes(route_names=routes)
     assert built[_XLSX].name == "spreadsheet"
     assert built["text/csv"].name == "table"
