@@ -109,7 +109,7 @@ structural tests a family design may use to recognize or validate its format.
 3. **OLE containers by stream names:** legacy Word, Excel and PowerPoint
    (D132, with the declared legacy office MIME selecting the subtype), MSG
    (`__properties_version1.0` stream). An OLE container matching none is
-   refused.
+   an unrecognized format and gets a `binary` card (D138).
 4. **Text.** Strict UTF-8 validation as D132 defines it. Then structural
    tests on the whole file, in order:
    1. **mbox** — the first line starts `From ` and at least one RFC 5322
@@ -261,8 +261,8 @@ version and representation):
 - The converter contract's shape (D65): profiles and cards are ordinary
   `document.md` + source map + derived assets + manifest.
 - D117 parking for families whose converter needs an unconfigured provider.
-- D132's byte classes, refusals and object storage classes; §2.2 extends the
-  detection list and refines only the text-flavour rule.
+- D132's byte classes and object storage classes, with its refusals limited to
+  declarations the bytes contradict (D138 §3).
 - The media routes and their binding details (`media_design.md` §2).
 - Conversion pinning per lineage (D57): changing a family's converter or
   posture is a converter version bump flowing the lifecycle's
@@ -295,8 +295,8 @@ before implementation, with at least:
 
 1. **Scope.** The exact formats and variants covered (e.g. DOCX but not
    password-protected DOCX; PDF 1.x–2.0; which chat-export versions), and
-   what is explicitly out, with the outcome for each excluded case (typed
-   refusal, parking, or card).
+   what is explicitly out, with the outcome for each excluded case (parking
+   or card; refusal only for a declaration the bytes contradict).
 2. **Parser choice.** The library or service used, the alternatives
    considered and why they lost, licence, maintenance status, and the
    official documentation cited with retrieval date.
