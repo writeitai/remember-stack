@@ -115,9 +115,10 @@ Always a profile, never the rows. `document.md` contains, in order:
    `profile_structure` / `source_expression`.
 
 Counts come from metadata where the format has it (spreadsheet dimensions, Parquet and
-statistical-file headers) and from a streaming line count for delimited files. No reader loads a
+statistical-file headers) and, for delimited files, from one streaming pass with a CSV reader
+that counts records (quoted fields may contain newlines). No reader loads a
 whole table; readers stop after the sample rows. A spreadsheet over 50 MB is profiled from its
-sheet list and dimensions only, without a sample. The header row is the first non-empty row.
+sheet list and dimensions only: no sample, no column list, and the profile says so. The header row is the first non-empty row.
 
 There is no model call and no claim extraction. The profile is found by search (its sheet,
 column and file names are all in the text) and by `search_documents`.

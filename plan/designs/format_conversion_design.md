@@ -71,7 +71,7 @@ setting one route never removes the others. Every file is stored. Outcomes:
 |---|---|
 | Bytes a declaration contradicts (D132) | Refused with a typed error |
 | Bytes not recognized as any family | Stored; a `binary` card (D138 §6) |
-| Over the family's reading limit | Stored; a card stating the reason (D138 §3) |
+| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2) |
 | Family recognized but its converter not built | Stored; conversion parks with `no_route` (D117) until it is |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |
@@ -144,8 +144,7 @@ where a step says so.
    11. Otherwise **Markdown** when declared as Markdown (D132 rendering hint),
        else **plain text**.
 
-**The order is binding; each family's exact test is its family design's.**
-This list fixes which families exist, the order in which they are tried and
+**Reference only (see the note above).** For families outside D138, this list fixes which families exist, the order in which they are tried and
 the kind of evidence each uses. The precise signature, offsets and grammar
 for a family are specified and tested in that family's design (§10.1 item 3)
 and must be placed at the position given here; a family design that needs a
@@ -283,8 +282,8 @@ version and representation):
 - **Log event digests.** Recorded with its adoption trigger in the
   analysis §7.
 - **Executing active content.** Macros, scripts in documents, and
-  executables are never run; a macro-enabled spreadsheet is profiled from
-  its stored values and formula text only.
+  executables are never run; a macro-enabled spreadsheet is profiled like
+  any other (D138 §5), without running its macros.
 
 ## 10. Delivering a family: design, implementation, tests
 
@@ -292,10 +291,9 @@ version and representation):
 sections cover the §10.1 contents for them. Each of those families still ships with the §10.3
 tests. A family outside D138 needs its own family design as described here.
 
-Every family in §3 is delivered as its own unit of work, one family at a
-time, in the order of the [delivery plan](../plans/format_coverage_delivery.md).
-Each unit has three parts, and the family ships only when all three are
-merged.
+A family **outside** D138 is delivered as its own unit of work, in the order
+of the [delivery plan](../plans/format_coverage_delivery.md), with the three
+parts below; it ships only when all three are merged.
 
 ### 10.1 The family design
 

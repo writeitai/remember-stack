@@ -5778,10 +5778,9 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
-**Refined by D133.** Parking applies to families the registry recognizes whose
-converter needs an unconfigured provider. A family a deployment explicitly turned
-off is refused at ingest with a typed error; unrecognized bytes remain a D132
-refusal.
+**Refined by D133 and D138.** Parking applies to recognized families whose converter needs
+an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
+(D138); only a declaration the bytes contradict is refused (D132).
 
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 

@@ -280,6 +280,10 @@ whole corpus as it grows (a single document cannot know the global tree).
 
 ### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
 
+> **D138:** a representation with no claim-eligible range (search-only text, a data profile, a
+> card) takes only the deterministic skeleton: no model call for skeleton checks, roles or
+> summaries. Model-written structure is for prose.
+
 The shipped route is a **single schema-constrained LLM call** over up to `max_prompt_chars`
 of `document.md` (default 200K; documents under `min_blocks_for_llm` skip the call) returning
 the entire tree — every span, role, and summary — in one response, with char offsets snapped
@@ -525,6 +529,9 @@ summaries are consumed (Selection drop quality, prefix quality, #150 scorecard c
 in prose.
 
 ## 4A. Cross-references — the `crossref` sub-worker
+
+> **D138:** for a representation with no claim-eligible range, cross-reference detection stays
+> deterministic; the ambiguous residue is left unresolved instead of going to a model.
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
 live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints
