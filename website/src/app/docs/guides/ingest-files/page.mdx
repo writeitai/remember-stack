@@ -126,6 +126,12 @@ name it does not know is sent as `application/octet-stream`. Pass `mime=`
 (or `--mime` on the CLI) to send a different type; an explicit value always
 wins.
 
+A self-hosted deployment decides the stored type itself: the file name's
+extension first, then the declared type when the name does not say, then
+the bytes ([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+The declared type matters for a file whose name has no recognized
+extension.
+
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
 does not change. Get the type right on the first send.

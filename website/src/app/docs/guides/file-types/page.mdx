@@ -14,23 +14,32 @@ self-hosted deployment.</Cloud>
 
 ## At a glance
 
+On a self-hosted deployment:
+
 | Format | As installed | With converters configured |
 |---|---|---|
-| Markdown (`.md`) and plain text (`.txt`) | Yes | Yes |
-| Chat logs and transcripts, as Markdown or text | Yes | Yes |
-| Code, configuration and log files | Yes, found by search; no claims are extracted | Same |
-| HTML and EPUB books | Yes | Yes |
-| Word (`.docx`, `.docm`, `.dotx`) and PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`) | Yes | Yes |
-| Legacy and OpenDocument text and slides (`.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`) | Yes, with LibreOffice (in the published image) | Yes |
-| Excel (`.xlsx`) | Yes | Yes |
-| PDF with a text layer | Yes | Yes |
-| Scanned PDF | Stored; the pages without text are not read | Yes, with `mistral_ocr` (needs a Mistral API key) |
-| Email (`.eml`) | Yes; attachments are listed, not read | Same |
-| Jupyter notebooks (`.ipynb`) | Yes; code cells are found by search only, outputs are dropped | Same |
-| PNG and JPEG images | A card (name, size, dimensions) | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Other images, audio, video, archives, unknown files | A card | A card |
-| CSV and TSV, data files, `.xls` and `.ods` spreadsheets | No: stored and parked | No |
+| Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
+| Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
+| HTML, EPUB | Read; claims extracted | Same |
+| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
+| PDF with a text layer | Read page by page; claims extracted | Same |
+| Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| Email (`.eml`) | Read; attachments listed, not read | Same |
+| Jupyter notebooks (`.ipynb`) | Markdown cells read (claims extracted); code cells searchable, no claims; outputs dropped | Same |
+| Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
+| Text files of unknown kind | Read and searchable; no claims | Same |
+| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
+| Audio and video | File card | Same |
+| Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
+| Other binary files | File card | Same |
+| `.xls`, `.ods`, CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+gets a file card instead of a reading. A text file over 1 MB is described
+by its size, line count, first 50 and last 20 lines instead of read in
+full.
 
 ## Formats and converters
 
@@ -64,12 +73,13 @@ to Markdown first and send the Markdown.
 
 ## Send the right type
 
-The type sent with the upload decides which converter reads the file. The
-`remember` CLI, Python client and MCP `ingest` tool take it from the file
-extension, the same way on every Python installation: `.md` is
-`text/markdown`, `.txt` is `text/plain`, `.pdf` is `application/pdf`, and
-so on ([the full table](/docs/guides/ingest-files#the-mime-type)). A file
-whose extension does not say what it is needs the type passed explicitly:
+A self-hosted deployment recognizes a file by its extension first. The type
+sent with the upload decides only when the name does not say what the file
+is; a text file with neither is searchable but no claims are extracted
+from it. The `remember` CLI, Python client and MCP `ingest` tool send a
+type taken from the extension ([the full
+table](/docs/guides/ingest-files#the-mime-type)). A file whose extension
+does not say what it is needs the type passed explicitly:
 
 ```python
 client.ingest("notes/standup", mime="text/markdown")

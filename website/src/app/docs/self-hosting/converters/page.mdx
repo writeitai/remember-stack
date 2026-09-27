@@ -8,70 +8,148 @@ export const metadata = {
 <AppliesTo products={["self-hosted"]} />
 
 Before RememberStack can read a file, the `convert` worker turns it into
-Markdown. Which converter handles which file is a table from MIME type to
-converter name. The engine ships a default table, and a stock deployment
-reads Markdown, plain text, code, configuration, logs, HTML, EPUB, Word,
-PowerPoint, PDF, email (`.eml`), Jupyter notebooks and Excel (`.xlsx`)
-with no API key. Images, audio, video, archives and unrecognized files get
-a short *card* that describes the file. Delimited files (`.csv`, `.tsv`),
-data files and legacy or OpenDocument spreadsheets (`.xls`, `.ods`) are
-stored and wait until a converter for them exists; the ingest response
-says so at once with `"parked": "no_route"`.
+Markdown. Every arriving file is first sorted into a **format family**
+(Markdown, code, image, archive and so on), and the family decides which
+converter reads it. A stock deployment handles text, code, configuration,
+logs, HTML, EPUB, Word, PowerPoint, Excel (`.xlsx`), PDF, email (`.eml`)
+and Jupyter notebooks with no API key, and describes images, audio, video,
+archives and unknown files with a short **file card**. CSV and data files
+and `.xls`/`.ods` spreadsheets are stored and wait until a converter for
+them exists; the ingest response says so at once with
+`"parked": "no_route"`.
+
+## How a file's family is chosen
+
+The server decides, in this order:
+
+1. **The file name.** The lower-cased extension picks the family (`.py` is
+   code, `.yaml` is configuration, `.tar.gz` is an archive). Files named
+   `README` or `LICENSE` are text; `Dockerfile`, `Makefile`, `Jenkinsfile`,
+   `Procfile`, `Containerfile`, `CODEOWNERS`, `BUILD` and `WORKSPACE` are
+   code; dotfiles such as `.gitignore`, `.editorconfig`, `.npmrc` and
+   `.env.local` are configuration.
+2. **The declared MIME type**, when the name does not decide. A specific
+   type the server knows (`text/markdown`, `application/pdf`, a type your
+   route table names) decides. `application/octet-stream` and `text/plain`
+   never do, because clients send them for anything.
+3. **The bytes.** A file that is valid UTF-8 with no NUL byte in its first
+   64 KiB is unrecognized text; anything else is a binary file.
+
+The stored MIME type is the family's (`text/x-code` for every code file,
+`text/x-config` for configuration, `text/x-log` for logs,
+`text/x-other-text` for unrecognized text, `application/octet-stream` for
+binary files). Formats that differ inside a family keep their own type:
+`.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
+reports the stored type in its `mime` field.
+
+## What each family becomes
+
+| Family | Extensions (examples) | Converter | Result |
+|---|---|---|---|
+| `markdown` | md, mdx, rst, adoc, org | `text` | The text; claims are extracted |
+| `text` | txt, srt, vtt, `README`, `LICENSE` | `text` | The text; claims are extracted |
+| `code` | py, js, ts, java, go, rs, c, sh, sql, css, `Dockerfile`, `Makefile` | `text` | The text, searchable; no claims |
+| `config` | json, jsonl, yaml, toml, ini, xml, svg, dotfiles | `text` | The text, searchable; no claims |
+| `log` | log, out, err, trace | `text` | The text, searchable; no claims |
+| `other_text` | unrecognized UTF-8 text | `text` | The text, searchable; no claims |
+| `html` | html, htm, xhtml | `markitdown` | The text; claims are extracted |
+| `ebook` | epub | `markitdown` | The text; claims are extracted |
+| `word` | docx, docm, dotx; doc, odt, rtf with LibreOffice | `office` | The text; claims are extracted |
+| `presentation` | pptx, pptm, ppsx, potx; ppt, odp with LibreOffice | `office` | One section per slide; claims are extracted |
+| `pdf` | pdf | `pdf` | One section per page of the text layer; claims are extracted |
+| `email` | eml | `email` | Headers, body and attachment list; claims are extracted |
+| `notebook` | ipynb | `notebook` | Markdown cells (claims extracted) and code cells (searchable, no claims); outputs dropped |
+| `spreadsheet` | xlsx (and xlsm, xltx) | `markitdown` | The sheets as tables; claims are extracted |
+| `image` | png, jpg, gif, webp, tiff, bmp, heic, avif, psd | `card` | A file card with width, height and format |
+| `media` | wav, mp3, m4a, flac, mp4, mov, webm, mkv | `card` | A file card |
+| `archive` | zip, tar, tar.gz, 7z, rar, gz | `card` | A file card; zip and tar list their members |
+| `binary` | everything else | `card` | A file card |
+| `delimited`, `dataset` | csv, tsv, parquet, sav, … | none | Stored and parked (`no_route`) |
+| `spreadsheet` (legacy) | xls, ods | none | Stored and parked (`no_route`) |
+
+"Searchable; no claims" means the file is chunked, embedded and found by
+search, but memory does not extract facts from it: a statement such as "the
+function returns a list" is not knowledge about your world, and extraction
+costs a model call per chunk. The structure step also makes no model call
+for these files.
+
+### The text converter
+
+`text` reads a file of up to 1 MB in full. It requires valid UTF-8; a file
+in another encoding fails conversion with a stated reason. A larger file is
+described instead of read: its line count, its size in bytes, and its first
+50 and last 20 lines, each cut to 500 characters. That description is
+searchable and never used for claims, so a 300 MB data table saved as
+`.txt`, or a 2 MB JSON export, costs a few kilobytes. Open the original for
+the rest.
+
+### File cards
+
+A card is a few lines of Markdown that make a file findable without reading
+it: its file name, source path, family, format and size in bytes. An image
+card adds the width, height and format read from the image header (the
+pixels are not decoded). A zip card lists up to 200 members with their
+sizes from the archive's directory, and says how many there are in total. A
+tar card (including `.tar.gz`, `.tar.bz2` and `.tar.xz`) lists up to 200
+members from a streamed read that stops after 200 members or 64 MB and then
+says the list is partial. Other archive formats get a card without a list.
+The original file is stored and served as always; an agent opens it with
+its own tools.
+
+Cards are searchable but never used for claims.
+
+### Size limits
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+is not read: it gets a file card that states the size limit it exceeded,
+whether or not a converter is configured for its type. Every file is
+stored whatever its size.
 
 ## What a stock deployment reads
 
-| Files | Converter | What memory holds |
-|---|---|---|
-| Markdown (`.md`, `.rst`, `.adoc`, …) and plain text (`.txt`, `.srt`, `.vtt`, `README`, `LICENSE`) | `text` | The text; claims are extracted |
-| Code, configuration (`.json`, `.yaml`, `.xml`, …), logs, and text files of unknown type | `text` | The text, found by search; no claims are extracted |
-| HTML (`.html`, `.htm`, `.xhtml`) and EPUB | `markitdown` | The text; claims are extracted |
-| Word (`.docx`, `.docm`, `.dotx`; `.doc`, `.odt`, `.rtf` with LibreOffice) | `office` | The text; claims are extracted |
-| PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`; `.ppt`, `.odp` with LibreOffice) | `office` | One section per slide; claims are extracted |
-| PDF | `pdf` | One section per page of the text layer; claims are extracted |
-| Email (`.eml`) | `email` | Headers, body and the attachment list; claims are extracted |
-| Jupyter notebooks (`.ipynb`) | `notebook` | Markdown cells (claims are extracted) and code cells (found by search only); outputs are dropped |
-| Excel (`.xlsx`, `.xlsm`, `.xltx`) | `markitdown` | The sheets as tables; claims are extracted |
-| Images, audio, video, archives, anything else | `card` | A card: name, path, type, size, plus image dimensions or an archive's member list |
-
-A text file larger than 1 MB is not read in full: memory holds its line
-and byte counts and its first 50 and last 20 lines. A Word, PowerPoint or
-PDF file larger than 100 MB gets a card that says it was too large to read.
-Every file is stored whatever happens to it, and the original can always be
-fetched.
-
-The engine decides a file's type from its name first (the extension, or
-names such as `Dockerfile`), then from the MIME type sent with it, then
-from its bytes. A file whose bytes a converter cannot read, such as a
-damaged `.docx` or a `.pdf` that is not a PDF, fails conversion with a
-reason; it is never read as something else.
+With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, every stored type of
+the families above routes to the converter named there: the six text MIME
+types (`text/markdown`, `text/plain`, `text/x-code`, `text/x-config`,
+`text/x-log`, `text/x-other-text`) to `text`; `text/html`,
+`application/epub+zip` and the `.xlsx` type to `markitdown`; the Word and
+PowerPoint types to `office` (the `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp`
+types only when LibreOffice is installed, see [LibreOffice](#libreoffice));
+`application/pdf` to `pdf`; `message/rfc822` to `email`;
+`application/x-ipynb+json` to `notebook`; image, audio, video, archive and
+`application/octet-stream` types to `card`. Every one of these runs in the
+worker with no network call and no API key.
 
 ## Add routes
 
-Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object of MIME
-type → converter name. Its entries are **added to** the default table and
-override the entries they name; you do not repeat the defaults. This
-example sends PNG and JPEG images to OCR and description instead of a card,
-and reads every PDF with Mistral OCR:
+Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. Each entry
+**adds** a MIME type or **overrides** the converter of one in the default
+table; the rest of the table stays. This example reads PDFs with Mistral OCR
+and reads PNG and JPEG images with OCR plus a written description instead
+of carding them:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"image/png": "image_ocr_description", "image/jpeg": "image_ocr_description", "application/pdf": "mistral_ocr"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
 both read this variable. A route that names an unknown converter stops the
 `convert` worker at start with an error listing the known names.
 
+A declared MIME type your table names is also taken as the file's type when
+its name does not decide (step 2 above), so a route for a type of your own
+works for files sent with that type.
+
 | Converter | Runs | Accepts | Needs |
 |---|---|---|---|
-| `text` | In the worker | Text families | Nothing |
+| `text` | In the worker | Markdown, text, code, configuration, logs | Nothing |
+| `card` | In the worker | Any file (describes it without reading it) | Nothing |
 | `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`) | Nothing |
 | `office` | In the worker | Word and PowerPoint | LibreOffice for `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` |
 | `pdf` | In the worker | PDFs with a text layer | Nothing |
 | `email` | In the worker | `.eml` messages | Nothing |
 | `notebook` | In the worker | Jupyter notebooks | Nothing |
-| `card` | In the worker | Any file | Nothing |
-| `passthrough` | In the worker | UTF-8 Markdown and plain text, kept as is | Nothing |
+| `passthrough` | In the worker | Markdown and plain text, always read in full and always extracted | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
@@ -132,6 +210,8 @@ first `# ` heading is the notebook's title.
 `markitdown` converts in the worker process, with no network call and no
 cost. It reads HTML, EPUB books and Excel (`.xlsx`) workbooks: text,
 headings, lists and tables. It does not read text inside embedded images.
+
+Excel workbooks are shown row by row and their claims are extracted.
 
 ## mistral_ocr
 
@@ -209,15 +289,19 @@ The command prints `{"released": [...]}` with the processing ids it
 released. It releases only work whose stored MIME type the current table
 covers; the rest stays parked. See [Operating the pipeline](/docs/self-hosting/operating).
 
-If the file was simply sent with the wrong type, send the same bytes again
-with a type that has a route (`--mime text/markdown` on the CLI,
+If a file whose name has no recognized extension was sent with the wrong
+type, send the same bytes again with a type that has a route (`--mime text/markdown` on the CLI,
 `mime="text/markdown"` in Python). The new type replaces the unrouted one
 and the parked conversion is released without an operator step.
 
 ## Not supported yet
 
-RememberStack does not read audio or video (they get a card), and it does
-not fetch web addresses. To add a web page, download it and send the HTML.
+RememberStack does not read `.xls` and `.ods` spreadsheets, CSV and TSV
+files, or data files (Parquet, SPSS, SAS, Stata, SQLite) yet: they are
+stored and parked. Scanned pages of a PDF are not read without an OCR
+route. Audio and video get a file
+card; their speech is not transcribed. Web addresses are not fetched; to
+add a web page, download it and send the HTML.
 
 <Cloud>
 

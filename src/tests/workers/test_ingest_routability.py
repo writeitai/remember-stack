@@ -206,3 +206,53 @@ def test_managed_binary_still_requires_a_supported_metered_rate_class() -> None:
         )
     assert store.writes == 0
     assert catalog.calls == 0
+
+
+def test_ingest_stores_the_detected_family_mime() -> None:
+    """D138 §3: the extension decides over a generic or guessed declaration."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    recorded: list[str] = []
+    original = catalog.record_upload
+
+    def record(**kwargs: object) -> IngestedVersion:
+        recorded.append(cast(UploadRecord, kwargs["record"]).mime)
+        return original(**kwargs)  # type: ignore[arg-type]
+
+    catalog.record_upload = record  # type: ignore[method-assign]
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(),
+    )
+    for filename, mime in (
+        ("main.py", "text/plain"),
+        ("Dockerfile", "application/octet-stream"),
+        ("notes.md", "application/octet-stream"),
+        ("unknown", "text/plain"),
+    ):
+        ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(filename=filename, mime=mime, content=b"print(1)\n"),
+        )
+    assert recorded == [
+        "text/x-code",
+        "text/x-code",
+        "text/markdown",
+        "text/x-other-text",
+    ]
+
+
+def test_an_oversized_file_is_never_parked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Over its family's reading limit, an unrouted PDF is scheduled for a card."""
+    from rememberstack.workers import e0 as e0_module
+
+    monkeypatch.setattr(
+        e0_module,
+        "exceeds_reading_limit",
+        lambda *, mime, byte_size: mime == "application/pdf",
+    )
+    catalog, _ = _ingest("application/pdf", observed=False, filename="scan.pdf")
+    assert catalog.defer_reason is None
+    parked, _ = _ingest("application/msword", observed=False, filename="old.doc")
+    assert parked.defer_reason is DeferReason.NO_ROUTE
