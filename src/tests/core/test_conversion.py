@@ -66,11 +66,11 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
     """The registry-derived stock table routes every family with a converter.
 
-    Text families go to ``text``, HTML/EPUB and Word/PowerPoint OOXML to
-    ``markitdown``, workbooks, delimited files and datasets to their profile
-    routes, images, media, archives and unrecognized bytes to ``card``;
-    families whose D138 converter is not built yet (PDF, legacy Office,
-    OpenDocument, email, notebooks) stay unrouted and park.
+    Text families go to ``text``, HTML/EPUB to ``markitdown``, Word and
+    PowerPoint to ``office``, PDF, email and notebooks to their own routes,
+    workbooks, delimited files and datasets to their profile routes, images,
+    media, archives and unrecognized bytes to ``card``; the LibreOffice
+    formats park where ``soffice`` is not installed.
     """
     routes = STOCK_CONVERSION_ROUTE_NAMES
     for mime in (
@@ -82,11 +82,20 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "text/x-other-text",
     ):
         assert routes[mime] == "text", mime
-    for mime in ("text/html", "application/epub+zip", _DOCX, _PPTX):
+    for mime in ("text/html", "application/epub+zip"):
         assert routes[mime] == "markitdown", mime
-    assert routes[_XLSX] == "spreadsheet"
-    assert routes["text/csv"] == "table"
-    assert routes["application/vnd.apache.parquet"] == "dataset"
+    for mime, name in (
+        (_DOCX, "office"),
+        (_PPTX, "office"),
+        ("application/pdf", "pdf"),
+        ("message/rfc822", "email"),
+        ("application/x-ipynb+json", "notebook"),
+        (_XLSX, "spreadsheet"),
+        ("application/vnd.ms-excel", "spreadsheet"),
+        ("text/csv", "table"),
+        ("application/vnd.apache.parquet", "dataset"),
+    ):
+        assert routes[mime] == name, mime
     for mime in (
         "image/png",
         "image/jpeg",
@@ -97,14 +106,7 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "application/octet-stream",
     ):
         assert routes[mime] == "card", mime
-    for mime in (
-        "application/pdf",
-        "application/msword",
-        "message/rfc822",
-        "application/x-ipynb+json",
-        "application/vnd.oasis.opendocument.spreadsheet",
-    ):
-        assert mime not in routes, mime
+    assert "application/x-unknown-never-routed" not in routes
     router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
     plain = router.converter_for(mime="text/plain")
     assert plain.name == "text"
@@ -113,11 +115,11 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
     )
     assert router.converter_for(mime="text/markdown") is plain
     with pytest.raises(UnroutableMimeError):
-        router.converter_for(mime="application/pdf")
+        router.converter_for(mime="application/x-unknown-never-routed")
 
 
-def test_stock_markitdown_route_converts_a_docx() -> None:
-    """The bundled markitdown carries its Word extra: a .docx becomes Markdown."""
+def test_stock_office_route_converts_a_docx() -> None:
+    """The stock office route renders a .docx with markitdown."""
     router = ConversionRouter(
         routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
     )
@@ -125,11 +127,14 @@ def test_stock_markitdown_route_converts_a_docx() -> None:
     result = router.converter_for(mime=_DOCX).convert(content=content, mime=_DOCX)
     assert "Quarterly plan" in result.document_md
     assert "Ship the converter." in result.document_md
-    assert result.manifest.components[0].name == "markitdown"
+    assert [component.name for component in result.manifest.components] == [
+        "office",
+        "markitdown",
+    ]
 
 
-def test_stock_markitdown_route_converts_a_pptx() -> None:
-    """The bundled markitdown carries its PowerPoint extra."""
+def test_stock_office_route_converts_a_pptx() -> None:
+    """The stock office route reads a .pptx slide by slide."""
     from pptx import Presentation
     from pptx.util import Inches
 

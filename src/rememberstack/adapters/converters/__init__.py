@@ -22,21 +22,21 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
 
     One converter instance is shared across every MIME type that names it.
     An unknown name refuses composition — a misconfigured deployment fails at
-    startup, never by silently dead-lettering uploads later.
+    startup, never by silently dead-lettering uploads later. When the table
+    also routes something to ``mistral_ocr``, the ``pdf`` route hands scanned
+    PDFs to that OCR route (D138 §7).
     """
-    built: dict[str, Converter] = {}
-    routes: dict[str, Converter] = {}
     for mime, name in sorted(route_names.items()):
-        if name not in built:
-            builder = _CONVERTER_BUILDERS.get(name)
-            if builder is None:
-                raise UnknownConverterError(
-                    f"route {mime!r} names unknown converter adapter {name!r}; "
-                    f"known adapters: {sorted(_CONVERTER_BUILDERS)}"
-                )
-            built[name] = builder()
-        routes[mime] = built[name]
-    return routes
+        if name not in _CONVERTER_BUILDERS:
+            raise UnknownConverterError(
+                f"route {mime!r} names unknown converter adapter {name!r}; "
+                f"known adapters: {sorted(_CONVERTER_BUILDERS)}"
+            )
+    names = set(route_names.values())
+    built = {name: _CONVERTER_BUILDERS[name]() for name in sorted(names - {"pdf"})}
+    if "pdf" in names:
+        built["pdf"] = _pdf(ocr=built.get("mistral_ocr"))
+    return {mime: built[name] for mime, name in route_names.items()}
 
 
 def _passthrough() -> Converter:
@@ -56,6 +56,34 @@ def _card() -> Converter:
     from rememberstack.adapters.converters.card import CardConverter
 
     return CardConverter()
+
+
+def _office() -> Converter:
+    """The D138 office route: Word documents and presentations."""
+    from rememberstack.adapters.converters.office import OfficeConverter
+
+    return OfficeConverter()
+
+
+def _pdf(ocr: Converter | None = None) -> Converter:
+    """The D138 pdf route; ``ocr`` reads scans when the deployment routes OCR."""
+    from rememberstack.adapters.converters.pdf import PdfConverter
+
+    return PdfConverter(ocr=ocr)
+
+
+def _email() -> Converter:
+    """The D138 email route for ``.eml`` messages."""
+    from rememberstack.adapters.converters.email_message import EmailConverter
+
+    return EmailConverter()
+
+
+def _notebook() -> Converter:
+    """The D138 notebook route for Jupyter ``.ipynb`` files."""
+    from rememberstack.adapters.converters.notebook import NotebookConverter
+
+    return NotebookConverter()
 
 
 def _spreadsheet() -> Converter:
@@ -109,6 +137,10 @@ _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "passthrough": _passthrough,
     "text": _text,
     "card": _card,
+    "office": _office,
+    "pdf": _pdf,
+    "email": _email,
+    "notebook": _notebook,
     "spreadsheet": _spreadsheet,
     "table": _table,
     "dataset": _dataset,

@@ -8,6 +8,7 @@ from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.format_registry import FAMILIES
 from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.format_registry import SNIFF_BYTES
+from rememberstack.core.format_registry import stock_route_names
 
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -180,12 +181,15 @@ def test_stock_routes_cover_every_family_with_a_converter() -> None:
     for file_name in ("photo.heic", "clip.mkv", "backup.tar.xz", "old.7z"):
         assert STOCK_CONVERSION_ROUTE_NAMES[_detect(file_name)] == "card"
     # families whose converter is not built yet park, and so do the formats
-    # LibreOffice converts first; the Office Open XML documents keep their
-    # markitdown route
-    assert "application/msword" not in STOCK_CONVERSION_ROUTE_NAMES
-    assert _detect("sheet.ods") not in STOCK_CONVERSION_ROUTE_NAMES
+    # LibreOffice converts first when it is not installed
     assert STOCK_CONVERSION_ROUTE_NAMES["text/csv"] == "table"
-    assert STOCK_CONVERSION_ROUTE_NAMES[_DOCX] == "markitdown"
+    assert STOCK_CONVERSION_ROUTE_NAMES[_DOCX] == "office"
+    without_libreoffice = stock_route_names(libreoffice_available=False)
+    assert "application/msword" not in without_libreoffice
+    assert _detect("sheet.ods") not in without_libreoffice
+    with_libreoffice = stock_route_names(libreoffice_available=True)
+    assert with_libreoffice["application/msword"] == "office"
+    assert with_libreoffice[_detect("sheet.ods")] == "spreadsheet"
 
 
 def test_reading_limits_apply_to_office_pdf_and_spreadsheets_only() -> None:

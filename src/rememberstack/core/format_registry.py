@@ -128,21 +128,21 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="notebook",
         mime="application/x-ipynb+json",
         outcome="prose",
-        converter=None,
+        converter="notebook",
         extensions=frozenset({"ipynb"}),
     ),
     FormatFamily(
         name="email",
         mime="message/rfc822",
         outcome="prose",
-        converter=None,
+        converter="email",
         extensions=frozenset({"eml"}),
     ),
     FormatFamily(
         name="word",
         mime=_DOCX,
         outcome="prose",
-        converter=None,
+        converter="office",
         extensions=frozenset({"docx", "docm", "dotx", "doc", "odt", "rtf"}),
         reading_limit_bytes=100_000_000,
     ),
@@ -150,7 +150,7 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="presentation",
         mime=_PPTX,
         outcome="prose",
-        converter=None,
+        converter="office",
         extensions=frozenset({"pptx", "pptm", "ppsx", "potx", "ppt", "odp"}),
         reading_limit_bytes=100_000_000,
     ),
@@ -158,7 +158,7 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="pdf",
         mime="application/pdf",
         outcome="prose",
-        converter=None,
+        converter="pdf",
         extensions=frozenset({"pdf"}),
         reading_limit_bytes=100_000_000,
     ),
@@ -281,6 +281,10 @@ canonical one: a different container (``.doc`` beside ``.docx``) or a media
 type a provider route keys on (``image/jpeg`` for the D115 route). Every
 other extension stores its family's canonical MIME."""
 
+LIBREOFFICE_EXTENSIONS: Final = frozenset({"doc", "odt", "rtf", "ppt", "odp", "ods"})
+"""Extensions LibreOffice converts to Office Open XML before they are read
+(D138 §7); their routes exist only where ``soffice`` is installed."""
+
 _DECLARED_ALIASES: Final[dict[str, str]] = {
     "text/x-markdown": "markdown",
     "application/xhtml+xml": "html",
@@ -335,10 +339,6 @@ _NAMED_FILES: Final[dict[str, str]] = {
     "workspace": "code",
 }
 """Extensionless file names with a known family (D138 §3 step 1)."""
-
-_NEEDS_LIBREOFFICE: Final = frozenset({"ods"})
-"""Extensions of routed families that LibreOffice converts before reading
-(D138 §7); they park under D117 until that conversion ships."""
 
 _COMPOUND_TAR: Final = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst")
 _UNSPECIFIC_DECLARED: Final = frozenset({"", "application/octet-stream", "text/plain"})
@@ -411,24 +411,22 @@ def family_named(*, name: str) -> FormatFamily:
     return _BY_NAME[name]
 
 
-def stock_route_names() -> dict[str, str]:
+def stock_route_names(*, libreoffice_available: bool) -> dict[str, str]:
     """The engine's default MIME → converter table, derived from the registry.
 
     Every stored MIME of a family whose converter this build ships routes to
-    it, except the formats LibreOffice converts first (D138 §7), which park
-    until that conversion ships. The Office Open XML documents keep their
-    markitdown route until the D138 office converter exists.
+    it. The formats LibreOffice converts first route only when it is
+    installed; without it they park (D117).
     """
     routes = {
         mime: family.converter
         for extension, mime in FORMAT_MIMES.items()
         if (family := _BY_EXTENSION[extension]).converter is not None
-        and extension not in _NEEDS_LIBREOFFICE
+        and (libreoffice_available or extension not in LIBREOFFICE_EXTENSIONS)
     }
     routes.update(
         {family.mime: family.converter for family in FAMILIES if family.converter}
     )
-    routes.update({_DOCX: "markitdown", _PPTX: "markitdown"})
     return routes
 
 

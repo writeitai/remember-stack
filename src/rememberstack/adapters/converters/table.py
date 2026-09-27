@@ -110,8 +110,12 @@ class TableConverter:
             content_size=len(content),
             hints=hints,
             mime=mime,
-            component=ManifestComponent(
-                name="table", version=TABLE_CONVERTER_VERSION, execution="library-local"
+            components=(
+                ManifestComponent(
+                    name="table",
+                    version=TABLE_CONVERTER_VERSION,
+                    execution="library-local",
+                ),
             ),
         )
 

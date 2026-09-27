@@ -301,19 +301,17 @@ Convert other formats to Markdown before you send them. See
 
 <Tab label="Self-hosted">
 
-A fresh self-hosted deployment reads Markdown, plain text, HTML, EPUB and
-Word and PowerPoint files (`.docx`, `.pptx`), and extracts claims from
-them. Spreadsheets, CSV/TSV and data files (Parquet, Arrow, SPSS, SAS,
-Stata, SQLite) get a searchable profile of their sheets, columns and first
-rows, with no claims. Code, configuration, logs and unrecognized text are read
-and searchable, but no claims are extracted from them. Images, audio,
-video, archives and other binary files get a short file card (name, path,
-format, size; image dimensions; archive members). PDFs, legacy Office,
-OpenDocument, email and notebook files are stored and their processing is
-parked, not refused: the ingest succeeds with `"parked": "no_route"`, and
-the version waits until a converter exists for its type. PDFs can be read
-with a converter you configure with your own provider key. See
-[File formats and converters](/docs/self-hosting/converters).
+A fresh self-hosted deployment reads Markdown, plain text, code and
+configuration files, HTML, EPUB, Word, PowerPoint, PDF, email (`.eml`)
+and Jupyter notebooks, profiles spreadsheets, CSV and data files (their
+sheets, columns and first rows; no claims), and describes images, media and
+archives with a card. A file of a type it cannot read (the LibreOffice
+formats, when the engine runs without LibreOffice) is stored and its
+processing is parked, not refused: the ingest succeeds with `"parked": "no_route"`, and the version
+waits until an operator adds a converter for its type. Reading scanned
+PDFs and images with OCR needs converters that you configure with your
+own provider key.
+See [File formats and converters](/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
 `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`. Over that limit the API

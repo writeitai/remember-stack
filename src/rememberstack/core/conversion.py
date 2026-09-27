@@ -7,6 +7,7 @@ version bump, never a silent difference.
 """
 
 from collections.abc import Mapping
+import shutil
 from typing import Final
 from typing import Literal
 from typing import Protocol
@@ -28,19 +29,23 @@ PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.08"
 D65 envelope emission (manifest + total labeling). A contract change here
 must bump this so replay never reuses artifacts from the old shape."""
 
-STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names()
+STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names(
+    libreoffice_available=shutil.which("soffice") is not None
+)
 """The engine's default MIME → converter-name table (D138 §3/§4).
 
 Derived from the format registry: every stored MIME of a family whose
-converter ships in this build routes to it — the ``text`` converter for
-Markdown, plain text, code, configuration and logs; ``markitdown`` for HTML,
-EPUB and the Word and PowerPoint Open XML documents; the ``spreadsheet``,
-``table`` and ``dataset`` profiles for workbooks, delimited files and
-datasets; ``card`` for images, media, archives and unrecognized bytes. Every
-route runs locally with no API key. A deployment's conversion-route setting
-adds or overrides entries on top of this table; MIME types no route accepts
-(PDF, legacy Office, OpenDocument, email, notebooks) are stored and parked
-as ``no_route`` until one does.
+converter ships in this build routes to it — ``text`` for Markdown, plain
+text, code, configuration and logs; ``markitdown`` for HTML and EPUB;
+``office`` for Word documents and presentations; ``spreadsheet``, ``table``
+and ``dataset`` profiles for workbooks, delimited files and datasets; ``pdf``,
+``email`` and ``notebook``; ``card`` for images, media, archives and
+unrecognized bytes. The formats LibreOffice converts first (doc, odt, rtf,
+ppt, odp, ods) route only where its ``soffice`` is on the PATH. Every route
+runs locally with no API key. A deployment's conversion-route setting adds
+or overrides entries on top of this table; MIME types no route accepts (the
+LibreOffice formats without LibreOffice) are stored and parked as
+``no_route`` until one does.
 """
 
 

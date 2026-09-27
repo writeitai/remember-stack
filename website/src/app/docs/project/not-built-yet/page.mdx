@@ -12,13 +12,10 @@ absent from the current release; nothing here has a date.
 
 ## Ingest
 
-- **Audio and video.** An audio or video file gets a file card (name, path,
-  format, size); no converter turns speech or video into text yet.
-- **PDFs without an OCR route, legacy Office, OpenDocument, email and
-  notebooks.** A self-hosted deployment stores `.pdf` (unless you route it
-  to `mistral_ocr`), `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`, `.ods`, `.eml`
-  and `.ipynb` and parks them as `no_route`; no built-in converter reads
-  them yet ([File formats and converters](/docs/self-hosting/converters)).
+- **Audio and video.** RememberStack stores audio and video and describes
+  each file with a card, but no converter turns speech or video into text.
+- **Email attachments.** An `.eml` file's attachments are listed by name and
+  size; they are not read.
 - **URLs.** You cannot ingest a web page by its address; fetch the page
   yourself and upload the file.
 - **Connectors and watched folders.** Nothing pulls documents from another
@@ -38,11 +35,10 @@ absent from the current release; nothing here has a date.
   others), fact lookups and the SQL query functions do not yet, and there is
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
-- **Metadata read from inside files.** Only two converters read metadata:
-  markitdown reports a title where it finds one, and the spreadsheet
-  converter reads an `.xlsx` workbook's title, author and dates. No
-  converter reads recipients, or the authors and dates of other formats,
-  yet.
+- **Metadata from other formats.** Word, PowerPoint, PDF and email files
+  give their title, people and dates, and `.xlsx` workbooks their title,
+  author and dates; HTML, EPUB and notebooks give only a title, and other
+  formats give none.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

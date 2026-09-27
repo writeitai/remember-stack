@@ -9,8 +9,9 @@ whose shared-strings table expands past 100 MB, is profiled from its sheet
 list and declared dimensions only — the shared strings and cells are never
 loaded — and the profile says why. ``.xls`` is read with xlrd; over 10 MB
 only its sheet names are listed, because xlrd loads a whole sheet to read
-any of it. Hidden sheets are marked. ``.ods`` is not routed here until the
-LibreOffice conversion (D138 §7) ships; it parks under D117.
+any of it. Hidden sheets are marked. ``.ods`` is converted to ``.xlsx`` by
+LibreOffice first (D138 §7) and profiled from the result; without LibreOffice
+it is not routed here and parks under D117.
 
 The OOXML core properties give D134 metadata (title, creator, created and
 modified). Bytes that are not a readable workbook fail the version.
@@ -32,6 +33,7 @@ from xlrd.biffh import XLRDError
 from xlrd.xldate import xldate_as_datetime
 from xlrd.xldate import XLDateError
 
+from rememberstack.adapters.converters.libreoffice import convert_with_libreoffice
 from rememberstack.adapters.converters.profile import ColumnProfile
 from rememberstack.adapters.converters.profile import DataFileProfile
 from rememberstack.adapters.converters.profile import Deadline
@@ -67,6 +69,7 @@ XLS_SHEET_LOAD_LIMIT_BYTES: Final = 10_000_000
 sheet to read any row of it (starting value)."""
 
 _XLS_MIME: Final = FORMAT_MIMES["xls"]
+_ODS_MIME: Final = FORMAT_MIMES["ods"]
 _CORE_PROPERTIES: Final = "docProps/core.xml"
 _XLS_VISIBILITY: Final = {1: "hidden", 2: "very hidden"}
 _XLSX_VISIBILITY: Final = {"hidden": "hidden", "veryHidden": "very hidden"}
@@ -101,8 +104,25 @@ class SpreadsheetConverter:
     ) -> ConversionResult:
         """Read the workbook's metadata and sample rows into a profile."""
         deadline = Deadline(seconds=TIME_LIMIT_SECONDS)
+        components = [
+            ManifestComponent(
+                name="spreadsheet",
+                version=SPREADSHEET_CONVERTER_VERSION,
+                execution="library-local",
+            )
+        ]
         if mime == _XLS_MIME:
             profile = _xls_profile(content=content, deadline=deadline)
+        elif mime == _ODS_MIME:
+            converted = convert_with_libreoffice(
+                content=content, source_extension="ods", target="xlsx"
+            )
+            components.append(
+                ManifestComponent(
+                    name="libreoffice", version="system", execution="library-local"
+                )
+            )
+            profile = _xlsx_profile(content=converted, deadline=deadline)
         else:
             profile = _xlsx_profile(content=content, deadline=deadline)
         return render_profile(
@@ -110,11 +130,7 @@ class SpreadsheetConverter:
             content_size=len(content),
             hints=hints,
             mime=mime,
-            component=ManifestComponent(
-                name="spreadsheet",
-                version=SPREADSHEET_CONVERTER_VERSION,
-                execution="library-local",
-            ),
+            components=tuple(components),
         )
 
 

@@ -11,6 +11,7 @@ import datetime
 import io
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import zipfile
 
@@ -781,3 +782,45 @@ def test_a_views_only_sqlite_database_names_its_views(tmp_path: Path) -> None:
 def test_nan_is_ignored_when_inferring_types() -> None:
     assert infer_type(values=[float("nan"), None], parse_text=False) == "empty"
     assert infer_type(values=[float("nan"), 1.5], parse_text=False) == "number"
+
+
+def test_ods_is_converted_by_libreoffice_then_profiled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The .ods bytes go to LibreOffice; the xlsx it returns is profiled."""
+    calls: list[tuple[bytes, str, str]] = []
+
+    def fake(*, content: bytes, source_extension: str, target: str) -> bytes:
+        calls.append((content, source_extension, target))
+        return _xlsx(_eight_rows)
+
+    monkeypatch.setattr(spreadsheet_module, "convert_with_libreoffice", fake)
+    result = SpreadsheetConverter().convert(
+        content=b"ods bytes", mime=_ODS, hints=_hints("sheet.ods")
+    )
+    _assert_search_only_profile(result)
+    assert calls == [(b"ods bytes", "ods", "xlsx")]
+    assert "- Format: ods" in result.document_md
+    assert "- Byte size: 9 bytes" in result.document_md
+    assert "| row4 | 4 |" in result.document_md
+    assert [c.name for c in result.manifest.components] == [
+        "spreadsheet",
+        "libreoffice",
+    ]
+
+
+@pytest.mark.skipif(
+    shutil.which("soffice") is None, reason="LibreOffice (soffice) is not installed"
+)
+def test_ods_profile_with_real_libreoffice(tmp_path: Path) -> None:
+    from rememberstack.adapters.converters.libreoffice import convert_with_libreoffice
+
+    ods = convert_with_libreoffice(
+        content=_xlsx(_eight_rows),
+        source_extension="xlsx",
+        target="ods",  # type: ignore[arg-type]
+    )
+    result = SpreadsheetConverter().convert(
+        content=ods, mime=_ODS, hints=_hints("sheet.ods")
+    )
+    assert "| row4 | 4 |" in result.document_md

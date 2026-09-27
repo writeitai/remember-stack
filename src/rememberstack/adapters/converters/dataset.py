@@ -117,10 +117,12 @@ class DatasetConverter:
             content_size=len(content),
             hints=hints,
             mime=mime,
-            component=ManifestComponent(
-                name="dataset",
-                version=DATASET_CONVERTER_VERSION,
-                execution="library-local",
+            components=(
+                ManifestComponent(
+                    name="dataset",
+                    version=DATASET_CONVERTER_VERSION,
+                    execution="library-local",
+                ),
             ),
         )
 

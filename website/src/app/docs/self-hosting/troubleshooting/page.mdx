@@ -231,11 +231,10 @@ work is parked with the reason `no_route`. It uses no attempts and makes no
 model calls. The ingest result reports it at once with
 `"parked": "no_route"`, and `remember ingest` prints a warning.
 
-A stock deployment reads text, code, configuration, logs, HTML, EPUB,
-`.docx` and `.pptx`, profiles spreadsheets, CSV and data files, and cards
-images, media, archives and unknown files. PDFs need an OCR route with your
-own provider key; legacy Office, OpenDocument, email and notebook files
-have no converter yet. Add
+A stock deployment reads text, HTML, EPUB, Office, PDF, email and notebook
+files, profiles spreadsheets, CSV and data files, and cards images, media
+and archives; `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` and `.ods` park when
+the engine runs without LibreOffice. Add
 a route for the type as described in
 [File formats and converters](/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:

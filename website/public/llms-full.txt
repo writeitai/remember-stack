@@ -3094,16 +3094,19 @@ On a self-hosted deployment:
 | Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
 | Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
 | HTML, EPUB | Read; claims extracted | Same |
-| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
+| PDF with a text layer | Read page by page; claims extracted | Same |
+| Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| Email (`.eml`) | Read; attachments listed, not read | Same |
+| Jupyter notebooks (`.ipynb`) | Markdown cells read (claims extracted); code cells searchable, no claims; outputs dropped | Same |
 | Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
 | Text files of unknown kind | Read and searchable; no claims | Same |
 | Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
 | Audio and video | File card | Same |
 | Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
 | Other binary files | File card | Same |
-| PDF, including scanned PDFs | Stored, not read | Read with `mistral_ocr` (needs a Mistral API key) |
-| Legacy Office (`.doc`, `.ppt`, `.xls`, OpenDocument, `.rtf`) | Stored, not read | Same: save as `.docx`, `.pptx` or `.xlsx` first |
-| Email (`.eml`), notebooks (`.ipynb`), CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
+| `.xls`, `.ods`, CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
 A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
@@ -3113,16 +3116,17 @@ full.
 
 ## Formats and converters
 
-A new self-hosted deployment reads or cards every file locally, with no
-API key. Formats with no converter yet are accepted and stored, but they
-wait unprocessed. The upload response tells you: its `parked` field is
-`"no_route"`, and `remember ingest` prints a warning.
+A new self-hosted deployment reads the formats above locally, with no API
+key, and describes images, media and archives with a card. Formats it
+cannot read yet are accepted and stored, but they wait unprocessed. The
+upload response tells you: its `parked` field is `"no_route"`, and
+`remember ingest` prints a warning.
 
-To read PDFs, or to read images instead of carding them, map their types
-to a converter in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats
-and converters](https://remember.dev/docs/self-hosting/converters) shows the setting, how the
-server recognizes each file, what each converter does and costs, and how
-to release files that were stored before you added a route.
+To read scanned PDFs and images with OCR, map their type to a converter in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
+converters](https://remember.dev/docs/self-hosting/converters) shows the setting, what each
+converter does and costs, and how to release files that were stored before
+you added a route.
 
 ## Send the right type
 
@@ -3710,17 +3714,16 @@ that to the user instead of waiting. See [Connect your coding agent](https://rem
 
 Every ingest is stored. Whether it is read depends on the MIME type.
 
-A fresh self-hosted deployment reads Markdown, plain text, HTML, EPUB and
-Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`), and extracts
-claims from them. Code, configuration, logs and unrecognized text are read
-and searchable, but no claims are extracted from them. Images, audio,
-video, archives and other binary files get a short file card (name, path,
-format, size; image dimensions; archive members). PDFs, legacy Office,
-email, notebook, CSV and data files are stored and their processing is
-parked, not refused: the ingest succeeds with `"parked": "no_route"`, and
-the version waits until a converter exists for its type. PDFs can be read
-with a converter you configure with your own provider key. See
-[File formats and converters](https://remember.dev/docs/self-hosting/converters).
+A fresh self-hosted deployment reads Markdown, plain text, code and
+configuration files, HTML, EPUB, Word, PowerPoint, Excel (`.xlsx`), PDF,
+email (`.eml`) and Jupyter notebooks, and describes images, media and
+archives with a card. A file of a type it cannot read yet (CSV, data
+files, `.xls`, `.ods`) is stored and its processing is parked, not
+refused: the ingest succeeds with `"parked": "no_route"`, and the version
+waits until an operator adds a converter for its type. Reading scanned
+PDFs and images with OCR needs converters that you configure with your
+own provider key.
+See [File formats and converters](https://remember.dev/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
 `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`. Over that limit the API
@@ -6802,11 +6805,11 @@ Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Every arriving file is first sorted into a **format family**
 (Markdown, code, image, archive and so on), and the family decides which
 converter reads it. A stock deployment handles text, code, configuration,
-logs, HTML, EPUB, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`)
-with no API key, and describes images, audio, video, archives and unknown
-files with a short **file card**. PDFs, legacy Office files, email,
-notebooks, CSV and data files are stored and wait until a converter for
-them exists or you add a route; the ingest response says so at once with
+logs, HTML, EPUB, Word, PowerPoint, Excel (`.xlsx`), PDF, email (`.eml`)
+and Jupyter notebooks with no API key, and describes images, audio, video,
+archives and unknown files with a short **file card**. CSV and data files
+and `.xls`/`.ods` spreadsheets are stored and wait until a converter for
+them exists; the ingest response says so at once with
 `"parked": "no_route"`.
 
 ## How a file's family is chosen
@@ -6845,15 +6848,18 @@ reports the stored type in its `mime` field.
 | `other_text` | unrecognized UTF-8 text | `text` | The text, searchable; no claims |
 | `html` | html, htm, xhtml | `markitdown` | The text; claims are extracted |
 | `ebook` | epub | `markitdown` | The text; claims are extracted |
-| `word` | docx (and docm, dotx) | `markitdown` | The text; claims are extracted |
-| `presentation` | pptx (and pptm, ppsx, potx) | `markitdown` | The text; claims are extracted |
+| `word` | docx, docm, dotx; doc, odt, rtf with LibreOffice | `office` | The text; claims are extracted |
+| `presentation` | pptx, pptm, ppsx, potx; ppt, odp with LibreOffice | `office` | One section per slide; claims are extracted |
+| `pdf` | pdf | `pdf` | One section per page of the text layer; claims are extracted |
+| `email` | eml | `email` | Headers, body and attachment list; claims are extracted |
+| `notebook` | ipynb | `notebook` | Markdown cells (claims extracted) and code cells (searchable, no claims); outputs dropped |
 | `spreadsheet` | xlsx (and xlsm, xltx) | `markitdown` | The sheets as tables; claims are extracted |
 | `image` | png, jpg, gif, webp, tiff, bmp, heic, avif, psd | `card` | A file card with width, height and format |
 | `media` | wav, mp3, m4a, flac, mp4, mov, webm, mkv | `card` | A file card |
 | `archive` | zip, tar, tar.gz, 7z, rar, gz | `card` | A file card; zip and tar list their members |
 | `binary` | everything else | `card` | A file card |
-| `pdf`, `notebook`, `email`, `delimited`, `dataset` | pdf, ipynb, eml, csv, tsv, parquet, sav, … | none | Stored and parked (`no_route`) |
-| `word`, `presentation`, `spreadsheet` (legacy) | doc, odt, rtf, ppt, odp, xls, ods | none | Stored and parked (`no_route`) |
+| `delimited`, `dataset` | csv, tsv, parquet, sav, … | none | Stored and parked (`no_route`) |
+| `spreadsheet` (legacy) | xls, ods | none | Stored and parked (`no_route`) |
 
 "Searchable; no claims" means the file is chunked, embedded and found by
 search, but memory does not extract facts from it. Such a file is one flat
@@ -6904,19 +6910,19 @@ is not read: it gets a file card that states the size limit it exceeded,
 whether or not a converter is configured for its type. Every file is
 stored whatever its size.
 
-## The default table
+## What a stock deployment reads
 
 With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, every stored type of
 the families above routes to the converter named there: the six text MIME
 types (`text/markdown`, `text/plain`, `text/x-code`, `text/x-config`,
 `text/x-log`, `text/x-other-text`) to `text`; `text/html`,
-`application/epub+zip` and the `.docx`, `.pptx` and `.xlsx` types to
-`markitdown`; image, audio, video, archive and `application/octet-stream`
-types to `card`. Every one of these runs in the worker with no network call
-and no API key.
-
-PDFs are not in the default table: the converter that reads them calls a
-paid provider API with your own key. Add a route for them as shown below.
+`application/epub+zip` and the `.xlsx` type to `markitdown`; the Word and
+PowerPoint types to `office` (the `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp`
+types only when LibreOffice is installed, see [LibreOffice](#libreoffice));
+`application/pdf` to `pdf`; `message/rfc822` to `email`;
+`application/x-ipynb+json` to `notebook`; image, audio, video, archive and
+`application/octet-stream` types to `card`. Every one of these runs in the
+worker with no network call and no API key.
 
 ## Add routes
 
@@ -6943,25 +6949,81 @@ works for files sent with that type.
 |---|---|---|---|
 | `text` | In the worker | Markdown, text, code, configuration, logs | Nothing |
 | `card` | In the worker | Any file (describes it without reading it) | Nothing |
-| `markitdown` | In the worker | HTML, EPUB, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
+| `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`) | Nothing |
+| `office` | In the worker | Word and PowerPoint | LibreOffice for `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` |
+| `pdf` | In the worker | PDFs with a text layer | Nothing |
+| `email` | In the worker | `.eml` messages | Nothing |
+| `notebook` | In the worker | Jupyter notebooks | Nothing |
 | `passthrough` | In the worker | Markdown and plain text, always read in full and always extracted | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
+`office`, `pdf`, `email`, `notebook` and `markitdown` stop after 120
+seconds and fail the file with a timeout reason.
+
+## office
+
+`office` reads Word documents with markitdown and PowerPoint files slide by
+slide. Each slide becomes a `## Slide N` section with its title, text,
+tables and speaker notes, and search results from it point to that slide
+(as page N). A Word, PowerPoint or EPUB file is a zip package; one that
+declares more than 500 MB of uncompressed content, or a single part over
+200 MB, fails conversion instead of being unpacked. It reads the document's title, author, created and modified
+dates from the file's properties, so they can be used in document filters
+([`search_documents`](https://remember.dev/docs/reference/mcp)). It does not read text inside
+images, and no macro or embedded object is run.
+
+### LibreOffice
+
+`.doc`, `.odt`, `.rtf`, `.ppt` and `.odp` are first converted to `.docx` or
+`.pptx` by LibreOffice (`soffice --headless`), one process per file with a
+fresh temporary profile, stopped after 120 seconds. The published engine
+image includes LibreOffice's headless Writer, Impress and Calc. An engine
+run without `soffice` on its `PATH` has no route for these types: they are
+stored and parked with `no_route`, and released by
+`remember ops resume-no-route` once LibreOffice is installed.
+
+The engine does not cut LibreOffice off from the network: a document that
+links to remote images or files could make it try to fetch them. If that
+matters for your data, run the engine in a network that allows only the
+connections it needs.
+
+## pdf
+
+`pdf` reads the text layer of each page (pypdfium2). Each page with text
+becomes a `## Page N` section, and search results point to that page. Pages
+without text (scanned pages) are listed in the conversion's coverage gaps,
+so you can see that part of the file was not read. The title, author,
+created and modified dates come from the PDF's document information.
+
+When your route table also names `mistral_ocr` (for any type) and more than
+half of a PDF's pages have no text, `pdf` sends the file to Mistral OCR
+instead and bills it like any other OCR call. Without an OCR route, a
+scanned PDF is stored with only its text pages read. A PDF that cannot be
+opened (damaged or password-protected) fails conversion.
+
+## email
+
+`email` reads one message: its subject as the heading, the From, To, Cc and
+Date headers, and the plain-text body (or the HTML body, converted to
+Markdown). Attachments are listed by name and size; they are not read. The
+subject, sender, recipients, date and thread (the first `References` entry,
+else the `Message-ID`) are recorded as document metadata.
+
+## notebook
+
+`notebook` reads a Jupyter notebook's cells in order. Markdown cells are
+read like any document. Code cells are kept as code blocks that search
+finds, but no claims are extracted from them. Cell outputs are dropped. The
+first `# ` heading is the notebook's title.
+
 ## markitdown
 
 `markitdown` converts in the worker process, with no network call and no
-cost. The image installs the markitdown library with the packages it needs
-for Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`); HTML needs
-none. It reads the text, headings, lists and tables of these files; it does
-not read text inside embedded images.
+cost. It reads HTML, EPUB books and Excel (`.xlsx`) workbooks: text,
+headings, lists and tables. It does not read text inside embedded images.
 
-The image does not contain markitdown's PDF, audio or legacy Office
-(`.doc`, `.ppt`, `.xls`) packages, so a file of those types routed to
-`markitdown` fails conversion. Route PDFs to `mistral_ocr` instead.
-
-Office Open XML files are read with markitdown as documents and tables for
-now; spreadsheets are shown row by row and their claims are extracted.
+Excel workbooks are shown row by row and their claims are extracted.
 
 ## mistral_ocr
 
@@ -7046,10 +7108,10 @@ and the parked conversion is released without an operator step.
 
 ## Not supported yet
 
-RememberStack does not read PDFs without an OCR route, legacy Office files
-(`.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`, `.xls`, `.ods`), email (`.eml`),
-Jupyter notebooks, CSV and TSV files, or data files (Parquet, SPSS, SAS,
-Stata, SQLite) yet: they are stored and parked. Audio and video get a file
+RememberStack does not read `.xls` and `.ods` spreadsheets, CSV and TSV
+files, or data files (Parquet, SPSS, SAS, Stata, SQLite) yet: they are
+stored and parked. Scanned pages of a PDF are not read without an OCR
+route. Audio and video get a file
 card; their speech is not transcribed. Web addresses are not fetched; to
 add a web page, download it and send the HTML.
 
@@ -7950,10 +8012,10 @@ work is parked with the reason `no_route`. It uses no attempts and makes no
 model calls. The ingest result reports it at once with
 `"parked": "no_route"`, and `remember ingest` prints a warning.
 
-A stock deployment reads text, code, configuration, logs, HTML, EPUB,
-`.docx`, `.pptx` and `.xlsx`, and cards images, media, archives and unknown
-files. PDFs need an OCR route with your own provider key; legacy Office,
-email, notebook, CSV and data files have no converter yet. Add
+A stock deployment reads text, HTML, EPUB, Office, PDF, email and notebook
+files and cards images, media and archives; CSV, data files, `.xls` and
+`.ods` park, and so do `.doc`, `.odt`, `.rtf`, `.ppt` and `.odp` when the
+engine runs without LibreOffice. Add
 a route for the type as described in
 [File formats and converters](https://remember.dev/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
@@ -16214,7 +16276,7 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 
 | Variable | Default | Type | Purpose |
 |---|---|---|---|
-| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | unset: the built-in table (text families → `text`; HTML, EPUB, `.docx`, `.pptx`, `.xlsx` → `markitdown`; images, media, archives, other files → `card`; [the table](https://remember.dev/docs/self-hosting/converters#the-default-table)) | JSON object | MIME type → converter. Adds to or overrides entries of the built-in table. |
+| `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` | empty: the engine's format table ([the table](https://remember.dev/docs/self-hosting/converters#what-a-stock-deployment-reads)) | JSON object | MIME type → converter. Adds to the default table and overrides the entries it names. |
 | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` | unset | secret | Mistral key; required by `mistral_ocr` and `image_ocr_description`. |
 | `REMEMBERSTACK_MISTRAL_OCR_BASE_URL` | `https://api.mistral.ai` | URL | Mistral API address. |
 | `REMEMBERSTACK_MISTRAL_OCR_MODEL` | `mistral-ocr-latest` | string | OCR model. |
@@ -16936,14 +16998,13 @@ absent from the current release; nothing here has a date.
 
 ## Ingest
 
-- **Audio and video.** An audio or video file gets a file card (name, path,
-  format, size); no converter turns speech or video into text yet.
-- **PDFs without an OCR route, legacy Office, email, notebooks and data
-  files.** A self-hosted deployment stores `.pdf` (unless you route it to
-  `mistral_ocr`), `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp`, `.xls`, `.ods`,
-  `.eml`, `.ipynb`, CSV/TSV and data files (Parquet, SPSS, SAS, Stata,
-  SQLite) and parks them as `no_route`; no built-in converter reads them
-  yet ([File formats and converters](https://remember.dev/docs/self-hosting/converters)).
+- **Audio and video.** RememberStack stores audio and video and describes
+  each file with a card, but no converter turns speech or video into text.
+- **CSV, data files and older spreadsheets.** `.csv`, `.tsv`, Parquet and
+  other data files, `.xls` and `.ods` are stored but not read; their
+  conversion is parked with `no_route`.
+- **Email attachments.** An `.eml` file's attachments are listed by name and
+  size; they are not read.
 - **Spreadsheet profiles.** `.xlsx` files are read row by row with
   markitdown; there is no compact sheet-and-column profile yet.
 - **URLs.** You cannot ingest a web page by its address; fetch the page
@@ -16965,9 +17026,9 @@ absent from the current release; nothing here has a date.
   others), fact lookups and the SQL query functions do not yet, and there is
   no `documents` filter over MCP because MCP has no claim or chunk search
   tool.
-- **Metadata read from inside files.** Converters read only a document's
-  title, and only where the markitdown converter reports one; no converter
-  reads authors, recipients or dates from files yet.
+- **Metadata from other formats.** Word, PowerPoint, PDF and email files
+  give their title, people and dates; HTML, EPUB and notebooks give only a
+  title, and other formats give none.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.

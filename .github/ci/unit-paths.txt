@@ -131,3 +131,4 @@ src/tests/adapters/test_text_and_card_converters.py
 src/tests/core/test_format_registry.py
 src/tests/workers/test_d138_extraction_eligibility.py
 src/tests/adapters/test_data_profiles.py
+src/tests/adapters/test_document_family_converters.py

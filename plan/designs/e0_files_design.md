@@ -23,15 +23,11 @@ and E2 (claim extraction) need. E0 is not a single worker; it is a short chain o
 sub-workers**, because document ingestion is genuinely several distinct, separately-failing jobs:
 
 ```
-ingest ──► convert ──► expand ──► structure ──► crossref
-(store raw  (raw → md,   (container   (PageIndex     (citations /
- + hash)    OCR/logic)   members →    tree + roles    document links)
-                         child docs)  + placement)
+ingest ──► convert ──► structure ──► crossref
+(store raw  (raw → md,   (PageIndex     (citations /
+ + hash)    OCR/logic)   tree + roles    document links)
+                         + placement)
 ```
-
-`expand` runs only for families with the expand posture (archives, email attachments,
-mailboxes, message exports, embedded images) and is otherwise a no-op; it is bound in
-[`format_conversion_design.md`](format_conversion_design.md) §5.
 
 These are *sub-workers of E0*, not new top-level stages: **the E-numbers name product layers**
 (files → chunks → claims → relations), and PageIndex structure is metadata *about the document*
@@ -42,8 +38,7 @@ complexity is handled by *decomposition into sub-workers*, each separately idemp
 
 ## 2. Storage layout — GCS holds bodies, Postgres holds the index
 
-Three buckets per deployment (storage is per-deployment, like entity spaces, D16) — raw,
-artifacts, and the private store:
+Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
 
 - **raw** — `gs://rememberstack-<dep>-raw/<doc_id>/<content_hash>/original.<ext>` — immutable source-of-truth
   bytes (D1). Strict per-deployment IAM. **Mounted read-only, but off the navigation path**
@@ -84,13 +79,6 @@ artifacts, and the private store:
   (timing-preserving, provenance-linked, for players and external tools), but text that
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
   does not exist as testimony.
-- **private** — `gs://rememberstack-<dep>-private/<doc_id>/<content_hash>/<representation_id>/…`
-  — engine-internal objects no agent surface reads (D133): a profiled data file's normalized
-  Parquet tables, read only by the `data_query` worker's staging step, and container members
-  staged between `convert` and `expand`. **Never mounted**, never projected into P3, never
-  returned by `hydrate`; separate IAM from the artifacts bucket so a mount of artifacts cannot
-  reach it. Purged with its representation and inventoried by hard forget
-  (`format_conversion_design.md` §4.6, §5.4).
 
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's
@@ -177,13 +165,14 @@ gates everything downstream:
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
 - **Routing by format family (D133).** An engine-shipped **format registry** maps every
   recognized family to a posture — **full** reading, **profile** (a description of a data
-  file, not its rows), **expand** (container members become child documents), or **card**
-  (a deterministic file card) — and to the converter implementing it. Deployments overlay
-  the registry (turn families off, configure providers, lower limits); they never replace
-  it. The routing key is the byte-detected MIME (D132), normalized and alias-resolved. The
-  family table, postures, profiles, `data_query`, child documents and new locator kinds
-  are bound in [`format_conversion_design.md`](format_conversion_design.md). **Media
-  routes (D65/D115),** bound in `media_design.md` §2: audio → **diarized ASR**
+  file, not its rows), or **card** (a deterministic file card) — and to the converter
+  implementing it. Deployments overlay
+  the registry (add or override routes, for example provider-backed ones); they never replace
+  it. The shipped families, detection order and profiles are bound in
+  [`workspace_formats_design.md`](workspace_formats_design.md) (D138); the framework and
+  locator kinds in [`format_conversion_design.md`](format_conversion_design.md). **Media
+  routes (D65/D115),** bound in `media_design.md` §2, run when a deployment configures their
+  providers; by default images, audio and video get cards (D138): audio → **diarized ASR**
   (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
   keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
   independent vision-LLM description call. Converters are versioned — a model or parser
@@ -208,8 +197,8 @@ gates everything downstream:
   its just-started attempt; converter content errors remain ordinary failures.
   This handles configuration skew without a dead-letter loop. Matching uses
   the registry's normalized routing key (D133). Parking covers recognized families
-  whose converter needs an unconfigured provider; a family the deployment turned
-  off is refused at ingest. The admission and managed text-classification
+  whose converter needs an unconfigured provider or is not yet built; every file is
+  stored (D138). The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps
@@ -291,6 +280,10 @@ materialized later by the projection (§6), which can reconcile, rename, and reo
 whole corpus as it grows (a single document cannot know the global tree).
 
 ### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
+
+> **D138:** a representation with no claim-eligible range (search-only text, a data profile, a
+> card) takes only the deterministic skeleton: no model call for skeleton checks, roles or
+> summaries. Model-written structure is for prose.
 
 The shipped route is a **single schema-constrained LLM call** over up to `max_prompt_chars`
 of `document.md` (default 200K; documents under `min_blocks_for_llm` skip the call) returning
@@ -537,6 +530,9 @@ summaries are consumed (Selection drop quality, prefix quality, #150 scorecard c
 in prose.
 
 ## 4A. Cross-references — the `crossref` sub-worker
+
+> **D138:** for a representation with no claim-eligible range, cross-reference detection stays
+> deterministic; the ambiguous residue is left unresolved instead of going to a model.
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
 live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints

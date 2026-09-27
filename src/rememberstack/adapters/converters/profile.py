@@ -26,6 +26,7 @@ import time
 from typing import Final
 from typing import Literal
 
+from rememberstack.adapters.converters.time_limit import CONVERTER_TIME_LIMIT_S
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
@@ -53,8 +54,9 @@ CELL_CHARS: Final = 80
 MAX_DEFINED_NAMES: Final = 50
 """Workbook defined names listed at most."""
 
-TIME_LIMIT_SECONDS: Final = 120.0
-"""A profile route's wall-time limit (D138 §9 starting value)."""
+TIME_LIMIT_SECONDS: Final = CONVERTER_TIME_LIMIT_S
+"""A profile route's wall-time limit (D138 §9 starting value), checked
+cooperatively between rows, records, batches, tables and sheets."""
 
 ColumnType = Literal["integer", "number", "date", "boolean", "text", "empty"]
 _Mode = Literal["computed", "source_expression"]
@@ -189,7 +191,7 @@ def render_profile(
     content_size: int,
     hints: FileHints | None,
     mime: str,
-    component: ManifestComponent,
+    components: tuple[ManifestComponent, ...],
 ) -> ConversionResult:
     """Write the profile's ``document.md`` and its labelled envelope."""
     file_name = hints.file_name if hints is not None else None
@@ -258,7 +260,7 @@ def render_profile(
         document_md=document_md,
         metadata=profile.metadata,
         manifest=ConverterManifest(
-            components=(component,),
+            components=components,
             coverage=ConversionCoverage(
                 policy="profile",
                 complete=False,
