@@ -16,13 +16,16 @@ records what it is, where it is, who wrote it and when, and how it is shaped; fo
 holds the text. It never ingests spreadsheet rows beyond a five-row sample. An agent that needs
 the numbers opens the file; memory's job is to get it to the right file, sheet and column fast.
 
-Every file that arrives is stored and gets a terminal outcome: a reading, a profile, or a card.
-Nothing is silently dropped.
+Every file that arrives is stored and gets a reading, a profile or a card. The only interim
+state is D117 parking, for a recognized family whose converter needs a provider that is not
+configured or is not yet built; parked files are stored, listed and resumable. Nothing is
+silently dropped.
 
 **No model calls outside prose.** Search-only text, profiles and cards run E0's structure step
 without model calls: a deterministic section skeleton from headings, no model-written summaries
-or roles, and no other LLM stage. Only prose families reach model-written structure (D79) and
-claim extraction.
+or roles, and no other LLM stage. Only prose reaches model-written structure (D79) and claim
+extraction. Prose includes the provider-backed media readings (D65/D115 transcripts and image
+descriptions) when a deployment configures those routes.
 
 ## 2. Four outcomes
 

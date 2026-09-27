@@ -88,9 +88,8 @@ The engine never prices; a deployment's metering maps labels to prices
 > content, with D132 refusing only contradictions and unrecognized bytes ending as a card. The
 > byte signatures below remain the reference for adding families that D138 does not list.
 
-Detection decides the family from bytes, in this fixed order; the first
-match wins. The declared MIME and the file extension are **hints** used only
-where a step says so.
+The list below is **not** a detection order. It is a catalogue of byte signatures and
+structural tests a family design may use to recognize or validate its format.
 
 1. **Binary signatures (D132's classes, extended).** PDF; images, audio and
    video by signature and ISO BMFF brand (D132); SQLite (`SQLite format 3\0`
@@ -145,18 +144,8 @@ where a step says so.
    11. Otherwise **Markdown** when declared as Markdown (D132 rendering hint),
        else **plain text**.
 
-**Reference only (see the note above).** The detection order is D138 §3's; the signatures
-below are reference material a new family design may use to recognize its format. As written
-here, this list fixed which families exist, the order in which they are tried and
-the kind of evidence each uses. The precise signature, offsets and grammar
-for a family are specified and tested in that family's design (§10.1 item 3)
-and must be placed at the position given here; a family design that needs a
-different position changes this list first.
-
-A declaration that contradicts a binary class is a D132 refusal. Within the
-text class a failed structural test never refuses — it falls through to the
-next test, ending at plain text — so the outcome is deterministic for given
-bytes and hints.
+The detection order is D138 §3's. The exact signature a family uses is specified and tested in
+its family design (§10.1 item 3). A declaration the bytes contradict is a D132 refusal.
 
 **This refines D132's text-flavour rule.** D132 routes CSV, JSON and code
 with plain text. Under D133 JSON, NDJSON, delimited and log text route to
