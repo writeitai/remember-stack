@@ -68,6 +68,12 @@ def test_extension_decides_first(file_name: str, family: str) -> None:
     assert family_for_mime(mime=detected).name == family
 
 
+def test_windows_paths_are_named_by_their_last_segment() -> None:
+    """A backslash-separated name is detected by its file name."""
+    assert _detect("C:\\repo\\src\\main.py") == "text/x-code"
+    assert _detect("C:\\repo\\Dockerfile") == "text/x-code"
+
+
 def test_extension_stores_format_or_canonical_mime() -> None:
     """Distinct formats keep their own MIME; others store the family's."""
     assert _detect("plan.doc") == "application/msword"

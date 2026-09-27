@@ -134,7 +134,10 @@ extension.
 
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
-does not change. Get the type right on the first send.
+does not change, with one exception: when the stored type has no converter
+route (the upload was parked as `no_route`), identical bytes sent again with
+a type that has a route take that type, and the parked conversion is
+released. Otherwise, get the type right on the first send.
 
 ## Filenames and titles
 
