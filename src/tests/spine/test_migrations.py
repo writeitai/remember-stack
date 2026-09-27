@@ -1581,3 +1581,138 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
     assert _head_revision(database_url=database_url) == "p9_37_0058"
+
+
+def test_d138_downgrade_guard_protects_search_only_readings() -> None:
+    """An empty store downgrades; D138 readings refuse and stay intact."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    engine = create_engine(database_url)
+
+    def eligibility_column_exists() -> bool:
+        with engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'chunks'"
+                    " AND column_name = 'extraction_eligible')"
+                )
+            ).scalar_one()
+
+    try:
+        # an empty store drops the columns and re-adds them on upgrade
+        command.downgrade(config=config, revision="p9_36_0057")
+        assert not eligibility_column_exists()
+        command.upgrade(config=config, revision="p9_37_0058")
+        assert eligibility_column_exists()
+
+        deployment_id, doc_id, version_id = uuid4(), uuid4(), uuid4()
+        representation_id, chunk_id = uuid4(), uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:d, 'd138-guard', 'D138 guard', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                    " raw_uri) VALUES (:d, 'hash-code', 'text/x-code', 'raw')"
+                ),
+                {"d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, title) VALUES (:doc, :d, 'upload', 'main', 'main')"
+                ),
+                {"doc": doc_id, "d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id,"
+                    " doc_id, content_hash, version_no) VALUES"
+                    " (:v, :d, :doc, 'hash-code', 1)"
+                ),
+                {"v": version_id, "d": deployment_id, "doc": doc_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_metadata (deployment_id, version_id,"
+                    " doc_id, family, metadata_mapping_version) VALUES"
+                    " (:d, :v, :doc, 'markdown', 'test')"
+                ),
+                {"d": deployment_id, "v": version_id, "doc": doc_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_representations (representation_id,"
+                    " deployment_id, version_id, route, status)"
+                    " VALUES (:r, :d, :v, 'text', 'ready')"
+                ),
+                {"r": representation_id, "d": deployment_id, "v": version_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                    " representation_id, ordinal, block_start, block_end,"
+                    " chunk_content_hash, extraction_input_hash, char_start,"
+                    " char_end, chunker_version, extraction_eligible)"
+                    " VALUES (:c, :d, :doc, :v, :r, 0, 0, 0, 'h', 'h', 0, 8,"
+                    " 'test', false)"
+                ),
+                {
+                    "c": chunk_id,
+                    "d": deployment_id,
+                    "doc": doc_id,
+                    "v": version_id,
+                    "r": representation_id,
+                },
+            )
+
+        # an ineligible chunk refuses; revision and data stay intact
+        with pytest.raises(RuntimeError, match="D138 downgrade requires"):
+            command.downgrade(config=config, revision="p9_36_0057")
+        assert _head_revision(database_url=database_url) == "p9_37_0058"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT extraction_eligible FROM chunks WHERE chunk_id = :c"),
+                    {"c": chunk_id},
+                ).scalar_one()
+                is False
+            )
+
+        # a D138 reading refuses even before it is chunked: here a Markdown
+        # file over 1 MB, a large_text profile whose family stays prose
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM chunks"))
+        with pytest.raises(RuntimeError, match="D138 downgrade requires"):
+            command.downgrade(config=config, revision="p9_36_0057")
+        assert _head_revision(database_url=database_url) == "p9_37_0058"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT route FROM document_representations")
+                ).scalar_one()
+                == "text"
+            )
+
+        # a pre-D138 reading of the same prose file does not block
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE document_representations SET route = 'passthrough'")
+            )
+        command.downgrade(config=config, revision="p9_36_0057")
+        assert not eligibility_column_exists()
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_37_0058"

@@ -68,7 +68,9 @@ reports the stored type in its `mime` field.
 | `word`, `presentation`, `spreadsheet` (legacy and OpenDocument) | doc, odt, rtf, ppt, odp, ods | none | Stored and parked (`no_route`) |
 
 "Searchable; no claims" means the file is chunked, embedded and found by
-search, but memory does not extract facts from it: a statement such as "the
+search, but memory does not extract facts from it. Such a file is one flat
+section: a `#` line in code or configuration is a comment, not a heading.
+Memory does not extract facts from it because a statement such as "the
 function returns a list" is not knowledge about your world, and extraction
 costs a model call per chunk. The structure step also makes no model call
 for these files.
@@ -76,7 +78,10 @@ for these files.
 ### The text converter
 
 `text` reads a file of up to 1 MB in full. It requires valid UTF-8; a file
-in another encoding fails conversion with a stated reason. A larger file is
+in another encoding fails conversion with a stated reason. Only Markdown
+and plain text (`text/markdown`, `text/plain`) are read as prose; text from
+any other type, including a type of your own that you route to `text`, is
+searchable only. A larger file is
 described instead of read: its line count, its size in bytes, and its first
 50 and last 20 lines, each cut to 500 characters. That description is
 searchable and never used for claims, so a 300 MB data table saved as
@@ -137,6 +142,12 @@ members from a streamed read that stops after 200 members or 64 MB and then
 says the list is partial. Other archive formats get a card without a list.
 The original file is stored and served as always; an agent opens it with
 its own tools.
+
+Member paths are cut to 300 characters. Bytes that contradict their type
+fail conversion with a stated reason: an image Pillow can read whose header
+is not an image, or a zip or tar archive that cannot be opened. A format
+this runtime cannot read at all (HEIC images, `.tar.zst` archives) gets the
+card without dimensions or members, and says so.
 
 Cards are searchable but never used for claims.
 

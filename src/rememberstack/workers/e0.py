@@ -54,10 +54,11 @@ from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import is_model_free
+from rememberstack.core.extraction_eligibility import is_search_only_text
 from rememberstack.core.extraction_eligibility import MixedEligibilityError
+from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
-from rememberstack.core.format_registry import family_named
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
 from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
@@ -68,6 +69,8 @@ from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterUsageEvent
+from rememberstack.model import ConvertSource
+from rememberstack.model import DerivationRange
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
@@ -150,9 +153,6 @@ E0_ROLE_VERSION: Final = (
     f"e0-role-2026.07a:title-rules-v1:classifier-v1:ceiling{ROLE_PROMPT_CEILING}"
 )
 """Deterministic normalized-title rules plus bounded title-only classifier."""
-
-BINARY_FAMILY_MIME: Final = family_named(name="binary").mime
-"""The MIME unrecognized bytes route on — the card, unless overridden."""
 
 E0_RULE_ROLE_VERSION: Final = "e0-role-2026.09a:title-rules-v1:no-model"
 """Roles from the deterministic title rules alone, used when structuring a
@@ -438,16 +438,8 @@ class ConvertHandler:
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
         )
-        # D138 §3: a file over its family's reading limit is carded, which
-        # is how unrecognized bytes route; the card still sees the real MIME.
-        route_mime = (
-            BINARY_FAMILY_MIME
-            if source.byte_size is not None
-            and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
-            else source.mime
-        )
         try:
-            converter = self._router.converter_for(mime=route_mime)
+            converter = self._converter_for(source=source)
         except UnroutableMimeError as err:
             # Configuration can differ from the ingestor or resume command.
             # This runs before reading bytes or making a provider call, so the
@@ -645,6 +637,18 @@ class ConvertHandler:
             work=work, version_id=source.version_id, representation_id=representation_id
         )
 
+    def _converter_for(self, *, source: ConvertSource) -> Converter:
+        """The routed converter, or the card for a file over its reading limit.
+
+        D138 §3: an oversized file is always carded, whatever the deployment's
+        route table maps; the card states the limit it exceeded.
+        """
+        if source.byte_size is not None and exceeds_reading_limit(
+            mime=source.mime, byte_size=source.byte_size
+        ):
+            return CardConverter()
+        return self._router.converter_for(mime=source.mime)
+
     def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
         """A convert whose retries exhausted must not leave the version in-flight."""
         self._catalog.mark_version_failed(
@@ -809,9 +813,14 @@ class StructureHandler:
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=markdown)
-        if self._is_model_free(source=source):
+        ranges = self._derivation_ranges(source=source)
+        if not blocks or is_model_free(ranges=ranges):
             return self._structure_without_models(
-                work=work, source=source, blocks=blocks, markdown=markdown
+                work=work,
+                source=source,
+                blocks=blocks,
+                markdown=markdown,
+                flat=is_search_only_text(ranges=ranges),
             )
         configured_check_version = _skeleton_check_version(
             settings=self._check_settings
@@ -1020,17 +1029,18 @@ class StructureHandler:
         )
         return _chunk_outcome(work=work, source=source)
 
-    def _is_model_free(self, *, source: StructureSource) -> bool:
-        """Whether the representation holds no prose (every range ineligible)."""
+    def _derivation_ranges(
+        self, *, source: StructureSource
+    ) -> tuple[DerivationRange, ...]:
+        """The converter's labelled ranges; a legacy row without a manifest has none."""
         if source.conversion_uri is None:
-            return False
-        manifest = parse_persisted_conversion_manifest(
+            return ()
+        return parse_persisted_conversion_manifest(
             payload=self._artifact_store.read_bytes(
                 key=ObjectKey(source.conversion_uri)
             ),
             uri=source.conversion_uri,
-        )
-        return is_model_free(ranges=manifest.derivation_ranges)
+        ).derivation_ranges
 
     def _structure_without_models(
         self,
@@ -1039,16 +1049,22 @@ class StructureHandler:
         source: StructureSource,
         blocks: tuple[Block, ...],
         markdown: str,
+        flat: bool,
     ) -> HandlerOutcome:
-        """D138 §1: search-only text, profiles and cards make no model calls.
+        """D138 §1: search-only text, profiles, cards and empty readings make
+        no model calls.
 
         The parsed heading skeleton is kept as is (no check, no fallback),
         roles come from the deterministic title rules alone, and no summary
         or placement is written — the generation's summary slots stay null.
+        Search-only text (``flat``) keeps only the root section: in code,
+        configuration and logs a ``#`` line is a comment, not a heading.
         """
         parsed = parse_heading_skeleton(
             blocks=blocks, title=source.title, markdown_chars=len(markdown)
         )
+        if flat:
+            parsed = parsed[:1]
         sections = tuple(
             section.model_copy(
                 update={
