@@ -6551,8 +6551,10 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 
 **Partially superseded by D139 (2026-09-27).** The PDF text-layer converter and
 the conditional OCR route in its family design are replaced by OCR on every
-accepted PDF page. Its other family routes, detection order, postures, profiles,
-cards, and metadata rules remain binding.
+accepted PDF page. Its oversized-file card outcome no longer applies to PDFs:
+an oversized PDF fails conversion with a typed reason and no card. Its other
+family routes, detection order, postures, profiles, cards, and metadata rules
+remain binding.
 
 **Status:** accepted. **Date:** 2026-09-27.
 
@@ -6594,6 +6596,10 @@ format registry and deployment overlays cannot select a PDF text-layer
 extraction route or split pages into text and scan routes. A PDF produces one
 OCR-derived reading with page locators and honest coverage; an unreadable or
 failed page is a visible gap/failure, never a silent text-layer fallback.
+The PDF has one effective pre-OCR size limit: the lower of the family reading
+limit and the configured provider's input ceiling. Exceeding it leaves the
+original stored but fails the version with a typed limit reason, without a
+card or `document.md` reading.
 
 **Context and alternatives.** The owner restated the explicit requirement on
 2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
@@ -6606,10 +6612,16 @@ scanned and mixed PDFs. D115 establishes the analogous always-OCR rule for
 standalone images, not an earlier PDF-specific mandate; no earlier
 PDF-specific owner statement was found in this repo.
 
-**Consequences.** OCR cost scales with every accepted PDF page, including
-pages with selectable text and pages with no visible text. The engine's PDF
-metering uses the registry's `scan_page` cost class and page quantity; the
-separate managed cloud maps every accepted PDF page to its `doc-scan` charge.
+**Consequences.** An accepted PDF page is a source page in a valid PDF admitted
+under the effective pre-OCR limit for OCR processing. The quantity is the
+source page count, including pages with selectable text, successful empty OCR,
+or an OCR response gap; admission failures contribute zero pages. OCR cost
+therefore scales with every accepted page. The engine records only the
+registry's `scan_page` cost class with that quantity; provider-reported
+`pages_processed` is diagnostic evidence, not the billable quantity. The
+separate managed cloud copies the same quantity to a `doc-scan` receipt and
+does not also charge `doc-text` for that PDF. This receipt mapping is a
+required cloud follow-up, not a claim about current cloud behavior.
 Conversion, source mapping and coverage stay in the engine under D60/D61.
 The PDF route needs a configured OCR provider and parks under D117 when it is
 unavailable. Converter and route changes require versioned re-conversion;

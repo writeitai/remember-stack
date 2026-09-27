@@ -73,7 +73,7 @@ setting one route never removes the others. Every file is stored. Outcomes:
 |---|---|
 | Bytes a declaration contradicts (D132) | Refused with a typed error |
 | Bytes not recognized as any family | Stored; a `binary` card (D138 §6) |
-| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF conversion fails with a typed limit reason rather than reporting a completed card |
+| Over the family's reading limit | Stored; the head/tail profile for text, otherwise a card stating the reason (D138 §3, §5.2), except PDF: its effective pre-OCR limit is the lower of the family limit and provider input ceiling, and exceeding it fails the version with a typed reason, no card and no `document.md` reading |
 | Family recognized but its converter not built | Stored; conversion parks with `no_route` (D117) until it is |
 | Family on, converter needs an unconfigured provider | Stored; conversion parks with `no_route` (D117); `resume-no-route` releases it after configuration |
 | Family on and ready | Stored and converted |
@@ -81,10 +81,13 @@ setting one route never removes the others. Every file is stored. Outcomes:
 `cost_class` is a label the metering port receives (`text`, `scan_page`,
 `image`, `audio_minute`, `video_minute`, `data_profile`, `archive`, `card`).
 The engine never prices; a deployment's metering maps labels to prices
-(D61). The PDF family emits `scan_page` with quantity equal to the number
-of accepted PDF pages: a page with selectable text has the same OCR route and
-metering as a scanned page. The separate managed cloud maps that work to
-`doc-scan` per page.
+(D61). An accepted PDF page is a source page in a valid PDF admitted under
+the effective pre-OCR limit; admission failures contribute zero. The PDF
+family records only `scan_page` with quantity equal to that source page count,
+including text-layer pages, empty OCR pages and response gaps. A provider's
+`pages_processed` field is diagnostic rather than the billable quantity. The
+separate managed cloud maps the same count to `doc-scan`, without also
+charging `doc-text`; implementing that receipt mapping belongs to the cloud.
 
 ### 2.2 Detection and precedence
 
@@ -234,8 +237,9 @@ name, a CAD file's declared units). Labels: `file_card` / `source_expression`
 for copied names and metadata strings, `computed` for sizes and counts.
 Coverage is `policy="card"`, `complete=False`. The card makes the file
 discoverable (its name and metadata feed `search_documents`, D134); the original is
-served as always (D51). A PDF that exceeds its OCR route's admission limit
-fails conversion with a typed reason; it does not receive a successful card.
+served as always (D51). A PDF above its effective pre-OCR limit leaves the
+original stored and its version failed with a typed reason; it receives no
+card or `document.md` reading.
 
 ## 7. New locator kinds
 

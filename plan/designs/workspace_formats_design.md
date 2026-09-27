@@ -17,10 +17,12 @@ records what it is, where it is, who wrote it and when, and how it is shaped; fo
 holds the text. It never ingests spreadsheet rows beyond a five-row sample. An agent that needs
 the numbers opens the file; memory's job is to get it to the right file, sheet and column fast.
 
-Every file that arrives is stored and gets a reading, a profile or a card. The only interim
-state is D117 parking, for a recognized family whose converter needs a provider that is not
-configured or is not yet built; parked files are stored, listed and resumable. Nothing is
-silently dropped.
+Every file that arrives is stored and gets a reading, a profile or a card when
+conversion succeeds. A PDF above its effective OCR admission limit instead
+has a failed version with a typed reason and no card or `document.md` reading.
+D117 parking is the interim state for a recognized family whose converter
+needs a provider that is not configured or is not yet built; parked files are
+stored, listed and resumable. Nothing is silently dropped.
 
 **No model calls outside prose.** Search-only text, profiles and cards run E0's structure step
 without model calls: a deterministic section skeleton from headings, no model-written summaries
@@ -70,12 +72,17 @@ OCR-and-description converter once provider keys exist); it no longer replaces t
 The PDF invariant survives overlays: a PDF route must OCR every page and cannot
 be replaced by text-layer extraction or by a per-page split.
 
-**Size.** Every file is stored. A file larger than its family's reading limit gets a card that
-says why, instead of a reading or a refusal, except a PDF: a PDF over the OCR
-route's admission limit fails conversion with a typed limit reason while its
-original remains stored. A PDF card must never masquerade as a completed PDF
-reading. Starting values: 100 MB for office documents and PDF, 200 MB for
-spreadsheets (profiled from sheet dimensions only above 50 MB).
+**Size.** Every file is stored. A file larger than its family's reading limit
+gets a card that says why, except a PDF. The PDF has one **effective pre-OCR
+limit**, the lower of the family reading limit and the configured OCR
+provider's input ceiling. Exceeding it leaves the original stored but fails
+the version with a typed limit reason, no card and no `document.md` reading;
+the check runs before any converter call. If a provider reports a smaller
+ceiling only after admission, conversion fails with a typed provider-limit
+reason, again without a card. Starting family values: 100 MB for office
+documents and PDF, 200 MB for spreadsheets (profiled from sheet dimensions
+only above 50 MB). For example, a 100 MB PDF family limit and a 50 MB OCR
+provider ceiling give one effective pre-OCR limit of 50 MB.
 
 ## 4. The family table
 
@@ -104,7 +111,8 @@ Text is read in full up to **1 MB**; beyond that, the head/tail profile of §5.2
 | `archive` | zip, tar (and compound tar), 7z, rar, gz, bz2, xz, zst | card | card; member listing for zip and tar |
 | `binary` | pages, numbers, key, msg, mbox, rds, rdata, everything else, and unrecognized bytes | card | card |
 
-The table is the whole per-family contract: extensions, converter and outcome.
+The table states each family's successful conversion outcome; §3 states the
+PDF's typed failure at its effective size limit.
 
 ## 5. Profiles
 
@@ -151,8 +159,8 @@ declares cheaply:
   scanned, saying the list is partial when it stops; other archive and compressed formats get the
   card without a listing;
 - **media, binary, oversized files other than PDFs** — the common fields, and
-  for oversized files the reason. An oversized PDF reports a typed conversion
-  failure under §3; it does not get a successful card.
+  for oversized files the reason. A PDF over the effective limit reports a
+  typed failed version under §3, with no card or `document.md` reading.
 
 Label `file_card` / `computed`; coverage `policy="card"`, `complete=False`. The original is
 stored and served as always (D51); the agent opens it with its own tools.
@@ -174,9 +182,15 @@ stored and served as always (D51); the agent opens it with its own tools.
   OCR page with no visible text is recorded as empty; a failed or unreadable
   page is an explicit coverage gap/failure, never a silently omitted page.
   The provider requirement is part of the registry entry; without a configured
-  OCR provider the file parks under D117. The engine meters `scan_page` with
-  quantity equal to accepted PDF pages; a managed cloud maps every such page
-  to `doc-scan`. The source map retains one `page` locator per page, and the
+  OCR provider the file parks under D117. An **accepted PDF page** is a source
+  page in a valid PDF admitted under §3's effective pre-OCR limit. The engine
+  records only `scan_page` with quantity equal to that source page count,
+  including empty OCR pages and response gaps; an admission failure has zero
+  accepted pages. Provider-reported `pages_processed` is diagnostic evidence,
+  not this quantity. The separate managed cloud maps the same count to one
+  `doc-scan` receipt and does not add a `doc-text` charge for the PDF; that
+  mapping requires a cloud implementation change. The source map retains one
+  `page` locator per page when conversion succeeds, and the
   converter/route version pins the representation for re-conversion.
 - **Email.** Python's `email` package; the plain-text part, or HTML converted with markitdown.
 - **Notebook.** JSON cells in order; outputs are dropped.
@@ -213,6 +227,13 @@ fields and caps; the head/tail threshold; card fields and archive listing limits
 mapping; oversized-file cards; corrupt-file failures; LibreOffice conversions when `soffice` is
 installed (skipped with a stated reason otherwise). The Workspace-Bench ingestion audit is the
 end-to-end check across the real 89-extension workspace.
+
 PDF fixtures include born-digital, scanned and mixed pages; each accepted page
-must have an OCR attempt and page locator, with no text-layer bypass on empty
-OCR or provider failure.
+must have an OCR attempt and, on success, a page locator, with no text-layer
+bypass on empty OCR or provider failure. Test an overlay attempting to route
+PDFs to text extraction; it must be rejected. Test a PDF over the effective
+pre-OCR limit: the original is stored, the version fails with a typed reason,
+and no card or `document.md` reading exists. Test a PDF with a text-layer page,
+an empty OCR page and a response gap: engine `scan_page` quantity is the source
+page count, no engine `doc-scan` appears, and the cloud mapping produces that
+same quantity as `doc-scan` without `doc-text` in the separate cloud follow-up.
