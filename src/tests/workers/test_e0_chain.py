@@ -2130,7 +2130,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
         connection.execute(text(statements[tombstone]), {"id": version.version_id})
     assert (
         rig.ledger.resume_no_route(
-            deployment_id=_DEPLOYMENT_ID, routable_mimes={version.mime}
+            deployment_id=_DEPLOYMENT_ID, routable_mimes={str(version.mime)}
         )
         == ()
     )

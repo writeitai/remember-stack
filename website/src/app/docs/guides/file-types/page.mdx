@@ -14,68 +14,44 @@ self-hosted deployment.</Cloud>
 
 ## At a glance
 
+On a self-hosted deployment:
+
 | Format | As installed | With converters configured |
 |---|---|---|
-| Markdown (`.md`) | Yes | Yes |
-| Plain text (`.txt`) | Yes | Yes |
-| Chat logs and transcripts, as Markdown or text | Yes | Yes |
-| HTML | Yes | Yes |
-| Word (`.docx`), PowerPoint (`.pptx`) | Yes | Yes |
-| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`) | Yes, as a [profile](#data-files) | Yes, as a profile |
-| Delimited files (`.csv`, `.tsv`, `.psv`, `.tab`) | Yes, as a [profile](#data-files) | Yes, as a profile |
-| Datasets (Parquet, Arrow and Feather, SPSS `.sav`/`.por`, SAS `.xpt`/`.sas7bdat`, Stata `.dta`, SQLite `.sqlite`/`.sqlite3`/`.db`) | Yes, as a [profile](#data-files) | Yes, as a profile |
-| OpenDocument spreadsheets (`.ods`) | No | No: save as `.xlsx` first |
-| PDF, including scanned PDFs | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
-| PNG and JPEG images | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Legacy Office (`.doc`, `.ppt`) | No | No: save as `.docx` or `.pptx` first |
-| Audio and video | No | No |
+| Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
+| Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
+| HTML, EPUB | Read; claims extracted | Same |
+| Word (`.docx`), PowerPoint (`.pptx`) | Read; claims extracted | Same |
+| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), CSV/TSV, data files (Parquet, Arrow, SPSS, SAS, Stata, SQLite) | [Profile](/docs/self-hosting/converters#data-file-profiles): sheets, columns, counts and the first 5 rows; searchable, no claims | Same |
+| Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
+| Text files of unknown kind | Read and searchable; no claims | Same |
+| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
+| Audio and video | File card | Same |
+| Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
+| Other binary files | File card | Same |
+| PDF, including scanned PDFs | Stored, not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| Legacy Office (`.doc`, `.ppt`, OpenDocument, `.rtf`) | Stored, not read | Same: save as `.docx`, `.pptx` or `.xlsx` first |
+| Email (`.eml`), notebooks (`.ipynb`) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+gets a file card instead of a reading; a spreadsheet over 50 MB is profiled
+from its sheet names and dimensions only. A text file over 1 MB is described
+by its size, line count, first 50 and last 20 lines instead of read in
+full.
 
 ## Formats and converters
 
-A new self-hosted deployment converts Markdown, plain text, HTML, Word and
-PowerPoint files locally, and profiles spreadsheets, delimited files and
-datasets locally, with no API key. Other formats are
-accepted and stored, but they wait unprocessed until you add a converter
-for their type. The upload response tells you: its `parked` field is
+A new self-hosted deployment reads or cards every file locally, with no
+API key. Formats with no converter yet are accepted and stored, but they
+wait unprocessed. The upload response tells you: its `parked` field is
 `"no_route"`, and `remember ingest` prints a warning.
 
-To read PDFs and images, map each file type to a converter in
-`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
-converters](/docs/self-hosting/converters) shows the setting, what each
-converter does and costs, and how to release files that were stored before
-you added a route.
-
-## Data files
-
-Spreadsheets, delimited files and datasets are described, not read. The
-memory holds a **profile** of each one, so an agent can find the right file,
-sheet and column and then open the original to compute on it. A profile
-contains:
-
-- the file name, family, format, size in bytes and number of sheets or tables;
-- for each sheet or table (up to 50; the rest are listed by name): its row
-  and column counts, and one line per column with its header, where it is
-  (a spreadsheet column letter or a 1-based position) and a type guessed
-  from the sample rows (`integer`, `number`, `date`, `boolean`, `text` or
-  `empty`), up to 100 columns;
-- the first 5 data rows as a table, up to 30 columns, each cell cut to 80
-  characters;
-- for workbooks, the defined names and what they refer to (up to 50);
-- for delimited files, the delimiter, quote character and encoding.
-
-The header is the first non-empty row. Row counts come from the file's own
-metadata, except for delimited files, which are counted in one pass;
-SPSS `.por` and SAS `.xpt` files do not record a row count, and the profile
-says so. A workbook over 50,000,000 bytes is profiled from its sheet names
-and dimensions only, and a workbook over 200,000,000 bytes gets a short
-card instead of a profile. A delimited file that is not UTF-8 is read as
-Latin-1, and the profile says that too. Excel workbooks also supply their
-title, author and dates as document metadata.
-
-A profile is searchable, but no claims are extracted from it and no model
-reads it. Files that are not valid for their type, and profiles that take
-longer than 120 seconds, fail with the reason on the version.
+To read PDFs, or to read images instead of carding them, map their types
+to a converter in `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats
+and converters](/docs/self-hosting/converters) shows the setting, how the
+server recognizes each file, what each converter does and costs, and how
+to release files that were stored before you added a route.
 
 <Cloud>
 
@@ -95,12 +71,13 @@ to Markdown first and send the Markdown.
 
 ## Send the right type
 
-The type sent with the upload decides which converter reads the file. The
-`remember` CLI, Python client and MCP `ingest` tool take it from the file
-extension, the same way on every Python installation: `.md` is
-`text/markdown`, `.txt` is `text/plain`, `.pdf` is `application/pdf`, and
-so on ([the full table](/docs/guides/ingest-files#the-mime-type)). A file
-whose extension does not say what it is needs the type passed explicitly:
+A self-hosted deployment recognizes a file by its extension first. The type
+sent with the upload decides only when the name does not say what the file
+is; a text file with neither is searchable but no claims are extracted
+from it. The `remember` CLI, Python client and MCP `ingest` tool send a
+type taken from the extension ([the full
+table](/docs/guides/ingest-files#the-mime-type)). A file whose extension
+does not say what it is needs the type passed explicitly:
 
 ```python
 client.ingest("notes/standup", mime="text/markdown")

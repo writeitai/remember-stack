@@ -126,6 +126,12 @@ name it does not know is sent as `application/octet-stream`. Pass `mime=`
 (or `--mime` on the CLI) to send a different type; an explicit value always
 wins.
 
+A self-hosted deployment decides the stored type itself: the file name's
+extension first, then the declared type when the name does not say, then
+the bytes ([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+The declared type matters for a file whose name has no recognized
+extension.
+
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
 does not change. Get the type right on the first send.
@@ -292,15 +298,19 @@ Convert other formats to Markdown before you send them. See
 
 <Tab label="Self-hosted">
 
-A fresh self-hosted deployment reads Markdown, plain text, HTML and
-Word and PowerPoint files (`.docx`, `.pptx`), and profiles spreadsheets,
-delimited files and datasets
-([Data files](/docs/guides/file-types#data-files)). A file
-with any other MIME type is stored and its processing is parked, not
-refused: the ingest succeeds with `"parked": "no_route"`, and the
-version waits until an operator adds a converter for its type. PDFs and
-images need converters that you configure with your own provider key.
-See [File formats and converters](/docs/self-hosting/converters).
+A fresh self-hosted deployment reads Markdown, plain text, HTML, EPUB and
+Word and PowerPoint files (`.docx`, `.pptx`), and extracts claims from
+them. Spreadsheets, CSV/TSV and data files (Parquet, Arrow, SPSS, SAS,
+Stata, SQLite) get a searchable profile of their sheets, columns and first
+rows, with no claims. Code, configuration, logs and unrecognized text are read
+and searchable, but no claims are extracted from them. Images, audio,
+video, archives and other binary files get a short file card (name, path,
+format, size; image dimensions; archive members). PDFs, legacy Office,
+OpenDocument, email and notebook files are stored and their processing is
+parked, not refused: the ingest succeeds with `"parked": "no_route"`, and
+the version waits until a converter exists for its type. PDFs can be read
+with a converter you configure with your own provider key. See
+[File formats and converters](/docs/self-hosting/converters).
 
 There is no body size limit unless the operator sets
 `REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES`. Over that limit the API

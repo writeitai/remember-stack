@@ -231,8 +231,11 @@ work is parked with the reason `no_route`. It uses no attempts and makes no
 model calls. The ingest result reports it at once with
 `"parked": "no_route"`, and `remember ingest` prints a warning.
 
-A stock deployment routes Markdown, plain text, HTML, `.docx`, `.pptx`,
-spreadsheets, delimited files and datasets. PDFs and images need an OCR route with your own provider key. Add
+A stock deployment reads text, code, configuration, logs, HTML, EPUB,
+`.docx` and `.pptx`, profiles spreadsheets, CSV and data files, and cards
+images, media, archives and unknown files. PDFs need an OCR route with your
+own provider key; legacy Office, OpenDocument, email and notebook files
+have no converter yet. Add
 a route for the type as described in
 [File formats and converters](/docs/self-hosting/converters#add-routes), apply it with
 `docker compose up -d`, then release the parked work:
@@ -245,41 +248,28 @@ docker compose exec -T api \
 It prints `{"released": [...]}` with the processing ids it released. Work
 whose MIME type is still unrouted stays parked.
 
-### A Markdown file parked as `no_route`
+### A text file that yields no claims
 
-The MIME type is the one the upload declared, not something the engine
-detects. These uploads arrive with a type the default routes do not cover:
+The server picks a file's family from its name first, then from a specific
+declared type, then from its bytes
+([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+A file with no recognized extension, sent as `application/octet-stream` or
+`text/plain`, is valid text but of unknown kind: it is stored as
+`text/x-other-text`, which is searchable but never used for claims. Code,
+configuration and log files are searchable only by design.
 
-- a file or `filename` with no extension, or an extension the client does
-  not map and the sending machine's MIME table does not know:
-  `application/octet-stream`;
-- an older `remember` client on a Python installation that does not know
-  `.md`: `application/octet-stream`;
-- a `curl` call with a type such as `text/x-markdown`. The match is exact.
-
-Send the same file again with the right type:
-`remember ingest notes --mime text/markdown`, or `mime="text/markdown"` in
-Python. RememberStack stores identical bytes once, with the type of their
-first upload, but a type with no route is replaced by a later upload's
-type that has one, and every parked conversion of those bytes is released.
-The ingest result's `mime` shows the type now recorded.
-
-Alternatively, add a route for the type that was recorded, for example
-`"application/octet-stream": "passthrough"`, then run `resume-no-route`.
-`passthrough` needs valid UTF-8, so a binary file sent under that type
-fails conversion instead of waiting. To see which types were recorded:
+Send prose with an extension (`notes.md`, `notes.txt`) or declare its type
+on the first upload: `remember ingest notes --mime text/markdown`, or
+`mime="text/markdown"` in Python. RememberStack stores identical bytes once,
+with the type of their first upload; only a type with no route is replaced
+by a later upload's routable type. The ingest result's `mime` shows the
+type recorded. To see which types were recorded:
 
 ```bash
 docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 SELECT mime, count(*) FROM content_objects GROUP BY mime;
 SQL
 ```
-
-The current client sends `.md` and `.markdown` as `text/markdown` on
-every Python installation, and takes the type of bytes from their
-`filename`. For a file whose extension does not say what it is, pass the
-type: `remember ingest notes --mime text/markdown`, or `mime="text/markdown"`
-in Python.
 
 ### Dead letters
 
