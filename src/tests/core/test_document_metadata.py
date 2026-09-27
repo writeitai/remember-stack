@@ -25,10 +25,7 @@ FAMILY_CASES: tuple[tuple[str, str], ...] = (
     ("image/x-icon", "image"),
     ("audio/mpeg", "media"),
     ("video/mp4", "media"),
-    (
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "word",
-    ),
+    ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "word"),
     ("application/vnd.oasis.opendocument.text", "word"),
     ("application/msword", "word"),
     ("application/rtf", "word"),

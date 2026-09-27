@@ -356,11 +356,7 @@ _STORED_MIMES: Final = frozenset(
 
 
 def detect_mime(
-    *,
-    file_name: str,
-    declared_mime: str,
-    content: bytes,
-    routed_mimes: Collection[str],
+    *, file_name: str, declared_mime: str, content: bytes, routed_mimes: Collection[str]
 ) -> str:
     """Return the MIME E0 stores for one arriving file (D138 §3).
 
