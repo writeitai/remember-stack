@@ -24,7 +24,6 @@ import pyreadstat
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
-from rememberstack.adapters.converters import card as card_module
 from rememberstack.adapters.converters import dataset as dataset_module
 from rememberstack.adapters.converters import spreadsheet as spreadsheet_module
 from rememberstack.adapters.converters import table as table_module
@@ -153,7 +152,9 @@ def test_a_spreadsheet_over_its_reading_limit_gets_an_oversized_card(
     assert exceeds_reading_limit(mime=_XLSX, byte_size=200_000_001)
     assert not exceeds_reading_limit(mime=_XLSX, byte_size=200_000_000)
     small = dataclasses.replace(family_for_mime(mime=_XLSX), reading_limit_bytes=10)
-    monkeypatch.setattr(card_module, "family_for_mime", lambda *, mime: small)
+    monkeypatch.setattr(
+        "rememberstack.core.file_card.family_for_mime", lambda *, mime: small
+    )
     result = CardConverter().convert(
         content=b"0" * 11, mime=_XLSX, hints=_hints("huge.xlsx")
     )
