@@ -106,8 +106,13 @@ class ConvertSource(BaseModel):
     version_id: UUID
     content_hash: str
     mime: str
+    byte_size: int | None = None
     raw_uri: str
     title: str | None
+    file_name: str | None = None
+    """The file name recorded in the version's D134 metadata (D138 hints)."""
+    source_path: str | None = None
+    """The source path recorded in the version's D134 metadata."""
 
 
 class RepresentationRecord(BaseModel):
@@ -141,6 +146,9 @@ class StructureSource(BaseModel):
     representation_id: UUID
     blocks_uri: str
     markdown_uri: str
+    conversion_uri: str | None = None
+    """The converter manifest; its range labels decide whether structuring
+    may call models (D138 §1). None only for legacy rows without one."""
     title: str | None
     source_kind: str
 

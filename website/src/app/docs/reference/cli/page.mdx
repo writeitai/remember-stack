@@ -224,7 +224,7 @@ there is no next page; without one they are newest ingested first and
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
 
 ```bash
-remember documents search "q3 sales" --family office | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search "q3 sales" --family spreadsheet | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
 remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
 ```
 

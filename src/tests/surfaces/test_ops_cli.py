@@ -7,6 +7,7 @@ import pytest
 import sqlalchemy
 
 from remember.cli import main as cli_main
+from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.spine import graph_catalog as graph_catalog_module
 from rememberstack.spine import GraphCatalogEnsureResult
 from rememberstack.spine import settings as settings_module
@@ -95,8 +96,12 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     assert (
         cli_main(["ops", "resume-no-route", "--deployment", str(_DEPLOYMENT_ID)]) == 0
     )
+    # the configured routes overlay the stock table (D138 §3)
     assert calls == [
-        {"deployment_id": _DEPLOYMENT_ID, "routes": frozenset({"text/plain"})}
+        {
+            "deployment_id": _DEPLOYMENT_ID,
+            "routes": frozenset(STOCK_CONVERSION_ROUTE_NAMES),
+        }
     ]
     assert json.loads(capsys.readouterr().out) == {"released": [str(_DEPLOYMENT_ID)]}
     assert engine.disposed

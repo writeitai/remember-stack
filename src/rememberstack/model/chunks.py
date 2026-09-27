@@ -96,6 +96,8 @@ class PackedChunk(BaseModel):
     char_end: int = Field(ge=0)
     chunk_content_hash: _NonEmpty
     token_count: int = Field(ge=0)
+    extraction_eligible: bool = True
+    """Whether E2 runs Selection on the chunk (D133 §4.5 eligibility policy)."""
 
 
 class ChunkRecord(BaseModel):
@@ -118,6 +120,9 @@ class ChunkRecord(BaseModel):
     char_end: int = Field(ge=0)
     token_count: int = Field(ge=0)
     chunker_version: _NonEmpty
+    extraction_eligible: bool = True
+    extraction_eligibility_version: str | None = None
+    """The eligibility policy version that decided ``extraction_eligible``."""
 
 
 class ChunkForEmbedding(BaseModel):
@@ -150,6 +155,8 @@ class ChunkForEmbedding(BaseModel):
     embedding_ref: str | None = None
     embedding_version: str | None = None
     location_facts_json: str | None = None
+    extraction_eligible: bool = True
+    """False when the eligibility policy excludes the chunk from Selection."""
 
 
 class CarryForwardSource(BaseModel):

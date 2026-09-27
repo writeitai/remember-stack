@@ -63,28 +63,54 @@ _PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentati
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def test_stock_routes_convert_text_html_and_office_locally() -> None:
-    """The stock table routes every keyless format; PDFs and images stay unrouted."""
-    assert STOCK_CONVERSION_ROUTE_NAMES == {
-        "text/markdown": "passthrough",
-        "text/plain": "passthrough",
-        "text/html": "markitdown",
-        _DOCX: "markitdown",
-        _PPTX: "markitdown",
-        _XLSX: "markitdown",
-    }
-    router = ConversionRouter(
-        routes=build_conversion_routes(route_names=STOCK_CONVERSION_ROUTE_NAMES)
-    )
+def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
+    """The registry-derived stock table routes every family with a converter.
+
+    Text families go to ``text``, HTML/EPUB/OOXML to ``markitdown``, images,
+    media, archives and unrecognized bytes to ``card``; families whose D138
+    converter is not built yet (PDF, legacy Office, email, notebooks,
+    delimited and dataset files) stay unrouted and park.
+    """
+    routes = STOCK_CONVERSION_ROUTE_NAMES
+    for mime in (
+        "text/markdown",
+        "text/plain",
+        "text/x-code",
+        "text/x-config",
+        "text/x-log",
+        "text/x-other-text",
+    ):
+        assert routes[mime] == "text", mime
+    for mime in ("text/html", "application/epub+zip", _DOCX, _PPTX, _XLSX):
+        assert routes[mime] == "markitdown", mime
+    for mime in (
+        "image/png",
+        "image/jpeg",
+        "video/mp4",
+        "audio/mpeg",
+        "application/zip",
+        "application/x-tar",
+        "application/octet-stream",
+    ):
+        assert routes[mime] == "card", mime
+    for mime in (
+        "application/pdf",
+        "application/msword",
+        "message/rfc822",
+        "application/x-ipynb+json",
+        "text/csv",
+        "application/vnd.apache.parquet",
+    ):
+        assert mime not in routes, mime
+    router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
     plain = router.converter_for(mime="text/plain")
-    assert plain.name == "passthrough"
+    assert plain.name == "text"
     assert plain.convert(content=b"hello note\n", mime="text/plain").document_md == (
         "hello note\n"
     )
     assert router.converter_for(mime="text/markdown") is plain
-    for mime in ("application/pdf", "image/png", "image/jpeg"):
-        with pytest.raises(UnroutableMimeError):
-            router.converter_for(mime=mime)
+    with pytest.raises(UnroutableMimeError):
+        router.converter_for(mime="application/pdf")
 
 
 def test_stock_markitdown_route_converts_a_docx() -> None:

@@ -156,11 +156,13 @@ class SelfHostSettings(BaseSettings):
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
-    """The D38 MIME → converter-adapter-name table; setting the env replaces it.
+    """The effective D38 MIME → converter-adapter-name table (D138 §3).
 
-    Decoding is explicit (NoDecode) so Compose's empty-string interpolation of
-    an unset variable falls back to the stock table instead of failing JSON
-    parsing inside the settings source."""
+    The engine's stock table, overlaid by the environment's JSON object: an
+    entry there adds a MIME type or overrides the stock converter for it; it
+    never removes the rest of the table. Decoding is explicit (NoDecode) so
+    Compose's empty-string interpolation of an unset variable means "no
+    overlay" instead of failing JSON parsing inside the settings source."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -338,13 +340,19 @@ class SelfHostSettings(BaseSettings):
     @field_validator("conversion_routes", mode="before")
     @classmethod
     def _parse_routes(cls, value: object) -> object:
-        """Decode the routes env: blank means stock, else strict JSON object."""
+        """Decode the routes env: blank means no overlay, else a JSON object."""
         if not isinstance(value, str):
             return value
         text = value.strip()
         if not text:
-            return dict(STOCK_CONVERSION_ROUTE_NAMES)
+            return {}
         return json.loads(text)
+
+    @field_validator("conversion_routes", mode="after")
+    @classmethod
+    def _overlay_stock_routes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Lay the configured routes over the stock table (D138 §3)."""
+        return {**STOCK_CONVERSION_ROUTE_NAMES, **value}
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod

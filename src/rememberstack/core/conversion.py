@@ -12,12 +12,14 @@ from typing import Literal
 from typing import Protocol
 from typing import runtime_checkable
 
+from rememberstack.core.format_registry import stock_route_names
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
+from rememberstack.model import FileHints
 from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
 
@@ -26,26 +28,18 @@ PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.08"
 D65 envelope emission (manifest + total labeling). A contract change here
 must bump this so replay never reuses artifacts from the old shape."""
 
-STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = {
-    "text/markdown": "passthrough",
-    "text/plain": "passthrough",
-    "text/html": "markitdown",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
-        "markitdown"
-    ),
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": (
-        "markitdown"
-    ),
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ("markitdown"),
-}
-"""The stock self-host MIME → converter-name table (the settings default).
+STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names()
+"""The engine's default MIME → converter-name table (D138 §3/§4).
 
-Every route here runs locally with no API key: Markdown and plain text pass
-through, and HTML, Word (.docx), PowerPoint (.pptx) and Excel (.xlsx) go to
-the bundled markitdown adapter. PDFs and images need a provider-backed OCR
-route (``mistral_ocr`` / ``image_ocr_description``) with its own key, so they
-stay unrouted by default: their uploads are stored and parked as
-``no_route`` until the operator configures a route.
+Derived from the format registry: every stored MIME of a family whose
+converter ships in this build routes to it — the ``text`` converter for
+Markdown, plain text, code, configuration and logs; ``markitdown`` for HTML,
+EPUB and the Office Open XML documents; ``card`` for images, media, archives
+and unrecognized bytes. Every route runs locally with no API key. A
+deployment's conversion-route setting adds or overrides entries on top of
+this table; MIME types no route accepts (PDF, legacy Office, email,
+notebooks, delimited and dataset files) are stored and parked as
+``no_route`` until one does.
 """
 
 
@@ -128,6 +122,33 @@ class LaneCheckpointConverter(Protocol):
         ...
 
 
+@runtime_checkable
+class FileHintConverter(Protocol):
+    """A converter that also reads the file's name and source path (D138).
+
+    The convert worker passes the version's D134 file name and source path
+    to such a route; every other route receives only bytes and MIME.
+    """
+
+    accepts_file_hints: bool
+
+    @property
+    def name(self) -> str:
+        """The route name recorded on representations."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """The converter version (D38): a bump creates new representations."""
+        ...
+
+    def convert(
+        self, *, content: bytes, mime: str, hints: FileHints | None = None
+    ) -> ConversionResult:
+        """Produce the Markdown reading, naming the file when hints are given."""
+        ...
+
+
 class ConversionRouter:
     """Route an input MIME type to its configured converter (D38 routing table)."""
 
@@ -189,7 +210,7 @@ def entire_document_labeling(
     document_md: str,
     derivation_kind: str,
     evidence_mode: Literal[
-        "source_expression", "model_observation", "model_interpretation"
+        "source_expression", "computed", "model_observation", "model_interpretation"
     ],
 ) -> tuple[DerivationRange, ...]:
     """Label the whole output as one range — labeling is total, even for text (§5)."""

@@ -140,6 +140,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_34_0055",
         "p9_35_0056",
         "p9_36_0057",
+        "p9_37_0058",
     )
     assert len(script.get_heads()) == 1
 
@@ -679,7 +680,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_36_0057"
+    assert head_before_noop == head_after_noop == "p9_37_0058"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1267,7 +1268,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_36_0057"
+    assert _head_revision(database_url=database_url) == "p9_37_0058"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1311,7 +1312,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_36_0057"
+    assert _head_revision(database_url=database_url) == "p9_37_0058"
 
 
 _BACKFILL_MIMES = (
@@ -1337,10 +1338,36 @@ _BACKFILL_MIMES = (
     "application/vnd.ms-outlook",
     "Text/HTML; charset=utf-8",
 )
+_D134_FAMILIES = {
+    "text/markdown": "markdown",
+    "text/x-markdown": "markdown",
+    "text/html": "html",
+    "application/xhtml+xml": "html",
+    "application/pdf": "pdf",
+    "image/png": "image",
+    "audio/mpeg": "audio",
+    "video/mp4": "video",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": (
+        "office"
+    ),
+    "application/vnd.oasis.opendocument.text": "office",
+    "application/msword": "office",
+    "application/rtf": "office",
+    "application/vnd.ms-excel": "office",
+    "application/vnd.ms-powerpoint": "office",
+    "text/plain": "text",
+    "text/csv": "text",
+    "application/json": "other",
+    "application/octet-stream": "other",
+    "message/rfc822": "other",
+    "application/vnd.ms-outlook": "other",
+    "Text/HTML; charset=utf-8": "html",
+}
+"""The p9_35 (D134) family of each backfilled MIME, before D138 renamed them."""
 
 
 def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
-    """One metadata row per live-able version, family by the Python mapping."""
+    """One metadata row per live-able version; D138 re-derives its family."""
     database_url = _database_url()
     config = _alembic_config(database_url=database_url)
     reset_database(config=config)
@@ -1434,7 +1461,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         assert len(rows) == len(_BACKFILL_MIMES)
         for mime, (version_id, doc_id) in versions.items():
             row = rows[version_id]
-            assert row["family"] == family_for_mime(mime=mime), mime
+            assert row["family"] == _D134_FAMILIES[mime], mime
             assert row["doc_id"] == doc_id
             assert row["language"] == "en"
             assert row["thread_ref"] == "thread-1"
@@ -1450,6 +1477,30 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         # a legacy lineage title is marked as backfilled, not as observed
         assert names[titled] == ("Doc 0", "Doc 0", None, "backfill")
         assert len(names) == len(_BACKFILL_MIMES) - 1
+
+        # D138 (p9_37) re-derives every family with the Python mapping and
+        # its downgrade restores the D134 names
+        def families() -> dict[object, str]:
+            with engine.connect() as connection:
+                return {
+                    row[0]: row[1]
+                    for row in connection.execute(
+                        text("SELECT version_id, family FROM document_metadata")
+                    )
+                }
+
+        command.upgrade(config=config, revision="p9_37_0058")
+        upgraded = families()
+        for mime, (version_id, _) in versions.items():
+            assert upgraded[version_id] == family_for_mime(mime=mime), mime
+        assert (
+            upgraded[versions["application/msword"][0]] == "word"
+            and upgraded[versions["application/json"][0]] == "config"
+        )
+        command.downgrade(config=config, revision="p9_35_0056")
+        restored = families()
+        for mime, (version_id, _) in versions.items():
+            assert restored[version_id] == _D134_FAMILIES[mime], mime
 
         # a populated store refuses the lossy downgrade and stays at head
         with pytest.raises(RuntimeError, match="D134 downgrade requires"):
@@ -1470,7 +1521,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_36_0057"
+    assert _head_revision(database_url=database_url) == "p9_37_0058"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1529,4 +1580,139 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_36_0057"
+    assert _head_revision(database_url=database_url) == "p9_37_0058"
+
+
+def test_d138_downgrade_guard_protects_search_only_readings() -> None:
+    """An empty store downgrades; D138 readings refuse and stay intact."""
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    engine = create_engine(database_url)
+
+    def eligibility_column_exists() -> bool:
+        with engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.columns"
+                    " WHERE table_name = 'chunks'"
+                    " AND column_name = 'extraction_eligible')"
+                )
+            ).scalar_one()
+
+    try:
+        # an empty store drops the columns and re-adds them on upgrade
+        command.downgrade(config=config, revision="p9_36_0057")
+        assert not eligibility_column_exists()
+        command.upgrade(config=config, revision="p9_37_0058")
+        assert eligibility_column_exists()
+
+        deployment_id, doc_id, version_id = uuid4(), uuid4(), uuid4()
+        representation_id, chunk_id = uuid4(), uuid4()
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO deployments (deployment_id, slug, name, raw_bucket,"
+                    " artifacts_bucket, corpusfs_bucket) VALUES"
+                    " (:d, 'd138-guard', 'D138 guard', 'mem://raw',"
+                    " 'mem://artifacts', 'mem://corpusfs')"
+                ),
+                {"d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                    " raw_uri) VALUES (:d, 'hash-code', 'text/x-code', 'raw')"
+                ),
+                {"d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO documents (doc_id, deployment_id, source_kind,"
+                    " source_ref, title) VALUES (:doc, :d, 'upload', 'main', 'main')"
+                ),
+                {"doc": doc_id, "d": deployment_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_versions (version_id, deployment_id,"
+                    " doc_id, content_hash, version_no) VALUES"
+                    " (:v, :d, :doc, 'hash-code', 1)"
+                ),
+                {"v": version_id, "d": deployment_id, "doc": doc_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_metadata (deployment_id, version_id,"
+                    " doc_id, family, metadata_mapping_version) VALUES"
+                    " (:d, :v, :doc, 'markdown', 'test')"
+                ),
+                {"d": deployment_id, "v": version_id, "doc": doc_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_representations (representation_id,"
+                    " deployment_id, version_id, route, status)"
+                    " VALUES (:r, :d, :v, 'text', 'ready')"
+                ),
+                {"r": representation_id, "d": deployment_id, "v": version_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+                    " representation_id, ordinal, block_start, block_end,"
+                    " chunk_content_hash, extraction_input_hash, char_start,"
+                    " char_end, chunker_version, extraction_eligible)"
+                    " VALUES (:c, :d, :doc, :v, :r, 0, 0, 0, 'h', 'h', 0, 8,"
+                    " 'test', false)"
+                ),
+                {
+                    "c": chunk_id,
+                    "d": deployment_id,
+                    "doc": doc_id,
+                    "v": version_id,
+                    "r": representation_id,
+                },
+            )
+
+        # an ineligible chunk refuses; revision and data stay intact
+        with pytest.raises(RuntimeError, match="D138 downgrade requires"):
+            command.downgrade(config=config, revision="p9_36_0057")
+        assert _head_revision(database_url=database_url) == "p9_37_0058"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT extraction_eligible FROM chunks WHERE chunk_id = :c"),
+                    {"c": chunk_id},
+                ).scalar_one()
+                is False
+            )
+
+        # a D138 reading refuses even before it is chunked: here a Markdown
+        # file over 1 MB, a large_text profile whose family stays prose
+        with engine.begin() as connection:
+            connection.execute(text("DELETE FROM chunks"))
+        with pytest.raises(RuntimeError, match="D138 downgrade requires"):
+            command.downgrade(config=config, revision="p9_36_0057")
+        assert _head_revision(database_url=database_url) == "p9_37_0058"
+        with engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT route FROM document_representations")
+                ).scalar_one()
+                == "text"
+            )
+
+        # a pre-D138 reading of the same prose file does not block
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE document_representations SET route = 'passthrough'")
+            )
+        command.downgrade(config=config, revision="p9_36_0057")
+        assert not eligibility_column_exists()
+    finally:
+        engine.dispose()
+        reset_database(config=config)
+        command.upgrade(config=config, revision="head")
+    assert _head_revision(database_url=database_url) == "p9_37_0058"

@@ -866,11 +866,13 @@ _SELECT_VERSION_PRINCIPAL = text(
 _SELECT_CONVERT_SOURCE = text(
     """
     SELECT v.deployment_id, v.doc_id, v.version_id, v.content_hash,
-           c.mime, c.raw_uri, d.title
+           c.mime, c.byte_size, c.raw_uri, d.title, m.file_name, m.source_path
     FROM document_versions v
     JOIN content_objects c
       ON c.deployment_id = v.deployment_id AND c.content_hash = v.content_hash
     JOIN documents d ON d.doc_id = v.doc_id
+    LEFT JOIN document_metadata m
+      ON m.deployment_id = v.deployment_id AND m.version_id = v.version_id
     WHERE v.version_id = :version_id
     """
 )
@@ -901,7 +903,7 @@ _MARK_VERSION_STRUCTURING = text(
 _SELECT_STRUCTURE_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.blocks_uri, r.markdown_uri, d.title, d.source_kind
+           r.blocks_uri, r.markdown_uri, r.conversion_uri, d.title, d.source_kind
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id

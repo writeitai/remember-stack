@@ -127,3 +127,6 @@ src/tests/surfaces/test_client_connection.py
 src/tests/surfaces/test_client_login.py
 src/tests/adapters/test_perimeter_trust.py
 src/tests/workers/test_self_reference_naming.py
+src/tests/adapters/test_text_and_card_converters.py
+src/tests/core/test_format_registry.py
+src/tests/workers/test_d138_extraction_eligibility.py

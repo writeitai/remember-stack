@@ -832,7 +832,8 @@ def test_resending_parked_bytes_with_a_routable_mime_releases_them(rig: _E0Rig) 
         source_version_ref=None,
         sync_cycle_id=None,
     )
-    assert parked.mime == "application/x-unknown"
+    # D138: an unrecognized declaration is not taken; the bytes are text
+    assert parked.mime == "text/x-other-text"
 
     resent = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
@@ -2129,7 +2130,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
         connection.execute(text(statements[tombstone]), {"id": version.version_id})
     assert (
         rig.ledger.resume_no_route(
-            deployment_id=_DEPLOYMENT_ID, routable_mimes={"application/x-unknown"}
+            deployment_id=_DEPLOYMENT_ID, routable_mimes={str(version.mime)}
         )
         == ()
     )
