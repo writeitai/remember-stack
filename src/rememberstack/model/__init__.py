@@ -100,6 +100,7 @@ from rememberstack.model.conversion import ConverterManifest
 from rememberstack.model.conversion import ConverterUsageEvent
 from rememberstack.model.conversion import DerivationRange
 from rememberstack.model.conversion import DerivedAsset
+from rememberstack.model.conversion import FileHints
 from rememberstack.model.conversion import ImageRegionLocator
 from rememberstack.model.conversion import ManifestComponent
 from rememberstack.model.conversion import NormalizedRegion
@@ -428,6 +429,7 @@ __all__ = (
     "ConversionCoverage",
     "ConversionError",
     "ConversionResult",
+    "FileHints",
     "ConverterLaneError",
     "ConverterManifest",
     "ConverterUsageEvent",

@@ -513,7 +513,21 @@ class ExtractClaimsHandler:
         frozen = self._catalog.selections.load(
             chunk_id=chunk.chunk_id, extractor_version=E2_EXTRACTOR_VERSION
         )
-        if frozen is None:
+        if frozen is None and not chunk.extraction_eligible:
+            # D133 §4.5: an ineligible chunk completes like an empty Selection
+            # result, with no model call and no reference cards.
+            self._catalog.selections.freeze(
+                deployment_id=source.deployment_id,
+                representation_id=source.representation_id,
+                chunk_id=chunk.chunk_id,
+                extractor_version=E2_EXTRACTOR_VERSION,
+                input_hash=chunk.extraction_input_hash,
+                selection=SelectionResponse(candidates=()),
+                cards=(),
+                diagnostics=(),
+                truncated=False,
+            )
+        elif frozen is None:
             document_md = self._read_markdown(source=source)
             if not self._reuse_prior_selection(
                 source=source,

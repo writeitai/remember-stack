@@ -44,6 +44,20 @@ def _passthrough() -> Converter:
     return MarkdownPassthroughConverter()
 
 
+def _text() -> Converter:
+    """The D138 text route: Markdown, plain text, code, config and logs."""
+    from rememberstack.adapters.converters.text import TextConverter
+
+    return TextConverter()
+
+
+def _card() -> Converter:
+    """The D138 card route: images, media, archives and unrecognized bytes."""
+    from rememberstack.adapters.converters.card import CardConverter
+
+    return CardConverter()
+
+
 def _markitdown() -> Converter:
     """The markitdown route, imported only when a deployment routes to it."""
     from rememberstack.adapters.converters.markitdown import MarkitdownConverter
@@ -72,6 +86,8 @@ def _image_ocr_description() -> Converter:
 
 _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "passthrough": _passthrough,
+    "text": _text,
+    "card": _card,
     "markitdown": _markitdown,
     "mistral_ocr": _mistral_ocr,
     "image_ocr_description": _image_ocr_description,

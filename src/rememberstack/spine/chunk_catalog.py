@@ -278,12 +278,12 @@ _INSERT_CHUNK = text(
         chunk_id, deployment_id, doc_id, version_id, representation_id,
         section_id, ordinal, block_start, block_end, chunk_content_hash,
         extraction_input_hash, char_start, char_end, token_count,
-        chunker_version
+        chunker_version, extraction_eligible, extraction_eligibility_version
     ) VALUES (
         :chunk_id, :deployment_id, :doc_id, :version_id, :representation_id,
         :section_id, :ordinal, :block_start, :block_end, :chunk_content_hash,
         :extraction_input_hash, :char_start, :char_end, :token_count,
-        :chunker_version
+        :chunker_version, :extraction_eligible, :extraction_eligibility_version
     )
     """
 )
@@ -296,6 +296,7 @@ _SELECT_FOR_EMBEDDING = text(
            c.embedding_input_policy_version, c.policy_generation,
            c.embedding_ref, c.embedding_version, c.location_facts_json,
            c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+           c.extraction_eligible,
            s.role AS section_role, s.node_path AS section_path,
            s.title AS section_title
     FROM chunks c
@@ -330,6 +331,7 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
                c.embedding_input_policy_version, c.policy_generation,
                c.embedding_ref, c.embedding_version, c.location_facts_json,
                c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+               c.extraction_eligible,
                s.role AS section_role, s.node_path AS section_path,
                s.title AS section_title
         FROM chunks c

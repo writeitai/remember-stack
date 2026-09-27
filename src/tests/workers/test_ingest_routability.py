@@ -103,7 +103,9 @@ class _CountingStore:
         self.writes += 1
 
 
-def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingStore]:
+def _ingest(
+    mime: str, *, observed: bool, filename: str = "input.bin"
+) -> tuple[_RecordingCatalog, _CountingStore]:
     """Drive one E0 entry point and return what it recorded."""
     catalog, store = _RecordingCatalog(), _CountingStore()
     ingestor = UploadIngestor(
@@ -112,7 +114,7 @@ def _ingest(mime: str, *, observed: bool) -> tuple[_RecordingCatalog, _CountingS
         admission=_AllowingAdmission(),
         routable_mimes=frozenset(_ROUTES),
     )
-    upload = DocumentUpload(filename="input.bin", mime=mime, content=b"hello")
+    upload = DocumentUpload(filename=filename, mime=mime, content=b"hello")
     if observed:
         ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
@@ -152,21 +154,20 @@ def test_unroutable_input_parks_its_convert_work(observed: bool) -> None:
 @pytest.mark.parametrize("observed", (False, True))
 def test_routable_input_is_scheduled_immediately(observed: bool) -> None:
     """The control: a type the deployment converts is not deferred at all."""
-    catalog, _ = _ingest("text/plain", observed=observed)
+    catalog, _ = _ingest("text/plain", observed=observed, filename="input.txt")
     assert catalog.defer_reason is None
 
 
-def test_matching_is_exact_so_ingest_agrees_with_the_router() -> None:
-    """A parameterised MIME parks, because the router would not route it.
+def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:
+    """D138: ingest stores the family's parameter-free MIME, never the declared one.
 
-    `ConversionRouter.converter_for` is an exact dict lookup. If ingest
-    normalised `text/plain; charset=utf-8` down to `text/plain` and the worker
-    did not, the row would be scheduled immediately and then dead-letter —
-    the outcome D117 exists to remove. Normalisation belongs in the router,
-    where both callers inherit it.
+    `ConversionRouter.converter_for` is an exact dict lookup, so ingest and
+    the worker must agree on the key. Detection stores the registry's MIME
+    (here ``text/markdown``, from the declared ``text/markdown;
+    charset=utf-8``), which is exactly what the route table names.
     """
-    catalog, _ = _ingest("text/plain; charset=utf-8", observed=False)
-    assert catalog.defer_reason is DeferReason.NO_ROUTE
+    catalog, _ = _ingest("text/markdown; charset=utf-8", observed=False)
+    assert catalog.defer_reason is None
 
 
 def test_ingest_and_the_router_read_the_same_key_set() -> None:

@@ -53,8 +53,9 @@ def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> No
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
     routes = build_conversion_routes(route_names=settings.conversion_routes)
-    assert routes["text/plain"].name == "passthrough"
+    assert routes["text/plain"].name == "text"
     assert routes["text/markdown"] is routes["text/plain"]
+    assert routes["application/octet-stream"].name == "card"
     assert routes["text/html"].name == "markitdown"
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "build_conversion_routes" in source
@@ -373,12 +374,30 @@ def test_blank_routes_env_falls_back_to_the_stock_table(
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
 
+
+def test_routes_env_overlays_the_stock_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D138 §3: configured routes add or override entries, never replace the table.
+
+    Existing route names keep working: ``passthrough`` can still be bound.
+    """
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
+    from rememberstack.profiles.selfhost import SelfHostSettings
+
     monkeypatch.setenv(
-        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/html": "markitdown"}'
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES",
+        '{"image/png": "image_ocr_description", "application/pdf": "mistral_ocr",'
+        ' "text/plain": "passthrough"}',
     )
-    assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
-        "text/html": "markitdown"
+    routes = SelfHostSettings(deployment_id=uuid4()).conversion_routes
+    assert routes == {
+        **STOCK_CONVERSION_ROUTE_NAMES,
+        "image/png": "image_ocr_description",
+        "application/pdf": "mistral_ocr",
+        "text/plain": "passthrough",
     }
+    # untouched stock entries survive the overlay
+    assert routes["text/markdown"] == "text"
+    assert routes["image/jpeg"] == "card"
 
 
 def test_external_mount_roots_load_from_environment(

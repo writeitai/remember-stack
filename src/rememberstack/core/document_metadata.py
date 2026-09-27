@@ -1,55 +1,31 @@
 """D134 pure rules: format family from MIME, people normalization, name text.
 
 ``family_for_mime`` is the one Python mapping from a stored MIME type to the
-coarse format family recorded on ``document_metadata.family``. The p9_34
-migration backfills existing versions with the identical mapping in SQL; a
-database test pins the two together.
+D138 format family recorded on ``document_metadata.family``; it reads the
+format registry. The p9_37 migration re-derives existing versions' families
+with this same function; a database test pins the two together.
 """
 
 from collections.abc import Iterable
 from typing import Final
 import unicodedata
 
-INGEST_METADATA_MAPPING_VERSION: Final = "e0-ingest-metadata-2026.09"
-"""The mapping that writes a version's metadata row at ingest (D134)."""
+from rememberstack.core.format_registry import family_for_mime as format_family_for_mime
 
-_MARKDOWN: Final = frozenset({"text/markdown", "text/x-markdown"})
-_HTML: Final = frozenset({"text/html", "application/xhtml+xml"})
-_OFFICE_EXACT: Final = frozenset({"application/msword", "application/rtf"})
-_OFFICE_PREFIXES: Final = (
-    "application/vnd.openxmlformats-officedocument.",
-    "application/vnd.oasis.opendocument.",
-    "application/vnd.ms-excel",
-    "application/vnd.ms-powerpoint",
-)
+INGEST_METADATA_MAPPING_VERSION: Final = "e0-ingest-metadata-2026.09b:d138-families"
+"""The mapping that writes a version's metadata row at ingest (D134)."""
 
 
 def family_for_mime(*, mime: str) -> str:
-    """Map a MIME type to its format family.
+    """Map a stored MIME type to its D138 format family name.
 
-    Families: ``markdown``, ``html``, ``pdf``, ``image``, ``audio``,
-    ``video``, ``office``, ``text`` (any other ``text/*``) and ``other``.
-    Parameters (``; charset=…``) and case are ignored.
+    The families are the D138 §4 table (``markdown``, ``text``, ``code``,
+    ``word``, ``image``, ``binary``, …); unknown types fall back by prefix
+    (``image/*`` → ``image``, ``audio/*`` and ``video/*`` → ``media``, other
+    ``text/*`` → ``other_text``, anything else → ``binary``). Parameters
+    (``; charset=…``) and case are ignored.
     """
-    canonical = mime.split(";", 1)[0].strip().lower()
-    if canonical in _MARKDOWN:
-        return "markdown"
-    if canonical in _HTML:
-        return "html"
-    if canonical == "application/pdf":
-        return "pdf"
-    for prefix, family in (
-        ("image/", "image"),
-        ("audio/", "audio"),
-        ("video/", "video"),
-    ):
-        if canonical.startswith(prefix):
-            return family
-    if canonical in _OFFICE_EXACT or canonical.startswith(_OFFICE_PREFIXES):
-        return "office"
-    if canonical.startswith("text/"):
-        return "text"
-    return "other"
+    return format_family_for_mime(mime=mime).name
 
 
 def normalize_name(*, value: str | None) -> str | None:

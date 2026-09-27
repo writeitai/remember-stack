@@ -28,10 +28,15 @@ from rememberstack.core.embedding_input_policy import EmbeddingInputRender
 from rememberstack.core.embedding_input_policy import location_facts_json
 from rememberstack.core.embedding_input_policy import LocationFacts
 from rememberstack.core.embedding_input_policy import render_embedding_input
+from rememberstack.core.extraction_eligibility import block_eligibility
+from rememberstack.core.extraction_eligibility import (
+    EXTRACTION_ELIGIBILITY_POLICY_VERSION,
+)
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
+from rememberstack.model import DerivationRange
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import EnqueueWork
@@ -43,6 +48,9 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model.occurrence_provenance import (
+    parse_persisted_conversion_manifest,
+)
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -132,11 +140,19 @@ class ChunkHandler:
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
+        eligible = block_eligibility(
+            blocks=blocks, ranges=self._derivation_ranges(source=source)
+        )
         packed = pack_blocks(
             blocks=blocks,
             sections=source.sections,
             document_md=document_md,
             params=self._params,
+            ineligible_ordinals=frozenset(
+                block.ordinal
+                for block, is_eligible in zip(blocks, eligible, strict=True)
+                if not is_eligible
+            ),
         )
         self._catalog.record_chunks(
             records=tuple(
@@ -150,6 +166,17 @@ class ChunkHandler:
             )
         )
         return _embed_follow_up(work=work, source=source)
+
+    def _derivation_ranges(self, *, source: ChunkSource) -> tuple[DerivationRange, ...]:
+        """The converter's labelled ranges; a legacy row without a manifest has none."""
+        if source.conversion_uri is None:
+            return ()
+        return parse_persisted_conversion_manifest(
+            payload=self._artifact_store.read_bytes(
+                key=ObjectKey(source.conversion_uri)
+            ),
+            uri=source.conversion_uri,
+        ).derivation_ranges
 
 
 class EmbedChunksHandler:
@@ -607,6 +634,15 @@ def _chunk_record(
         source.language or "",
         source.file_name or "",
     )
+    if not chunk.extraction_eligible:
+        # D133 §4.5: the policy version joins the reuse basis of ineligible
+        # chunks, so they never share a Selection result with an eligible
+        # chunk and a policy change re-keys exactly them. Eligible chunks keep
+        # their key, so the policy never re-extracts prose.
+        header_facts = (
+            *header_facts,
+            f"ineligible:{EXTRACTION_ELIGIBILITY_POLICY_VERSION}",
+        )
     return ChunkRecord(
         chunk_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -629,6 +665,8 @@ def _chunk_record(
         char_end=chunk.char_end,
         token_count=chunk.token_count,
         chunker_version=chunker_version,
+        extraction_eligible=chunk.extraction_eligible,
+        extraction_eligibility_version=EXTRACTION_ELIGIBILITY_POLICY_VERSION,
     )
 
 

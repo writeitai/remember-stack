@@ -442,7 +442,7 @@ def test_family_language_and_doc_id_filters(rig: _Rig) -> None:
     notes = rig.ingest(filename="costs.md", content="# Costs\n")
     rig.merge(version_id=notes.version_id, metadata=DocumentMetadata(language="cs"))
 
-    assert _doc_ids(rig.search("costs", family=["office"])) == [sheet.doc_id]
+    assert _doc_ids(rig.search("costs", family=["spreadsheet"])) == [sheet.doc_id]
     assert _doc_ids(rig.search(language="cs")) == [notes.doc_id]
     assert _doc_ids(rig.search("costs", doc_ids=[str(notes.doc_id)])) == [notes.doc_id]
     with pytest.raises(ValueError, match="cursor is malformed"):

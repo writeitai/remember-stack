@@ -23,6 +23,7 @@ from rememberstack.core.context_references import MAX_CONTEXT_REFS
 from rememberstack.core.conversion import ConversionRouter
 from rememberstack.core.conversion import Converter
 from rememberstack.core.conversion import entire_document_labeling
+from rememberstack.core.conversion import FileHintConverter
 from rememberstack.core.conversion import LaneCheckpointConverter
 from rememberstack.core.conversion import LaneCheckpointStore
 from rememberstack.core.conversion import LaneUsageRecorder
@@ -125,6 +126,7 @@ __all__ = (
     "PASSTHROUGH_CONVERTER_VERSION",
     "STOCK_CONVERSION_ROUTE_NAMES",
     "entire_document_labeling",
+    "FileHintConverter",
     "PredicateDefinition",
     "block_hash",
     "blockize",

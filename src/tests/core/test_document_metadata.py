@@ -22,30 +22,40 @@ FAMILY_CASES: tuple[tuple[str, str], ...] = (
     ("application/xhtml+xml", "html"),
     ("application/pdf", "pdf"),
     ("image/png", "image"),
-    ("audio/mpeg", "audio"),
-    ("video/mp4", "video"),
+    ("image/x-icon", "image"),
+    ("audio/mpeg", "media"),
+    ("video/mp4", "media"),
     (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "office",
+        "word",
     ),
-    ("application/vnd.oasis.opendocument.text", "office"),
-    ("application/msword", "office"),
-    ("application/rtf", "office"),
-    ("application/vnd.ms-excel", "office"),
-    ("application/vnd.ms-powerpoint", "office"),
+    ("application/vnd.oasis.opendocument.text", "word"),
+    ("application/msword", "word"),
+    ("application/rtf", "word"),
+    ("application/vnd.ms-excel", "spreadsheet"),
+    ("application/vnd.ms-powerpoint", "presentation"),
     ("text/plain", "text"),
-    ("text/csv", "text"),
-    ("application/json", "other"),
-    ("application/octet-stream", "other"),
-    ("message/rfc822", "other"),
-    ("application/vnd.ms-outlook", "other"),
+    ("text/csv", "delimited"),
+    ("text/x-code", "code"),
+    ("text/x-config", "config"),
+    ("text/x-log", "log"),
+    ("text/x-other-text", "other_text"),
+    ("text/x-unknown-dialect", "other_text"),
+    ("application/json", "config"),
+    ("application/epub+zip", "ebook"),
+    ("application/x-ipynb+json", "notebook"),
+    ("application/vnd.apache.parquet", "dataset"),
+    ("application/x-tar", "archive"),
+    ("application/octet-stream", "binary"),
+    ("message/rfc822", "email"),
+    ("application/vnd.ms-outlook", "binary"),
     ("Text/HTML; charset=utf-8", "html"),
 )
 
 
 @pytest.mark.parametrize(("mime", "family"), FAMILY_CASES)
 def test_family_for_mime(mime: str, family: str) -> None:
-    """Each MIME maps to one coarse family; parameters and case are ignored."""
+    """Each MIME maps to its D138 family; parameters and case are ignored."""
     assert family_for_mime(mime=mime) == family
 
 

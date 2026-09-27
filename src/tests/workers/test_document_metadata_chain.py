@@ -54,7 +54,7 @@ from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("60000000-0000-0000-0000-0000000d0134")
-_MAIL_MIME = "application/x-fake-mail"
+_MAIL_MIME = "message/rfc822"
 _SENT = datetime(2025, 4, 2, 8, 15, tzinfo=timezone.utc)
 _MAIL_METADATA = DocumentMetadata(
     title="Audit findings",
@@ -361,7 +361,7 @@ def test_convert_merges_converter_metadata_idempotently(rig: _Rig) -> None:
     names = rig.names(version_id=ingested.version_id)
     people = rig.people(version_id=ingested.version_id)
 
-    assert merged["family"] == "other"
+    assert merged["family"] == "email"
     assert merged["title"] == "Audit findings"
     assert merged["created_at"] == _SENT
     assert merged["language"] == "en"
@@ -464,7 +464,7 @@ def test_mime_repair_refreshes_family_for_every_lineage(rig: _Rig) -> None:
         sync_cycle_id=None,
     )
     for version_id in (parked.version_id, other_lineage.version_id):
-        assert rig.metadata(version_id=version_id)["family"] == "other"
+        assert rig.metadata(version_id=version_id)["family"] == "other_text"
 
     resent = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
