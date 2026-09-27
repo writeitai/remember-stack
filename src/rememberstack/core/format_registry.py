@@ -166,7 +166,7 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="spreadsheet",
         mime=_XLSX,
         outcome="profile",
-        converter=None,
+        converter="spreadsheet",
         extensions=frozenset({"xlsx", "xlsm", "xltx", "xls", "ods"}),
         reading_limit_bytes=200_000_000,
     ),
@@ -174,14 +174,14 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="delimited",
         mime="text/csv",
         outcome="profile",
-        converter=None,
+        converter="table",
         extensions=frozenset({"csv", "tsv", "psv", "tab"}),
     ),
     FormatFamily(
         name="dataset",
         mime="application/vnd.apache.parquet",
         outcome="profile",
-        converter=None,
+        converter="dataset",
         extensions=frozenset(
             {
                 *("parquet", "feather", "arrow", "sav", "por", "xpt", "sas7bdat"),
@@ -336,6 +336,10 @@ _NAMED_FILES: Final[dict[str, str]] = {
 }
 """Extensionless file names with a known family (D138 §3 step 1)."""
 
+_NEEDS_LIBREOFFICE: Final = frozenset({"ods"})
+"""Extensions of routed families that LibreOffice converts before reading
+(D138 §7); they park under D117 until that conversion ships."""
+
 _COMPOUND_TAR: Final = (".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst")
 _UNSPECIFIC_DECLARED: Final = frozenset({"", "application/octet-stream", "text/plain"})
 """Declarations that never decide a family: the generic byte type and the
@@ -411,18 +415,20 @@ def stock_route_names() -> dict[str, str]:
     """The engine's default MIME → converter table, derived from the registry.
 
     Every stored MIME of a family whose converter this build ships routes to
-    it. The Office Open XML documents keep their markitdown route until the
-    D138 office and spreadsheet converters exist.
+    it, except the formats LibreOffice converts first (D138 §7), which park
+    until that conversion ships. The Office Open XML documents keep their
+    markitdown route until the D138 office converter exists.
     """
     routes = {
         mime: family.converter
         for extension, mime in FORMAT_MIMES.items()
         if (family := _BY_EXTENSION[extension]).converter is not None
+        and extension not in _NEEDS_LIBREOFFICE
     }
     routes.update(
         {family.mime: family.converter for family in FAMILIES if family.converter}
     )
-    routes.update({_DOCX: "markitdown", _PPTX: "markitdown", _XLSX: "markitdown"})
+    routes.update({_DOCX: "markitdown", _PPTX: "markitdown"})
     return routes
 
 

@@ -58,6 +58,27 @@ def _card() -> Converter:
     return CardConverter()
 
 
+def _spreadsheet() -> Converter:
+    """The D138 spreadsheet profile route: xlsx, xlsm, xltx and xls."""
+    from rememberstack.adapters.converters.spreadsheet import SpreadsheetConverter
+
+    return SpreadsheetConverter()
+
+
+def _table() -> Converter:
+    """The D138 delimited profile route: csv, tsv, psv and tab."""
+    from rememberstack.adapters.converters.table import TableConverter
+
+    return TableConverter()
+
+
+def _dataset() -> Converter:
+    """The D138 dataset profile route: Parquet, Arrow, statistical, SQLite."""
+    from rememberstack.adapters.converters.dataset import DatasetConverter
+
+    return DatasetConverter()
+
+
 def _markitdown() -> Converter:
     """The markitdown route, imported only when a deployment routes to it."""
     from rememberstack.adapters.converters.markitdown import MarkitdownConverter
@@ -88,6 +109,9 @@ _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "passthrough": _passthrough,
     "text": _text,
     "card": _card,
+    "spreadsheet": _spreadsheet,
+    "table": _table,
+    "dataset": _dataset,
     "markitdown": _markitdown,
     "mistral_ocr": _mistral_ocr,
     "image_ocr_description": _image_ocr_description,

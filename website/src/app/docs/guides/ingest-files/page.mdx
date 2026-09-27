@@ -293,7 +293,9 @@ Convert other formats to Markdown before you send them. See
 <Tab label="Self-hosted">
 
 A fresh self-hosted deployment reads Markdown, plain text, HTML and
-Word, PowerPoint and Excel files (`.docx`, `.pptx`, `.xlsx`). A file
+Word and PowerPoint files (`.docx`, `.pptx`), and profiles spreadsheets,
+delimited files and datasets
+([Data files](/docs/guides/file-types#data-files)). A file
 with any other MIME type is stored and its processing is parked, not
 refused: the ingest succeeds with `"parked": "no_route"`, and the
 version waits until an operator adds a converter for its type. PDFs and

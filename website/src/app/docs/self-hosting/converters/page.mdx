@@ -10,8 +10,8 @@ export const metadata = {
 Before RememberStack can read a file, the `convert` worker turns it into
 Markdown. Which converter handles which file is a table you configure: a
 map from MIME type to converter name. A stock deployment converts
-Markdown, plain text, HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel
-(`.xlsx`) with no API key. Everything else, including PDFs and images, is
+Markdown, plain text, HTML, Word (`.docx`) and PowerPoint (`.pptx`), and
+profiles spreadsheets, delimited files and datasets, with no API key. Everything else, including PDFs and images, is
 stored and waits until you add a route for it; the ingest response says so
 at once with `"parked": "no_route"`.
 
@@ -26,11 +26,16 @@ With `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` unset, the table is:
 | `text/html` | `markitdown` |
 | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` (`.docx`) | `markitdown` |
 | `application/vnd.openxmlformats-officedocument.presentationml.presentation` (`.pptx`) | `markitdown` |
-| `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`) | `markitdown` |
+| `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` (`.xlsx`, `.xlsm`, `.xltx`) | `spreadsheet` |
+| `application/vnd.ms-excel` (`.xls`) | `spreadsheet` |
+| `text/csv` (`.csv`, `.psv`), `text/tab-separated-values` (`.tsv`, `.tab`) | `table` |
+| `application/vnd.apache.parquet`, `application/vnd.apache.arrow.file`, `application/x-spss-sav`, `application/x-spss-por`, `application/x-sas-xport`, `application/x-sas-data`, `application/x-stata-dta`, `application/vnd.sqlite3` | `dataset` |
 
 `passthrough` keeps the text as it is. It requires valid UTF-8; a file in
 another encoding fails conversion. `markitdown` runs in the worker with no
-network call (see [markitdown](#markitdown)).
+network call (see [markitdown](#markitdown)). `spreadsheet`, `table` and
+`dataset` write a [profile](/docs/guides/file-types#data-files) of the file
+in the worker, with no network call.
 
 PDFs and images are not in the default table: the converters that read
 them call a paid provider API with your own key. Add a route for them as
@@ -52,7 +57,7 @@ example adds PDFs and images:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "markitdown", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "markitdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "markitdown", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"text/markdown": "passthrough", "text/plain": "passthrough", "text/html": "markitdown", "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "markitdown", "application/vnd.openxmlformats-officedocument.presentationml.presentation": "markitdown", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "spreadsheet", "application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
@@ -63,6 +68,9 @@ both read this variable. A route that names an unknown converter stops the
 |---|---|---|---|
 | `passthrough` | In the worker | Markdown and plain text | Nothing |
 | `markitdown` | In the worker | HTML, Word (`.docx`), PowerPoint (`.pptx`) and Excel (`.xlsx`) | Nothing |
+| `spreadsheet` | In the worker | Excel (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), as a profile | Nothing |
+| `table` | In the worker | Delimited text (`.csv`, `.tsv`, `.psv`, `.tab`), as a profile | Nothing |
+| `dataset` | In the worker | Parquet, Arrow and Feather, SPSS, SAS, Stata and SQLite files, as a profile | Nothing |
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 

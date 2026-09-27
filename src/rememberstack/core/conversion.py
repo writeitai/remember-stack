@@ -34,12 +34,13 @@ STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names()
 Derived from the format registry: every stored MIME of a family whose
 converter ships in this build routes to it — the ``text`` converter for
 Markdown, plain text, code, configuration and logs; ``markitdown`` for HTML,
-EPUB and the Office Open XML documents; ``card`` for images, media, archives
-and unrecognized bytes. Every route runs locally with no API key. A
-deployment's conversion-route setting adds or overrides entries on top of
-this table; MIME types no route accepts (PDF, legacy Office, email,
-notebooks, delimited and dataset files) are stored and parked as
-``no_route`` until one does.
+EPUB and the Word and PowerPoint Open XML documents; the ``spreadsheet``,
+``table`` and ``dataset`` profiles for workbooks, delimited files and
+datasets; ``card`` for images, media, archives and unrecognized bytes. Every
+route runs locally with no API key. A deployment's conversion-route setting
+adds or overrides entries on top of this table; MIME types no route accepts
+(PDF, legacy Office, OpenDocument, email, notebooks) are stored and parked
+as ``no_route`` until one does.
 """
 
 

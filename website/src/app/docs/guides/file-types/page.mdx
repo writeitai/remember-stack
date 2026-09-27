@@ -20,17 +20,22 @@ self-hosted deployment.</Cloud>
 | Plain text (`.txt`) | Yes | Yes |
 | Chat logs and transcripts, as Markdown or text | Yes | Yes |
 | HTML | Yes | Yes |
-| Word (`.docx`), PowerPoint (`.pptx`), Excel (`.xlsx`) | Yes | Yes |
+| Word (`.docx`), PowerPoint (`.pptx`) | Yes | Yes |
+| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`) | Yes, as a [profile](#data-files) | Yes, as a profile |
+| Delimited files (`.csv`, `.tsv`, `.psv`, `.tab`) | Yes, as a [profile](#data-files) | Yes, as a profile |
+| Datasets (Parquet, Arrow and Feather, SPSS `.sav`/`.por`, SAS `.xpt`/`.sas7bdat`, Stata `.dta`, SQLite `.sqlite`/`.sqlite3`/`.db`) | Yes, as a [profile](#data-files) | Yes, as a profile |
+| OpenDocument spreadsheets (`.ods`) | No | No: save as `.xlsx` first |
 | PDF, including scanned PDFs | No | Yes, with `mistral_ocr` (needs a Mistral API key) |
 | PNG and JPEG images | No | Yes, with `image_ocr_description` (OCR plus a written description of the image) |
-| Legacy Office (`.doc`, `.ppt`, `.xls`) | No | No: save as `.docx`, `.pptx` or `.xlsx` first |
+| Legacy Office (`.doc`, `.ppt`) | No | No: save as `.docx` or `.pptx` first |
 | Audio and video | No | No |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
 ## Formats and converters
 
-A new self-hosted deployment converts Markdown, plain text, HTML, Word,
-PowerPoint and Excel files locally, with no API key. Other formats are
+A new self-hosted deployment converts Markdown, plain text, HTML, Word and
+PowerPoint files locally, and profiles spreadsheets, delimited files and
+datasets locally, with no API key. Other formats are
 accepted and stored, but they wait unprocessed until you add a converter
 for their type. The upload response tells you: its `parked` field is
 `"no_route"`, and `remember ingest` prints a warning.
@@ -40,6 +45,37 @@ To read PDFs and images, map each file type to a converter in
 converters](/docs/self-hosting/converters) shows the setting, what each
 converter does and costs, and how to release files that were stored before
 you added a route.
+
+## Data files
+
+Spreadsheets, delimited files and datasets are described, not read. The
+memory holds a **profile** of each one, so an agent can find the right file,
+sheet and column and then open the original to compute on it. A profile
+contains:
+
+- the file name, family, format, size in bytes and number of sheets or tables;
+- for each sheet or table (up to 50; the rest are listed by name): its row
+  and column counts, and one line per column with its header, where it is
+  (a spreadsheet column letter or a 1-based position) and a type guessed
+  from the sample rows (`integer`, `number`, `date`, `boolean`, `text` or
+  `empty`), up to 100 columns;
+- the first 5 data rows as a table, up to 30 columns, each cell cut to 80
+  characters;
+- for workbooks, the defined names and what they refer to (up to 50);
+- for delimited files, the delimiter, quote character and encoding.
+
+The header is the first non-empty row. Row counts come from the file's own
+metadata, except for delimited files, which are counted in one pass;
+SPSS `.por` and SAS `.xpt` files do not record a row count, and the profile
+says so. A workbook over 50,000,000 bytes is profiled from its sheet names
+and dimensions only, and a workbook over 200,000,000 bytes gets a short
+card instead of a profile. A delimited file that is not UTF-8 is read as
+Latin-1, and the profile says that too. Excel workbooks also supply their
+title, author and dates as document metadata.
+
+A profile is searchable, but no claims are extracted from it and no model
+reads it. Files that are not valid for their type, and profiles that take
+longer than 120 seconds, fail with the reason on the version.
 
 <Cloud>
 

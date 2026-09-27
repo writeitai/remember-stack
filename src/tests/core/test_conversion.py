@@ -66,10 +66,11 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
     """The registry-derived stock table routes every family with a converter.
 
-    Text families go to ``text``, HTML/EPUB/OOXML to ``markitdown``, images,
-    media, archives and unrecognized bytes to ``card``; families whose D138
-    converter is not built yet (PDF, legacy Office, email, notebooks,
-    delimited and dataset files) stay unrouted and park.
+    Text families go to ``text``, HTML/EPUB and Word/PowerPoint OOXML to
+    ``markitdown``, workbooks, delimited files and datasets to their profile
+    routes, images, media, archives and unrecognized bytes to ``card``;
+    families whose D138 converter is not built yet (PDF, legacy Office,
+    OpenDocument, email, notebooks) stay unrouted and park.
     """
     routes = STOCK_CONVERSION_ROUTE_NAMES
     for mime in (
@@ -81,8 +82,11 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "text/x-other-text",
     ):
         assert routes[mime] == "text", mime
-    for mime in ("text/html", "application/epub+zip", _DOCX, _PPTX, _XLSX):
+    for mime in ("text/html", "application/epub+zip", _DOCX, _PPTX):
         assert routes[mime] == "markitdown", mime
+    assert routes[_XLSX] == "spreadsheet"
+    assert routes["text/csv"] == "table"
+    assert routes["application/vnd.apache.parquet"] == "dataset"
     for mime in (
         "image/png",
         "image/jpeg",
@@ -98,8 +102,7 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "application/msword",
         "message/rfc822",
         "application/x-ipynb+json",
-        "text/csv",
-        "application/vnd.apache.parquet",
+        "application/vnd.oasis.opendocument.spreadsheet",
     ):
         assert mime not in routes, mime
     router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
@@ -142,8 +145,8 @@ def test_stock_markitdown_route_converts_a_pptx() -> None:
     assert "Launch in October." in result.document_md
 
 
-def test_stock_markitdown_route_converts_an_xlsx() -> None:
-    """The bundled markitdown carries its Excel extra."""
+def test_stock_spreadsheet_route_profiles_an_xlsx() -> None:
+    """A default deployment profiles workbooks (D138 §5.1): shape, not rows."""
     from openpyxl import Workbook
 
     workbook = Workbook()
@@ -154,9 +157,9 @@ def test_stock_markitdown_route_converts_an_xlsx() -> None:
     buffer = io.BytesIO()
     workbook.save(buffer)
     result = _stock_convert(content=buffer.getvalue(), mime=_XLSX)
-    assert "Region" in result.document_md
-    assert "North" in result.document_md
-    assert "1200" in result.document_md
+    assert "  - Region: text (column A)" in result.document_md
+    assert "| North | 1200 |" in result.document_md
+    assert result.manifest.components[0].name == "spreadsheet"
 
 
 def _stock_convert(*, content: bytes, mime: str) -> ConversionResult:
