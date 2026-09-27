@@ -19,6 +19,11 @@ the numbers opens the file; memory's job is to get it to the right file, sheet a
 Every file that arrives is stored and gets a terminal outcome: a reading, a profile, or a card.
 Nothing is silently dropped.
 
+**No model calls outside prose.** Search-only text, profiles and cards run E0's structure step
+without model calls: a deterministic section skeleton from headings, no model-written summaries
+or roles, and no other LLM stage. Only prose families reach model-written structure (D79) and
+claim extraction.
+
 ## 2. Four outcomes
 
 | Outcome | `document.md` holds | Claims extracted (E2)? |
@@ -31,8 +36,8 @@ Nothing is silently dropped.
 Search-only uses D133 §4.5's eligibility mechanism: converters label every range with a
 `derivation_kind`; the eligibility policy lists the kinds that are never claim-extracted; E1 cuts
 chunks where eligibility changes and E2 schedules Selection only for eligible chunks. The
-ineligible kinds are `code`, `config`, `log`, `large_text`, `profile_structure`, `profile_sample`
-and `file_card`. Everything else a converter emits is prose.
+ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profile_structure`,
+`profile_sample` and `file_card`. Everything else a converter emits is prose.
 
 ## 3. Detection and routing
 
@@ -43,8 +48,9 @@ and `file_card`. Everything else a converter emits is prose.
    `.editorconfig`, `.npmrc` and `.env*`, are text.
 2. **Declared MIME second.** A declared MIME that is specific (not `application/octet-stream`
    and not a guessed `text/plain`) and known to the registry decides when the extension does not.
-3. **Content last.** Otherwise: valid UTF-8 with no NUL byte in the first 64 KiB is `text`;
-   anything else is `binary`.
+3. **Content last.** Otherwise: valid UTF-8 with no NUL byte in the first 64 KiB is
+   `other_text` (search-only; an unknown text file is not assumed to be prose); anything else is
+   `binary`.
 
 The family's canonical MIME is what E0 stores and routes on. A converter that finds bytes that
 do not match its family (a corrupt `.xlsx`, a `.pdf` without a PDF header) fails the version with
@@ -69,11 +75,13 @@ Text is read in full up to **1 MB**; beyond that, the head/tail profile of §5.2
 | Family | Extensions | Converter | Outcome |
 |---|---|---|---|
 | `markdown` | md, markdown, mdx, rst, adoc, asciidoc, org, textile | text | prose |
-| `text` | txt, and extensionless text | text | prose |
+| `text` | txt, srt, vtt, and the named README and LICENSE files | text | prose |
+| `other_text` | text found by content only (§3 step 3) | text | search-only |
 | `log` | log, out, err, trace | text | search-only |
-| `code` | py, pyi, js, jsx, ts, tsx, cjs, mjs, cts, mts, java, kt, kts, scala, go, rs, c, h, cc, cpp, cxx, hh, hpp, hxx, m, mm, cs, fs, rb, php, swift, dart, zig, sol, lua, pl, r, jl, sh, bash, zsh, fish, ps1, bat, cmd, sql, sas, sps, do, gradle, groovy, cmake, tf, hcl, proto, graphql, gql, css, scss, sass, less, vue, svelte, j2, jinja, template, jmx, and the named build files of §3 | text | search-only |
-| `config` | json, jsonc, json5, jsonl, ndjson, yaml, yml, toml, ini, cfg, conf, cnf, properties, plist, xml, svg, env-style dotfiles, ignore files | text | search-only |
+| `code` | py, pyi, js, jsx, ts, tsx, cjs, mjs, cts, mts, java, kt, kts, scala, go, rs, c, h, cc, cpp, cxx, hh, hpp, hxx, m, mm, cs, fs, rb, php, swift, dart, zig, sol, lua, pl, r, jl, sh, bash, zsh, fish, ps1, bat, cmd, sql, sas, sps, do, gradle, groovy, cmake, tf, hcl, proto, graphql, gql, css, scss, sass, less, vue, svelte, j2, jinja, template, jmx, and the named build files of §3 (not README or LICENSE) | text | search-only |
+| `config` | json, jsonc, json5, jsonl, ndjson, geojson, yaml, yml, toml, ini, cfg, conf, cnf, properties, plist, xml, svg, kml, gpx, env-style dotfiles, ignore files | text | search-only |
 | `html` | html, htm, xhtml | markitdown | prose |
+| `ebook` | epub | markitdown | prose |
 | `notebook` | ipynb | notebook | Markdown cells prose; code cells `code`; outputs dropped |
 | `email` | eml | email | prose (headers and body; attachments listed by name and size) |
 | `word` | docx, docm, dotx, doc, odt, rtf | office (markitdown; LibreOffice converts doc, odt, rtf first) | prose |
@@ -81,11 +89,11 @@ Text is read in full up to **1 MB**; beyond that, the head/tail profile of §5.2
 | `pdf` | pdf | pdf (pypdfium2 text layer) | prose, one `page` locator per page |
 | `spreadsheet` | xlsx, xlsm, xltx, xls, ods | spreadsheet (openpyxl; xlrd for xls; LibreOffice converts ods first) | profile |
 | `delimited` | csv, tsv, psv, tab | table | profile |
-| `dataset` | parquet, feather, arrow, sav, por, xpt, sas7bdat, dta | dataset (pyarrow; pyreadstat) | profile |
+| `dataset` | parquet, feather, arrow, sav, por, xpt, sas7bdat, dta, sqlite, sqlite3, db | dataset (pyarrow; pyreadstat; sqlite3 opened read-only) | profile |
 | `image` | png, jpg, jpeg, gif, webp, tif, tiff, bmp, heic, avif, psd | card (the D115 route when providers are configured) | card |
 | `media` | wav, mp3, m4a, flac, ogg, aac, mp4, mov, webm, mkv, avi | card | card |
 | `archive` | zip, tar (and compound tar), 7z, rar, gz, bz2, xz, zst | card | card; member listing for zip and tar |
-| `binary` | everything else, and unrecognized bytes | card | card |
+| `binary` | pages, numbers, key, msg, mbox, rds, rdata, everything else, and unrecognized bytes | card | card |
 
 The table is the whole per-family contract: extensions, converter and outcome.
 
@@ -99,7 +107,8 @@ Always a profile, never the rows. `document.md` contains, in order:
    `profile_structure` / `computed`.
 2. **Per sheet or table** — its name, its row and column counts, and one line per column with
    its header and a type inferred from the sample rows (`integer`, `number`, `date`, `boolean`,
-   `text`, `empty`). `profile_structure` / `computed`.
+   `text`, `empty`), at most 100 columns listed with the rest counted, and at most 50 sheets or
+   tables described with the rest listed by name only. `profile_structure` / `computed`.
 3. **Head sample** — the first 5 data rows as a Markdown table, each cell cut to 80 characters,
    at most 30 columns shown with the rest counted. `profile_sample` / `source_expression`.
 4. **Defined names** (spreadsheets) — workbook-level names and their references, at most 50.
@@ -140,7 +149,8 @@ stored and served as always (D51); the agent opens it with its own tools.
 - **Office metadata and slides.** The office converter reads `docProps/core.xml` from the OOXML
   package itself (with `defusedxml`) for D134 metadata, and reads presentations slide by slide so
   each slide's text gets its own `page` locator. Word documents are rendered with markitdown.
-- **LibreOffice** (`soffice --headless --convert-to`) handles doc, odt, rtf, ppt, odp and ods:
+- **LibreOffice** (`soffice --headless --convert-to`) converts doc, odt and rtf to docx, ppt and
+  odp to pptx, and ods to xlsx:
   one process per file, a fresh temporary profile directory per call
   (`-env:UserInstallation=file:///<tmp>`), a 120-second limit, no network. A deployment without
   LibreOffice parks those extensions under D117 until it is installed.

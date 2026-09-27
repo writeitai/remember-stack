@@ -132,3 +132,15 @@ agreed on the main corrections, all adopted:
 - **"Deferred" is not a design state** (CLAUDE.md Rule 2): `data_query` and container expansion
   were removed from the binding corpus into proposals, and D133/D134 reconciled.
 - More adjacent extensions were added to the registry.
+
+### Round 2
+
+Both reviewers found D133's body still contradicting D138 (its 25-row target table with
+model-call profilers, profile claim extraction in §4.5, refusals in §2.1, and the overview prompt
+in §10.1). D133 was cut to the framework: D138 §4 is the one shipped registry, §4.5 states the
+eligibility mechanism generically, and §2.1's outcomes store every file. New points adopted: E0's
+structure step makes no model calls for search-only text, profiles and cards; text found only by
+content sniffing is search-only (`other_text`); profiles list at most 100 columns and 50 tables;
+`.ods` converts to xlsx; `.pages`, `.numbers`, `.key`, `.msg`, `.mbox`, `.rds` and `.rdata` are
+cards; `epub` is prose; captions are text; GeoJSON, KML and GPX are config; SQLite files are
+datasets.

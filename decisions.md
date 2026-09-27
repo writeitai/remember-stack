@@ -6543,7 +6543,7 @@ dominated by spreadsheets, PDFs, office documents, code and config. The readers 
 coding agents that open files and compute on them.
 
 **Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
-what the file is, where it is and how it is shaped. One shipped registry routes 18 families by
+what the file is, where it is and how it is shaped. One shipped registry routes 20 families by
 extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
 declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
 full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
