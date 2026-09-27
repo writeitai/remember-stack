@@ -6175,6 +6175,11 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
 
+**Refined by D138.** The first shipped family set is D138's. Profiles are deterministic (no model
+overview) and store a small head sample; code, config, logs and cards are search-only;
+unrecognized bytes get a card instead of a refusal; `data_query` and container expansion are
+deferred. The registry, postures, profile rules and locators remain binding.
+
 **Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
 PR #452, which this decision builds on.)
 
@@ -6528,3 +6533,30 @@ the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
 - D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
 
 **Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+
+## D138. Coding-agent-first ingestion of workspace formats
+
+**Status:** accepted. **Date:** 2026-09-27.
+
+**Context.** D133 bound the format framework but left each family to its own design. A matched
+Workspace-Bench run must ingest whole professional workspaces: 23,268 files across 89 extensions,
+dominated by spreadsheets, PDFs, office documents, code and config. The readers of the result are
+coding agents that open files and compute on them.
+
+**Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
+what the file is, where it is and how it is shaped. One shipped registry routes 18 families by
+extension, then declared MIME, then content. Prose (markdown, text, HTML, email, word,
+presentation, PDF text layer) is read in full and claim-extracted. Code, config and logs are read
+in full but search-only. Spreadsheets, delimited files and statistical datasets get deterministic
+profiles (structure, 5-row head sample, identifying values, formulas) with no model call, or a
+full reading when small. Images (without configured providers), media, archives and unknown
+bytes get cards. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+Deployment route settings overlay the registry instead of replacing it.
+
+**Alternatives and consequences.** Rendering everything through markitdown, skipping files the
+tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
+(analysis §7). `data_query` and container expansion are deferred, not rejected. LibreOffice adds
+several hundred megabytes to the engine image.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).

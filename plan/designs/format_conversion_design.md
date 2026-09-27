@@ -1,6 +1,11 @@
 # Format conversion — every family, one contract (Design)
 
 **Status:** D133, accepted 2026-09-23; binding when merged.
+
+> **Refined by D138 (2026-09-27).** The first shipped family set, and changes to §2.1
+> (unrecognized bytes get a card), §4.2 (no model overview), §4.4 (a head sample is stored),
+> §4.6 (`data_query` deferred) and §5 (expansion deferred), are in
+> [`workspace_formats_design.md`](workspace_formats_design.md).
 **Analysis:** [format coverage and the conversion architecture](../analysis/format_coverage_and_conversion_architecture.md).
 **Refines:** D38 (router), D65 (converter contract and locators), D117
 (parking scope), D132 (text-flavour routing), D54 (counting identity), D74
