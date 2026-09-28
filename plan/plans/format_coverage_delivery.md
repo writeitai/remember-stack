@@ -14,7 +14,8 @@ merged before the family counts as supported (`/docs/project/not-built-yet` stay
    head/tail large-text profile, the `text` converter for prose, code, config and logs, and
    cards (image, media, archive listing, binary, oversized).
 2. **Documents.** Office (docx/pptx with core-property metadata and per-slide locators;
-   LibreOffice for doc, odt, rtf, ppt, odp), PDF text layer, HTML, email, notebook.
+   LibreOffice for doc, odt, rtf, ppt, odp), PDF OCR on every page (D139), HTML,
+   email, notebook.
 3. **Data files.** Spreadsheet, delimited and dataset profiles.
 
 Then the Workspace-Bench smoke (task 300 and the five-task smoke) exercises all of them on the
