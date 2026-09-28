@@ -336,7 +336,8 @@ def test_a_corrupt_workbook_fails_with_a_typed_reason(mime: str) -> None:
 # --- delimited ------------------------------------------------------------
 
 
-def test_csv_counts_records_with_quoted_newlines_and_samples_five() -> None:
+def test_csv_samples_five_records_and_approximates_the_length() -> None:
+    """Quoted newlines stay inside one sampled record; the rest is not parsed."""
     lines = ["id,name,comment"]
     for index in range(1, 8):
         lines.append(f'{index},name{index},"first line\nsecond line {index}"')
@@ -348,7 +349,8 @@ def test_csv_counts_records_with_quoted_newlines_and_samples_five() -> None:
     markdown = result.document_md
     assert "- Delimiter: comma (detected)" in markdown
     assert "- Encoding: UTF-8" in markdown
-    assert "- Data rows below the header: 7" in markdown
+    # 1 header line + 7 records of 2 lines each; the blank line counts too
+    assert "- Lines in file (approximate, includes header): 16" in markdown
     assert "  - id: integer (column 1)" in markdown
     assert "  - comment: text (column 3)" in markdown
     sample = _section(result, "profile_sample")
@@ -826,3 +828,29 @@ def test_ods_profile_with_real_libreoffice(tmp_path: Path) -> None:
         content=ods, mime=_ODS, hints=_hints("sheet.ods")
     )
     assert "| row4 | 4 |" in result.document_md
+
+
+def test_csv_parsing_stops_after_the_sample() -> None:
+    """A malformed record after the sample is never parsed."""
+    content = b"a,b\n" + b"1,2\n" * 5 + b'3,"unterminated\n' + b"x" * 50
+    result = TableConverter().convert(content=content, mime="text/csv")
+    assert "| 1 | 2 |" in result.document_md
+    assert "- Lines in file (approximate, includes header): 8" in result.document_md
+
+
+def test_a_formula_only_header_and_rows_are_not_empty() -> None:
+    def build(workbook: Workbook) -> None:
+        sheet = workbook.active
+        assert sheet is not None
+        sheet.append(['=CONCAT("q", 1)', '=CONCAT("q", 2)'])
+        sheet.append(["=1+1", "=2+2"])
+        sheet.append(["=3+3", "=4+4"])
+
+    markdown = (
+        SpreadsheetConverter().convert(content=_xlsx(build), mime=_XLSX).document_md
+    )
+    assert "- Header row: 1" in markdown
+    assert '  - =CONCAT("q", 1): empty (column A)' in markdown
+    assert "| =1+1 | =2+2 |" in markdown
+    assert "| =3+3 | =4+4 |" in markdown
+    assert "- Data rows below the header: 2" in markdown

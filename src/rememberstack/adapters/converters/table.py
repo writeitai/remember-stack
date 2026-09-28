@@ -2,10 +2,10 @@
 
 The dialect is sniffed from the first 64 KiB (``csv.Sniffer`` over comma, tab,
 semicolon and pipe), falling back to the extension (``.tsv``/``.tab`` tab,
-``.psv`` pipe, otherwise comma). One streaming pass of the CSV reader finds
-the header (the first non-empty record), keeps the next five records as the
-sample and counts the rest without keeping them — so a quoted field that
-spans lines is one record, not several. Text is read as UTF-8 (a byte-order
+``.psv`` pipe, otherwise comma). The CSV reader parses only the header (the
+first non-empty record) and the next five records; the rest of the file is
+never parsed. Its length is given as an approximate line count, taken from
+the raw bytes (a quoted value may span lines, so it is not a record count). Text is read as UTF-8 (a byte-order
 mark is honoured, UTF-16 included); bytes that are not UTF-8 are read as
 Latin-1 and the profile says so.
 """
@@ -46,8 +46,8 @@ FIELD_SIZE_LIMIT: Final = 10_000_000
 """The largest field, in characters, the CSV reader accepts (starting value);
 a larger one fails the version instead of being read into memory."""
 
-_DEADLINE_EVERY: Final = 4096
-"""Records between wall-time checks in the counting pass."""
+_COUNT_CHUNK_BYTES: Final = 64_000_000
+"""Bytes counted between wall-time checks in the line count."""
 
 
 class TableConverter:
@@ -68,7 +68,7 @@ class TableConverter:
     def convert(
         self, *, content: bytes, mime: str, hints: FileHints | None = None
     ) -> ConversionResult:
-        """Sniff, sample and count the file in one streaming pass."""
+        """Sniff the dialect, read the header and sample, count lines."""
         deadline = Deadline(seconds=TIME_LIMIT_SECONDS)
         csv.field_size_limit(FIELD_SIZE_LIMIT)
         extension = format_extension(hints=hints, mime=mime)
@@ -87,7 +87,13 @@ class TableConverter:
             scan = _scan(
                 content=content, encoding=encoding, dialect=dialect, deadline=deadline
             )
-        header, sample, data_rows, widest = scan
+        header, sample, ended = scan
+        count_fact = (
+            f"Data rows below the header: {len(sample):,}"
+            if ended
+            else "Lines in file (approximate, includes header): "
+            f"{_line_count(content=content, deadline=deadline):,}"
+        )
         return render_profile(
             profile=DataFileProfile(
                 family="delimited",
@@ -97,8 +103,7 @@ class TableConverter:
                         name=(hints.file_name if hints else None) or "table",
                         header=header,
                         sample=sample,
-                        data_rows=data_rows,
-                        widest=widest,
+                        count_fact=count_fact,
                     ),
                 ),
                 unread_tables=(),
@@ -162,30 +167,27 @@ def _scan(
     encoding: str,
     dialect: type[csv.Dialect] | csv.Dialect,
     deadline: Deadline,
-) -> tuple[list[str], list[list[str]], int, int]:
-    """Header, sample, data-record count and widest record in one pass.
+) -> tuple[list[str], list[list[str]], bool]:
+    """The header (first non-empty record), up to five data records, and
+    whether the file ended within them.
 
-    Blank records are not counted; a decoding error propagates so the caller
-    can re-read as Latin-1.
+    Parsing stops once the sample is full; the rest of the file is never
+    parsed. A decoding error propagates so the caller can re-read as Latin-1.
     """
     text = io.TextIOWrapper(io.BytesIO(content), encoding=encoding, newline="")
     header: list[str] | None = None
     sample: list[list[str]] = []
-    data_rows = 0
-    widest = 0
     try:
-        for number, record in enumerate(csv.reader(text, dialect)):
-            if number % _DEADLINE_EVERY == 0:
-                deadline.check()
+        for record in csv.reader(text, dialect):
+            deadline.check()
             if not any(field.strip() for field in record):
                 continue
-            widest = max(widest, len(record))
             if header is None:
                 header = record
-                continue
-            data_rows += 1
-            if len(sample) < SAMPLE_ROWS:
+            elif len(sample) < SAMPLE_ROWS:
                 sample.append(record)
+            else:
+                return header, sample, False
     except csv.Error as err:
         if "field larger than field limit" in str(err):
             raise ConversionError(
@@ -193,26 +195,36 @@ def _scan(
                 f"{FIELD_SIZE_LIMIT:,}-character limit"
             ) from err
         raise ConversionError(f"not a readable delimited file ({err})") from err
-    return header or [], sample, data_rows, widest
+    return header or [], sample, True
+
+
+def _line_count(*, content: bytes, deadline: Deadline) -> int:
+    """Newline-terminated lines, counted on the raw bytes in chunks.
+
+    Approximate as a record count: a quoted value may span lines.
+    """
+    lines = 0
+    for start in range(0, len(content), _COUNT_CHUNK_BYTES):
+        deadline.check()
+        lines += content.count(b"\n", start, start + _COUNT_CHUNK_BYTES)
+    if content and not content.endswith(b"\n"):
+        lines += 1
+    return lines
 
 
 def _table(
-    *,
-    name: str,
-    header: list[str],
-    sample: list[list[str]],
-    data_rows: int,
-    widest: int,
+    *, name: str, header: list[str], sample: list[list[str]], count_fact: str
 ) -> TableProfile:
-    """The one table of a delimited file."""
+    """The one table of a delimited file; widths come from the sample."""
     facts = [
         f"Header: the first non-empty record ({len(header):,} fields)"
         if header
         else "Header: none (the file has no records)",
-        f"Data rows below the header: {data_rows:,}",
+        count_fact,
     ]
+    widest = max((len(row) for row in sample), default=0)
     if widest > len(header):
-        facts.append(f"Widest record: {widest:,} fields")
+        facts.append(f"Widest sampled record: {widest:,} fields")
     width = max(len(header), widest)
     columns = tuple(
         ColumnProfile(

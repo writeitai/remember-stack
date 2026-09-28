@@ -109,9 +109,10 @@ The header is the first non-empty row. Hidden sheets are marked, and a
 formula cell the file stores without a computed value is shown as its
 formula (`=A2+B2`). A workbook's size is what the file declares, marked as
 not verified; the sample is read past it, so a wrong declaration never cuts
-the sample short. Delimited files are counted in one streaming pass, so a
-quoted value that spans lines counts once; a single field over 10,000,000
-characters fails the file. SPSS `.por`, SAS `.xpt` and Arrow files do not
+the sample short. A delimited file is parsed only up to its header and 5
+sample rows; its length is given as an approximate line count (a quoted
+value can span lines), and a single field over 10,000,000 characters fails
+the file. SPSS `.por`, SAS `.xpt` and Arrow files do not
 record a row count where it can be read cheaply, and the profile says so.
 SQLite tables include generated columns, long values are cut before they
 are read, and views are listed by name. `.ods` is converted to `.xlsx` by

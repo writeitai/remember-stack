@@ -18,9 +18,11 @@ modified). Bytes that are not a readable workbook fail the version.
 """
 
 from collections.abc import Iterable
+from collections.abc import Iterator
 from collections.abc import Sequence
 import datetime
 import io
+import itertools
 from typing import Final
 import zipfile
 
@@ -249,13 +251,9 @@ def _xlsx_sheet(
             sample=(),
         )
     sheet.reset_dimensions()
-    header_row, header, rows, numbers = _head(
-        rows=sheet.iter_rows(min_row=1, values_only=True), deadline=deadline
+    header_row, header, rows = _head(
+        rows=_rows_with_formulas(workbook=workbook, sheet=sheet), deadline=deadline
     )
-    if any(value is None for row in rows for value in row):
-        rows = _with_formulas(
-            workbook=workbook, sheet=sheet, rows=rows, numbers=numbers
-        )
     return _sheet_profile(
         name=sheet.title,
         facts=facts,
@@ -288,46 +286,39 @@ def _declared_dimension(
     return min_column, min_row, max_column, max_row
 
 
-def _with_formulas(
-    *,
-    workbook: Workbook,
-    sheet: ReadOnlyWorksheet,
-    rows: list[tuple[object, ...]],
-    numbers: list[int],
-) -> list[tuple[object, ...]]:
-    """Show formula cells that have no cached value as their formula text.
+def _rows_with_formulas(
+    *, workbook: Workbook, sheet: ReadOnlyWorksheet
+) -> Iterator[tuple[object, ...]]:
+    """The sheet's rows, cached values first, uncached formulas as text.
 
-    A second read-only pass covers only the sampled rows' span; the cached
-    pass is kept for every other cell.
+    Two read-only passes run side by side: the cached values, and the cell
+    formulas. A cell with no cached value whose formula exists becomes a
+    ``FormulaText`` (``=A2+B2``), so a row of uncached formulas is not empty
+    and can be the header. The caller stops both after the sample.
     """
+    cached = sheet.iter_rows(min_row=1, values_only=True)
+    first_cached = next(cached, None)  # the parser reads data_only on start
     workbook._data_only = False  # pyright: ignore[reportAttributeAccessIssue]
     try:
-        formulas = {
-            number: row
-            for number, row in enumerate(
-                sheet.iter_rows(
-                    min_row=numbers[0], max_row=numbers[-1], values_only=True
-                ),
-                start=numbers[0],
-            )
-        }
+        formulas = sheet.iter_rows(min_row=1, values_only=True)
+        first_formulas = next(formulas, None)
     finally:
         workbook._data_only = True  # pyright: ignore[reportAttributeAccessIssue]
-    merged: list[tuple[object, ...]] = []
-    for number, row in zip(numbers, rows, strict=True):
-        source = formulas.get(number, ())
-        merged.append(
-            tuple(
-                FormulaText(source[index])
-                if value is None
-                and index < len(source)
-                and isinstance(source[index], str)
-                and str(source[index]).startswith("=")
-                else value
-                for index, value in enumerate(row)
-            )
+    if first_cached is None:
+        return
+    pairs = itertools.chain(
+        [(first_cached, first_formulas or ())], zip(cached, formulas, strict=False)
+    )
+    for values, sources in pairs:
+        yield tuple(
+            FormulaText(sources[index])
+            if value is None
+            and index < len(sources)
+            and isinstance(sources[index], str)
+            and str(sources[index]).startswith("=")
+            else value
+            for index, value in enumerate(values)
         )
-    return merged
 
 
 def _xls_profile(*, content: bytes, deadline: Deadline) -> DataFileProfile:
@@ -405,7 +396,7 @@ def _xls_sheet(
 ) -> TableProfile:
     """One loaded BIFF sheet: its size, then the header and sample rows."""
     facts.append(f"Size: {sheet.nrows:,} rows × {sheet.ncols:,} columns")
-    header_row, header, rows, _ = _head(
+    header_row, header, rows = _head(
         rows=(
             tuple(_xls_value(cell=cell, datemode=datemode) for cell in sheet.row(index))
             for index in range(sheet.nrows)
@@ -425,16 +416,14 @@ def _xls_sheet(
 
 def _head(
     *, rows: Iterable[Sequence[object]], deadline: Deadline
-) -> tuple[int | None, tuple[object, ...], list[tuple[object, ...]], list[int]]:
-    """The header row (the first non-empty row), up to five data rows, and
-    the data rows' 1-based row numbers.
+) -> tuple[int | None, tuple[object, ...], list[tuple[object, ...]]]:
+    """The header row (the first non-empty row) and up to five data rows.
 
     Reading stops as soon as the sample is full; empty rows are skipped.
     """
     header_row: int | None = None
     header: tuple[object, ...] = ()
     sample: list[tuple[object, ...]] = []
-    numbers: list[int] = []
     for number, row in enumerate(rows, start=1):
         deadline.check()
         values = tuple(row)
@@ -444,10 +433,9 @@ def _head(
             header_row, header = number, values
             continue
         sample.append(values)
-        numbers.append(number)
         if len(sample) == SAMPLE_ROWS:
             break
-    return header_row, header, sample, numbers
+    return header_row, header, sample
 
 
 def _sheet_profile(
