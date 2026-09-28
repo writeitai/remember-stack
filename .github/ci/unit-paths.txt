@@ -28,6 +28,8 @@ src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
 src/tests/benchmarks/test_locomo_sharding.py
 src/tests/benchmarks/test_locomo_store_backup.py
+src/tests/benchmarks/test_workspacebench_core.py
+src/tests/benchmarks/test_workspacebench_runner.py
 src/tests/core/test_blockizer_corpus.py
 src/tests/core/test_chunker.py
 src/tests/core/test_context_references.py
