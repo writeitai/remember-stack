@@ -135,7 +135,8 @@ Always a profile, never the rows. `document.md` contains, in order:
 
 Counts come from metadata where the format has it (spreadsheet dimensions, Parquet and
 statistical-file headers); where it does not (Arrow IPC, SPSS portable, SAS transport), the
-profile says the count is not recorded rather than reading every row. A delimited file is
+profile says the count is not recorded rather than reading every row. An Arrow file's sample comes
+from its first record batch only (up to five rows), so no later batch is decoded. A delimited file is
 parsed only up to its header and five sample records; its length is an approximate line
 count taken from the raw bytes (a quoted value may span lines, so it is not a record
 count). No reader loads a whole table into memory; spreadsheet and dataset readers read only

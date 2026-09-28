@@ -149,8 +149,8 @@ def _arrow(*, content: bytes, name: str, deadline: Deadline) -> TableProfile:
     """Arrow IPC (Feather v2) file or stream: schema and the first rows.
 
     Arrow keeps row counts per record batch, not in its footer, so the count
-    is not read; batches are decoded only until five rows are in hand, and
-    only for the listed columns.
+    is not read; only the first record batch is decoded, only for the listed
+    columns, and at most five of its rows are shown.
     """
     try:
         try:
@@ -170,12 +170,9 @@ def _arrow(*, content: bytes, name: str, deadline: Deadline) -> TableProfile:
                 pa.ipc.open_stream(pa.BufferReader(content), options=options)
             )
             rows_fact = "Rows: not recorded in the stream"
-        rows: list[dict[str, object]] = []
-        for batch in batches:
-            deadline.check()
-            rows.extend(batch.slice(0, SAMPLE_ROWS - len(rows)).to_pylist())
-            if len(rows) >= SAMPLE_ROWS:
-                break
+        deadline.check()
+        first = next(batches, None)
+        rows = [] if first is None else first.slice(0, SAMPLE_ROWS).to_pylist()
     except (pa.ArrowException, OSError) as err:
         raise _unreadable(kind="Arrow", err=err) from err
     return _arrow_table(name=name, schema=schema, rows=rows, rows_fact=rows_fact)

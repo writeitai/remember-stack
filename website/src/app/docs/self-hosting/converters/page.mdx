@@ -114,6 +114,7 @@ sample rows; its length is given as an approximate line count (a quoted
 value can span lines), and a single field over 10,000,000 characters fails
 the file. SPSS `.por`, SAS `.xpt` and Arrow files do not
 record a row count where it can be read cheaply, and the profile says so.
+An Arrow file's sample comes from its first record batch only.
 SQLite tables include generated columns, long values are cut before they
 are read, and views are listed by name. `.ods` is converted to `.xlsx` by
 [LibreOffice](#libreoffice) first.

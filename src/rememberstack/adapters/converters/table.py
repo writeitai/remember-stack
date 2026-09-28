@@ -171,8 +171,8 @@ def _scan(
     """The header (first non-empty record), up to five data records, and
     whether the file ended within them.
 
-    Parsing stops once the sample is full; the rest of the file is never
-    parsed. A decoding error propagates so the caller can re-read as Latin-1.
+    Parsing stops at the fifth data record; nothing after it is parsed, so a
+    full sample reports the file as not ended. A decoding error propagates so the caller can re-read as Latin-1.
     """
     text = io.TextIOWrapper(io.BytesIO(content), encoding=encoding, newline="")
     header: list[str] | None = None
@@ -184,10 +184,10 @@ def _scan(
                 continue
             if header is None:
                 header = record
-            elif len(sample) < SAMPLE_ROWS:
-                sample.append(record)
             else:
-                return header, sample, False
+                sample.append(record)
+                if len(sample) == SAMPLE_ROWS:
+                    return header, sample, False
     except csv.Error as err:
         if "field larger than field limit" in str(err):
             raise ConversionError(

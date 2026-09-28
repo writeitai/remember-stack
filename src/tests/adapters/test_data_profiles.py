@@ -478,8 +478,8 @@ def test_arrow_profile_reads_file_stream_and_feather(form: str) -> None:
     )
     _assert_search_only_profile(result)
     assert "- Rows: not recorded in the" in result.document_md
-    assert "| 5 | 2.0 | row4 | 2024-01-05 |" in result.document_md
-    assert "row5" not in result.document_md
+    assert "| 3 | 1.0 | row2 | 2024-01-03 |" in result.document_md
+    assert "row3" not in result.document_md
 
 
 @pytest.mark.parametrize(
@@ -740,8 +740,8 @@ def test_csv_field_over_the_size_limit_fails_clearly(
     assert "x" * 79 + "…" in result.document_md
 
 
-def test_arrow_stops_reading_once_the_sample_is_full() -> None:
-    """Batches after the fifth row are never decoded (a truncated tail is fine)."""
+def test_arrow_decodes_only_the_first_record_batch() -> None:
+    """Batches after the first are never decoded (a truncated tail is fine)."""
     table = _frame_table()
     buffer = io.BytesIO()
     with pa.ipc.new_stream(buffer, table.schema) as writer:
@@ -750,7 +750,8 @@ def test_arrow_stops_reading_once_the_sample_is_full() -> None:
         writer.write_batch(table.to_batches()[0])
     content = buffer.getvalue()
     result = DatasetConverter().convert(content=content[:-200], mime=_ARROW)
-    assert "| 5 | 2.0 | row4 | 2024-01-05 |" in result.document_md
+    assert "| 3 | 1.0 | row2 | 2024-01-03 |" in result.document_md
+    assert "row3" not in result.document_md
 
 
 def test_sqlite_generated_columns_views_and_bounded_values(tmp_path: Path) -> None:
