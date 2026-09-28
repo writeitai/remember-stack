@@ -134,11 +134,19 @@ Always a profile, never the rows. `document.md` contains, in order:
    `profile_structure` / `source_expression`.
 
 Counts come from metadata where the format has it (spreadsheet dimensions, Parquet and
-statistical-file headers) and, for delimited files, from one streaming pass with a CSV reader
-that counts records (quoted fields may contain newlines) without keeping them. No reader loads
-a whole table into memory; spreadsheet and dataset readers read only metadata and the sample
-rows. A spreadsheet over 50 MB is profiled from its
-sheet list and dimensions only: no sample, no column list, and the profile says so. The header row is the first non-empty row.
+statistical-file headers); where it does not (Arrow IPC, SPSS portable, SAS transport), the
+profile says the count is not recorded rather than reading every row. An Arrow file's sample comes
+from its first record batch only (up to five rows), so no later batch is decoded. A delimited file is
+parsed only up to its header and five sample records; its length is an approximate line
+count taken from the raw bytes (a quoted value may span lines, so it is not a record
+count). No reader loads a whole table into memory; spreadsheet and dataset readers read only
+metadata and the sample rows. A spreadsheet over 50 MB, or an `.xlsx` whose shared-strings
+table expands past 100 MB, is profiled from its sheet list and dimensions only: no sample,
+no column list, and the profile says so. An `.xls` over 10 MB lists its sheet names and
+visibility only, because its reader (xlrd) has no bounded row read and loads a whole sheet
+to read any row of it. These sizes are starting values. The header row is the first
+non-empty row; a cell holding a formula with no cached value counts as non-empty and is
+shown as its formula text.
 
 There is no model call and no claim extraction. The profile is found by search (its sheet,
 column and file names are all in the text) and by `search_documents`.

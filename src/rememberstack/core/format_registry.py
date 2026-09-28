@@ -166,7 +166,7 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="spreadsheet",
         mime=_XLSX,
         outcome="profile",
-        converter=None,
+        converter="spreadsheet",
         extensions=frozenset({"xlsx", "xlsm", "xltx", "xls", "ods"}),
         reading_limit_bytes=200_000_000,
     ),
@@ -174,14 +174,14 @@ FAMILIES: Final[tuple[FormatFamily, ...]] = (
         name="delimited",
         mime="text/csv",
         outcome="profile",
-        converter=None,
+        converter="table",
         extensions=frozenset({"csv", "tsv", "psv", "tab"}),
     ),
     FormatFamily(
         name="dataset",
         mime="application/vnd.apache.parquet",
         outcome="profile",
-        converter=None,
+        converter="dataset",
         extensions=frozenset(
             {
                 *("parquet", "feather", "arrow", "sav", "por", "xpt", "sas7bdat"),
@@ -416,8 +416,7 @@ def stock_route_names(*, libreoffice_available: bool) -> dict[str, str]:
 
     Every stored MIME of a family whose converter this build ships routes to
     it. The formats LibreOffice converts first route only when it is
-    installed; without it they park (D117). The Office Open XML workbook
-    keeps its markitdown route until the D138 spreadsheet converter exists.
+    installed; without it they park (D117).
     """
     routes = {
         mime: family.converter
@@ -428,7 +427,6 @@ def stock_route_names(*, libreoffice_available: bool) -> dict[str, str]:
     routes.update(
         {family.mime: family.converter for family in FAMILIES if family.converter}
     )
-    routes.update({_XLSX: "markitdown"})
     return routes
 
 

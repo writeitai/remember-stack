@@ -208,7 +208,9 @@ def test_legacy_office_formats_route_only_with_libreoffice() -> None:
         assert mime not in without, mime
         assert with_it[mime] == "office", mime
     assert without[_DOCX] == with_it[_DOCX] == "office"
-    assert "application/vnd.oasis.opendocument.spreadsheet" not in with_it
+    ods = "application/vnd.oasis.opendocument.spreadsheet"
+    assert ods not in without
+    assert with_it[ods] == "spreadsheet"
 
 
 def test_legacy_format_without_soffice_is_a_typed_failure(

@@ -21,7 +21,9 @@ On a self-hosted deployment:
 | Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
 | Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
 | HTML, EPUB | Read; claims extracted | Same |
-| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`), Excel (`.xlsx`) | Read; claims extracted | Same |
+| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`) | Read; claims extracted | Same |
+| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), CSV/TSV, data files (Parquet, Arrow, SPSS, SAS, Stata, SQLite) | [Profile](/docs/self-hosting/converters#data-file-profiles): sheets, columns, counts and the first 5 rows; searchable, no claims | Same |
+| `.ods` | Profiled through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
 | `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
 | PDF with a text layer | Read page by page; claims extracted | Same |
 | Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
@@ -33,11 +35,11 @@ On a self-hosted deployment:
 | Audio and video | File card | Same |
 | Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
 | Other binary files | File card | Same |
-| `.xls`, `.ods`, CSV/TSV, data files (Parquet, SPSS, SAS, Stata, SQLite) | Stored, not read | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
 A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
-gets a file card instead of a reading. A text file over 1 MB is described
+gets a file card instead of a reading; a spreadsheet over 50 MB is profiled
+from its sheet list and dimensions only. A text file over 1 MB is described
 by its size, line count, first 50 and last 20 lines instead of read in
 full.
 

@@ -36,15 +36,16 @@ STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names(
 
 Derived from the format registry: every stored MIME of a family whose
 converter ships in this build routes to it — ``text`` for Markdown, plain
-text, code, configuration and logs; ``markitdown`` for HTML, EPUB and the
-Office Open XML workbook; ``office`` for Word documents and presentations
-(doc, odt, rtf, ppt and odp only where LibreOffice's ``soffice`` is on the
-PATH); ``pdf``, ``email`` and ``notebook``; ``card`` for images, media,
-archives and unrecognized bytes. Every route runs locally with no API key.
-A deployment's conversion-route setting adds or overrides entries on top of
-this table; MIME types no route accepts (legacy and OpenDocument
-spreadsheets, delimited and dataset files, and the LibreOffice formats
-without LibreOffice) are stored and parked as ``no_route`` until one does.
+text, code, configuration and logs; ``markitdown`` for HTML and EPUB;
+``office`` for Word documents and presentations; ``spreadsheet``, ``table``
+and ``dataset`` profiles for workbooks, delimited files and datasets; ``pdf``,
+``email`` and ``notebook``; ``card`` for images, media, archives and
+unrecognized bytes. The formats LibreOffice converts first (doc, odt, rtf,
+ppt, odp, ods) route only where its ``soffice`` is on the PATH. Every route
+runs locally with no API key. A deployment's conversion-route setting adds
+or overrides entries on top of this table; MIME types no route accepts (the
+LibreOffice formats without LibreOffice) are stored and parked as
+``no_route`` until one does.
 """
 
 

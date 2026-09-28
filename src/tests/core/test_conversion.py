@@ -66,11 +66,11 @@ _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
     """The registry-derived stock table routes every family with a converter.
 
-    Text families go to ``text``, HTML/EPUB and the workbook to
-    ``markitdown``, Word and PowerPoint to ``office``, PDF, email and
-    notebooks to their own routes, images, media, archives and unrecognized
-    bytes to ``card``; families whose D138 converter is not built yet
-    (legacy spreadsheets, delimited and dataset files) stay unrouted and park.
+    Text families go to ``text``, HTML/EPUB to ``markitdown``, Word and
+    PowerPoint to ``office``, PDF, email and notebooks to their own routes,
+    workbooks, delimited files and datasets to their profile routes, images,
+    media, archives and unrecognized bytes to ``card``; the LibreOffice
+    formats park where ``soffice`` is not installed.
     """
     routes = STOCK_CONVERSION_ROUTE_NAMES
     for mime in (
@@ -82,7 +82,7 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "text/x-other-text",
     ):
         assert routes[mime] == "text", mime
-    for mime in ("text/html", "application/epub+zip", _XLSX):
+    for mime in ("text/html", "application/epub+zip"):
         assert routes[mime] == "markitdown", mime
     for mime, name in (
         (_DOCX, "office"),
@@ -90,6 +90,10 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         ("application/pdf", "pdf"),
         ("message/rfc822", "email"),
         ("application/x-ipynb+json", "notebook"),
+        (_XLSX, "spreadsheet"),
+        ("application/vnd.ms-excel", "spreadsheet"),
+        ("text/csv", "table"),
+        ("application/vnd.apache.parquet", "dataset"),
     ):
         assert routes[mime] == name, mime
     for mime in (
@@ -102,13 +106,7 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
         "application/octet-stream",
     ):
         assert routes[mime] == "card", mime
-    for mime in (
-        "application/vnd.ms-excel",
-        "application/vnd.oasis.opendocument.spreadsheet",
-        "text/csv",
-        "application/vnd.apache.parquet",
-    ):
-        assert mime not in routes, mime
+    assert "application/x-unknown-never-routed" not in routes
     router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
     plain = router.converter_for(mime="text/plain")
     assert plain.name == "text"
@@ -117,7 +115,7 @@ def test_stock_routes_convert_text_html_office_and_cards_locally() -> None:
     )
     assert router.converter_for(mime="text/markdown") is plain
     with pytest.raises(UnroutableMimeError):
-        router.converter_for(mime="text/csv")
+        router.converter_for(mime="application/x-unknown-never-routed")
 
 
 def test_stock_office_route_converts_a_docx() -> None:
@@ -152,8 +150,8 @@ def test_stock_office_route_converts_a_pptx() -> None:
     assert "Launch in October." in result.document_md
 
 
-def test_stock_markitdown_route_converts_an_xlsx() -> None:
-    """The bundled markitdown carries its Excel extra."""
+def test_stock_spreadsheet_route_profiles_an_xlsx() -> None:
+    """A default deployment profiles workbooks (D138 §5.1): shape, not rows."""
     from openpyxl import Workbook
 
     workbook = Workbook()
@@ -164,9 +162,9 @@ def test_stock_markitdown_route_converts_an_xlsx() -> None:
     buffer = io.BytesIO()
     workbook.save(buffer)
     result = _stock_convert(content=buffer.getvalue(), mime=_XLSX)
-    assert "Region" in result.document_md
-    assert "North" in result.document_md
-    assert "1200" in result.document_md
+    assert "  - Region: text (column A)" in result.document_md
+    assert "| North | 1200 |" in result.document_md
+    assert result.manifest.components[0].name == "spreadsheet"
 
 
 def _stock_convert(*, content: bytes, mime: str) -> ConversionResult:
