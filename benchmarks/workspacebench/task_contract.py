@@ -213,8 +213,14 @@ def collect_output_manifest(
     contract: TaskContract,
     target_output_dir: str = TARGET_OUTPUT_DIR,
     returned_paths: Sequence[str] = (),
+    baseline: Mapping[str, str] | None = None,
 ) -> OutputManifest:
-    """Collect using upstream semantics and copy into the arm case output dir."""
+    """Collect using upstream semantics and copy into the arm case output dir.
+
+    ``baseline`` maps workspace-relative paths to their pre-turn SHA-256. A
+    collected file that is unchanged from the baseline was not produced by
+    the agent and is not counted as an output.
+    """
     expected = contract.expected_output_basenames(metadata)
     preserve_root = workspace / target_output_dir
     preserve_root.mkdir(parents=True, exist_ok=True)
@@ -226,6 +232,12 @@ def collect_output_manifest(
         last_text=last_text,
     )
     safe_paths, rejected = filter_collected_paths(workspace=workspace, paths=paths)
+    if baseline:
+        safe_paths = tuple(
+            path
+            for path in safe_paths
+            if not _unchanged(workspace=workspace, path=path, baseline=baseline)
+        )
     case_output_dir.mkdir(parents=True, exist_ok=True)
     copied = contract.copy_outputs(
         output_paths=safe_paths, out_dir=case_output_dir, preserve_root=preserve_root
@@ -263,6 +275,12 @@ def collect_output_manifest(
         missing=missing,
         rejected=tuple(dict.fromkeys(rejected)),
     )
+
+
+def _unchanged(*, workspace: Path, path: str, baseline: Mapping[str, str]) -> bool:
+    relative = Path(path).resolve().relative_to(workspace.resolve()).as_posix()
+    before = baseline.get(relative)
+    return before is not None and before == sha256_file(Path(path))
 
 
 def filter_collected_paths(
@@ -402,8 +420,10 @@ def _load_agent_runner(path: Path) -> types.ModuleType:
             f"failed to load pinned {AGENT_RUNNER_RELPATH}: {error}"
         ) from error
     finally:
-        if sys.path and sys.path[0] == str(path.parent):
-            sys.path.pop(0)
+        try:
+            sys.path.remove(str(path.parent))
+        except ValueError:
+            pass
         _restore_sys_modules(saved)
     return module
 

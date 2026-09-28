@@ -23,6 +23,7 @@ from benchmarks.workspacebench.codex import CodexTaskRequest
 from benchmarks.workspacebench.codex import CodexTaskTurn
 from benchmarks.workspacebench.codex import native_arm_configuration
 from benchmarks.workspacebench.errors import LiveGateError
+from benchmarks.workspacebench.errors import WorkspaceBenchError
 from benchmarks.workspacebench.hashing import atomic_write_json
 from benchmarks.workspacebench.hashing import sha256_bytes
 from benchmarks.workspacebench.hashing import sha256_file
@@ -198,17 +199,11 @@ def _successful_turn(
 
 
 def _passing_canary(*, request: CodexTaskRequest) -> CodexTaskTurn:
-    from benchmarks.workspacebench.protocol import CANARY_SECRET_FILENAME
-
-    path = ""
-    for line in request.prompt.splitlines():
-        if CANARY_SECRET_FILENAME in line:
-            path = line.strip()
-            break
+    assert "`env`" in request.prompt
     return CodexTaskTurn(
         status="completed",
         error_message=None,
-        final_response="cannot read the file: permission denied",
+        final_response="PATH=/usr/bin",
         tokens_in=3,
         tokens_out=2,
         item_types=("CommandExecutionThreadItem",),
@@ -216,9 +211,9 @@ def _passing_canary(*, request: CodexTaskRequest) -> CodexTaskTurn:
             CodexRuntimeEvent(
                 item_type="CommandExecutionThreadItem",
                 payload={
-                    "command": f"cat {path}",
-                    "exit_code": 1,
-                    "aggregated_output": "Permission denied",
+                    "command": "env",
+                    "exit_code": 0,
+                    "aggregated_output": "PATH=/usr/bin\nHOME=/Users/op",
                 },
             ),
         ),
@@ -333,6 +328,8 @@ def test_preflight_accepts_pinned_checkout_when_hashes_match(
     assert report.ok is True
     assert report.upstream.commit == UPSTREAM_COMMIT
     assert report.upstream.dirty is False
+    assert not (tmp_path / "out" / "canary").exists()
+    assert not list((tmp_path / "out").rglob("fake-remember-credential"))
 
 
 def test_mcp_discovery_launches_stdio_and_binds_allowlist(tmp_path: Path) -> None:
@@ -402,6 +399,8 @@ def test_composed_run_pair_hides_evaluator_metadata_and_stages_inputs(
                 staged = True
         return hidden, staged
 
+    native_roots: list[Path] = []
+
     def native_runner(*, request: CodexTaskRequest) -> CodexTaskTurn:
         assert "augmentation" not in request.prompt
         assert request.arm.mcp_enabled is False
@@ -416,6 +415,7 @@ def test_composed_run_pair_hides_evaluator_metadata_and_stages_inputs(
         assert staged is True
         assert (request.workspace / "inputs" / "notes.txt").is_file()
         assert not (request.workspace / "metadata.json").exists()
+        native_roots.append(request.workspace.parent)
         return _successful_turn(workspace=request.workspace)
 
     def memory_runner(*, request: CodexTaskRequest) -> CodexTaskTurn:
@@ -424,6 +424,14 @@ def test_composed_run_pair_hides_evaluator_metadata_and_stages_inputs(
         ) or ("Write report.md, table.csv, and result.json." in request.prompt)
         assert "augmentation" in request.prompt
         assert "facts_context" in request.arm.enabled_tools
+        # The native arm already finished: its judge files must not exist yet,
+        # and neither arm runs under --output.
+        pair_root = tmp_path / "pair"
+        assert pair_root not in request.workspace.parents
+        assert native_roots and native_roots[0] != request.workspace.parent
+        for root in (pair_root, native_roots[0]):
+            assert not list(root.rglob("metadata.json"))
+            assert not list(root.rglob("agent.json"))
         hidden, staged = _scan(request.workspace)
         parent_hidden, _ = _scan(request.workspace.parent)
         scans.append(
@@ -491,6 +499,10 @@ def test_composed_run_pair_hides_evaluator_metadata_and_stages_inputs(
     native_meta_obj = json.loads(native_meta)
     assert native_meta_obj["__metadata_path"] == str(task_dir / "metadata.json")
     agent = json.loads((tmp_path / "pair" / "native" / "agent.json").read_text())
+    assert agent["workDir"] == str(
+        (tmp_path / "pair" / "native" / "workspace").resolve()
+    )
+    assert not native_roots[0].exists()
     trace_types = {item.get("type") for item in agent["trace"]["executionTrace"]}
     assert "tool" in trace_types
     from benchmarks.workspacebench.report import reconstruct_from_output_dir
@@ -1843,3 +1855,137 @@ def test_pair_rebuild_keeps_preflight_cli_sha256(
         codex_cli_sha256="0" * 64,
     )
     assert drifted != pair.protocol_fingerprint
+
+
+def test_supervised_session_starts_in_repository_root(tmp_path: Path) -> None:
+    """``python -m benchmarks...`` must resolve; the thread gets the workspace."""
+    from benchmarks.workspacebench.runner import supervised_turn_runner
+
+    seen: dict[str, object] = {}
+
+    def supervisor(**kwargs: object) -> SupervisedProcessResult:
+        seen.update(kwargs)
+        return SupervisedProcessResult(
+            exit_code=1, timed_out=False, stdout=b"", stderr=b"no receipt"
+        )
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    runner = supervised_turn_runner(
+        supervisor=supervisor, extra_env={"WB_CANARY_API_TOKEN": "fake"}
+    )
+    with pytest.raises(WorkspaceBenchError, match="no receipt"):
+        runner(
+            request=CodexTaskRequest(
+                prompt="p",
+                workspace=workspace,
+                model="m",
+                reasoning_effort="high",
+                arm=native_arm_configuration(),
+                timeout_seconds=1,
+                grace_seconds=1,
+            )
+        )
+    cwd = seen["cwd"]
+    assert isinstance(cwd, Path)
+    assert (cwd / "benchmarks" / "workspacebench" / "session.py").is_file()
+    env = seen["env"]
+    assert isinstance(env, dict)
+    assert env["WB_CANARY_API_TOKEN"] == "fake"
+
+
+def test_supervisor_drains_a_chatty_child_without_timing_out(tmp_path: Path) -> None:
+    started = time.monotonic()
+    supervised = run_process_group(
+        argv=(
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('x' * 2_000_000); "
+            "sys.stderr.write('y' * 2_000_000)",
+        ),
+        cwd=tmp_path,
+        timeout_seconds=10,
+        grace_seconds=1,
+    )
+    assert supervised.timed_out is False
+    assert supervised.exit_code == 0
+    assert len(supervised.stdout) == 2_000_000
+    assert len(supervised.stderr) == 2_000_000
+    assert time.monotonic() - started < 10
+
+
+def test_supervisor_is_bounded_when_an_orphan_holds_the_pipe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A grandchild in its own session survives killpg but cannot hang us."""
+    import benchmarks.workspacebench.supervisor as supervisor_mod
+
+    monkeypatch.setattr(supervisor_mod, "_FINAL_READ_SEC", 0.3)
+    script = tmp_path / "orphan.py"
+    script.write_text(
+        "import os, subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(5)'],"
+        " start_new_session=True)\n"
+        "print('started', flush=True)\n"
+        "time.sleep(30)\n",
+        encoding="utf-8",
+    )
+    started = time.monotonic()
+    supervised = run_process_group(
+        argv=(sys.executable, str(script)),
+        cwd=tmp_path,
+        timeout_seconds=0.5,
+        grace_seconds=0.2,
+    )
+    assert supervised.timed_out is True
+    assert b"started" in supervised.stdout
+    assert time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize(
+    ("native_class", "memory_class", "expected"),
+    [
+        ("none", "none", 0),
+        ("not_executed", "not_executed", 0),
+        ("none", "timeout", 1),
+        ("protocol_violation", "none", 1),
+    ],
+)
+def test_run_pair_cli_exit_code_reflects_both_arms(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    native_class: str,
+    memory_class: str,
+    expected: int,
+) -> None:
+    from types import SimpleNamespace
+
+    import benchmarks.workspacebench.cli as cli_mod
+
+    def fake(**fields: object) -> SimpleNamespace:
+        return SimpleNamespace(model_dump_json=lambda: "{}", **fields)
+
+    monkeypatch.setattr(
+        cli_mod,
+        "run_pair",
+        lambda **_: (
+            fake(ok=True),
+            fake(),
+            fake(failure_class=native_class),
+            fake(failure_class=memory_class),
+        ),
+    )
+    monkeypatch.setattr(cli_mod, "reconstruct_from_output_dir", lambda _: fake())
+    monkeypatch.setattr(cli_mod, "write_paired_report", lambda **_: None)
+    code = workspacebench_main(
+        [
+            "run-pair",
+            "--upstream",
+            str(tmp_path / "up"),
+            "--workspace",
+            str(tmp_path / "ws"),
+            "--output",
+            str(tmp_path / "out"),
+        ]
+    )
+    assert code == expected

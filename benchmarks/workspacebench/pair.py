@@ -13,7 +13,6 @@ from uuid import uuid4
 from benchmarks.workspacebench.canary import LiveCanaryRunner
 from benchmarks.workspacebench.canary import require_live_canary
 from benchmarks.workspacebench.canary import run_live_canary
-from benchmarks.workspacebench.canary import write_fake_secret
 from benchmarks.workspacebench.codex import AccountReader
 from benchmarks.workspacebench.codex import CodexTurnRunner
 from benchmarks.workspacebench.codex import memory_arm_configuration
@@ -37,12 +36,16 @@ from benchmarks.workspacebench.models import TaskResult
 from benchmarks.workspacebench.office import stage_office_skills
 from benchmarks.workspacebench.preflight import build_protocol_coordinates
 from benchmarks.workspacebench.preflight import run_preflight
+from benchmarks.workspacebench.protocol import CANARY_SECRET_ENV
 from benchmarks.workspacebench.protocol import DEFAULT_ARM_ORDER
 from benchmarks.workspacebench.protocol import DEFAULT_GRACE_SEC
 from benchmarks.workspacebench.protocol import DEFAULT_TASK_ID
 from benchmarks.workspacebench.protocol import DEFAULT_TIMEOUT_SEC
+from benchmarks.workspacebench.protocol import FAKE_CANARY_SECRET
 from benchmarks.workspacebench.protocol import PROTOCOL_EXPERIMENTAL_LABEL
+from benchmarks.workspacebench.runner import JudgeHandoff
 from benchmarks.workspacebench.runner import run_agent
+from benchmarks.workspacebench.runner import write_judge_handoff
 from benchmarks.workspacebench.task_contract import load_upstream_task_contract
 from benchmarks.workspacebench.task_contract import metadata_sha256
 from benchmarks.workspacebench.task_contract import task_prompt_sha256
@@ -152,8 +155,72 @@ def run_pair(
     if not prompt:
         raise WorkspaceBenchError("task prompt is empty; pass --prompt or --task-dir")
     contract = task_contract or load_upstream_task_contract(upstream=upstream)
-    native_ws = output / "native" / "workspace"
-    memory_ws = output / "memory" / "workspace"
+    for name in ("native", "memory"):
+        if (output / name).exists():
+            raise WorkspaceBenchError(
+                f"{output / name} already exists; use a new --output"
+            )
+    # Each arm runs in its own temp root, away from --output and from the
+    # other arm; results move to output/<arm> only after both arms finish.
+    roots: dict[ArmName, Path] = {
+        "native": Path(tempfile.mkdtemp(prefix="wb-arm-")),
+        "memory": Path(tempfile.mkdtemp(prefix="wb-arm-")),
+    }
+    try:
+        return _run_arms(
+            roots=roots,
+            output=output,
+            preflight=preflight,
+            workspace=workspace,
+            upstream=upstream,
+            task_id=task_id,
+            task_dir=task_dir,
+            metadata=metadata,
+            prompt=prompt,
+            prompt_hash=prompt_hash,
+            contract=contract,
+            execute=execute,
+            arm_order=arm_order,
+            timeout_seconds=timeout_seconds,
+            grace_seconds=grace_seconds,
+            native_turn_runner=native_turn_runner,
+            memory_turn_runner=memory_turn_runner,
+            live_canary_runner=live_canary_runner,
+            remember_bin=remember_bin,
+            skip_office=skip_office,
+        )
+    finally:
+        # On success these already moved; on failure keep partial artifacts.
+        for name, root in roots.items():
+            if root.exists():
+                shutil.move(root, output / name)
+
+
+def _run_arms(
+    *,
+    roots: Mapping[ArmName, Path],
+    output: Path,
+    preflight: PreflightReport,
+    workspace: Path,
+    upstream: Path,
+    task_id: str,
+    task_dir: Path | None,
+    metadata: dict[str, Any],
+    prompt: str,
+    prompt_hash: str | None,
+    contract: TaskContract,
+    execute: bool,
+    arm_order: tuple[ArmName, ArmName],
+    timeout_seconds: float,
+    grace_seconds: float,
+    native_turn_runner: CodexTurnRunner | None,
+    memory_turn_runner: CodexTurnRunner | None,
+    live_canary_runner: LiveCanaryRunner | CodexTurnRunner | None,
+    remember_bin: Sequence[str] | str | None,
+    skip_office: bool,
+) -> tuple[PreflightReport, PairedRunManifest, TaskResult, TaskResult]:
+    native_ws = roots["native"] / "workspace"
+    memory_ws = roots["memory"] / "workspace"
     clone_pristine_workspace(source=workspace, destination=native_ws)
     clone_pristine_workspace(source=workspace, destination=memory_ws)
     if task_dir is not None:
@@ -226,11 +293,12 @@ def run_pair(
         mcp=preflight.mcp,
     )
     results: dict[ArmName, TaskResult] = {}
+    handoffs: dict[ArmName, list[JudgeHandoff]] = {"native": [], "memory": []}
     for name in arm_order:
         if name == "native":
             results["native"] = run_agent(
                 workspace=native_ws,
-                output=output / "native",
+                output=roots["native"],
                 arm=native_arm,
                 task_id=task_id,
                 task_prompt=prompt,
@@ -245,12 +313,13 @@ def run_pair(
                 ),
                 account=preflight.account,
                 contract=contract,
-                case_dir=output / "native",
+                case_dir=roots["native"],
+                deferred_handoffs=handoffs["native"],
             )
         else:
             results["memory"] = run_agent(
                 workspace=memory_ws,
-                output=output / "memory",
+                output=roots["memory"],
                 arm=memory_arm,
                 task_id=task_id,
                 task_prompt=prompt,
@@ -265,7 +334,17 @@ def run_pair(
                 ),
                 account=preflight.account,
                 contract=contract,
-                case_dir=output / "memory",
+                case_dir=roots["memory"],
+                deferred_handoffs=handoffs["memory"],
+            )
+    for name in ("native", "memory"):
+        shutil.move(roots[name], output / name)
+    for name in ("native", "memory"):
+        for handoff in handoffs[name]:
+            write_judge_handoff(
+                handoff=handoff,
+                case_dir=output / name,
+                workspace=output / name / "workspace",
             )
     pair = PairedRunManifest(
         pair_id=uuid4().hex,
@@ -327,16 +406,16 @@ def _run_execute_canary(
     try:
         workspace = canary_root / "workspace"
         workspace.mkdir()
-        fake_secret_path = write_fake_secret(directory=canary_root / "secret")
         canary_runner = runner
         if canary_runner is None:
             from benchmarks.workspacebench.runner import supervised_turn_runner
 
-            canary_runner = supervised_turn_runner()
+            canary_runner = supervised_turn_runner(
+                extra_env={CANARY_SECRET_ENV: FAKE_CANARY_SECRET}
+            )
         return run_live_canary(
             workspace=workspace,
             artifact_root=workspace,
-            fake_secret_path=fake_secret_path,
             runner=canary_runner,
             arm=memory_arm,
         )

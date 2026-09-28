@@ -134,7 +134,11 @@ def main(argv: list[str] | None = None) -> int:
             print(native.model_dump_json())
             print(memory.model_dump_json())
             print(report.model_dump_json())
-            return 0 if preflight.ok else 1
+            arms_ok = all(
+                result.failure_class in {"none", "not_executed"}
+                for result in (native, memory)
+            )
+            return 0 if preflight.ok and arms_ok else 1
     except (LiveGateError, WorkspaceBenchError, OSError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

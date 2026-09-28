@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from benchmarks.workspacebench.env import sanitized_subprocess_env
 from benchmarks.workspacebench.errors import WorkspaceBenchError
 from benchmarks.workspacebench.hashing import sha256_bytes
+from benchmarks.workspacebench.models import bare_http_origin
 from benchmarks.workspacebench.models import McpAccessBinding
 from benchmarks.workspacebench.models import McpDiscovery
 from benchmarks.workspacebench.models import ToolDescriptorRecord
@@ -91,7 +92,22 @@ def access_binding_from_args(
     access_mode: str = "direct",
     canonical_origin: str | None = None,
 ) -> McpAccessBinding:
-    """Build a typed access binding from CLI coordinates."""
+    """Build a typed access binding from CLI coordinates.
+
+    Every origin must be a bare http(s) URL (no userinfo, query, or fragment)
+    before it is compared or persisted.
+    """
+    for label, value in (
+        ("--api-url", api_origin),
+        ("receipt api_origin", receipt_origin),
+        ("--canonical-origin", canonical_origin),
+    ):
+        if value is None:
+            continue
+        try:
+            bare_http_origin(value)
+        except ValueError as error:
+            raise McpDiscoveryError(f"{label}: {error}") from None
     if access_mode == "ssh_local_forward":
         target = canonical_origin or receipt_origin
         binding = McpAccessBinding(

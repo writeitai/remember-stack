@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 import json
 from pathlib import Path
+import tempfile
 
 from benchmarks.workspacebench.canary import evaluate_canary
 from benchmarks.workspacebench.canary import write_fake_secret
@@ -26,6 +27,7 @@ from benchmarks.workspacebench.mcp import discover_mcp
 from benchmarks.workspacebench.mcp import remember_launcher
 from benchmarks.workspacebench.mcp import StdioRunner
 from benchmarks.workspacebench.models import ArmName
+from benchmarks.workspacebench.models import bare_http_origin
 from benchmarks.workspacebench.models import CloudDeploymentReceipt
 from benchmarks.workspacebench.models import CodexRuntimePin
 from benchmarks.workspacebench.models import McpAccessBinding
@@ -314,8 +316,6 @@ def run_preflight(
         ),
         codex_cli_sha256=None if runtime_pin is None else runtime_pin.cli_sha256,
     )
-    canary_dir = output / "canary"
-    fake_path = write_fake_secret(directory=canary_dir)
     arm_config = (
         memory_arm_configuration(
             remember_bin=remember_bin or remember_launcher(),
@@ -325,18 +325,24 @@ def run_preflight(
         if arm == "memory"
         else native_arm_configuration()
     )
-    canary = evaluate_canary(
-        artifact_root=output,
-        arm=arm_config,
-        events=(),
-        fake_secret_path=fake_path,
-        kind="structural",
-        live_turn=False,
-    )
+    # The fake secret never lands under --output; it only has to exist so the
+    # scan can prove neither it nor its path entered artifacts or config.
+    with tempfile.TemporaryDirectory(prefix="wb-structural-canary-") as scratch:
+        canary = evaluate_canary(
+            artifact_root=output,
+            arm=arm_config,
+            events=(),
+            fake_secret_path=write_fake_secret(directory=Path(scratch)),
+            kind="structural",
+            live_turn=False,
+        )
     if not canary.passed:
         failures.append(canary.detail)
-    if api_origin is not None and "token=" in api_origin.lower():
-        failures.append("api origin must not embed credentials")
+    if api_origin is not None:
+        try:
+            bare_http_origin(api_origin)
+        except ValueError as error:
+            failures.append(f"--api-url: {error}")
     report = PreflightReport(
         task_id=task_id,
         upstream=upstream_inspection

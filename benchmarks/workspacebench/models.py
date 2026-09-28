@@ -113,6 +113,26 @@ class ReadinessPin(FrozenModel):
     p3: bool
 
 
+def bare_http_origin(value: str) -> str:
+    """Return ``value`` without a trailing slash if it is a bare http(s) URL.
+
+    Userinfo, a query, a fragment, or path parameters are refused: they could
+    carry a credential or make two origins compare differently from what
+    ``remember`` actually dials.
+    """
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{value!r} must be an http(s) origin")
+    if "@" in parsed.netloc:
+        raise ValueError("origin must not contain userinfo (credentials)")
+    if parsed.query or parsed.fragment or parsed.params or value.endswith(("?", "#")):
+        raise ValueError("origin must not contain a query or fragment")
+    return value.rstrip("/")
+
+
+BareOrigin: TypeAlias = Annotated[str, AfterValidator(bare_http_origin)]
+
+
 class McpAccessBinding(FrozenModel):
     """Typed MCP access: direct HTTPS or an SSH local forward.
 
@@ -126,8 +146,8 @@ class McpAccessBinding(FrozenModel):
         "WorkspaceBenchMcpAccessBinding/v1"
     )
     mode: Literal["direct", "ssh_local_forward"]
-    local_access_origin: NonEmpty
-    canonical_target_origin: NonEmpty
+    local_access_origin: BareOrigin
+    canonical_target_origin: BareOrigin
 
 
 class CloudDeploymentReceipt(FrozenModel):
@@ -142,21 +162,11 @@ class CloudDeploymentReceipt(FrozenModel):
     component_generations: dict[str, str]
     version_ids: tuple[NonEmpty, ...] = Field(min_length=1)
     readiness_requirements: ReadinessPin
-    api_origin: NonEmpty
+    api_origin: BareOrigin
     deployment_id: NonEmpty
     sealed: Literal[True]
     attested_by: NonEmpty
     attested_at: UTCDateTime
-
-    @field_validator("api_origin")
-    @classmethod
-    def _origin_has_no_userinfo(cls, value: str) -> str:
-        parsed = urlparse(value)
-        if parsed.username or parsed.password:
-            raise ValueError("api_origin must not contain credentials")
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("api_origin must be an http(s) origin")
-        return value.rstrip("/")
 
     @field_validator("component_generations")
     @classmethod
@@ -355,7 +365,7 @@ class CanaryResult(FrozenModel):
     detail: NonEmpty
     kind: Literal["structural", "live"] = "structural"
     live_turn: bool = False
-    observed_denied_outside_read: bool = False
+    observed_successful_command: bool = False
 
 
 class PairedRunManifest(FrozenModel):

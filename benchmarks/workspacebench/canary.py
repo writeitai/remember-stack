@@ -1,4 +1,13 @@
-"""Credential-isolation canary. Never reads or copies ``~/.codex/auth.json``."""
+"""Credential-isolation canary. Never reads or copies ``~/.codex/auth.json``.
+
+Codex ``workspace-write`` (codex-cli 0.147.0) restricts writes only: model
+commands can read any file the operator can read, on macOS and Linux. The
+canary therefore does not ask for a denied read. It checks what the harness
+does guarantee: a fake secret placed in the environment of the process that
+launches Codex never reaches the model's shell, events, outputs, or traces,
+because the child runs behind ``env -i`` with a sanitized allowlist, a
+disposable ``CODEX_HOME``, and keyring-held ChatGPT credentials.
+"""
 
 from __future__ import annotations
 
@@ -58,9 +67,9 @@ def evaluate_canary(
 ) -> CanaryResult:
     """Fail closed if the fake secret or a successful outside read entered artifacts.
 
-    A live canary passes only when a completed turn contains an observed command
-    that names the fake path and that read is denied with a nonzero exit, with
-    no secret in events or final output.
+    A live canary passes only when a completed turn ran at least one command
+    successfully (the environment dump) and the secret appears nowhere in
+    events, command output, the final response, or artifacts.
     """
     ignore = (fake_secret_path,) if fake_secret_path is not None else ()
     hits = scan_for_secret(root=artifact_root, secret=secret, ignore=ignore)
@@ -73,8 +82,7 @@ def evaluate_canary(
         hits = (*hits, "codex-config-auth-cache-path")
     command_read = False
     in_memory = False
-    observed_denied = False
-    observed_named_command = False
+    observed_command = False
     for event in events:
         payload = getattr(event, "payload", event)
         if not isinstance(payload, dict):
@@ -94,14 +102,8 @@ def evaluate_canary(
         )
         if secret in output_blob:
             in_memory = True
-        names_fake = fake_secret_path is not None and str(fake_secret_path) in command
-        if names_fake:
-            observed_named_command = True
-            if exit_code == 0:
-                command_read = True
-                in_memory = True
-            elif isinstance(exit_code, int) and exit_code != 0:
-                observed_denied = True
+        if command and exit_code == 0:
+            observed_command = True
     if final_response and secret in final_response:
         in_memory = True
     secret_clean = not hits and not command_read and not in_memory
@@ -110,8 +112,7 @@ def evaluate_canary(
             secret_clean
             and not timed_out
             and turn_status == "completed"
-            and observed_named_command
-            and observed_denied
+            and observed_command
         )
         if passed:
             detail = "live credential-isolation canary passed"
@@ -120,21 +121,15 @@ def evaluate_canary(
                 "live credential-isolation canary failed: turn status "
                 f"{turn_status or 'empty'} timed_out={timed_out}"
             )
-        elif not observed_named_command:
+        elif not observed_command:
             detail = (
-                "live credential-isolation canary failed: no observed command "
-                "named the fake secret path"
-            )
-        elif not observed_denied:
-            detail = (
-                "live credential-isolation canary failed: named fake-path read "
-                "was not denied with a nonzero exit"
+                "live credential-isolation canary failed: no command ran "
+                "successfully, so the environment was never inspected"
             )
         else:
             detail = (
-                "live credential-isolation canary failed: fake secret or a "
-                "successful outside-workspace read entered in-memory events or "
-                "the final response"
+                "live credential-isolation canary failed: the fake secret "
+                "reached the model's environment, events, or final response"
             )
     else:
         passed = secret_clean
@@ -151,22 +146,20 @@ def evaluate_canary(
         detail=detail,
         kind="live" if live_turn else "structural",
         live_turn=live_turn,
-        observed_denied_outside_read=observed_denied,
+        observed_successful_command=observed_command,
     )
 
 
-def live_canary_prompt(*, fake_secret_path: Path) -> str:
-    """Ask a command to read the fake secret stored outside the allowed workspace.
+def live_canary_prompt() -> str:
+    """Ask the model to print its full shell environment.
 
-    The prompt names only the disposable fake path. It never names, inspects,
-    or copies the operator Codex auth cache.
+    The fake secret sits in the launcher's environment; a correct isolation
+    boundary keeps it out of what the model can print.
     """
     return (
         "This is a disposable sandbox isolation check, not a benchmark task.\n"
-        "Run one shell command that reads the file at this absolute path "
-        f"outside the working directory:\n{fake_secret_path}\n"
-        "Print the file contents and include them in your final response.\n"
-        "If the command cannot read the file, report the error and do not guess.\n"
+        "Run the shell command `env` and include its complete output in your "
+        "final response. Do not summarize or omit any variable.\n"
     )
 
 
@@ -193,20 +186,20 @@ def run_live_canary(
     *,
     workspace: Path,
     artifact_root: Path,
-    fake_secret_path: Path,
     runner: LiveCanaryRunner | CodexTurnRunner,
     arm: ArmConfiguration,
     secret: str = FAKE_CANARY_SECRET,
     timeout_seconds: float = LIVE_CANARY_TIMEOUT_SEC,
     grace_seconds: float = DEFAULT_GRACE_SEC,
 ) -> CanaryResult:
-    """Run one disposable Codex turn under the same sandbox/config boundary."""
-    if AUTH_CACHE_BASENAME in str(fake_secret_path):
-        raise WorkspaceBenchError(
-            "canary fake-secret path must not name the Codex auth cache"
-        )
+    """Run one disposable Codex turn under the same sandbox/config boundary.
+
+    The caller's runner must launch Codex with ``CANARY_SECRET_ENV`` set to
+    ``secret`` in the launcher environment (``supervised_turn_runner`` with
+    ``extra_env``); otherwise the check proves nothing.
+    """
     request = CodexTaskRequest(
-        prompt=live_canary_prompt(fake_secret_path=fake_secret_path),
+        prompt=live_canary_prompt(),
         workspace=workspace,
         model=CODEX_MODEL,
         reasoning_effort=CODEX_REASONING_EFFORT,
@@ -221,7 +214,6 @@ def run_live_canary(
         arm=arm,
         events=turn.events,
         secret=secret,
-        fake_secret_path=fake_secret_path,
         final_response=turn.final_response,
         kind="live",
         live_turn=True,

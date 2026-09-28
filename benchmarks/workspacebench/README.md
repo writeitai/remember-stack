@@ -42,10 +42,14 @@ These fail closed on `run-pair --execute` without starting either task arm:
 3. Live credential-isolation canary turn under the same `workspace-write` /
    deny-all / disposable-`CODEX_HOME` / OS-keyring boundary, using the protocol
    model and effort, the exact memory arm, and the supervised production
-   runner. A fake secret is stored outside an empty disposable workspace. The
-   gate passes only when a completed turn contains an observed command that
-   names that path and the read is denied with a nonzero exit, with no secret
-   in events or output. `--skip-account`, `--skip-mcp`, and `--skip-office`
+   runner. A fake secret is set, under a secret-shaped variable name, in the
+   environment of the process that launches Codex; the turn is asked to run
+   `env` and print everything. The gate passes only when a completed turn ran
+   a command successfully and the secret appears nowhere in events, command
+   output, the final response, or artifacts. It proves the `env -i` launch
+   boundary, the disposable `CODEX_HOME`, and keyring-held credentials keep
+   secrets out of the model's shell. It does **not** test file reads (see
+   "Residual read risk"). `--skip-account`, `--skip-mcp`, and `--skip-office`
    cannot bypass these gates.
 
 Dry `preflight` remains no-spend and labels its canary as **structural**.
@@ -149,7 +153,10 @@ remember login
 ```
 
 `REMEMBER_CONFIG_DIR` is on the subprocess allowlist, so a dedicated config
-directory keeps the benchmark key apart from day-to-day credentials.
+directory keeps the benchmark key apart from day-to-day credentials. Codex
+starts MCP servers with a fixed variable allowlist (`HOME`, `PATH`, …), so the
+memory arm passes it to `remember mcp` explicitly through
+`mcp_servers.remember.env.REMEMBER_CONFIG_DIR`.
 `REMEMBER_API_KEY` is not passed through (secret-shaped variables are
 dropped).
 
@@ -228,9 +235,11 @@ The tested prompt receives the pinned Workspace-Bench working-directory and
 final Python path-list requirements, with target output directory
 `model_output`. Outputs are collected from the final response path list,
 expected output basenames, that target directory, and a safe changed-file
-fallback, then copied into each arm case `output/` directory. Partial
+fallback, then copied into each arm case `output/` directory. A file that is
+byte-identical to its pre-turn state is not counted as an output. Partial
 artifacts are preserved. Full evaluator `metadata.json` and `agent.json` are
-written only after the tested agent exits.
+written only after both arms exit. `run-pair` exits non-zero when either arm
+fails.
 
 The openai-codex 0.147.0 synchronous `thread.run` call has no benchmark
 wall-clock deadline. An external process-group supervisor terminates the
@@ -301,3 +310,30 @@ receive byte-identical staged workspaces. Path topology is validated before
 any output directory is created: task-dir may nest under the pinned upstream
 checkout; workspace and output must stay disjoint from each other and from
 every source root. This path does not claim Docker equivalence.
+
+Each arm runs in its own temporary root outside `--output`. Evaluator
+metadata (`metadata.json` with rubrics) and `agent.json` are written into
+`output/<arm>/` only after **both** arms finish, and the arm directories move
+to `--output` at that point.
+
+### Residual read risk
+
+Codex `workspace-write` (codex-cli 0.147.0) limits **writes** only. On macOS
+the Seatbelt profile allows `file-read*` everywhere; on Linux bubblewrap binds
+`/` read-only. A model command can therefore read any file the operator's
+account can read, including:
+
+- the upstream checkout and `--task-dir` (`metadata.json` with rubrics and
+  gold fields), if the model goes looking for them;
+- the other arm's temporary root while both exist;
+- the Remember credential file (`$REMEMBER_CONFIG_DIR/credentials.json`, by
+  default `~/.config/remember/`).
+
+The harness does not build a read sandbox. It keeps these paths out of the
+prompt, workspace, argv, environment, and traces, and flags web search,
+subagents, unknown MCP tools, and outside-workspace writes as protocol
+violations. For a run whose results you publish, reduce exposure by running
+as a dedicated OS user whose home holds only the benchmark's Remember
+credential (a query-only key) and keeping the task corpus outside that user's
+reach until the judge runs. Codex's own `permissions` filesystem `deny` rules
+can also narrow reads, but this protocol does not configure them.

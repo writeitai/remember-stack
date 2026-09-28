@@ -184,17 +184,35 @@ def tree_digest(root: Path) -> str:
     return hasher.hexdigest()
 
 
+def file_digests(root: Path) -> dict[str, str]:
+    """SHA-256 of every regular file under ``root``, keyed by relative path."""
+    return {
+        relative: payload
+        for relative, kind, payload in _tree_entries(root=root.resolve())
+        if kind == "file"
+    }
+
+
 def atomic_write_bytes(*, path: Path, content: bytes, mode: int | None = None) -> None:
-    """Flush, fsync, and replace without a partial destination."""
+    """Flush, fsync, and replace without a partial destination.
+
+    The temporary file already has ``mode`` before it is filled, so the
+    destination is never visible with wider permissions.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
-    with temporary.open("wb") as stream:
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o666 if mode is None else mode,
+    )
+    with os.fdopen(descriptor, "wb") as stream:
+        if mode is not None:
+            os.fchmod(stream.fileno(), mode)
         stream.write(content)
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
-    if mode is not None:
-        os.chmod(path, mode)
 
 
 def atomic_write_json(

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
 import json
 from pathlib import Path
 import sys
 from typing import Any
+from typing import Final
 from uuid import uuid4
 
 from benchmarks.workspacebench.canary import evaluate_canary
@@ -25,6 +27,7 @@ from benchmarks.workspacebench.errors import LiveGateError
 from benchmarks.workspacebench.errors import WorkspaceBenchError
 from benchmarks.workspacebench.fingerprint import arm_execution_fingerprint
 from benchmarks.workspacebench.hashing import atomic_write_json
+from benchmarks.workspacebench.hashing import file_digests
 from benchmarks.workspacebench.hashing import require_absolute_path
 from benchmarks.workspacebench.hashing import require_output_outside_workspace
 from benchmarks.workspacebench.hashing import tree_digest
@@ -58,6 +61,10 @@ from benchmarks.workspacebench.traces import write_jsonl
 from benchmarks.workspacebench.workspace import assert_no_evaluation_metadata
 from benchmarks.workspacebench.workspace import write_full_evaluator_metadata
 
+# The supervised child imports ``benchmarks.*`` with ``python -m``, which
+# resolves from its CWD. The Codex thread gets the task workspace explicitly.
+_REPOSITORY_ROOT: Final = Path(__file__).resolve().parents[2]
+
 
 def run_agent(
     *,
@@ -81,8 +88,14 @@ def run_agent(
     contract: TaskContract | None = None,
     target_output_dir: str = TARGET_OUTPUT_DIR,
     case_dir: Path | None = None,
+    deferred_handoffs: list[JudgeHandoff] | None = None,
 ) -> TaskResult:
-    """Run one arm and write a durable result envelope plus traces."""
+    """Run one arm and write a durable result envelope plus traces.
+
+    The judge files (``metadata.json`` with full evaluator metadata, and
+    ``agent.json``) are written at the end of the run, or appended to
+    ``deferred_handoffs`` when a paired run must wait until both arms finish.
+    """
     require_absolute_path(workspace, label="workspace")
     require_absolute_path(output, label="output")
     require_output_outside_workspace(workspace=workspace, output=output)
@@ -152,6 +165,7 @@ def run_agent(
     if turn_runner is None:
         _require_live_runtime_pin(bound_protocol)
     runner = turn_runner or _supervised_runner(supervisor=supervisor)
+    baseline = file_digests(workspace)
     try:
         turn = runner(request=request)
     except WorkspaceBenchError as error:
@@ -214,6 +228,7 @@ def run_agent(
         last_text=turn.final_response or "",
         contract=helper,
         target_output_dir=target_output_dir,
+        baseline=baseline,
     )
     failure_class, detail = _classify_failure(
         turn=turn, violations=violations, outputs=outputs, canary_passed=canary.passed
@@ -265,44 +280,88 @@ def run_agent(
     )
     _persist(output=output, result=result)
     if task_metadata is not None:
-        post_metadata = dict(task_metadata)
-        if source_task_dir is not None:
-            post_metadata["__metadata_path"] = str(
-                (source_task_dir / "metadata.json").resolve()
-            )
-        write_full_evaluator_metadata(
-            path=output / "metadata.json", metadata=post_metadata
-        )
-        _write_agent_json(
-            path=output / "agent.json",
+        handoff = JudgeHandoff(
             task_id=task_id,
-            workspace=workspace,
             prompt=prompt,
             turn=turn,
             result=result,
+            task_metadata=task_metadata,
             source_task_dir=source_task_dir,
         )
+        if deferred_handoffs is None:
+            write_judge_handoff(handoff=handoff, case_dir=output, workspace=workspace)
+        else:
+            deferred_handoffs.append(handoff)
     return result
 
 
+@dataclass(frozen=True, kw_only=True)
+class JudgeHandoff:
+    """What the official judge needs from one finished arm."""
+
+    task_id: str
+    prompt: str
+    turn: CodexTaskTurn
+    result: TaskResult
+    task_metadata: Mapping[str, Any]
+    source_task_dir: Path | None
+
+
+def write_judge_handoff(
+    *, handoff: JudgeHandoff, case_dir: Path, workspace: Path
+) -> None:
+    """Write full evaluator ``metadata.json`` and ``agent.json`` for the judge."""
+    post_metadata = dict(handoff.task_metadata)
+    if handoff.source_task_dir is not None:
+        post_metadata["__metadata_path"] = str(
+            (handoff.source_task_dir / "metadata.json").resolve()
+        )
+    write_full_evaluator_metadata(
+        path=case_dir / "metadata.json", metadata=post_metadata
+    )
+    _write_agent_json(
+        path=case_dir / "agent.json",
+        task_id=handoff.task_id,
+        workspace=workspace,
+        prompt=handoff.prompt,
+        turn=handoff.turn,
+        result=handoff.result,
+        source_task_dir=handoff.source_task_dir,
+    )
+
+
 def supervised_turn_runner(
-    *, supervisor: ProcessGroupRunner | None = None
+    *,
+    supervisor: ProcessGroupRunner | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> CodexTurnRunner:
-    """External process-group supervisor around one Codex session child."""
-    return _supervised_runner(supervisor=supervisor)
+    """External process-group supervisor around one Codex session child.
+
+    ``extra_env`` is added to the session child's environment unfiltered. Only
+    the live canary uses it, to plant a fake secret that the Codex launch
+    boundary must then drop.
+    """
+    return _supervised_runner(supervisor=supervisor, extra_env=extra_env)
 
 
-def _supervised_runner(*, supervisor: ProcessGroupRunner | None) -> CodexTurnRunner:
+def _supervised_runner(
+    *, supervisor: ProcessGroupRunner | None, extra_env: Mapping[str, str] | None = None
+) -> CodexTurnRunner:
     def run(*, request: CodexTaskRequest) -> CodexTaskTurn:
         return _run_supervised(
-            request=request, supervisor=supervisor or run_process_group
+            request=request,
+            supervisor=supervisor or run_process_group,
+            extra_env=extra_env,
         )
 
     return run
 
 
 def _run_supervised(
-    *, request: CodexTaskRequest, supervisor: ProcessGroupRunner
+    *,
+    request: CodexTaskRequest,
+    supervisor: ProcessGroupRunner,
+    extra_env: Mapping[str, str] | None,
 ) -> CodexTaskTurn:
     request_path = request.workspace.parent / f".{uuid4().hex}-codex-request.json"
     output_path = request.workspace.parent / f".{uuid4().hex}-codex-turn.json"
@@ -330,10 +389,10 @@ def _run_supervised(
         ]
         supervised = supervisor(
             argv=argv,
-            cwd=request.workspace,
+            cwd=_REPOSITORY_ROOT,
             timeout_seconds=request.timeout_seconds,
             grace_seconds=request.grace_seconds,
-            env=sanitized_subprocess_env(),
+            env={**sanitized_subprocess_env(), **(extra_env or {})},
         )
         if supervised.timed_out:
             partial = _load_turn(output_path)

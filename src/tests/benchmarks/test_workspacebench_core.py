@@ -20,7 +20,6 @@ from benchmarks.workspacebench.hashing import tree_digest
 from benchmarks.workspacebench.hashing import WorkspacePathError
 from benchmarks.workspacebench.judge import JUDGE_REQUIRED_FLAGS
 from benchmarks.workspacebench.judge import official_judge_command
-from benchmarks.workspacebench.judge import prepare_judge_view
 from benchmarks.workspacebench.mcp import access_binding_from_args
 from benchmarks.workspacebench.mcp import McpDiscoveryError
 from benchmarks.workspacebench.models import CloudDeploymentReceipt
@@ -392,48 +391,39 @@ def test_canary_fails_when_fake_secret_enters_trace(tmp_path: Path) -> None:
     assert dirty.passed is False
     empty = tmp_path / "empty"
     empty.mkdir()
-    command = evaluate_canary(
-        artifact_root=empty,
-        arm=arm,
-        events=(
+
+    def env_dump(output: str) -> tuple[CodexRuntimeEvent, ...]:
+        return (
             CodexRuntimeEvent(
                 item_type="CommandExecutionThreadItem",
-                payload={"command": f"cat {secret_path}", "exit_code": 0},
+                payload={"command": "env", "exit_code": 0, "aggregated_output": output},
             ),
-        ),
-        fake_secret_path=secret_path,
-        live_turn=True,
-    )
-    assert command.credential_path_readable_by_command is True
-    assert command.passed is False
-    denied = evaluate_canary(
+        )
+
+    clean_live = evaluate_canary(
         artifact_root=empty,
         arm=arm,
-        events=(
-            CodexRuntimeEvent(
-                item_type="CommandExecutionThreadItem",
-                payload={
-                    "command": f"cat {secret_path}",
-                    "exit_code": 1,
-                    "aggregated_output": "permission denied",
-                },
-            ),
-        ),
-        fake_secret_path=secret_path,
-        final_response="cannot read the file",
+        events=env_dump("PATH=/usr/bin\nHOME=/Users/op"),
+        final_response="PATH=/usr/bin",
         live_turn=True,
         turn_status="completed",
     )
-    assert denied.passed is True
+    assert clean_live.passed is True
+    assert clean_live.observed_successful_command is True
+    leaked = evaluate_canary(
+        artifact_root=empty,
+        arm=arm,
+        events=env_dump(f"WB_CANARY_API_TOKEN={FAKE_CANARY_SECRET}"),
+        live_turn=True,
+        turn_status="completed",
+    )
+    assert leaked.passed is False
+    assert leaked.fake_secret_present_in_artifacts is True
     empty_live = evaluate_canary(
-        artifact_root=empty,
-        arm=arm,
-        events=(),
-        fake_secret_path=secret_path,
-        live_turn=True,
-        turn_status="completed",
+        artifact_root=empty, arm=arm, events=(), live_turn=True, turn_status="completed"
     )
     assert empty_live.passed is False
+    assert "no command ran" in empty_live.detail
     assert "auth.json" not in config_blob_for_canary(arm=arm)
 
 
@@ -563,39 +553,6 @@ def test_judge_command_requires_task_dir_and_eval_yaml(tmp_path: Path) -> None:
         judge_mod.EXPECTED_UPSTREAM_FILE_SHA256[JUDGE_SCRIPT_RELPATH] = original
 
 
-def test_judge_view_copies_source_data_and_does_not_invent_empty_inputs(
-    tmp_path: Path,
-) -> None:
-    source = tmp_path / "task"
-    (source / "data").mkdir(parents=True)
-    (source / "data" / "notes.txt").write_text("n", encoding="utf-8")
-    (source / "metadata.json").write_text(
-        __import__("json").dumps(_task_metadata()), encoding="utf-8"
-    )
-    case = tmp_path / "native-case"
-    (case / "output").mkdir(parents=True)
-    (case / "output" / "report.md").write_text("# r", encoding="utf-8")
-    view = prepare_judge_view(
-        case_dir=case, source_task_dir=source, candidate_id="candidate-a"
-    )
-    assert "native" not in view.name
-    restored = (view / "original_task_metadata.json").read_text(encoding="utf-8")
-    assert HIDDEN_SENTINEL in restored
-    assert (view / "candidate_output" / "report.md").is_file()
-    assert (view / "inputs" / "notes.txt").is_file()
-    empty_source = tmp_path / "empty-task"
-    empty_source.mkdir()
-    (empty_source / "metadata.json").write_text(
-        __import__("json").dumps({"id": "1"}), encoding="utf-8"
-    )
-    empty_case = tmp_path / "empty-case"
-    empty_case.mkdir()
-    empty_view = prepare_judge_view(
-        case_dir=empty_case, source_task_dir=empty_source, candidate_id="candidate-b"
-    )
-    assert not (empty_view / "inputs").exists()
-
-
 def test_local_task_contract_wraps_workdir_and_path_list(tmp_path: Path) -> None:
     contract = local_task_contract()
     work = tmp_path / "ws"
@@ -708,3 +665,94 @@ def test_wrong_model_canary_request_is_rejected() -> None:
     )
     with pytest.raises(LiveGateError, match="protocol model"):
         require_protocol_canary_request(request)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://user:pw@remember.example.test",
+        "https://remember.example.test?token=x",
+        "https://remember.example.test/#frag",
+        "https://remember.example.test?",
+        "ftp://remember.example.test",
+    ],
+)
+def test_origins_with_userinfo_query_or_fragment_are_refused(origin: str) -> None:
+    from benchmarks.workspacebench.mcp import access_binding_from_args
+    from benchmarks.workspacebench.mcp import McpDiscoveryError
+    from benchmarks.workspacebench.models import McpAccessBinding
+    from pydantic import ValidationError
+
+    good = "https://remember.example.test"
+    with pytest.raises(McpDiscoveryError):
+        access_binding_from_args(api_origin=origin, receipt_origin=good)
+    with pytest.raises(McpDiscoveryError):
+        access_binding_from_args(api_origin=good, receipt_origin=origin)
+    with pytest.raises(ValidationError):
+        McpAccessBinding(
+            mode="direct", local_access_origin=origin, canonical_target_origin=good
+        )
+
+
+def test_memory_mcp_server_receives_remember_config_dir() -> None:
+    from benchmarks.workspacebench.codex import codex_config_overrides
+    from benchmarks.workspacebench.codex import memory_arm_configuration
+
+    memory = memory_arm_configuration(
+        remember_bin=("/usr/bin/python", "-m", "remember"),
+        api_origin="http://127.0.0.1:18000",
+        enabled_tools=("search_documents",),
+    )
+    env = {"REMEMBER_CONFIG_DIR": "/Users/op/.config/remember-wsb"}
+    overrides = codex_config_overrides(arm=memory, env=env)
+    assert (
+        'mcp_servers.remember.env.REMEMBER_CONFIG_DIR="/Users/op/.config/remember-wsb"'
+        in overrides
+    )
+    assert not any(".env." in item for item in codex_config_overrides(arm=memory))
+    native = codex_config_overrides(arm=native_arm_configuration(), env=env)
+    assert not any("REMEMBER_CONFIG_DIR" in item for item in native)
+
+
+def test_unchanged_pre_existing_files_are_not_counted_as_outputs(
+    tmp_path: Path,
+) -> None:
+    from benchmarks.workspacebench.hashing import file_digests
+    from benchmarks.workspacebench.task_contract import collect_output_manifest
+    from benchmarks.workspacebench.task_contract import local_task_contract
+
+    workspace = tmp_path / "ws"
+    out = workspace / "model_output"
+    out.mkdir(parents=True)
+    (out / "result.json").write_text("{}\n", encoding="utf-8")
+    (out / "report.md").write_text("old", encoding="utf-8")
+    baseline = file_digests(workspace)
+    (out / "report.md").write_text("new", encoding="utf-8")
+    (out / "table.csv").write_text("a\n", encoding="utf-8")
+    manifest = collect_output_manifest(
+        workspace=workspace,
+        case_output_dir=tmp_path / "case" / "output",
+        metadata={"output_files": ["report.md", "table.csv", "result.json"]},
+        last_text="",
+        contract=local_task_contract(),
+        baseline=baseline,
+    )
+    produced = {Path(item.relative_path).name for item in manifest.files}
+    assert produced == {"report.md", "table.csv"}
+    assert manifest.missing == ("result.json",)
+
+
+def test_atomic_write_creates_the_file_with_its_final_mode(tmp_path: Path) -> None:
+    import os
+    import stat
+
+    from benchmarks.workspacebench.hashing import atomic_write_bytes
+
+    target = tmp_path / "secret.json"
+    old_umask = os.umask(0)
+    try:
+        atomic_write_bytes(path=target, content=b"{}", mode=0o600)
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert not (tmp_path / ".secret.json.tmp").exists()

@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-import time
+from typing import Final
 from typing import Protocol
 
 from benchmarks.workspacebench.errors import WorkspaceBenchError
@@ -49,17 +49,20 @@ def run_process_group(
     timeout_seconds: float,
     grace_seconds: float,
     env: Mapping[str, str] | None = None,
-    clock: Callable[[], float] = time.monotonic,
     popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
     killpg: Callable[[int, int], None] = os.killpg,
 ) -> SupervisedProcessResult:
-    """Start a new session, wait, SIGTERM the group, then SIGKILL after grace."""
+    """Run argv in a new session; on timeout SIGTERM, then SIGKILL the group.
+
+    ``communicate`` drains both pipes while waiting, so a chatty child cannot
+    block on a full pipe. After the grace period the whole group is SIGKILLed
+    unconditionally, and the final pipe read is bounded so an orphan that
+    still holds a pipe cannot hang the supervisor.
+    """
     if timeout_seconds <= 0:
         raise WorkspaceBenchError("timeout_seconds must be positive")
     if grace_seconds <= 0:
         raise WorkspaceBenchError("grace_seconds must be positive")
-    stdout_chunks: list[bytes] = []
-    stderr_chunks: list[bytes] = []
     proc = popen(
         list(argv),
         cwd=str(cwd),
@@ -68,61 +71,72 @@ def run_process_group(
         env=None if env is None else dict(env),
         start_new_session=True,
     )
-    deadline = clock() + timeout_seconds
-    timed_out = False
     try:
-        while proc.poll() is None:
-            remaining = deadline - clock()
-            if remaining <= 0:
-                timed_out = True
-                _terminate_group(
-                    proc=proc, grace_seconds=grace_seconds, killpg=killpg, clock=clock
-                )
-                break
-            try:
-                proc.wait(timeout=min(0.25, remaining))
-            except subprocess.TimeoutExpired:
-                continue
-    finally:
-        stdout_chunks.append(_read_pipe(proc.stdout))
-        stderr_chunks.append(_read_pipe(proc.stderr))
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    else:
+        return SupervisedProcessResult(
+            exit_code=proc.returncode, timed_out=False, stdout=stdout, stderr=stderr
+        )
+    _signal_group(proc=proc, sig=signal.SIGTERM, killpg=killpg)
+    drained = _communicate_bounded(proc=proc, seconds=grace_seconds)
+    _signal_group(proc=proc, sig=signal.SIGKILL, killpg=killpg)
+    if not drained.closed:
+        drained = _communicate_bounded(proc=proc, seconds=_FINAL_READ_SEC)
+    if not drained.closed:
+        _close_pipes(proc)
+    try:
+        proc.wait(timeout=_FINAL_READ_SEC)
+    except subprocess.TimeoutExpired:
+        pass
     return SupervisedProcessResult(
         exit_code=proc.poll(),
-        timed_out=timed_out,
-        stdout=b"".join(stdout_chunks),
-        stderr=b"".join(stderr_chunks),
+        timed_out=True,
+        stdout=drained.stdout,
+        stderr=drained.stderr,
     )
 
 
-def _terminate_group(
-    *,
-    proc: subprocess.Popen[bytes],
-    grace_seconds: float,
-    killpg: Callable[[int, int], None],
-    clock: Callable[[], float],
-) -> None:
-    if proc.poll() is not None:
-        return
-    _signal_group(proc=proc, sig=signal.SIGTERM, killpg=killpg)
-    grace_deadline = clock() + grace_seconds
-    while proc.poll() is None and clock() < grace_deadline:
-        try:
-            proc.wait(timeout=0.1)
-        except subprocess.TimeoutExpired:
-            continue
-    if proc.poll() is None:
-        _signal_group(proc=proc, sig=signal.SIGKILL, killpg=killpg)
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            pass
+# Starting point: how long to wait for pipes/reaping after SIGKILL.
+_FINAL_READ_SEC: Final = 5.0
+
+
+@dataclass(frozen=True)
+class _Drained:
+    stdout: bytes
+    stderr: bytes
+    closed: bool
+
+
+def _communicate_bounded(*, proc: subprocess.Popen[bytes], seconds: float) -> _Drained:
+    """Drain both pipes for at most ``seconds``; keep partial output on timeout."""
+    try:
+        stdout, stderr = proc.communicate(timeout=seconds)
+    except subprocess.TimeoutExpired as error:
+        return _Drained(
+            stdout=_as_bytes(error.stdout), stderr=_as_bytes(error.stderr), closed=False
+        )
+    return _Drained(stdout=_as_bytes(stdout), stderr=_as_bytes(stderr), closed=True)
+
+
+def _as_bytes(value: object) -> bytes:
+    return value if isinstance(value, bytes) else b""
+
+
+def _close_pipes(proc: subprocess.Popen[bytes]) -> None:
+    """Stop reading pipes an orphan outside the group still holds open."""
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            try:
+                pipe.close()
+            except OSError:
+                pass
 
 
 def _signal_group(
     *, proc: subprocess.Popen[bytes], sig: int, killpg: Callable[[int, int], None]
 ) -> None:
-    if proc.pid is None:
-        return
     try:
         killpg(proc.pid, sig)
     except ProcessLookupError:
@@ -132,14 +146,3 @@ def _signal_group(
             proc.terminate() if sig == signal.SIGTERM else proc.kill()
         except OSError:
             return
-
-
-def _read_pipe(pipe: object) -> bytes:
-    reader = getattr(pipe, "read", None)
-    if not callable(reader):
-        return b""
-    try:
-        data = reader()
-    except OSError:
-        return b""
-    return data if isinstance(data, bytes) else b""

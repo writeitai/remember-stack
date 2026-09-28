@@ -42,6 +42,7 @@ from benchmarks.workspacebench.protocol import MCP_READ_ONLY_ARGS
 from benchmarks.workspacebench.protocol import MCP_SERVER_NAME
 from benchmarks.workspacebench.protocol import MCP_STARTUP_TIMEOUT_SEC
 from benchmarks.workspacebench.protocol import MCP_TOOL_TIMEOUT_SEC
+from benchmarks.workspacebench.protocol import REMEMBER_CONFIG_DIR_ENV
 
 
 class CodexAccountError(WorkspaceBenchError):
@@ -167,8 +168,15 @@ def compose_prompt(*, task_prompt: str, arm: ArmConfiguration) -> str:
     return task_prompt
 
 
-def codex_config_overrides(*, arm: ArmConfiguration) -> tuple[str, ...]:
+def codex_config_overrides(
+    *, arm: ArmConfiguration, env: Mapping[str, str] | None = None
+) -> tuple[str, ...]:
     """Per-process ``--config`` keys. Never includes tokens or auth-cache paths.
+
+    Codex starts MCP servers with the ``core`` environment only, which drops
+    ``REMEMBER_CONFIG_DIR``. When ``env`` (the isolated child env) carries it,
+    the memory arm hands it to ``remember mcp`` through
+    ``mcp_servers.remember.env`` so the CLI finds the operator's credential.
 
     ``codex-cli`` 0.147.0 ``app-server`` does not accept ``--ignore-user-config``
     (bundled app-server help/launch rejects it with exit 2). User config is
@@ -212,6 +220,12 @@ def codex_config_overrides(*, arm: ArmConfiguration) -> tuple[str, ...]:
                 ),
             ]
         )
+        config_dir = (env or {}).get(REMEMBER_CONFIG_DIR_ENV)
+        if config_dir:
+            overrides.append(
+                f"mcp_servers.{MCP_SERVER_NAME}.env.{REMEMBER_CONFIG_DIR_ENV}="
+                f"{_toml_str(config_dir)}"
+            )
     return tuple(overrides)
 
 
@@ -225,7 +239,7 @@ def app_server_launch_argv(
     environment, then execs the pinned binary with only ``env``.
     """
     launch = list(isolated_command_argv(env=env, binary=binary))
-    for item in codex_config_overrides(arm=arm):
+    for item in codex_config_overrides(arm=arm, env=env):
         launch.extend(["--config", item])
     launch.extend(["app-server", "--listen", "stdio://"])
     if launch[0] != str(TRUSTED_ENV_BIN) or launch[1] != "-i":

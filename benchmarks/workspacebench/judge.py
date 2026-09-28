@@ -4,17 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
 
 from benchmarks.workspacebench.errors import LiveGateError
 from benchmarks.workspacebench.errors import WorkspaceBenchError
-from benchmarks.workspacebench.hashing import contained_path
 from benchmarks.workspacebench.hashing import require_absolute_path
 from benchmarks.workspacebench.hashing import sha256_file
-from benchmarks.workspacebench.models import TaskResult
 from benchmarks.workspacebench.protocol import EXPECTED_UPSTREAM_FILE_SHA256
 from benchmarks.workspacebench.task_contract import JUDGE_SCRIPT_RELPATH
-from benchmarks.workspacebench.workspace import load_json_object
 
 JUDGE_LIVE_GATE = (
     "official Workspace-Bench judge remains the upstream ClaudeCode/"
@@ -76,58 +72,6 @@ def official_judge_invocations(
             eval_root=eval_root, task_dir=memory_case, eval_yaml=eval_yaml
         ),
     }
-
-
-def prepare_judge_view(
-    *,
-    case_dir: Path,
-    source_task_dir: Path,
-    candidate_id: str,
-    result: TaskResult | None = None,
-) -> Path:
-    """Optional local helper. The official scorer builds its own restricted view.
-
-    If used, this copies or links ``source_task_dir/data`` into ``inputs``.
-    It never creates a misleading empty input directory.
-    """
-    require_absolute_path(case_dir, label="case directory")
-    require_absolute_path(source_task_dir, label="source task directory")
-    full_metadata = load_json_object(source_task_dir / "metadata.json")
-    view = case_dir / "judge_view" / candidate_id
-    if view.exists():
-        shutil.rmtree(view)
-    view.mkdir(parents=True)
-    data_dir = source_task_dir / "data"
-    if data_dir.is_dir():
-        _symlink_or_copy(source=data_dir, destination=view / "inputs")
-    source_output = case_dir / "output"
-    if source_output.is_dir():
-        _symlink_or_copy(source=source_output, destination=view / "candidate_output")
-    (view / "original_task_metadata.json").write_text(
-        json.dumps(full_metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
-    if result is not None:
-        trace_snapshot = {
-            "attempt_id": result.attempt_id,
-            "failure_class": result.failure_class,
-            "item_types": list(result.traces.item_types),
-            "command_count": result.traces.command_count,
-            "file_change_count": result.traces.file_change_count,
-            "mcp_tool_names": [call.tool for call in result.traces.mcp_calls],
-        }
-        (view / "trace_snapshot.json").write_text(
-            json.dumps(trace_snapshot, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n",
-            encoding="utf-8",
-        )
-    (view / "README.md").write_text(
-        "Restricted evaluation workspace for the official agent-as-a-judge.\n"
-        "Do not treat this as a tested-agent filesystem.\n"
-        "inputs/ is copied from the source task data directory when present.\n",
-        encoding="utf-8",
-    )
-    _ = contained_path(root=case_dir, candidate=view)
-    return view
 
 
 def invoke_official_judge(
@@ -209,19 +153,3 @@ def _safe_load_json(path: Path) -> object | None:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-
-
-def _symlink_or_copy(*, source: Path, destination: Path) -> None:
-    if destination.exists():
-        if destination.is_dir() and not destination.is_symlink():
-            shutil.rmtree(destination)
-        else:
-            destination.unlink()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        destination.symlink_to(source, target_is_directory=source.is_dir())
-    except OSError:
-        if source.is_dir():
-            shutil.copytree(source, destination)
-        else:
-            shutil.copy2(source, destination)

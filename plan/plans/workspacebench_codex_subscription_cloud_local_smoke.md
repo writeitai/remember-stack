@@ -80,8 +80,14 @@ origin rule (D136) applies: the stored key must belong to that endpoint (a self-
 stored with the tunnel URL, or an issuer key whose resolved deployment is the receipt origin).
 
 Before a live subscription run, execute a disposable credential-isolation canary using a fake
-secret. If a model-generated command can read the credential location, or if the fake value enters
-the Codex trace/result tree, the live run must fail closed. Do not weaken this gate merely to make
+secret. Codex `workspace-write` (codex-cli 0.147.0) restricts writes only, so model commands can
+read any file the operator can read; the canary therefore does not test a denied read. It plants
+the fake secret under a secret-shaped name in the environment of the process that launches Codex,
+asks the model to print its full environment, and fails closed if the fake value enters the
+model's environment, the Codex trace, the final response, or the result tree. The unrestricted
+read surface (task corpus, the other arm's temp root, the Remember credential file) is a
+documented residual risk in `benchmarks/workspacebench/README.md`, reduced by running as a
+dedicated OS user with a query-only key. Do not weaken this gate merely to make
 Docker convenient. Official OpenAI documentation permits copying an auth cache into a trusted
 container, but this protocol deliberately keeps the stricter existing LoCoMo rule: no auth-cache
 copying by the benchmark adapter.
@@ -331,7 +337,7 @@ credential boundary:
 1. **MCP checkpoint:** the memory arm uses the shipping `remember mcp --read-only` engine mode
    and cannot call write tools.
 2. **Authentication checkpoint:** no code reads/copies `auth.json`; ChatGPT credentials must
-   come from the OS keyring under a disposable `CODEX_HOME`; and the fake-secret canary is
+   come from the OS keyring under a disposable `CODEX_HOME`; and the environment fake-secret canary is
    green.
 3. **Isolation checkpoint:** both arms receive identical pristine local workspace bytes; evaluator
    metadata stays hidden.

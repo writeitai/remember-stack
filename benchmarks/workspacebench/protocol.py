@@ -32,6 +32,7 @@ CODEX_CLIENT_TITLE: Final = "RememberStack Workspace-Bench"
 CODEX_SERVICE_NAME: Final = "rememberstack-workspacebench"
 CONSUMPTION_INSTRUCTION_VERSION: Final = "1.2.0"
 MCP_SERVER_NAME: Final = "remember"
+REMEMBER_CONFIG_DIR_ENV: Final = "REMEMBER_CONFIG_DIR"
 MCP_READ_ONLY_ARGS: Final[tuple[str, ...]] = ("mcp", "--read-only")
 # Starting points to measure, not committed performance constants.
 MCP_STARTUP_TIMEOUT_SEC: Final = 30
@@ -188,6 +189,8 @@ RECEIPT_CREDENTIAL_FIELD_NAMES: Final[frozenset[str]] = frozenset(
 AUTH_CACHE_BASENAME: Final = "auth.json"
 FAKE_CANARY_SECRET: Final = "WB_FAKE_SECRET_DO_NOT_LIVE_USE_9f3c2a1b"
 CANARY_SECRET_FILENAME: Final = "fake-remember-credential"
+# Secret-shaped name: the subprocess allowlist must drop it before Codex.
+CANARY_SECRET_ENV: Final = "WB_CANARY_API_TOKEN"
 LIVE_GATES: Final[tuple[str, ...]] = (
     "cloud_role_workspace_ingest_and_signed_receipt",
     "external_workspace_and_lite_task_corpus",
