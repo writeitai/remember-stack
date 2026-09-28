@@ -674,10 +674,12 @@ def test_wrong_model_canary_request_is_rejected() -> None:
         "https://remember.example.test?token=x",
         "https://remember.example.test/#frag",
         "https://remember.example.test?",
+        "https://remember.example.test/a;token=x/b",
+        "https://remember.example.test/prefix",
         "ftp://remember.example.test",
     ],
 )
-def test_origins_with_userinfo_query_or_fragment_are_refused(origin: str) -> None:
+def test_origins_with_userinfo_path_query_or_fragment_are_refused(origin: str) -> None:
     from benchmarks.workspacebench.mcp import access_binding_from_args
     from benchmarks.workspacebench.mcp import McpDiscoveryError
     from benchmarks.workspacebench.models import McpAccessBinding

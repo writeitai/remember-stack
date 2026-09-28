@@ -116,16 +116,18 @@ class ReadinessPin(FrozenModel):
 def bare_http_origin(value: str) -> str:
     """Return ``value`` without a trailing slash if it is a bare http(s) URL.
 
-    Userinfo, a query, a fragment, or path parameters are refused: they could
-    carry a credential or make two origins compare differently from what
-    ``remember`` actually dials.
+    Userinfo, a path, a query, or a fragment are refused: an origin has none of
+    them, and each could carry a credential or make two origins compare
+    differently from what ``remember`` actually dials.
     """
     parsed = urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError(f"{value!r} must be an http(s) origin")
     if "@" in parsed.netloc:
         raise ValueError("origin must not contain userinfo (credentials)")
-    if parsed.query or parsed.fragment or parsed.params or value.endswith(("?", "#")):
+    if parsed.path not in {"", "/"} or parsed.params:
+        raise ValueError("origin must not contain a path")
+    if parsed.query or parsed.fragment or value.endswith(("?", "#")):
         raise ValueError("origin must not contain a query or fragment")
     return value.rstrip("/")
 
