@@ -82,6 +82,7 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     monkeypatch.setenv(
         "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/plain":"passthrough"}'
     )
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "")
     monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
 
@@ -96,11 +97,11 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     assert (
         cli_main(["ops", "resume-no-route", "--deployment", str(_DEPLOYMENT_ID)]) == 0
     )
-    # the configured routes overlay the stock table (D138 §3)
+    # The overlay keeps stock routes, but PDF remains parked without OCR.
     assert calls == [
         {
             "deployment_id": _DEPLOYMENT_ID,
-            "routes": frozenset(STOCK_CONVERSION_ROUTE_NAMES),
+            "routes": frozenset(STOCK_CONVERSION_ROUTE_NAMES) - {"application/pdf"},
         }
     ]
     assert json.loads(capsys.readouterr().out) == {"released": [str(_DEPLOYMENT_ID)]}
