@@ -62,6 +62,10 @@ For conversational anaphora and question-affirmation resolution across dialogue 
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
 
+For byte-authoritative ingest MIME and explicit classes on every object write,
+see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--gcs-holds-bodies-postgres-holds-the-index)
+and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
+
 For deleting a document through the API, SDK, CLI or MCP, see D135 in the
 [evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
 and the [analysis](analysis/public_document_deletion.md). Erasure remains

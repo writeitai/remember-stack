@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.model.metering import ManagedTextClassificationError
 
 DOC_TEXT_CLASSIFIER_VERSION = "doc-text-classifier-v1"
@@ -13,22 +14,14 @@ DOC_TEXT_PROCESSING_PROFILE_ID = "doc-text-standard-v1"
 DOC_TEXT_MAX_SOURCE_BYTES = 10_000_000
 
 _BINARY_MAGICS: tuple[bytes, ...] = (
-    b"%PDF-",
     b"\x89PNG\r\n\x1a\n",
     b"\xff\xd8\xff",
-    b"GIF87a",
-    b"GIF89a",
     b"PK\x03\x04",
     b"\x1f\x8b",
-    b"RIFF",
-    b"OggS",
-    b"ID3",
     b"\x00\x00\x00\x18ftyp",
     b"\x00\x00\x00\x20ftyp",
 )
-_DOC_TEXT_MIMES = frozenset(
-    {"", "application/octet-stream", "text/markdown", "text/plain", "text/x-markdown"}
-)
+_DOC_TEXT_MIMES = frozenset({"", "application/octet-stream"})
 _STRUCTURED_TEXT_PREFIX = re.compile(
     rb"(?:\{\\rtf|<!doctype\s+html|<html(?:\s|>)|<\?xml(?:\s|>)|<svg(?:\s|>)|<[/!?]?[a-z][^>]{0,128}>)",
     re.IGNORECASE,
@@ -72,14 +65,29 @@ def classify_doc_text(*, content: bytes, declared_mime: str) -> ClassifiedText:
         raise ManagedTextClassificationError(code="empty_text")
     if any(content.startswith(magic) for magic in _BINARY_MAGICS):
         raise ManagedTextClassificationError(code="rate_class_unavailable")
+    byte_mime = detect_content_mime(
+        content=content, declared_mime="application/octet-stream"
+    )
+    if byte_mime not in {
+        "application/octet-stream",
+        "text/plain",
+        "text/markdown",
+        "text/html",
+    }:
+        raise ManagedTextClassificationError(code="rate_class_unavailable")
     mime = declared_mime.partition(";")[0].strip().lower()
-    if mime not in _DOC_TEXT_MIMES:
+    if mime not in _DOC_TEXT_MIMES and not mime.startswith("text/"):
         raise ManagedTextClassificationError(code="rate_class_ambiguous")
-    stripped = content.lstrip()
+    stripped = content
+    while True:
+        next_prefix = stripped.lstrip().removeprefix(b"\xef\xbb\xbf")
+        if next_prefix == stripped:
+            break
+        stripped = next_prefix
     if _STRUCTURED_TEXT_PREFIX.match(stripped) or stripped.startswith(b"JVBERi0"):
         raise ManagedTextClassificationError(code="rate_class_ambiguous")
     try:
-        decoded = content.decode("utf-8")
+        decoded = content.decode("utf-8-sig")
     except UnicodeDecodeError as error:
         raise ManagedTextClassificationError(code="rate_class_ambiguous") from error
     if any(

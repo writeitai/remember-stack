@@ -52,6 +52,7 @@ from rememberstack.core import SKELETON_PARSER_VERSION
 from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
+from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import is_model_free
 from rememberstack.core.extraction_eligibility import is_search_only_text
@@ -59,6 +60,8 @@ from rememberstack.core.extraction_eligibility import MixedEligibilityError
 from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
+from rememberstack.core.format_registry import family_for_mime
+from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
 from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
@@ -228,6 +231,7 @@ class UploadIngestor:
             source_ref=content_hash,
             content_hash=content_hash,
         )
+        upload = self._detect_upload(upload=upload)
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
@@ -296,6 +300,7 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
+        upload = self._detect_upload(upload=upload)
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
@@ -344,21 +349,10 @@ class UploadIngestor:
     def _prepare_managed_text(
         self, *, upload: DocumentUpload
     ) -> tuple[DocumentUpload, ManagedTextMeasurementDraft | None]:
-        """Detect the stored MIME, or classify/measure a managed upload.
-
-        Self-host ingest stores the D138 family MIME the registry detects from
-        the file name, the declared MIME and the bytes. The managed doc-text
-        profile keeps its own bounded classifier, which admits text only.
-        """
+        """Measure managed text after the common byte-class admission check."""
         scope = self._meter_scope
         if scope is None:
-            detected = detect_mime(
-                file_name=upload.filename,
-                declared_mime=upload.mime,
-                content=upload.content,
-                routed_mimes=self._routable,
-            )
-            return upload.model_copy(update={"mime": detected}), None
+            return upload, None
         classified = classify_doc_text(
             content=upload.content, declared_mime=upload.mime
         )
@@ -378,6 +372,45 @@ class UploadIngestor:
             identity_key=scope.identity_key,
             staged_content=upload.content,
         )
+
+    def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
+        """Use byte classes first and registry hints within compatible families."""
+        detected = detect_content_mime(
+            content=upload.content, declared_mime=upload.mime
+        )
+        if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
+            routed = detect_mime(
+                file_name=upload.filename,
+                declared_mime=upload.mime,
+                content=upload.content,
+                routed_mimes=self._routable,
+            )
+            family = family_for_mime(mime=routed).name
+            if detected.startswith("text/") and (
+                family
+                in {
+                    "markdown",
+                    "text",
+                    "other_text",
+                    "log",
+                    "code",
+                    "config",
+                    "delimited",
+                    "email",
+                    "notebook",
+                    "html",
+                }
+                or routed == "application/rtf"
+            ):
+                detected = routed
+            elif detected == "application/octet-stream" and family in {
+                "archive",
+                "dataset",
+                "ebook",
+                "binary",
+            }:
+                detected = routed
+        return upload.model_copy(update={"mime": detected})
 
     def _routable_for(self, *, upload: DocumentUpload) -> frozenset[str]:
         """The deployment's routable MIMEs; an oversized file is always routable.
@@ -613,7 +646,11 @@ class ConvertHandler:
         if source_map_bytes is not None:
             artifacts[f"{base}/source_map.json"] = source_map_bytes
         for uri, payload_bytes in artifacts.items():
-            self._artifact_store.write_bytes(key=ObjectKey(uri), content=payload_bytes)
+            self._artifact_store.write_bytes(
+                key=ObjectKey(uri),
+                content=payload_bytes,
+                storage_class=storage_class_for_derived(),
+            )
 
         self._catalog.record_representation(
             record=RepresentationRecord(
@@ -1492,7 +1529,9 @@ class StructureHandler:
         )
         try:
             self._artifact_store.write_bytes(
-                key=ObjectKey(persisted.pageindex_uri), content=payload
+                key=ObjectKey(persisted.pageindex_uri),
+                content=payload,
+                storage_class=storage_class_for_derived(),
             )
         except ObjectAlreadyExistsError:
             pass

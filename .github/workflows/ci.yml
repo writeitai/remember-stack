@@ -318,16 +318,16 @@ jobs:
               store = MinIOObjectStore(bucket=bucket, settings=s3)
               key = ObjectKey(f"ci/round-trip-{uuid4().hex}")
               content = f"round trip {bucket}".encode()
-              store.write_bytes(key=key, content=content)
+              store.write_bytes(key=key, content=content, storage_class="cold")
               if store.read_bytes(key=key) != content:
                   raise RuntimeError(f"{bucket} returned different bytes")
               print(f"{bucket}: write and read back ok")
 
           store = MinIOObjectStore(bucket=profile.raw_bucket_name, settings=s3)
           key = ObjectKey("ci/immutable-object")
-          store.write_bytes(key=key, content=b"first")
+          store.write_bytes(key=key, content=b"first", storage_class="cold")
           try:
-              store.write_bytes(key=key, content=b"replacement")
+              store.write_bytes(key=key, content=b"replacement", storage_class="cold")
           except ObjectAlreadyExistsError:
               pass
           else:

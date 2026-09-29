@@ -75,11 +75,11 @@ to Markdown first and send the Markdown.
 
 ## Send the right type
 
-A self-hosted deployment recognizes a file by its extension first. The type
-sent with the upload decides only when the name does not say what the file
-is; a text file with neither is searchable but no claims are extracted
-from it. The `remember` CLI, Python client and MCP `ingest` tool send a
-type taken from the extension ([the full
+A self-hosted deployment checks recognizable bytes before it uses the
+extension or sent MIME as a format hint. A type that contradicts the bytes
+is refused with HTTP 422. A text file with no recognizable family is
+searchable but no claims are extracted from it. The `remember` CLI, Python
+client and MCP `ingest` tool send a hint taken from the extension ([the full
 table](/docs/guides/ingest-files#the-mime-type)). A file whose extension
 does not say what it is needs the type passed explicitly:
 

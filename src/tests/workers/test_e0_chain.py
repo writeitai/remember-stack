@@ -78,6 +78,11 @@ _FIXTURES = _ROOT / "src" / "tests" / "core" / "fixtures"
 _DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _MARKDOWN_SOURCE = "# Quarterly report\n\nRevenue grew nine percent.\n\n- steady\n"
+_PDF_BYTES = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
+_PNG_BYTES = b"\x89PNG\r\n\x1a\nimage"
+_JPEG_BYTES = b"\xff\xd8\xff\xe0image"
+_MP3_BYTES = b"ID3\x04\x00\x00\x00\x00\x00\x00"
+_MP4_BYTES = b"\x00\x00\x00\x10ftypisom\x00\x00\x00\x00"
 
 
 @pytest.fixture(scope="module")
@@ -282,6 +287,10 @@ class _E0Rig:
             "text/plain": MarkdownPassthroughConverter(),
             "text/html": markitdown,
             _DOCX: markitdown,
+            "application/pdf": _FakeScanConverter(),
+            "image/png": _UnlabeledConverter(),
+            "audio/mpeg": _InvalidEnvelopeConverter(),
+            "video/mp4": _TransientlyFailingConverter(),
             "application/x-fake-scan": _FakeScanConverter(),
             "application/x-unlabeled": _UnlabeledConverter(),
             "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
@@ -488,9 +497,7 @@ def test_media_envelope_persists_source_map_and_derived_assets(rig: _E0Rig) -> N
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="scan.fake",
-            mime="application/x-fake-scan",
-            content=b"raw-scan-bytes",
+            filename="scan.pdf", mime="application/pdf", content=_PDF_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.SUCCEEDED
@@ -553,7 +560,7 @@ def test_unlabeled_converter_output_dead_letters(rig: _E0Rig) -> None:
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="silent.fake", mime="application/x-unlabeled", content=b"raw-bytes"
+            filename="silent.png", mime="image/png", content=_PNG_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
@@ -570,9 +577,7 @@ def test_invalid_envelope_models_dead_letter_as_converter_bug(rig: _E0Rig) -> No
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="broken.fake",
-            mime="application/x-invalid-envelope",
-            content=b"raw-bytes",
+            filename="broken.mp3", mime="audio/mpeg", content=_MP3_BYTES
         ),
     )
     assert rig.run(stage=PipelineStage.CONVERT) is RunResultOutcome.DEAD_LETTERED
@@ -590,7 +595,7 @@ def test_exhausted_provider_retries_finalize_the_version(rig: _E0Rig) -> None:
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="flaky.fake", mime="application/x-transient", content=b"raw-bytes"
+            filename="flaky.mp4", mime="video/mp4", content=_MP4_BYTES
         ),
     )
     outcome = rig.run(stage=PipelineStage.CONVERT)
@@ -640,7 +645,7 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     ingested = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     # the ingest response says so at once, so a client can tell its user
@@ -669,7 +674,7 @@ def test_unroutable_mime_is_stored_and_parked_never_dead_lettered(rig: _E0Rig) -
     duplicate = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     assert duplicate.created is False
@@ -738,7 +743,7 @@ def test_resuming_after_a_route_is_registered_releases_only_matching_backlog(
     other = parked_ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="later.bin", mime="application/x-other", content=b"other"
+            filename="later.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     assert (
@@ -906,12 +911,12 @@ def test_a_released_row_whose_route_is_still_missing_reparks(
         catalog=rig.catalog,
         raw_store=rig.raw_store,
         admission=ForgetCatalog(engine=rig.engine),
-        routable_mimes=frozenset({"application/x-unknown"}),
+        routable_mimes=frozenset({"image/jpeg"}),
     )
     ingested = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="blob.bin", mime="application/x-unknown", content=b"\x00\x01\x02"
+            filename="blob.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     if prior_attempts:
@@ -972,7 +977,7 @@ def test_mime_replaced_mid_claim_is_not_stranded_as_no_route(rig: _E0Rig) -> Non
         catalog=rig.catalog,
         raw_store=rig.raw_store,
         admission=ForgetCatalog(engine=rig.engine),
-        routable_mimes=frozenset({"application/x-unknown"}),
+        routable_mimes=frozenset({"text/x-other-text"}),
     )
     first = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,
@@ -2118,7 +2123,7 @@ def test_resume_does_not_release_deleted_or_purged_sources(
     version = rig.ingestor.ingest(
         deployment_id=_DEPLOYMENT_ID,
         upload=DocumentUpload(
-            filename="removed.bin", mime="application/x-unknown", content=b"removed"
+            filename="removed.jpg", mime="image/jpeg", content=_JPEG_BYTES
         ),
     )
     statements = {

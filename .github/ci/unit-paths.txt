@@ -35,6 +35,7 @@ src/tests/core/test_chunker.py
 src/tests/core/test_context_references.py
 src/tests/core/test_consumption_skill.py
 src/tests/core/test_conversion.py
+src/tests/core/test_content_detection.py
 src/tests/core/test_core_manifest.py
 src/tests/core/test_document_metadata.py
 src/tests/core/test_d80_recovery_and_hydration.py

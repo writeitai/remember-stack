@@ -556,7 +556,7 @@ class _TranscriptStore:
         return self.objects[key.root]
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Archive one immutable transcript object."""
         if key.root in self.objects:

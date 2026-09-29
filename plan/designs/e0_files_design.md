@@ -80,6 +80,42 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
   does not exist as testimony.
 
+**Byte-authoritative admission (D132).** Before raw storage or a catalog row,
+E0 inspects file signatures and header fields, ISO BMFF file-type brands
+(distinguishing common MP4 video, M4A audio, and HEIC/AVIF images), and, for
+office ZIP packages, their member names. Printable prefix strings alone do
+not establish a binary class; a PDF token after a bounded preamble requires a
+PDF object body and end marker, even if the file has trailing padding.
+Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
+and CRLF are valid. It detects text, PDF, image, audio, video, and office
+classes. A contradictory declared class is a typed ingest refusal, surfaced
+as HTTP 422. Binary bytes D132 cannot classify may use a D138 registry hint
+for a family D132 does not cover (for example, an archive); the converter
+validates that format. Remaining unrecognized binary is stored as a D138
+binary card. The stored
+`content_objects.mime` is the decided MIME and drives the D38 route, D51
+original class, and managed text metering. Text flavours cannot be settled by
+bytes: once bytes establish text, D133/D138 registry hints select Markdown,
+CSV, code, configuration, or plain text and their distinct processing postures.
+Textual email, notebooks, RTF, and delimited data keep their registry families;
+their converters validate full structure. Recognizable HTML markup retains
+`text/html` for its separate converter, and an empty upload
+is valid text in the self-host profile (the managed text profile rejects an
+empty measured source).
+
+For legacy OLE office containers, bytes establish the office class and the
+declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
+container is refused. This check identifies the class; a converter still
+validates the complete format before producing evidence.
+
+**Class on every object (D132).** The object-store write contract requires an
+explicit class. Original video/audio/image bytes are `hot`, other originals
+`cold` as D51 specifies. Canonical Markdown, source maps, blocks, PageIndex,
+derived media, and P3 snapshots/manifests are `hot` because queries and agents
+read them. Conversion checkpoints and private K transcripts are `cold` because
+only retry/replay paths open them. The policy lives in `core/storage_routing.py`;
+storage adapters record the chosen class on every write.
+
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's
 `(source_kind, source_ref)` — D55.)

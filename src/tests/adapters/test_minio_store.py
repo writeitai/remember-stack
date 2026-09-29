@@ -123,7 +123,11 @@ def test_bucket_provision_and_immutable_round_trip() -> None:
     assert client.last_body is not None and client.last_body.closed
     assert store.storage_class_of(key=ObjectKey("documents/a.md")) == "cold"
     with pytest.raises(ObjectAlreadyExistsError):
-        store.write_bytes(key=ObjectKey("documents/a.md"), content=b"replacement")
+        store.write_bytes(
+            key=ObjectKey("documents/a.md"),
+            content=b"replacement",
+            storage_class="cold",
+        )
     assert store.read_bytes(key=ObjectKey("documents/a.md")) == b"first"
 
 
@@ -141,7 +145,9 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
     store = MinIOObjectStore(bucket="artifacts", client=client)
     store.ensure_bucket()
     for name in ("doc/a", "doc/nested/b", "document/sibling", "exact"):
-        store.write_bytes(key=ObjectKey(name), content=name.encode())
+        store.write_bytes(
+            key=ObjectKey(name), content=name.encode(), storage_class="cold"
+        )
 
     store.purge_objects(keys=(ObjectKey("exact"),), prefixes=(ObjectKey("doc"),))
     store.verify_objects_purged(
@@ -149,7 +155,9 @@ def test_purge_respects_prefix_boundaries_and_verifies() -> None:
     )
 
     assert store.read_bytes(key=ObjectKey("document/sibling")) == b"document/sibling"
-    store.write_bytes(key=ObjectKey("doc/reappeared"), content=b"unsafe")
+    store.write_bytes(
+        key=ObjectKey("doc/reappeared"), content=b"unsafe", storage_class="cold"
+    )
     with pytest.raises(RuntimeError, match="doc/reappeared"):
         store.verify_objects_purged(keys=(), prefixes=(ObjectKey("doc"),))
 
@@ -160,7 +168,7 @@ def test_keys_cannot_escape_the_logical_store_root(value: str) -> None:
     store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
 
     with pytest.raises(ObjectKeyEscapesRootError):
-        store.write_bytes(key=ObjectKey(value), content=b"no")
+        store.write_bytes(key=ObjectKey(value), content=b"no", storage_class="cold")
 
 
 def _client_error(*, code: str, operation: str) -> ClientError:

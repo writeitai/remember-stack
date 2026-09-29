@@ -26,6 +26,7 @@ from rememberstack.core import knowledge_summary_hash
 from rememberstack.core import knowledge_writer_coverage
 from rememberstack.core import render_knowledge_fact_sheet
 from rememberstack.core import render_knowledge_writer_bundle
+from rememberstack.core.storage_routing import storage_class_for_internal
 from rememberstack.model import KnowledgeCitation
 from rememberstack.model import KnowledgeCompilationFailure
 from rememberstack.model import KnowledgeCompilationWrite
@@ -277,7 +278,11 @@ class KnowledgeProseCompiler:
             f"{request.artifact.deployment_id}/{request.artifact.artifact_id}/"
             f"{session_id}.json"
         )
-        self._transcript_store.write_bytes(key=key, content=transcript.encode("utf-8"))
+        self._transcript_store.write_bytes(
+            key=key,
+            content=transcript.encode("utf-8"),
+            storage_class=storage_class_for_internal(),
+        )
         return key.root
 
 

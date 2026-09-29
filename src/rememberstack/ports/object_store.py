@@ -15,7 +15,7 @@ class ObjectStorePort(Protocol):
         ...
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Create immutable bytes, failing rather than replacing an occupied key.
 

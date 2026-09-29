@@ -1,4 +1,4 @@
-"""Storage-class routing for raw originals (D51 guardrail 3).
+"""Storage-class routing for every immutable object (D51 guardrail 3).
 
 Which originals stay cheap to read and which go cold is a *policy* decision
 about the corpus, not a storage-provider mechanic — so it lives here, in
@@ -20,6 +20,21 @@ HOT_MIME_PREFIXES: Final = ("video/", "audio/", "image/")
 
 HOT: Final = "hot"
 COLD: Final = "cold"
+
+
+def storage_class_for_derived() -> str:
+    """Keep canonical Markdown, indexes, and referenced media cheap to read."""
+    return HOT
+
+
+def storage_class_for_internal() -> str:
+    """Keep replay checkpoints and private transcripts in archival storage."""
+    return COLD
+
+
+def storage_class_for_snapshot() -> str:
+    """Keep the published corpus tree and its manifest cheap to browse."""
+    return HOT
 
 
 def storage_class_for(*, mime: str) -> str:

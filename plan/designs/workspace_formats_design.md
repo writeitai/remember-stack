@@ -47,7 +47,14 @@ ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profi
 
 ## 3. Detection and routing
 
-1. **Extension first.** The lower-cased extension selects a family from §4. The compound
+First, D132 checks bytes for recognized PDF, media, Office packages, and text.
+The following hints choose a family within the established text byte class,
+or among binary families D132 does not recognize; a recognized PDF remains PDF
+even when named `notes.txt`. Binary with no matching registry family gets
+the `binary` card. A declaration that contradicts recognizable bytes is
+refused before storage.
+
+1. **Extension first within the byte class.** The lower-cased extension selects a family from §4. The compound
    extensions `.tar.gz`, `.tar.bz2`, `.tar.xz` and `.tar.zst` count as `tar`. Extensionless
    files named `Dockerfile`, `Containerfile`, `Makefile`, `Jenkinsfile`, `Procfile`, `LICENSE`,
    `README`, `CODEOWNERS`, `BUILD`, `WORKSPACE`, and dotfiles such as `.gitignore`,
@@ -58,13 +65,12 @@ ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profi
    `other_text` (search-only; an unknown text file is not assumed to be prose); anything else is
    `binary`.
 
-The family's canonical MIME is what E0 stores and routes on. A converter that finds bytes that
+The detected MIME or compatible family's canonical MIME is what E0 stores and routes on. A converter that finds bytes that
 do not match its family (a corrupt `.xlsx`, a `.pdf` without a PDF header) fails the version with
 a typed reason; it never falls back silently.
 
-**Byte detection (D132), when present,** runs before step 1 and may refuse only a declaration the
-bytes contradict (non-PDF bytes declared `.pdf`). Bytes it does not recognize are never refused:
-they continue to step 1 and end, at worst, as a `binary` card.
+Byte detection does not validate a whole format. A converter still checks its
+full input. Unknown binary remains stored as a card under D138.
 
 **Routing is the registry, overlaid.** The engine ships the family table below. A deployment's
 conversion-route setting **adds or overrides** entries (for example, routing images to the D115

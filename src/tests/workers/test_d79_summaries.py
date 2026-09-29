@@ -482,6 +482,7 @@ def test_one_bad_sidecar_entry_does_not_discard_later_cache_values(
             b'{"node_path":"0","summary_cache_key":"bad","summary":"root"},'
             b'{"node_path":"0.0","summary_cache_key":"good","summary":"usable"}]}'
         ),
+        storage_class="cold",
     )
     summarizer = SectionSummarizer(
         catalog=_SidecarCatalog(),  # type: ignore[arg-type]

@@ -106,9 +106,9 @@ With bytes, the MIME type comes from the `filename` you pass.
 
 ## The MIME type
 
-The MIME type decides which converter reads the file. The client picks it
-from the extension: of the file's real name for a path, of `filename` for
-bytes. The formats a deployment can convert map the same way on every
+The client suggests a MIME type from the extension: of the file's real name
+for a path, or of `filename` for bytes. The server checks the bytes before
+storing them. The formats a deployment can convert map the same way on every
 Python installation:
 
 | Extension | MIME type |
@@ -123,16 +123,18 @@ Python installation:
 
 Any other extension is looked up in Python's `mimetypes` database, and a
 name it does not know is sent as `application/octet-stream`. Pass `mime=`
-(or `--mime` on the CLI) to send a different type; an explicit value always
-wins.
+(or `--mime` on the CLI) to send a different hint; an explicit client value
+wins over the client's extension lookup, while the server checks the bytes.
 
-A self-hosted deployment decides the stored type itself: the file name's
-extension first, then the declared type when the name does not say, then
-the bytes ([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
-The declared type matters for a file whose name has no recognized
-extension.
+A self-hosted deployment decides the stored type itself: recognized PDF,
+image, audio, video, and Office bytes establish the class; within a compatible
+text class, the filename and declared type choose the format family
+([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+A declaration contradicted by the bytes returns HTTP 422. Binary that does
+not match a known family is stored with a binary card.
 
-The deployment keeps the first MIME type it saw for a given set of bytes.
+The deployment keeps the first detected or compatible family MIME type for a
+given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
 does not change, with one exception: when the stored type has no converter
 route (the upload was parked as `no_route`), identical bytes sent again with

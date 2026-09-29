@@ -191,7 +191,11 @@ def _write_representation(
 ) -> None:
     """The three artifacts E1 and structure read: markdown, blocks, manifest."""
     blocks = blockize(document_md=document_md)
-    store.write_bytes(key=ObjectKey("doc/document.md"), content=document_md.encode())
+    store.write_bytes(
+        key=ObjectKey("doc/document.md"),
+        content=document_md.encode(),
+        storage_class="hot",
+    )
     store.write_bytes(
         key=ObjectKey("doc/blocks.json"),
         content=json.dumps(
@@ -201,6 +205,7 @@ def _write_representation(
                 "blocks": [block.model_dump(mode="json") for block in blocks],
             }
         ).encode(),
+        storage_class="hot",
     )
     store.write_bytes(
         key=ObjectKey("doc/conversion.json"),
@@ -211,6 +216,7 @@ def _write_representation(
                 ]
             }
         ).encode(),
+        storage_class="hot",
     )
 
 
@@ -516,7 +522,9 @@ def _convert(
 ) -> LocalFSObjectStore:
     """Run the convert stage once over stored raw bytes."""
     raw = LocalFSObjectStore(root=tmp_path / "raw")
-    raw.write_bytes(key=ObjectKey("raw/original"), content=b"%PDF-1.7 tiny")
+    raw.write_bytes(
+        key=ObjectKey("raw/original"), content=b"%PDF-1.7 tiny", storage_class="cold"
+    )
     artifacts = LocalFSObjectStore(root=tmp_path / "artifacts")
     ConvertHandler(
         catalog=cast("DocumentCatalog", catalog),

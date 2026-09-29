@@ -40,6 +40,7 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.storage_routing import storage_class_for_snapshot
 from rememberstack.model import ObjectKey
 from rememberstack.ports.object_store import ObjectStorePort
 from rememberstack.spine.projection import ProjectionCatalog
@@ -106,7 +107,9 @@ class CorpusFsBuilder:
             files = self._render(deployment_id=deployment_id)
             for path, content in sorted(files.items()):
                 self._snapshot_store.write_bytes(
-                    key=ObjectKey(f"{prefix}/{path}"), content=content.encode("utf-8")
+                    key=ObjectKey(f"{prefix}/{path}"),
+                    content=content.encode("utf-8"),
+                    storage_class=storage_class_for_snapshot(),
                 )
             manifest = {
                 "version": version,
@@ -118,6 +121,7 @@ class CorpusFsBuilder:
             self._snapshot_store.write_bytes(
                 key=ObjectKey(f"{prefix}/MANIFEST.json"),
                 content=json.dumps(manifest).encode("utf-8"),
+                storage_class=storage_class_for_snapshot(),
             )
         except Exception as error:
             self._catalog.mark_failed(

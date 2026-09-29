@@ -94,8 +94,8 @@ charging `doc-text`; implementing that receipt mapping belongs to the cloud.
 
 ### 2.2 Detection and precedence
 
-> **Replaced by D138 §3** for the shipped registry: extension first, then declared MIME, then
-> content, with D132 refusing only contradictions and unrecognized bytes ending as a card. The
+> **Replaced by D138 §3** for the shipped registry: D132 establishes the byte class first;
+> extension then declared MIME choose a compatible family, and unrecognized bytes end as a card. The
 > byte signatures below remain the reference for adding families that D138 does not list.
 
 The list below is **not** a detection order. It is a catalogue of byte signatures and
