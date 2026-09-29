@@ -38,6 +38,7 @@ def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
         (b"", "text/markdown", "text/markdown"),
         (b"<html><p>Hello</p></html>", "text/html", "text/html"),
         (b"const answer = 42;\n", "application/javascript", "text/plain"),
+        (b"# Notes\n", "application/x-unknown", "text/plain"),
         (b'{"answer":42}\n', "application/json", "text/plain"),
         (b"\xef\xbb\xbf# Heading\r\n", "text/markdown", "text/markdown"),
         (
@@ -108,6 +109,15 @@ def test_unknown_binary_is_not_text() -> None:
     with pytest.raises(ContentDetectionError) as raised:
         detect_content_mime(content=b"\x00\x01payload", declared_mime="text/plain")
     assert raised.value.code == "content_type_mismatch"
+
+
+def test_pdf_example_inside_prose_does_not_override_text() -> None:
+    """A quoted complete PDF example does not turn Markdown into a PDF."""
+    note = b"A PDF example follows:\n%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
+    assert (
+        detect_content_mime(content=note, declared_mime="text/markdown")
+        == "text/markdown"
+    )
 
 
 @pytest.mark.parametrize("declared", ("text/plain", "application/octet-stream"))

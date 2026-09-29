@@ -6,6 +6,7 @@ import io
 import re
 import zipfile
 
+from rememberstack.core.format_registry import family_for_mime
 from rememberstack.model.content_detection import ContentDetectionError
 
 _OFFICE_MIMES = {
@@ -30,6 +31,9 @@ _TEXT_APPLICATION_HINTS = {
     "application/yaml",
     "application/toml",
     "application/x-sh",
+    "application/rtf",
+    "application/x-ipynb+json",
+    "message/rfc822",
 }
 _IMAGE_MIME_ALIASES = {
     "image/jpg": "image/jpeg",
@@ -185,12 +189,24 @@ def _bmff_mime(*, content: bytes) -> str | None:
 
 
 def has_pdf_body(*, content: bytes) -> bool:
-    """Find a PDF header in a bounded preamble followed by an object body."""
+    """Find a bounded PDF header, complete object, and trailing end marker."""
     header = re.search(rb"%PDF-[12]\.\d", content[:8200])
+    if header is None or header.start() > 8192:
+        return False
+    preamble = content[: header.start()]
+    try:
+        preamble_text = preamble.decode("utf-8")
+    except UnicodeDecodeError:
+        preamble_text = ""
+    if len(preamble_text.split()) >= 2:
+        # A prose sentence quoting a PDF header is not a PDF preamble.
+        return False
+    object_match = re.search(
+        rb"(?:^|\n)\d+\s+\d+\s+obj\b.*?\bendobj\b", content[header.end() :], re.DOTALL
+    )
     return bool(
-        header is not None
-        and header.start() <= 8192
-        and re.search(rb"\d+\s+\d+\s+obj\b", content[header.end() :])
+        object_match is not None
+        and b"%%EOF" in content[header.end() + object_match.end() :]
     )
 
 
@@ -229,13 +245,16 @@ def _office_zip_mime(*, content: bytes) -> str | None:
 
 def _detected_mime(*, content: bytes) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
-    if has_pdf_body(content=content) and b"%%EOF" in content:
+    if has_pdf_body(content=content):
         return "application/pdf"
+    if len(content) >= 8 and content.startswith(b"PAR1") and content.endswith(b"PAR1"):
+        return "application/vnd.apache.parquet"
     for signature, mime in (
         (b"\x89PNG\r\n\x1a\n", "image/png"),
         (b"\xff\xd8\xff", "image/jpeg"),
         (b"II*\x00", "image/tiff"),
         (b"MM\x00*", "image/tiff"),
+        (b"8BPS", "image/vnd.adobe.photoshop"),
         (b"\x1a\x45\xdf\xa3", "video/webm"),
     ):
         if content.startswith(signature):
@@ -311,6 +330,7 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
             declared not in {"", "application/octet-stream"}
             and declared not in _TEXT_APPLICATION_HINTS
             and not declared.startswith("text/")
+            and family_for_mime(mime=declared).name != "binary"
         ):
             raise ContentDetectionError(code="content_type_mismatch")
         return "text/markdown" if declared in _TEXT_HINTS else "text/plain"

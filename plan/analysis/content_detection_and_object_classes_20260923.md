@@ -24,8 +24,10 @@ existing Python runtime. Its standard-library pieces are maintained with
 Python releases. Reading ZIP names avoids decompressing
 untrusted document bodies. Its limit is that a signature is a class assertion,
 not full format validation; converters still validate their inputs. Unknown
-binary and an unrecognized ZIP must fail closed because treating either as text
-could select a cheaper rate or a wrong route. A single magic-only `filetype`
+binary and an unrecognized ZIP cannot be treated as text because that could
+select a cheaper rate or wrong route. D138 stores them with a file card (or
+uses a compatible archive/data family hint and lets its converter validate).
+A single magic-only `filetype`
 dependency would still need office package inspection and Unicode validation.
 A libmagic binding has broad signature coverage but adds a system library and
 platform-specific packaging to both OSS and managed deployments. Neither
@@ -39,9 +41,11 @@ implementation starting point); trailing padding does not erase the marker.
 These checks limit false refusals without decoding full media bodies.
 
 Text flavours cannot be inferred reliably from bytes. Markdown, CSV, source
-code (including `application/javascript`), JSON, and plain text therefore share
-one byte class, one text rate, and the passthrough converter. The declaration
-may select Markdown rendering; other text hints normalize to plain text.
+code (including `application/javascript`), JSON, and plain text share one
+byte class, but D138's registry gives compatible families different postures:
+prose, search-only text, or deterministic data profile. The filename and
+declaration are hints within that established byte class, not proof of a
+binary PDF or image.
 UTF-8 BOM and CRLF remain valid. HTML markup is distinguishable from native
 text and keeps its separate
 `text/html` conversion route. Empty bytes are assigned the text class for
@@ -59,7 +63,9 @@ a type or runtime error, including in a new writer.
 
 ## Failure and migration behavior
 
-Detection runs before any raw write or catalog transaction. Contradictions and
-unknown binary return a stable typed error at HTTP 422. Existing rows keep their
-recorded MIME and class; changing historical evidence would require explicit
-re-ingestion. No dependency or schema migration is required.
+Detection runs before any raw write or catalog transaction. A contradicted
+declaration returns a stable typed error at HTTP 422. Unknown binary is stored
+with the D138 binary card. Existing content rows keep their first recorded
+MIME, including on a same-byte no-op. Correcting a historical wrong class
+requires a separate migration and reprocessing plan; D132 changes admission
+for new content, not prior evidence. No dependency or schema migration is required.

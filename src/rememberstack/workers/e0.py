@@ -385,11 +385,18 @@ class UploadIngestor:
                 content=upload.content,
                 routed_mimes=self._routable,
             )
-            if (
-                detected.startswith("text/")
-                and routed.startswith("text/")
-                and routed != "text/html"
-            ):
+            if detected.startswith("text/") and family_for_mime(mime=routed).name in {
+                "markdown",
+                "text",
+                "other_text",
+                "log",
+                "code",
+                "config",
+                "delimited",
+                "email",
+                "notebook",
+                "word",
+            }:
                 detected = routed
             elif detected == "application/octet-stream" and family_for_mime(
                 mime=routed

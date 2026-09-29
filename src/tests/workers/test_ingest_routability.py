@@ -210,6 +210,68 @@ def test_unknown_archive_uses_registry_card_family() -> None:
     assert store.classes == ["cold"]
 
 
+@pytest.mark.parametrize(
+    ("filename", "declared", "content", "expected"),
+    [
+        (
+            "thread.eml",
+            "message/rfc822",
+            b"From: A\nDate: Tue\n\nHello",
+            "message/rfc822",
+        ),
+        (
+            "report.ipynb",
+            "application/x-ipynb+json",
+            b'{"nbformat":4,"cells":[]}',
+            "application/x-ipynb+json",
+        ),
+        ("letter.rtf", "application/rtf", b"{\\rtf1 Hello}", "application/rtf"),
+        ("data.csv", "text/csv", b"name,value\na,1\n", "text/csv"),
+        (
+            "book.epub",
+            "application/epub+zip",
+            b"PK\x03\x04package",
+            "application/epub+zip",
+        ),
+        (
+            "data.parquet",
+            "application/vnd.apache.parquet",
+            b"PAR1payloadPAR1",
+            "application/vnd.apache.parquet",
+        ),
+        (
+            "app.db",
+            "application/vnd.sqlite3",
+            b"SQLite format 3\x00payload",
+            "application/vnd.sqlite3",
+        ),
+        (
+            "photo.psd",
+            "image/vnd.adobe.photoshop",
+            b"8BPS\x00\x01",
+            "image/vnd.adobe.photoshop",
+        ),
+    ],
+)
+def test_registry_family_survives_compatible_byte_class(
+    filename: str, declared: str, content: bytes, expected: str
+) -> None:
+    """Byte admission preserves D138 families whose converters validate them."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(filename=filename, mime=declared, content=content),
+    )
+    assert catalog.recorded_mime == expected
+    assert store.classes == ["hot" if expected.startswith("image/") else "cold"]
+
+
 def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:
     """D138: ingest stores the family's parameter-free MIME, never the declared one.
 

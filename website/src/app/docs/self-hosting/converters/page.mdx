@@ -23,7 +23,9 @@ ingest response says so at once with `"parked": "no_route"`.
 The server first checks bytes for recognizable PDF, image, audio, video and
 Office classes. It refuses a declaration that contradicts those bytes with
 HTTP 422. A recognized PDF stays a PDF regardless of its filename. Within
-the detected text class, it chooses a format family in this order:
+the detected text class, or for a binary format the detector does not
+recognize (such as an archive or dataset), it chooses a format family in
+this order:
 
 1. **The file name.** The lower-cased extension picks the family (`.py` is
    code, `.yaml` is configuration, `.tar.gz` is an archive). Files named

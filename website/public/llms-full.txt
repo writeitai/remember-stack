@@ -3132,11 +3132,11 @@ you added a route.
 
 ## Send the right type
 
-A self-hosted deployment recognizes a file by its extension first. The type
-sent with the upload decides only when the name does not say what the file
-is; a text file with neither is searchable but no claims are extracted
-from it. The `remember` CLI, Python client and MCP `ingest` tool send a
-type taken from the extension ([the full
+A self-hosted deployment checks recognizable bytes before it uses the
+extension or sent MIME as a format hint. A type that contradicts the bytes
+is refused with HTTP 422. A text file with no recognizable family is
+searchable but no claims are extracted from it. The `remember` CLI, Python
+client and MCP `ingest` tool send a hint taken from the extension ([the full
 table](https://remember.dev/docs/guides/ingest-files#the-mime-type)). A file whose extension
 does not say what it is needs the type passed explicitly:
 
@@ -3563,8 +3563,8 @@ Python installation:
 
 Any other extension is looked up in Python's `mimetypes` database, and a
 name it does not know is sent as `application/octet-stream`. Pass `mime=`
-(or `--mime` on the CLI) to send a different type; an explicit value always
-wins.
+(or `--mime` on the CLI) to send a different hint; an explicit client value
+wins over the client's extension lookup, while the server checks the bytes.
 
 A self-hosted deployment decides the stored type itself: recognized PDF,
 image, audio, video, and Office bytes establish the class; within a compatible
@@ -3573,7 +3573,8 @@ text class, the filename and declared type choose the format family
 A declaration contradicted by the bytes returns HTTP 422. Binary that does
 not match a known family is stored with a binary card.
 
-The deployment keeps the first MIME type it saw for a given set of bytes.
+The deployment keeps the first detected or compatible family MIME type for a
+given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
 does not change, with one exception: when the stored type has no converter
 route (the upload was parked as `no_route`), identical bytes sent again with
@@ -6821,7 +6822,9 @@ ingest response says so at once with `"parked": "no_route"`.
 The server first checks bytes for recognizable PDF, image, audio, video and
 Office classes. It refuses a declaration that contradicts those bytes with
 HTTP 422. A recognized PDF stays a PDF regardless of its filename. Within
-the detected text class, it chooses a format family in this order:
+the detected text class, or for a binary format the detector does not
+recognize (such as an archive or dataset), it chooses a format family in
+this order:
 
 1. **The file name.** The lower-cased extension picks the family (`.py` is
    code, `.yaml` is configuration, `.tar.gz` is an archive). Files named
@@ -9186,7 +9189,7 @@ attribution, which travels in headers so that it never lands in access logs.
 | Name | In | Type | Required | Default | Constraints |
 |---|---|---|---|---|---|
 | `filename` | query | string | yes | | At least 1 character. Its suffix is kept on the stored original; its stem is the title when `title` is absent. |
-| `mime` | query | string | yes | | At least 1 character. Chooses the converter. |
+| `mime` | query | string | yes | | At least 1 character. A format hint; recognizable bytes establish the content class first. |
 | `title` | query | string | no | stem of `filename` | |
 | `source_kind` | query | string | no | | At least 1 character. Must be sent together with `source_ref`. |
 | `source_ref` | query | string | no | | At least 1 character. Must be sent together with `source_kind`. |
@@ -9236,9 +9239,9 @@ Some settings are taken from the first ingest and kept:
   it is first ingested. Later ingests of the same document do not change
   them.
 - **The MIME type** belongs to the bytes: identical bytes are stored once,
-  with the type they were first sent with, and conversion uses that type.
+  with the first detected or compatible family type, and conversion uses that type.
   One exception: if that type has no converter route, so conversion is
-  parked, sending the same bytes with a type that has a route replaces it
+  parked, sending the same bytes with a compatible type that has a route replaces it
   and releases every parked conversion of those bytes. A file first sent as
   `application/octet-stream` is fixed by sending it again as `text/markdown`.
 
@@ -9313,6 +9316,8 @@ for it; it will not become ready on its own.
 | `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
+| `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
+| `422` | `ambiguous_office_format` | Legacy Office container bytes have no declared Word, Excel or PowerPoint subtype. |
 | `422` | validation list | `filename` or `mime` missing or empty, or another parameter malformed. |
 | `503` | `{"code": "forget_in_progress"}` | A hard forget is running. |
 

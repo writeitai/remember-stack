@@ -6185,7 +6185,8 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Refined by D133 and D138.** The registry chooses a text format family
 from the filename and declaration only after bytes establish that the input
-is text. For binary families D132 cannot identify, registry hints may still
+is text. Compatible text-bearing families include delimited data, email,
+notebooks, and RTF. For binary families D132 cannot identify, registry hints may still
 select a family and its converter validates the full format. Otherwise unknown
 binary is stored with a binary card rather than refused.
 Recognized binary signatures override filename hints; PDF always remains PDF
@@ -6217,7 +6218,8 @@ libmagic dependency increases deployment and wheel-platform complexity.
 Signatures identify the class but do not replace converter validation of full
 format structure. Binary bytes with no recognized registry family receive the
 D138 binary card rather than an optimistic text or media rate. Existing rows
-retain their recorded MIME until re-ingested.
+retain their recorded MIME under content-hash first-write identity; a
+historical correction requires a dedicated migration and reprocessing plan.
 
 **Authority:** [design](plan/designs/e0_files_design.md),
 [analysis](plan/analysis/content_detection_and_object_classes_20260923.md).

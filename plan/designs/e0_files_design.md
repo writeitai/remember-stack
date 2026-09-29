@@ -97,7 +97,9 @@ binary card. The stored
 original class, and managed text metering. Text flavours cannot be settled by
 bytes: once bytes establish text, D133/D138 registry hints select Markdown,
 CSV, code, configuration, or plain text and their distinct processing postures.
-Recognizable HTML markup retains `text/html` for its separate converter, and an empty upload
+Textual email, notebooks, RTF, and delimited data keep their registry families;
+their converters validate full structure. Recognizable HTML markup retains
+`text/html` for its separate converter, and an empty upload
 is valid text in the self-host profile (the managed text profile rejects an
 empty measured source).
 
