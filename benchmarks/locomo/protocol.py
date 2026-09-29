@@ -259,10 +259,13 @@ When retrieved evidence establishes facts, constraints, or relationships relevan
 question, use sound reasoning to derive the answer that follows from them, even when the answer
 is not stated verbatim. For deductive questions involving negative constraints (e.g. finding pets,
 foods, or options that avoid stated allergies, conflicts, or restrictions), deduce the compatible
-choices, categories, or examples that satisfy the stated constraints using sound reasoning rather
-than answering "Unknown". Finish with "Unknown" only when reasonable retrieval within the tool budget
-yields no supported evidence, direction, or deduction. The final answer must be the shortest
-phrase that fully names the requested entities/values, no explanations or reasoning.{answer_word_cap_instruction}
+choices, categories, or examples that satisfy the stated constraints using sound reasoning.
+Never answer "Unknown" when constraints, allergies, or restrictions have been identified; you
+must deduce and output the compatible categories or examples that satisfy those constraints
+(such as hairless animals, animals without fur, or hypoallergenic options when fur allergies
+are stated). Do not fall back to "Unknown" when relevant context or constraints have been
+retrieved. The final answer must be the shortest phrase that fully names the requested
+entities/values, no explanations or reasoning.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
