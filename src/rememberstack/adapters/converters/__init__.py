@@ -22,21 +22,56 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
 
     One converter instance is shared across every MIME type that names it.
     An unknown name refuses composition — a misconfigured deployment fails at
-    startup, never by silently dead-lettering uploads later. When the table
-    also routes something to ``mistral_ocr``, the ``pdf`` route hands scanned
-    PDFs to that OCR route (D138 §7).
+    startup, never by silently dead-lettering uploads later. PDF aliases
+    always use the mandatory OCR wrapper; absent OCR credentials leave PDF
+    unrouted so D117 parks it.
     """
     for mime, name in sorted(route_names.items()):
-        if name not in _CONVERTER_BUILDERS:
+        if name not in _CONVERTER_BUILDERS and name != "pdf":
             raise UnknownConverterError(
                 f"route {mime!r} names unknown converter adapter {name!r}; "
                 f"known adapters: {sorted(_CONVERTER_BUILDERS)}"
             )
-    names = set(route_names.values())
-    built = {name: _CONVERTER_BUILDERS[name]() for name in sorted(names - {"pdf"})}
-    if "pdf" in names:
-        built["pdf"] = _pdf(ocr=built.get("mistral_ocr"))
-    return {mime: built[name] for mime, name in route_names.items()}
+        if mime == "application/pdf" and name not in {"pdf", "mistral_ocr"}:
+            raise UnknownConverterError(
+                "application/pdf must use the every-page OCR route"
+            )
+    if any(
+        mime != "application/pdf" and name == "pdf"
+        for mime, name in route_names.items()
+    ):
+        raise UnknownConverterError("the pdf converter accepts only application/pdf")
+    pdf_requested = "application/pdf" in route_names
+    from pydantic import ValidationError
+
+    from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
+
+    settings = None
+    try:
+        if pdf_requested:
+            settings = MistralOcrSettings.model_validate({})
+    except ValidationError as err:
+        if all(
+            item["loc"] == ("api_key",)
+            and (item["type"] == "missing" or "must not be blank" in item["msg"])
+            for item in err.errors()
+        ):
+            pdf_requested = False
+        else:
+            raise
+    non_pdf_names = {
+        name for mime, name in route_names.items() if mime != "application/pdf"
+    }
+    built = {name: _CONVERTER_BUILDERS[name]() for name in sorted(non_pdf_names)}
+    if pdf_requested:
+        ocr = built.get("mistral_ocr") or _mistral_ocr()
+        assert settings is not None
+        built["pdf"] = _pdf(ocr=ocr, provider_limit_bytes=settings.max_document_bytes)
+    return {
+        mime: built["pdf"] if mime == "application/pdf" else built[name]
+        for mime, name in route_names.items()
+        if mime != "application/pdf" or pdf_requested
+    }
 
 
 def _passthrough() -> Converter:
@@ -65,11 +100,11 @@ def _office() -> Converter:
     return OfficeConverter()
 
 
-def _pdf(ocr: Converter | None = None) -> Converter:
-    """The D138 pdf route; ``ocr`` reads scans when the deployment routes OCR."""
+def _pdf(*, ocr: Converter, provider_limit_bytes: int | None = None) -> Converter:
+    """The D139 PDF route; ``ocr`` reads every page."""
     from rememberstack.adapters.converters.pdf import PdfConverter
 
-    return PdfConverter(ocr=ocr)
+    return PdfConverter(ocr=ocr, provider_limit_bytes=provider_limit_bytes)
 
 
 def _email() -> Converter:
@@ -138,7 +173,6 @@ _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "text": _text,
     "card": _card,
     "office": _office,
-    "pdf": _pdf,
     "email": _email,
     "notebook": _notebook,
     "spreadsheet": _spreadsheet,

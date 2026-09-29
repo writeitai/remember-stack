@@ -69,10 +69,11 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
     assert engine.disposed is True
 
 
+@pytest.mark.parametrize("ocr_key", ["", "test-key"])
 def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ocr_key: str
 ) -> None:
-    """The resume command validates local routes and reports bounded release IDs."""
+    """The resume command releases PDF only when OCR is configured."""
     from rememberstack.spine import WorkLedger
 
     engine = _Engine()
@@ -82,6 +83,7 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     monkeypatch.setenv(
         "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/plain":"passthrough"}'
     )
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", ocr_key)
     monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
 
@@ -96,12 +98,12 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     assert (
         cli_main(["ops", "resume-no-route", "--deployment", str(_DEPLOYMENT_ID)]) == 0
     )
-    # the configured routes overlay the stock table (D138 §3)
+    # The overlay keeps stock routes, but PDF remains parked without OCR.
+    expected_routes = set(STOCK_CONVERSION_ROUTE_NAMES)
+    if not ocr_key:
+        expected_routes.remove("application/pdf")
     assert calls == [
-        {
-            "deployment_id": _DEPLOYMENT_ID,
-            "routes": frozenset(STOCK_CONVERSION_ROUTE_NAMES),
-        }
+        {"deployment_id": _DEPLOYMENT_ID, "routes": frozenset(expected_routes)}
     ]
     assert json.loads(capsys.readouterr().out) == {"released": [str(_DEPLOYMENT_ID)]}
     assert engine.disposed

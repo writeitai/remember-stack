@@ -548,24 +548,40 @@ def test_convert_refuses_a_block_that_mixes_eligibility(tmp_path: Path) -> None:
     assert catalog.recorded is None
 
 
-def test_convert_routes_an_oversized_file_to_the_card_with_hints(
+def test_convert_fails_an_oversized_pdf_before_card_or_route(tmp_path: Path) -> None:
+    """A PDF over its pre-OCR limit fails without a card or representation."""
+    catalog = _ConvertCatalog(mime="application/pdf", byte_size=100_000_001)
+    with pytest.raises(NonRetryableHandlerError, match="pre-OCR reading limit"):
+        _convert(
+            tmp_path=tmp_path,
+            catalog=catalog,
+            routes={"application/octet-stream": _MixedConverter()},
+        )
+    assert catalog.recorded is None
+    assert catalog.failed is not None
+    assert "pre-OCR reading limit" in catalog.failed
+
+
+def test_convert_fails_pdf_above_provider_limit_before_converter(
     tmp_path: Path,
 ) -> None:
-    """Over the family limit, even an unrouted PDF is carded, named by its hints,
-    whatever the route table maps unrecognized bytes to."""
-    catalog = _ConvertCatalog(mime="application/pdf", byte_size=100_000_001)
-    artifacts = _convert(
-        tmp_path=tmp_path,
-        catalog=catalog,
-        # the deployment maps unknown bytes elsewhere; oversized still cards
-        routes={"application/octet-stream": _MixedConverter()},
-    )
-    assert catalog.recorded is not None
-    assert catalog.recorded.route == "card"
-    card = artifacts.read_bytes(key=ObjectKey(catalog.recorded.markdown_uri)).decode()
-    assert card.startswith("# scan.pdf\n")
-    assert "- Source path: archive/2025" in card
-    assert "- Family: pdf" in card
+    """A PDF between provider and family limits fails before pdfium or OCR."""
+    from rememberstack.adapters.converters.pdf import PdfConverter
+
+    catalog = _ConvertCatalog(mime="application/pdf", byte_size=50_000_001)
+    with pytest.raises(NonRetryableHandlerError, match="pre-OCR provider limit"):
+        _convert(
+            tmp_path=tmp_path,
+            catalog=catalog,
+            routes={
+                "application/pdf": PdfConverter(
+                    ocr=_MixedConverter(), provider_limit_bytes=50_000_000
+                )
+            },
+        )
+    assert catalog.recorded is None
+    assert catalog.failed is not None
+    assert "pre-OCR provider limit" in catalog.failed
 
 
 def test_file_hints_reach_only_routes_that_accept_them() -> None:

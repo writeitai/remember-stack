@@ -63,7 +63,7 @@ reports the stored type in its `mime` field.
 | `ebook` | epub | `markitdown` | The text; claims are extracted |
 | `word` | docx, docm, dotx; doc, odt, rtf with LibreOffice | `office` | The text; claims are extracted |
 | `presentation` | pptx, pptm, ppsx, potx; ppt, odp with LibreOffice | `office` | One section per slide; claims are extracted |
-| `pdf` | pdf | `pdf` | One section per page of the text layer; claims are extracted |
+| `pdf` | pdf | `pdf` (OCR) | Every page goes through OCR; claims are extracted |
 | `email` | eml | `email` | Headers, body and attachment list; claims are extracted |
 | `notebook` | ipynb | `notebook` | Markdown cells (claims extracted) and code cells (searchable, no claims); outputs dropped |
 | `spreadsheet` | xlsx, xlsm, xltx, xls, ods (ods through LibreOffice) | `spreadsheet` | A profile; no claims |
@@ -180,22 +180,20 @@ LibreOffice is installed, see [LibreOffice](#libreoffice)); the `.xlsx` and
 `.xls` types to `spreadsheet` (`.ods` only with LibreOffice); `text/csv` and
 `text/tab-separated-values` to `table`; the Parquet, Arrow, SPSS, SAS,
 Stata and SQLite types to `dataset`;
-`application/pdf` to `pdf`; `message/rfc822` to `email`;
+`application/pdf` to the OCR backed `pdf` route when a Mistral key is configured; `message/rfc822` to `email`;
 `application/x-ipynb+json` to `notebook`; image, audio, video, archive and
 `application/octet-stream` types to `card`. Every one of these runs in the
-worker with no network call and no API key.
+worker with no network call and no API key, except PDF: it needs a Mistral OCR key. Without the key, PDFs are stored and parked as `no_route`.
 
 ## Add routes
 
 Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. Each entry
 **adds** a MIME type or **overrides** the converter of one in the default
-table; the rest of the table stays. This example reads PDFs with Mistral OCR
-and reads PNG and JPEG images with OCR plus a written description instead
-of carding them:
+table; the rest of the table stays. PDFs already use Mistral OCR when its key is configured. This example reads PNG and JPEG images with OCR plus a written description instead of carding them:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
@@ -212,7 +210,7 @@ works for files sent with that type.
 | `card` | In the worker | Any file (describes it without reading it) | Nothing |
 | `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`, only when routed to it) | Nothing |
 | `office` | In the worker | Word and PowerPoint | LibreOffice for `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` |
-| `pdf` | In the worker | PDFs with a text layer | Nothing |
+| `pdf` | Mistral OCR plus local PDF page counting | Every PDF page | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `email` | In the worker | `.eml` messages | Nothing |
 | `notebook` | In the worker | Jupyter notebooks | Nothing |
 | `spreadsheet` | In the worker | Excel (`.xlsx`, `.xlsm`, `.xltx`, `.xls`) and `.ods`, as a profile | LibreOffice for `.ods` |
@@ -222,7 +220,7 @@ works for files sent with that type.
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
-`office`, `pdf`, `email`, `notebook` and `markitdown` stop after 120
+`office`, `pdf` page counting, `email`, `notebook` and `markitdown` stop after 120
 seconds and fail the file with a timeout reason.
 
 ## office
@@ -254,17 +252,15 @@ connections it needs.
 
 ## pdf
 
-`pdf` reads the text layer of each page (pypdfium2). Each page with text
-becomes a `## Page N` section, and search results point to that page. Pages
-without text (scanned pages) are listed in the conversion's coverage gaps,
-so you can see that part of the file was not read. The title, author,
-created and modified dates come from the PDF's document information.
-
-When your route table also names `mistral_ocr` (for any type) and more than
-half of a PDF's pages have no text, `pdf` sends the file to Mistral OCR
-instead and bills it like any other OCR call. Without an OCR route, a
-scanned PDF is stored with only its text pages read. A PDF that cannot be
-opened (damaged or password-protected) fails conversion.
+Every page of an accepted PDF goes through Mistral OCR, including pages with
+selectable text. The engine counts pages from the PDF structure before OCR
+and checks that the response contains every page. An empty OCR page receives
+a page-located status marker; a missing page fails conversion without a partial
+reading. The title, author, created and modified dates come from the PDF's
+Info dictionary. Without `REMEMBERSTACK_MISTRAL_OCR_API_KEY`, the PDF is stored
+and parked as `no_route`. An oversized PDF fails with a typed limit reason
+and gets no file card or Markdown reading. The route overlay cannot replace
+PDF OCR with a text-layer or card converter.
 
 ## email
 

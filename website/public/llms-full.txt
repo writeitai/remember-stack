@@ -3098,8 +3098,7 @@ On a self-hosted deployment:
 | Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), CSV/TSV, data files (Parquet, Arrow, SPSS, SAS, Stata, SQLite) | [Profile](https://remember.dev/docs/self-hosting/converters#data-file-profiles): sheets, columns, counts and the first 5 rows; searchable, no claims | Same |
 | `.ods` | Profiled through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
 | `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
-| PDF with a text layer | Read page by page; claims extracted | Same |
-| Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| PDF (digital, scanned or mixed) | Stored and parked without a Mistral OCR key | Every page is read with OCR when the key is configured; claims extracted |
 | Email (`.eml`) | Read; attachments listed, not read | Same |
 | Jupyter notebooks (`.ipynb`) | Markdown cells read (claims extracted); code cells searchable, no claims; outputs dropped | Same |
 | Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
@@ -3110,8 +3109,8 @@ On a self-hosted deployment:
 | Other binary files | File card | Same |
 | Web addresses (URLs) | No | No: download the page and send the HTML |
 
-A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
-gets a file card instead of a reading; a spreadsheet over 50 MB is profiled
+A Word or PowerPoint file over 100 MB, or a spreadsheet over 200 MB,
+gets a file card instead of a reading. A PDF over the lower of its 100 MB family limit and the OCR provider limit fails conversion without a card; a spreadsheet over 50 MB is profiled
 from its sheet list and dimensions only. A text file over 1 MB is described
 by its size, line count, first 50 and last 20 lines instead of read in
 full.
@@ -3124,7 +3123,7 @@ cannot read yet are accepted and stored, but they wait unprocessed. The
 upload response tells you: its `parked` field is `"no_route"`, and
 `remember ingest` prints a warning.
 
-To read scanned PDFs and images with OCR, map their type to a converter in
+To read PDFs, set `REMEMBERSTACK_MISTRAL_OCR_API_KEY`; every PDF page then uses OCR. To read images, map their type to a converter in
 `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
 converters](https://remember.dev/docs/self-hosting/converters) shows the setting, what each
 converter does and costs, and how to release files that were stored before
@@ -3264,9 +3263,12 @@ File modification times are often reset by copying and exporting. If your
 source system knows the real date (a document's last edit, a meeting's
 date), use that instead.
 
-Scanned PDFs have no text layer. markitdown returns little or nothing for
-them, which the loop skips; run them through an OCR tool first. A
-self-hosted deployment can do OCR itself with the `mistral_ocr` converter.
+The conversion loop above uploads Markdown, so a scanned PDF needs OCR before
+that loop can produce useful text. To ingest an original PDF instead, send the
+PDF itself to a self-hosted deployment and configure
+`REMEMBERSTACK_MISTRAL_OCR_API_KEY`. The engine OCRs every page, including
+pages with selectable text. Without the key, it stores the original and parks
+conversion.
 
 ## From a vector database
 
@@ -6245,7 +6247,7 @@ objects itself, during a hard forget.
 | Key | Required | Used for |
 |---|---|---|
 | OpenRouter API key (`REMEMBERSTACK_OPENROUTER_API_KEY`) | Yes | Every model call: structure, claim extraction, entity resolution, fact adjudication, and all embeddings, including query embeddings for search |
-| Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Only if you route PDFs or images to OCR | The `mistral_ocr` and `image_ocr_description` converters |
+| Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Required to read PDFs, or images routed to OCR | The `mistral_ocr` and `image_ocr_description` converters |
 | A second OpenRouter key (`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) | Only if you route images to `image_ocr_description` | The vision-model description of an image |
 | TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` | The alternative fact adjudicator |
 
@@ -6862,7 +6864,7 @@ reports the stored type in its `mime` field.
 | `ebook` | epub | `markitdown` | The text; claims are extracted |
 | `word` | docx, docm, dotx; doc, odt, rtf with LibreOffice | `office` | The text; claims are extracted |
 | `presentation` | pptx, pptm, ppsx, potx; ppt, odp with LibreOffice | `office` | One section per slide; claims are extracted |
-| `pdf` | pdf | `pdf` | One section per page of the text layer; claims are extracted |
+| `pdf` | pdf | `pdf` (OCR) | Every page goes through OCR; claims are extracted |
 | `email` | eml | `email` | Headers, body and attachment list; claims are extracted |
 | `notebook` | ipynb | `notebook` | Markdown cells (claims extracted) and code cells (searchable, no claims); outputs dropped |
 | `spreadsheet` | xlsx, xlsm, xltx, xls, ods (ods through LibreOffice) | `spreadsheet` | A profile; no claims |
@@ -6979,22 +6981,20 @@ LibreOffice is installed, see [LibreOffice](#libreoffice)); the `.xlsx` and
 `.xls` types to `spreadsheet` (`.ods` only with LibreOffice); `text/csv` and
 `text/tab-separated-values` to `table`; the Parquet, Arrow, SPSS, SAS,
 Stata and SQLite types to `dataset`;
-`application/pdf` to `pdf`; `message/rfc822` to `email`;
+`application/pdf` to the OCR backed `pdf` route when a Mistral key is configured; `message/rfc822` to `email`;
 `application/x-ipynb+json` to `notebook`; image, audio, video, archive and
 `application/octet-stream` types to `card`. Every one of these runs in the
-worker with no network call and no API key.
+worker with no network call and no API key, except PDF: it needs a Mistral OCR key. Without the key, PDFs are stored and parked as `no_route`.
 
 ## Add routes
 
 Set `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` to a JSON object. Each entry
 **adds** a MIME type or **overrides** the converter of one in the default
-table; the rest of the table stays. This example reads PDFs with Mistral OCR
-and reads PNG and JPEG images with OCR plus a written description instead
-of carding them:
+table; the rest of the table stays. PDFs already use Mistral OCR when its key is configured. This example reads PNG and JPEG images with OCR plus a written description instead of carding them:
 
 ```bash
 # .env
-REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"application/pdf": "mistral_ocr", "image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
+REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES={"image/png": "image_ocr_description", "image/jpeg": "image_ocr_description"}
 ```
 
 Then apply it with `docker compose up -d`. The API and the `convert` worker
@@ -7011,7 +7011,7 @@ works for files sent with that type.
 | `card` | In the worker | Any file (describes it without reading it) | Nothing |
 | `markitdown` | In the worker | HTML, EPUB and Excel (`.xlsx`, only when routed to it) | Nothing |
 | `office` | In the worker | Word and PowerPoint | LibreOffice for `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` |
-| `pdf` | In the worker | PDFs with a text layer | Nothing |
+| `pdf` | Mistral OCR plus local PDF page counting | Every PDF page | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `email` | In the worker | `.eml` messages | Nothing |
 | `notebook` | In the worker | Jupyter notebooks | Nothing |
 | `spreadsheet` | In the worker | Excel (`.xlsx`, `.xlsm`, `.xltx`, `.xls`) and `.ods`, as a profile | LibreOffice for `.ods` |
@@ -7021,7 +7021,7 @@ works for files sent with that type.
 | `mistral_ocr` | Mistral's OCR API | PDFs and scanned images | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` |
 | `image_ocr_description` | Mistral OCR plus a vision model on OpenRouter | PNG and JPEG only | `REMEMBERSTACK_MISTRAL_OCR_API_KEY` and `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` |
 
-`office`, `pdf`, `email`, `notebook` and `markitdown` stop after 120
+`office`, `pdf` page counting, `email`, `notebook` and `markitdown` stop after 120
 seconds and fail the file with a timeout reason.
 
 ## office
@@ -7053,17 +7053,15 @@ connections it needs.
 
 ## pdf
 
-`pdf` reads the text layer of each page (pypdfium2). Each page with text
-becomes a `## Page N` section, and search results point to that page. Pages
-without text (scanned pages) are listed in the conversion's coverage gaps,
-so you can see that part of the file was not read. The title, author,
-created and modified dates come from the PDF's document information.
-
-When your route table also names `mistral_ocr` (for any type) and more than
-half of a PDF's pages have no text, `pdf` sends the file to Mistral OCR
-instead and bills it like any other OCR call. Without an OCR route, a
-scanned PDF is stored with only its text pages read. A PDF that cannot be
-opened (damaged or password-protected) fails conversion.
+Every page of an accepted PDF goes through Mistral OCR, including pages with
+selectable text. The engine counts pages from the PDF structure before OCR
+and checks that the response contains every page. An empty OCR page receives
+a page-located status marker; a missing page fails conversion without a partial
+reading. The title, author, created and modified dates come from the PDF's
+Info dictionary. Without `REMEMBERSTACK_MISTRAL_OCR_API_KEY`, the PDF is stored
+and parked as `no_route`. An oversized PDF fails with a typed limit reason
+and gets no file card or Markdown reading. The route overlay cannot replace
+PDF OCR with a text-layer or card converter.
 
 ## email
 

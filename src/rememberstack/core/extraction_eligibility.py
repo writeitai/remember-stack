@@ -3,7 +3,7 @@
 Converters label every range of ``document.md`` with a ``derivation_kind``.
 This versioned policy names the kinds that are never claim-extracted: code,
 configuration, logs, unrecognized text, the large-text head/tail profile,
-data-file profiles and file cards. They are still chunked, embedded and
+data-file profiles, file cards and PDF empty-page status. They are still chunked, embedded and
 found by search; E2 simply completes them without a Selection call.
 
 Eligibility changes only at block boundaries: a block labelled with both an
@@ -16,7 +16,7 @@ from typing import Final
 from rememberstack.model import Block
 from rememberstack.model import DerivationRange
 
-EXTRACTION_ELIGIBILITY_POLICY_VERSION: Final = "extraction-eligibility-2026.09"
+EXTRACTION_ELIGIBILITY_POLICY_VERSION: Final = "extraction-eligibility-2026.09-d139"
 """Identifies the ineligible-kind list; it joins the Selection reuse basis of
 ineligible chunks, so a policy change re-keys exactly those chunks."""
 
@@ -30,6 +30,7 @@ INELIGIBLE_DERIVATION_KINDS: Final = frozenset(
         "profile_structure",
         "profile_sample",
         "file_card",
+        "pdf_page_status",
     }
 )
 """Derivation kinds whose ranges are never claim-extracted (D138 §2)."""

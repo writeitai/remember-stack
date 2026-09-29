@@ -1,19 +1,9 @@
-"""The D138 ``pdf`` route: a PDF's text layer, page by page → prose.
-
-pypdfium2 extracts each page's text layer; every page with text becomes a
-``## Page N`` section with its own ``page`` locator. Pages without text are
-named in ``coverage.gaps``. When the deployment configures the Mistral OCR
-route and most pages have no text (a scan), the PDF is read by OCR instead.
-The document Info dictionary gives D134 metadata (Title, Author,
-CreationDate, ModDate). A file pdfium cannot open (corrupt, not a PDF,
-encrypted) fails the version.
-"""
+"""PDF admission and metadata around the mandatory every-page OCR route."""
 
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone
-from importlib.metadata import version as package_version
 import logging
 import re
 import threading
@@ -23,21 +13,17 @@ import pypdfium2
 
 from rememberstack.adapters.converters import time_limit
 from rememberstack.core import Converter
-from rememberstack.core import entire_document_labeling
-from rememberstack.model import ConversionCoverage
+from rememberstack.core.content_detection import has_pdf_body
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
-from rememberstack.model import ConverterManifest
-from rememberstack.model import ManifestComponent
 from rememberstack.model import PageLocator
-from rememberstack.model import SourceMapEntry
 from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.document_metadata import DocumentPerson
 
 _logger = logging.getLogger(__name__)
 
-PDF_CONVERTER_VERSION: Final = "pdf-2026.09"
-"""Pins the pdf route: page sections, gaps, Info metadata, the OCR rule."""
+PDF_CONVERTER_VERSION: Final = "pdf-ocr-2026.09"
+"""Pins structural page validation and Info metadata around OCR."""
 
 _PDFIUM_LOCK: Final = threading.Lock()
 """pdfium is not thread-safe; one PDF is read at a time per process."""
@@ -52,18 +38,21 @@ _PDF_DATE: Final = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class _PdfReading:
-    """What pdfium read: each page's text (empty when it has none) and Info."""
+    """Structural page count and Info dictionary, without reading page text."""
 
-    pages: tuple[str, ...]
+    page_count: int
     info: dict[str, str]
 
 
 class PdfConverter:
-    """Read a PDF's text layer; hand scans to the OCR route when configured."""
+    """Count source pages, OCR all of them, and reject missing page results."""
 
-    def __init__(self, *, ocr: Converter | None) -> None:
-        """Bind the deployment's OCR route, or None when none is configured."""
+    def __init__(
+        self, *, ocr: Converter, provider_limit_bytes: int | None = None
+    ) -> None:
+        """Bind the required OCR route."""
         self._ocr = ocr
+        self._provider_limit_bytes = provider_limit_bytes
 
     @property
     def name(self) -> str:
@@ -73,77 +62,47 @@ class PdfConverter:
     @property
     def version(self) -> str:
         """The pdf route version; the OCR route's version joins it (D38)."""
-        if self._ocr is None:
-            return PDF_CONVERTER_VERSION
         return f"{PDF_CONVERTER_VERSION}+{self._ocr.version}"
 
+    @property
+    def provider_limit_bytes(self) -> int | None:
+        """The configured OCR input ceiling for pre-converter admission."""
+        return self._provider_limit_bytes
+
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
-        """Convert one PDF from its text layer, or by OCR when it is a scan."""
-        if b"%PDF-" not in content[:1024]:
-            raise ConversionError("the file is not a PDF (no %PDF- header)")
+        """OCR every structurally valid page and keep the PDF Info metadata."""
+        if (
+            self._provider_limit_bytes is not None
+            and len(content) > self._provider_limit_bytes
+        ):
+            raise ConversionError(
+                f"PDF exceeds the pre-OCR provider limit of "
+                f"{self._provider_limit_bytes} bytes"
+            )
+        if not has_pdf_body(content=content):
+            raise ConversionError("the file is not a PDF (invalid PDF body)")
         if not _PDFIUM_LOCK.acquire(timeout=time_limit.CONVERTER_TIME_LIMIT_S):
             raise ConversionError(
                 "pdfium is still held by an earlier PDF that overran its time limit"
             )
         reading = time_limit.run_with_time_limit(
-            work=lambda: _read_pdf_and_release(content=content),
-            what="PDF text extraction",
+            work=lambda: _read_pdf_and_release(content=content), what="PDF page count"
         )
         metadata = _info_metadata(info=reading.info)
-        empty_pages = [
-            number
-            for number, text in enumerate(reading.pages, start=1)
-            if not text.strip()
-        ]
-        if self._ocr is not None and len(empty_pages) * 2 > len(reading.pages):
-            result = self._ocr.convert(content=content, mime=mime)
-            return result.model_copy(update={"metadata": metadata or result.metadata})
-        document_md = ""
-        source_map: list[SourceMapEntry] = []
-        for number, text in enumerate(reading.pages, start=1):
-            if not text.strip():
-                continue
-            section = f"## Page {number}\n\n{text.strip()}"
-            start = len(document_md)
-            document_md += section + "\n\n"
-            source_map.append(
-                SourceMapEntry(
-                    start=start,
-                    end=start + len(section),
-                    locators=(PageLocator(page=number, precision="page"),),
-                )
+        result = self._ocr.convert(content=content, mime=mime)
+        found = {
+            locator.page
+            for entry in result.source_map or ()
+            for locator in entry.locators
+            if isinstance(locator, PageLocator) and locator.precision == "page"
+        }
+        expected = set(range(1, reading.page_count + 1))
+        if found != expected:
+            raise ConversionError(
+                f"PDF OCR incomplete: expected pages {sorted(expected)}, "
+                f"received pages {sorted(found)}"
             )
-        return ConversionResult(
-            document_md=document_md,
-            metadata=metadata,
-            source_map=tuple(source_map),
-            manifest=ConverterManifest(
-                components=(
-                    ManifestComponent(
-                        name="pdf",
-                        version=PDF_CONVERTER_VERSION,
-                        execution="library-local",
-                    ),
-                    ManifestComponent(
-                        name="pypdfium2",
-                        version=package_version("pypdfium2"),
-                        execution="library-local",
-                    ),
-                ),
-                coverage=ConversionCoverage(
-                    policy="pdf-text-layer",
-                    complete=not empty_pages,
-                    gaps=tuple(
-                        f"page {number} has no text layer" for number in empty_pages
-                    ),
-                ),
-                derivation_ranges=entire_document_labeling(
-                    document_md=document_md,
-                    derivation_kind="prose",
-                    evidence_mode="source_expression",
-                ),
-            ),
-        )
+        return result.model_copy(update={"metadata": metadata or result.metadata})
 
 
 def _read_pdf_and_release(*, content: bytes) -> _PdfReading:
@@ -159,25 +118,32 @@ def _read_pdf_and_release(*, content: bytes) -> _PdfReading:
 
 
 def _read_pdf(*, content: bytes) -> _PdfReading:
-    """Every page's whole text layer and the Info dictionary."""
+    """Count pages from the page tree and read only the Info dictionary."""
     try:
         document = pypdfium2.PdfDocument(content)
     except pypdfium2.PdfiumError as err:
         raise ConversionError(f"the PDF could not be opened: {err}") from err
     try:
-        pages: list[str] = []
-        for index in range(len(document)):
-            page = document[index]
-            text_page = page.get_textpage()
-            pages.append(text_page.get_text_bounded().replace("\r\n", "\n"))
-            text_page.close()
-            page.close()
+        page_count = len(document)
         info = document.get_metadata_dict(skip_empty=True)
     except pypdfium2.PdfiumError as err:
         raise ConversionError(f"the PDF could not be read: {err}") from err
     finally:
         document.close()
-    return _PdfReading(pages=tuple(pages), info=info)
+    if page_count < 1:
+        raise ConversionError("the PDF has no pages")
+    return _PdfReading(page_count=page_count, info=info)
+
+
+def pdf_page_count(*, content: bytes) -> int:
+    """Count a PDF's source pages without reading any text layer."""
+    if not has_pdf_body(content=content):
+        raise ConversionError("the file is not a PDF (invalid PDF body)")
+    if not _PDFIUM_LOCK.acquire(timeout=time_limit.CONVERTER_TIME_LIMIT_S):
+        raise ConversionError("pdfium is still held by an earlier PDF")
+    return time_limit.run_with_time_limit(
+        work=lambda: _read_pdf_and_release(content=content), what="PDF page count"
+    ).page_count
 
 
 def _info_metadata(*, info: dict[str, str]) -> DocumentMetadata | None:

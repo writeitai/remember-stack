@@ -30,9 +30,12 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.converters.pdf import pdf_page_count
+from rememberstack.core.content_detection import has_pdf_body
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
@@ -144,10 +147,40 @@ class MistralOcrConverter:
                 f"document of {len(content)} bytes exceeds the configured "
                 f"mistral_ocr ceiling of {self._settings.max_document_bytes}"
             )
+        source_pages = (
+            pdf_page_count(content=content)
+            if mime == "application/pdf" and has_pdf_body(content=content)
+            else None
+        )
         started_ns = time.monotonic_ns()
-        raw = self._process(content=content, mime=mime)
+        raw = self._process(
+            content=content, mime=mime, allow_empty_pages=source_pages is not None
+        )
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
-        usage = _usage(raw=raw, settings=self._settings, latency_ms=int(latency_ms))
+        usage = _usage(
+            raw=raw,
+            settings=self._settings,
+            latency_ms=int(latency_ms),
+            source_pages=source_pages,
+        )
+        if source_pages is not None:
+            pages = raw.get("pages")
+            indexes = (
+                [page.get("index") for page in pages]
+                if isinstance(pages, list)
+                and all(isinstance(page, dict) for page in pages)
+                else []
+            )
+            if not all(type(index) is int for index in indexes) or sorted(
+                indexes
+            ) != list(range(source_pages)):
+                raise ConverterLaneError(
+                    f"PDF OCR incomplete: expected {source_pages} source pages, "
+                    f"received page indexes {indexes}",
+                    usage_events=(ConverterUsageEvent(call_key="ocr", usage=usage),),
+                    failed_call_keys=("ocr",),
+                    retryable=False,
+                )
         try:
             result = _normalize(
                 raw=raw,
@@ -165,7 +198,9 @@ class MistralOcrConverter:
             update={"usage_events": (ConverterUsageEvent(call_key="ocr", usage=usage),)}
         )
 
-    def _process(self, *, content: bytes, mime: str) -> dict[str, Any]:
+    def _process(
+        self, *, content: bytes, mime: str, allow_empty_pages: bool = False
+    ) -> dict[str, Any]:
         """One `/v1/ocr` call; 4xx is the input's fault, the rest retries."""
         encoded = base64.b64encode(content).decode("ascii")
         data_url = f"data:{mime};base64,{encoded}"
@@ -199,11 +234,18 @@ class MistralOcrConverter:
                 f"mistral ocr call failed (HTTP {response.status_code}): "
                 f"{response.text[:300]}"
             )
-        decoded = response.json()
+        try:
+            decoded = response.json()
+        except ValueError:
+            if allow_empty_pages:
+                return {"pages": None}
+            raise
         if not isinstance(decoded, dict):
+            if allow_empty_pages:
+                return {"pages": None}
             raise MistralOcrProviderError("mistral ocr returned a non-object JSON body")
         pages = decoded.get("pages")
-        if (
+        if not allow_empty_pages and (
             not isinstance(pages, list)
             or not pages
             or not all(isinstance(page, dict) for page in pages)
@@ -215,11 +257,17 @@ class MistralOcrConverter:
 
 
 def _usage(
-    *, raw: dict[str, Any], settings: MistralOcrSettings, latency_ms: int
+    *,
+    raw: dict[str, Any],
+    settings: MistralOcrSettings,
+    latency_ms: int,
+    source_pages: int | None = None,
 ) -> ProviderCallUsage:
-    """The billable call as the cost ledger records it (pages, not tokens)."""
+    """Meter accepted PDF source pages; other routes use provider diagnostics."""
     info = raw.get("usage_info")
-    if isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
+    if source_pages is not None:
+        pages = source_pages
+    elif isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
         pages = info["pages_processed"]
     else:
         pages = len(raw.get("pages") or [])
@@ -274,7 +322,14 @@ def _normalize(
 
         confidence = _page_confidence(page=page)
         segments = _page_segments(page=page, body=body, last=position == len(pages) - 1)
-        if not segments:
+        if not segments and not source_is_image:
+            segments = [
+                (
+                    f"## Page {number}\n\n[No visible text found by OCR]\n\n",
+                    "pdf_page_status",
+                )
+            ]
+        elif not segments:
             warnings.append(f"page {number} produced no text")
         page_start = offset
         markdown_start = offset
@@ -289,7 +344,9 @@ def _normalize(
                     start=start,
                     end=offset,
                     derivation_kind=kind,
-                    evidence_mode="source_expression",
+                    evidence_mode=(
+                        "computed" if kind == "pdf_page_status" else "source_expression"
+                    ),
                     confidence=confidence,
                 )
             )
