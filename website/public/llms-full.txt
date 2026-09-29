@@ -7164,10 +7164,11 @@ The command prints `{"released": [...]}` with the processing ids it
 released. It releases only work whose stored MIME type the current table
 covers; the rest stays parked. See [Operating the pipeline](https://remember.dev/docs/self-hosting/operating).
 
-If a file whose name has no recognized extension was sent with the wrong
-type, send the same bytes again with a type that has a route (`--mime text/markdown` on the CLI,
+If unrecognized text was stored as `text/x-other-text` and parked, send the
+same text bytes again as Markdown (`--mime text/markdown` on the CLI,
 `mime="text/markdown"` in Python). The new type replaces the unrouted one
-and the parked conversion is released without an operator step.
+and releases the parked conversion. A binary file cannot enter a text route
+by changing the MIME hint.
 
 ## Not supported yet
 
@@ -8091,8 +8092,8 @@ whose MIME type is still unrouted stays parked.
 
 ### A text file that yields no claims
 
-The server picks a file's family from its name first, then from a specific
-declared type, then from its bytes
+The server checks recognizable bytes first, then uses the name and a specific
+declared type as compatible format hints
 ([how a family is chosen](https://remember.dev/docs/self-hosting/converters#how-a-files-family-is-chosen)).
 A file with no recognized extension, sent as `application/octet-stream` or
 `text/plain`, is valid text but of unknown kind: it is stored as
@@ -8102,7 +8103,7 @@ configuration and log files are searchable only by design.
 Send prose with an extension (`notes.md`, `notes.txt`) or declare its type
 on the first upload: `remember ingest notes --mime text/markdown`, or
 `mime="text/markdown"` in Python. RememberStack stores identical bytes once,
-with the type of their first upload; only a type with no route is replaced
+with the first detected or compatible family type; only a type with no route is replaced
 by a later upload's routable type. The ingest result's `mime` shows the
 type recorded. To see which types were recorded:
 
@@ -9241,9 +9242,11 @@ Some settings are taken from the first ingest and kept:
 - **The MIME type** belongs to the bytes: identical bytes are stored once,
   with the first detected or compatible family type, and conversion uses that type.
   One exception: if that type has no converter route, so conversion is
-  parked, sending the same bytes with a compatible type that has a route replaces it
+  parked, sending the same bytes with a byte-compatible type that has a route replaces it
   and releases every parked conversion of those bytes. A file first sent as
-  `application/octet-stream` is fixed by sending it again as `text/markdown`.
+  unrecognized text stored as `text/x-other-text` can be made Markdown by
+  sending the same text bytes again as `text/markdown`. A binary file cannot
+  be made Markdown by changing its MIME hint.
 
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours
@@ -16457,6 +16460,8 @@ seconds. `wait_for_readiness` raises
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
 | `413` | `body_too_large` | The ingest body is over the cap. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
+| `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
+| `422` | `ambiguous_office_format` | A legacy Office container needs a Word, Excel or PowerPoint subtype. | Supply the matching legacy Office MIME. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
 | `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |

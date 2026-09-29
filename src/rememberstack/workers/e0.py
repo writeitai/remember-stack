@@ -385,28 +385,29 @@ class UploadIngestor:
                 content=upload.content,
                 routed_mimes=self._routable,
             )
-            if detected.startswith("text/") and family_for_mime(mime=routed).name in {
-                "markdown",
-                "text",
-                "other_text",
-                "log",
-                "code",
-                "config",
-                "delimited",
-                "email",
-                "notebook",
-                "word",
-            }:
+            family = family_for_mime(mime=routed).name
+            if detected.startswith("text/") and (
+                family
+                in {
+                    "markdown",
+                    "text",
+                    "other_text",
+                    "log",
+                    "code",
+                    "config",
+                    "delimited",
+                    "email",
+                    "notebook",
+                    "html",
+                }
+                or routed == "application/rtf"
+            ):
                 detected = routed
-            elif detected == "application/octet-stream" and family_for_mime(
-                mime=routed
-            ).name not in {
-                "pdf",
-                "image",
-                "media",
-                "word",
-                "presentation",
-                "spreadsheet",
+            elif detected == "application/octet-stream" and family in {
+                "archive",
+                "dataset",
+                "ebook",
+                "binary",
             }:
                 detected = routed
         return upload.model_copy(update={"mime": detected})

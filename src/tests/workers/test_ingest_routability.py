@@ -32,6 +32,14 @@ from rememberstack.workers.e0 import UploadIngestor
 
 _DEPLOYMENT_ID = UUID("106a0000-0000-0000-0000-000000000001")
 _ROUTES = {"text/markdown": "passthrough", "text/plain": "passthrough"}
+_PARQUET_BYTES = b"PAR1meta" + (4).to_bytes(length=4, byteorder="little") + b"PAR1"
+_PSD_BYTES = (
+    b"8BPS\x00\x01"
+    + b"\x00" * 6
+    + b"\x00\x03"
+    + (1).to_bytes(length=4, byteorder="big") * 2
+    + b"\x00\x08\x00\x03"
+)
 
 
 class _RecordingCatalog:
@@ -236,7 +244,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         (
             "data.parquet",
             "application/vnd.apache.parquet",
-            b"PAR1payloadPAR1",
+            _PARQUET_BYTES,
             "application/vnd.apache.parquet",
         ),
         (
@@ -248,7 +256,7 @@ def test_unknown_archive_uses_registry_card_family() -> None:
         (
             "photo.psd",
             "image/vnd.adobe.photoshop",
-            b"8BPS\x00\x01",
+            _PSD_BYTES,
             "image/vnd.adobe.photoshop",
         ),
     ],
@@ -270,6 +278,36 @@ def test_registry_family_survives_compatible_byte_class(
     )
     assert catalog.recorded_mime == expected
     assert store.classes == ["hot" if expected.startswith("image/") else "cold"]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        ("notes.txt", b"The secret is swordfish\x00", "application/octet-stream"),
+        ("notes.txt", b"PK\x03\x04not-office", "application/octet-stream"),
+        ("notes.docx", b"ordinary UTF-8 prose", "text/plain"),
+        ("index.html", b"<!-- saved -->\n<html><p>Hi</p></html>", "text/html"),
+    ],
+)
+def test_registry_hint_cannot_cross_the_detected_byte_class(
+    filename: str, content: bytes, expected: str
+) -> None:
+    """Filename hints cannot make binary into text or text into OOXML."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename=filename, mime="application/octet-stream", content=content
+        ),
+    )
+    assert catalog.recorded_mime == expected
+    assert store.classes == ["cold"]
 
 
 def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:

@@ -37,6 +37,7 @@ def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
         (b"hello\r\nworld", "text/csv", "text/plain"),
         (b"", "text/markdown", "text/markdown"),
         (b"<html><p>Hello</p></html>", "text/html", "text/html"),
+        (b"<html><p>Hello</p></html>", "text/plain", "text/html"),
         (b"const answer = 42;\n", "application/javascript", "text/plain"),
         (b"# Notes\n", "application/x-unknown", "text/plain"),
         (b'{"answer":42}\n', "application/json", "text/plain"),
@@ -72,6 +73,11 @@ def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
         (
             _docx_bytes(),
             "application/octet-stream",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        (
+            _docx_bytes(),
+            "application/zip",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ),
     ],
@@ -117,6 +123,25 @@ def test_pdf_example_inside_prose_does_not_override_text() -> None:
     assert (
         detect_content_mime(content=note, declared_mime="text/markdown")
         == "text/markdown"
+    )
+
+
+@pytest.mark.parametrize(
+    "content", (b"PAR1\nmagic notes\nPAR1", b"8BPS is the Photoshop marker\n")
+)
+def test_printable_format_markers_are_text(content: bytes) -> None:
+    """A printable marker alone never establishes a binary format."""
+    assert (
+        detect_content_mime(content=content, declared_mime="text/plain") == "text/plain"
+    )
+
+
+def test_cr_delimited_pdf_is_detected() -> None:
+    """PDF syntax also permits carriage returns between object tokens."""
+    content = b"%PDF-1.7\r%\xff\r1 0 obj\r<<>>\rendobj\r%%EOF"
+    assert (
+        detect_content_mime(content=content, declared_mime="application/pdf")
+        == "application/pdf"
     )
 
 

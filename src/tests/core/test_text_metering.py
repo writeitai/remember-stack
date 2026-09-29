@@ -22,7 +22,7 @@ def test_normalized_character_count_collapses_unicode_whitespace(
 @pytest.mark.parametrize(
     "payload",
     [
-        b"%PDF-1.7\n1 0 obj\n(scanned-looking text)",
+        b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
         b"\x89PNG\r\n\x1a\n" + b"text-looking-tail",
         b"\xff\xd8\xff\xe0image-only",
         b"PK\x03\x04archive-with-text.txt",
@@ -43,6 +43,15 @@ def test_ambiguous_binary_text_fails_before_measurement(payload: bytes) -> None:
     with pytest.raises(ManagedTextClassificationError) as raised:
         classify_doc_text(content=payload, declared_mime="text/markdown")
     assert raised.value.code == "rate_class_ambiguous"
+
+
+@pytest.mark.parametrize(
+    "payload", (b"%PDF-1.4 is only a header\n", b"ID3 tags are metadata\n")
+)
+def test_printable_binary_markers_remain_managed_text(payload: bytes) -> None:
+    """Metering uses the same structural signatures as E0 admission."""
+    result = classify_doc_text(content=payload, declared_mime="text/plain")
+    assert result.canonical_mime == "text/plain"
 
 
 def test_mime_does_not_hide_native_text_or_change_quantity() -> None:

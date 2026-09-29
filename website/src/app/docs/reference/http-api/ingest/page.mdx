@@ -83,9 +83,11 @@ Some settings are taken from the first ingest and kept:
 - **The MIME type** belongs to the bytes: identical bytes are stored once,
   with the first detected or compatible family type, and conversion uses that type.
   One exception: if that type has no converter route, so conversion is
-  parked, sending the same bytes with a compatible type that has a route replaces it
+  parked, sending the same bytes with a byte-compatible type that has a route replaces it
   and releases every parked conversion of those bytes. A file first sent as
-  `application/octet-stream` is fixed by sending it again as `text/markdown`.
+  unrecognized text stored as `text/x-other-text` can be made Markdown by
+  sending the same text bytes again as `text/markdown`. A binary file cannot
+  be made Markdown by changing its MIME hint.
 
 The response reports the values in force (`mime`, `title`,
 `versioning_mode`). Compare them with what you sent to see whether yours

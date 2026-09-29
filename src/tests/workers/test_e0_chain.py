@@ -287,6 +287,10 @@ class _E0Rig:
             "text/plain": MarkdownPassthroughConverter(),
             "text/html": markitdown,
             _DOCX: markitdown,
+            "application/pdf": _FakeScanConverter(),
+            "image/png": _UnlabeledConverter(),
+            "audio/mpeg": _InvalidEnvelopeConverter(),
+            "video/mp4": _TransientlyFailingConverter(),
             "application/x-fake-scan": _FakeScanConverter(),
             "application/x-unlabeled": _UnlabeledConverter(),
             "application/x-invalid-envelope": _InvalidEnvelopeConverter(),
@@ -973,7 +977,7 @@ def test_mime_replaced_mid_claim_is_not_stranded_as_no_route(rig: _E0Rig) -> Non
         catalog=rig.catalog,
         raw_store=rig.raw_store,
         admission=ForgetCatalog(engine=rig.engine),
-        routable_mimes=frozenset({"application/x-unknown"}),
+        routable_mimes=frozenset({"text/x-other-text"}),
     )
     first = admitting_gate.ingest(
         deployment_id=_DEPLOYMENT_ID,

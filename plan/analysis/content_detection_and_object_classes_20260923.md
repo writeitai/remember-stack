@@ -66,6 +66,7 @@ a type or runtime error, including in a new writer.
 Detection runs before any raw write or catalog transaction. A contradicted
 declaration returns a stable typed error at HTTP 422. Unknown binary is stored
 with the D138 binary card. Existing content rows keep their first recorded
-MIME, including on a same-byte no-op. Correcting a historical wrong class
-requires a separate migration and reprocessing plan; D132 changes admission
+MIME on a same-byte no-op when that MIME is routable. D117 retains its
+unroutable-to-routable same-byte exception. Correcting a historical wrong
+routable class requires a separate migration and reprocessing plan; D132 changes admission
 for new content, not prior evidence. No dependency or schema migration is required.

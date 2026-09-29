@@ -11,9 +11,11 @@ from __future__ import annotations
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import UTC
+import io
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
+import zipfile
 
 from alembic import command
 from alembic.config import Config
@@ -46,6 +48,15 @@ from tests.database_reset import reset_database
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("61000000-0000-0000-0000-0000000d0134")
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _xlsx_bytes() -> bytes:
+    """Build the minimal OOXML package needed for byte-class admission."""
+    output = io.BytesIO()
+    with zipfile.ZipFile(file=output, mode="w") as archive:
+        archive.writestr(zinfo_or_arcname="[Content_Types].xml", data="<Types/>")
+        archive.writestr(zinfo_or_arcname="xl/workbook.xml", data="<workbook/>")
+    return output.getvalue()
 
 
 @pytest.fixture(scope="module")
@@ -83,13 +94,16 @@ class _Rig:
         self,
         *,
         filename: str,
-        content: str,
+        content: str | bytes,
         title: str | None = None,
         mime: str = "text/markdown",
         source_ref: str | None = None,
     ) -> IngestedVersion:
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content.encode(), title=title
+            filename=filename,
+            mime=mime,
+            content=content.encode() if isinstance(content, str) else content,
+            title=title,
         )
         if source_ref is None:
             return self.ingestor.ingest(deployment_id=_DEPLOYMENT_ID, upload=upload)
@@ -210,7 +224,7 @@ def _doc_ids(page: DocumentSearchPage) -> list[UUID]:
 
 
 def test_names_match_exactly_partially_and_misspelled(rig: _Rig) -> None:
-    sales = rig.ingest(filename="Q3_sales_2025.xlsx", content="sheet", mime=_XLSX)
+    sales = rig.ingest(filename="Q3_sales_2025.xlsx", content=_xlsx_bytes(), mime=_XLSX)
     report = rig.ingest(
         filename="quarterly_report.md", content="# Report\n", title="Quarterly report"
     )
@@ -438,7 +452,7 @@ def test_deleted_and_forgotten_documents_never_match(rig: _Rig) -> None:
 
 
 def test_family_language_and_doc_id_filters(rig: _Rig) -> None:
-    sheet = rig.ingest(filename="costs.xlsx", content="sheet", mime=_XLSX)
+    sheet = rig.ingest(filename="costs.xlsx", content=_xlsx_bytes(), mime=_XLSX)
     notes = rig.ingest(filename="costs.md", content="# Costs\n")
     rig.merge(version_id=notes.version_id, metadata=DocumentMetadata(language="cs"))
 
@@ -476,7 +490,7 @@ def test_the_trigram_name_channel_uses_the_indexable_operator(
     rig: _Rig, database_engine: Engine
 ) -> None:
     """`%>` is served by ix_document_names_trgm; `word_similarity() >=` is not."""
-    rig.ingest(filename="Q3_sales_2025.xlsx", content="sheet", mime=_XLSX)
+    rig.ingest(filename="Q3_sales_2025.xlsx", content=_xlsx_bytes(), mime=_XLSX)
     assert "n.name_text %> :query" in NAMES_TRIGRAM
     with database_engine.connect() as connection:
         connection.execute(text("SET LOCAL enable_seqscan = off"))

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from rememberstack.core.content_detection import has_pdf_body
+from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.model.metering import ManagedTextClassificationError
 
 DOC_TEXT_CLASSIFIER_VERSION = "doc-text-classifier-v1"
@@ -14,16 +14,10 @@ DOC_TEXT_PROCESSING_PROFILE_ID = "doc-text-standard-v1"
 DOC_TEXT_MAX_SOURCE_BYTES = 10_000_000
 
 _BINARY_MAGICS: tuple[bytes, ...] = (
-    b"%PDF-",
     b"\x89PNG\r\n\x1a\n",
     b"\xff\xd8\xff",
-    b"GIF87a",
-    b"GIF89a",
     b"PK\x03\x04",
     b"\x1f\x8b",
-    b"RIFF",
-    b"OggS",
-    b"ID3",
     b"\x00\x00\x00\x18ftyp",
     b"\x00\x00\x00\x20ftyp",
 )
@@ -71,7 +65,15 @@ def classify_doc_text(*, content: bytes, declared_mime: str) -> ClassifiedText:
         raise ManagedTextClassificationError(code="empty_text")
     if any(content.startswith(magic) for magic in _BINARY_MAGICS):
         raise ManagedTextClassificationError(code="rate_class_unavailable")
-    if has_pdf_body(content=content):
+    byte_mime = detect_content_mime(
+        content=content, declared_mime="application/octet-stream"
+    )
+    if byte_mime not in {
+        "application/octet-stream",
+        "text/plain",
+        "text/markdown",
+        "text/html",
+    }:
         raise ManagedTextClassificationError(code="rate_class_unavailable")
     mime = declared_mime.partition(";")[0].strip().lower()
     if mime not in _DOC_TEXT_MIMES and not mime.startswith("text/"):

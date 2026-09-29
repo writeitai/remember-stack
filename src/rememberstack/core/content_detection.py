@@ -91,6 +91,28 @@ def _looks_like_gif(*, content: bytes) -> bool:
     )
 
 
+def _looks_like_psd(*, content: bytes) -> bool:
+    """Require Photoshop header fields beyond the printable signature."""
+    if (
+        len(content) < 26
+        or content[:6] != b"8BPS\x00\x01"
+        or content[6:12] != b"\x00" * 6
+    ):
+        return False
+    channels = int.from_bytes(content[12:14], "big")
+    height = int.from_bytes(content[14:18], "big")
+    width = int.from_bytes(content[18:22], "big")
+    depth = int.from_bytes(content[22:24], "big")
+    mode = int.from_bytes(content[24:26], "big")
+    return (
+        1 <= channels <= 56
+        and 1 <= height <= 300_000
+        and 1 <= width <= 300_000
+        and depth in {1, 8, 16, 32}
+        and mode <= 9
+    )
+
+
 def _looks_like_flac(*, content: bytes) -> bool:
     """Require the mandatory 34-byte STREAMINFO block after the marker."""
     return (
@@ -201,12 +223,19 @@ def has_pdf_body(*, content: bytes) -> bool:
     if len(preamble_text.split()) >= 2:
         # A prose sentence quoting a PDF header is not a PDF preamble.
         return False
+    body = content[header.end() :]
     object_match = re.search(
-        rb"(?:^|\n)\d+\s+\d+\s+obj\b.*?\bendobj\b", content[header.end() :], re.DOTALL
+        rb"(?:^|[\r\n])[ \t]*\d+[ \t]+\d+[ \t]+obj[ \t]*(?:\r\n|[\r\n])"
+        rb".*?(?:^|[\r\n])[ \t]*endobj[ \t]*(?:\r\n|[\r\n])",
+        body,
+        re.DOTALL,
     )
     return bool(
         object_match is not None
-        and b"%%EOF" in content[header.end() + object_match.end() :]
+        and re.search(
+            rb"(?:^|[\r\n])[ \t]*%%EOF(?:[ \t]*[\r\n]|[ \t]*$)",
+            body[object_match.end() :],
+        )
     )
 
 
@@ -247,14 +276,18 @@ def _detected_mime(*, content: bytes) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
     if has_pdf_body(content=content):
         return "application/pdf"
-    if len(content) >= 8 and content.startswith(b"PAR1") and content.endswith(b"PAR1"):
+    if (
+        len(content) >= 13
+        and content.startswith(b"PAR1")
+        and content.endswith(b"PAR1")
+        and 0 < int.from_bytes(content[-8:-4], "little") <= len(content) - 12
+    ):
         return "application/vnd.apache.parquet"
     for signature, mime in (
         (b"\x89PNG\r\n\x1a\n", "image/png"),
         (b"\xff\xd8\xff", "image/jpeg"),
         (b"II*\x00", "image/tiff"),
         (b"MM\x00*", "image/tiff"),
-        (b"8BPS", "image/vnd.adobe.photoshop"),
         (b"\x1a\x45\xdf\xa3", "video/webm"),
     ):
         if content.startswith(signature):
@@ -263,6 +296,8 @@ def _detected_mime(*, content: bytes) -> str:
         return "image/bmp"
     if _looks_like_gif(content=content):
         return "image/gif"
+    if _looks_like_psd(content=content):
+        return "image/vnd.adobe.photoshop"
     if _looks_like_flac(content=content):
         return "audio/flac"
     if _looks_like_ogg(content=content):
@@ -323,7 +358,12 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
         return detected
     if detected.startswith("text/"):
         if detected == "text/html":
-            if declared not in {"", "application/octet-stream", "text/html"}:
+            if declared not in {
+                "",
+                "application/octet-stream",
+                "text/plain",
+                "text/html",
+            }:
                 raise ContentDetectionError(code="content_type_mismatch")
             return detected
         if (
@@ -345,6 +385,10 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
     if (
         declared not in {"", "application/octet-stream"}
         and declared_class != detected_class
+        and not (
+            detected_class == "office"
+            and declared in {"application/zip", "application/x-zip-compressed"}
+        )
     ):
         raise ContentDetectionError(code="content_type_mismatch")
     if detected == "application/pdf" and declared not in {

@@ -249,8 +249,8 @@ whose MIME type is still unrouted stays parked.
 
 ### A text file that yields no claims
 
-The server picks a file's family from its name first, then from a specific
-declared type, then from its bytes
+The server checks recognizable bytes first, then uses the name and a specific
+declared type as compatible format hints
 ([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
 A file with no recognized extension, sent as `application/octet-stream` or
 `text/plain`, is valid text but of unknown kind: it is stored as
@@ -260,7 +260,7 @@ configuration and log files are searchable only by design.
 Send prose with an extension (`notes.md`, `notes.txt`) or declare its type
 on the first upload: `remember ingest notes --mime text/markdown`, or
 `mime="text/markdown"` in Python. RememberStack stores identical bytes once,
-with the type of their first upload; only a type with no route is replaced
+with the first detected or compatible family type; only a type with no route is replaced
 by a later upload's routable type. The ingest result's `mime` shows the
 type recorded. To see which types were recorded:
 

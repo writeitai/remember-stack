@@ -365,10 +365,11 @@ The command prints `{"released": [...]}` with the processing ids it
 released. It releases only work whose stored MIME type the current table
 covers; the rest stays parked. See [Operating the pipeline](/docs/self-hosting/operating).
 
-If a file whose name has no recognized extension was sent with the wrong
-type, send the same bytes again with a type that has a route (`--mime text/markdown` on the CLI,
+If unrecognized text was stored as `text/x-other-text` and parked, send the
+same text bytes again as Markdown (`--mime text/markdown` on the CLI,
 `mime="text/markdown"` in Python). The new type replaces the unrouted one
-and the parked conversion is released without an operator step.
+and releases the parked conversion. A binary file cannot enter a text route
+by changing the MIME hint.
 
 ## Not supported yet
 

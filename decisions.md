@@ -6218,8 +6218,11 @@ libmagic dependency increases deployment and wheel-platform complexity.
 Signatures identify the class but do not replace converter validation of full
 format structure. Binary bytes with no recognized registry family receive the
 D138 binary card rather than an optimistic text or media rate. Existing rows
-retain their recorded MIME under content-hash first-write identity; a
-historical correction requires a dedicated migration and reprocessing plan.
+retain their recorded MIME under content-hash first-write identity, except
+D117's existing rule: if the stored MIME has no converter route, a same-byte
+re-ingest with a byte-compatible routable family adopts that MIME and releases
+parked conversions for every lineage sharing the bytes. A historical wrong
+class that is already routable requires a dedicated migration and reprocessing plan.
 
 **Authority:** [design](plan/designs/e0_files_design.md),
 [analysis](plan/analysis/content_detection_and_object_classes_20260923.md).
