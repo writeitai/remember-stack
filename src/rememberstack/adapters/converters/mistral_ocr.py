@@ -236,10 +236,10 @@ class MistralOcrConverter:
             )
         try:
             decoded = response.json()
-        except ValueError as err:
+        except ValueError:
             if allow_empty_pages:
                 return {"pages": None}
-            raise MistralOcrProviderError("mistral ocr returned invalid JSON") from err
+            raise
         if not isinstance(decoded, dict):
             if allow_empty_pages:
                 return {"pages": None}
