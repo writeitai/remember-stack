@@ -30,9 +30,12 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.adapters.converters.pdf import pdf_page_count
+from rememberstack.core.content_detection import has_pdf_body
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
@@ -144,10 +147,32 @@ class MistralOcrConverter:
                 f"document of {len(content)} bytes exceeds the configured "
                 f"mistral_ocr ceiling of {self._settings.max_document_bytes}"
             )
+        source_pages = (
+            pdf_page_count(content=content)
+            if mime == "application/pdf" and has_pdf_body(content=content)
+            else None
+        )
         started_ns = time.monotonic_ns()
         raw = self._process(content=content, mime=mime)
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
-        usage = _usage(raw=raw, settings=self._settings, latency_ms=int(latency_ms))
+        usage = _usage(
+            raw=raw,
+            settings=self._settings,
+            latency_ms=int(latency_ms),
+            source_pages=source_pages,
+        )
+        if source_pages is not None:
+            indexes = [page.get("index") for page in raw["pages"]]
+            if not all(type(index) is int for index in indexes) or sorted(
+                indexes
+            ) != list(range(source_pages)):
+                raise ConverterLaneError(
+                    f"PDF OCR incomplete: expected {source_pages} source pages, "
+                    f"received page indexes {indexes}",
+                    usage_events=(ConverterUsageEvent(call_key="ocr", usage=usage),),
+                    failed_call_keys=("ocr",),
+                    retryable=False,
+                )
         try:
             result = _normalize(
                 raw=raw,
@@ -215,11 +240,17 @@ class MistralOcrConverter:
 
 
 def _usage(
-    *, raw: dict[str, Any], settings: MistralOcrSettings, latency_ms: int
+    *,
+    raw: dict[str, Any],
+    settings: MistralOcrSettings,
+    latency_ms: int,
+    source_pages: int | None = None,
 ) -> ProviderCallUsage:
-    """The billable call as the cost ledger records it (pages, not tokens)."""
+    """Meter accepted PDF source pages; other routes use provider diagnostics."""
     info = raw.get("usage_info")
-    if isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
+    if source_pages is not None:
+        pages = source_pages
+    elif isinstance(info, dict) and isinstance(info.get("pages_processed"), int):
         pages = info["pages_processed"]
     else:
         pages = len(raw.get("pages") or [])
@@ -274,7 +305,14 @@ def _normalize(
 
         confidence = _page_confidence(page=page)
         segments = _page_segments(page=page, body=body, last=position == len(pages) - 1)
-        if not segments:
+        if not segments and not source_is_image:
+            segments = [
+                (
+                    f"## Page {number}\n\n[No visible text found by OCR]\n\n",
+                    "pdf_page_status",
+                )
+            ]
+        elif not segments:
             warnings.append(f"page {number} produced no text")
         page_start = offset
         markdown_start = offset

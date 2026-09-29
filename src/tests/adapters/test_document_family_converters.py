@@ -42,6 +42,7 @@ from rememberstack.model import ConverterManifest
 from rememberstack.model import FileHints
 from rememberstack.model import ManifestComponent
 from rememberstack.model import PageLocator
+from rememberstack.model import SourceMapEntry
 from rememberstack.model.document_metadata import DocumentMetadata
 from rememberstack.model.document_metadata import DocumentPerson
 
@@ -282,38 +283,45 @@ def test_libreoffice_rejects_corrupt_input() -> None:
 # --- PDF ---------------------------------------------------------------------
 
 
-def test_pdf_pages_get_page_locators_and_empty_pages_are_gaps() -> None:
-    """Each page with text is a section; a page without text is a named gap."""
-    content = _pdf(pages=["Alpha findings", None, "Gamma summary"])
-    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
-    markdown = result.document_md
-    assert "## Page 1\n\nAlpha findings" in markdown
-    assert "## Page 3\n\nGamma summary" in markdown
-    assert "## Page 2" not in markdown
+def test_every_pdf_page_uses_ocr_even_when_text_is_selectable() -> None:
+    """Born-digital, scanned and mixed pages all take the same OCR path."""
+    ocr = _FakeOcr(pages=(1, 2, 3))
+    content = _pdf(pages=["Selectable", None, "More selectable"])
+    result = PdfConverter(ocr=ocr).convert(content=content, mime="application/pdf")
+    assert ocr.calls == 1
+    assert result.document_md == "OCR text\n"
     assert result.source_map is not None
-    assert [entry.locators[0].page for entry in result.source_map] == [1, 3]  # pyright: ignore[reportAttributeAccessIssue]
-    coverage = result.manifest.coverage
-    assert coverage.complete is False
-    assert coverage.gaps == ("page 2 has no text layer",)
-    _assert_prose(result=result)
+    assert {entry.locators[0].page for entry in result.source_map} == {1, 2, 3}  # pyright: ignore[reportAttributeAccessIssue]
+    assert result.manifest.coverage.complete
 
 
-def test_pdf_text_keeps_supplementary_unicode_characters() -> None:
-    """Characters outside the BMP (here U+1D465, 𝑥) survive extraction."""
-    content = _pdf(pages=["AB"], to_unicode={"41": "D835DC65", "42": "0062"})
-    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
-    assert "## Page 1\n\n\U0001d465b" in result.document_md
+def test_pdf_missing_ocr_page_fails_without_partial_reading() -> None:
+    """A provider response gap is a typed failure, not a partial success."""
+    with pytest.raises(ConversionError, match="PDF OCR incomplete"):
+        PdfConverter(ocr=_FakeOcr(pages=(1, 3))).convert(
+            content=_pdf(pages=["One", None, "Three"]), mime="application/pdf"
+        )
 
 
-def test_fully_scanned_pdf_without_ocr_is_empty_with_every_page_a_gap() -> None:
-    """No OCR route: nothing is read, and every page is named as a gap."""
-    content = _pdf(pages=[None, None])
-    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
-    assert result.document_md == ""
-    assert result.manifest.coverage.gaps == (
-        "page 1 has no text layer",
-        "page 2 has no text layer",
+def test_pdf_info_dictionary_becomes_d134_metadata() -> None:
+    """Structural Info metadata survives the OCR reading."""
+    content = _pdf(
+        pages=["Body"],
+        info={
+            "Title": "Audit 2025",
+            "Author": "Dana Lee",
+            "CreationDate": "D:20250301120000+01'00'",
+            "ModDate": "D:20250302",
+        },
     )
+    result = PdfConverter(ocr=_FakeOcr()).convert(
+        content=content, mime="application/pdf"
+    )
+    assert result.metadata is not None
+    assert result.metadata.title == "Audit 2025"
+    assert result.metadata.authors == (DocumentPerson(name="Dana Lee"),)
+    assert result.metadata.created_at == datetime(2025, 3, 1, 11, tzinfo=timezone.utc)
+    assert result.metadata.modified_at == datetime(2025, 3, 2, tzinfo=timezone.utc)
 
 
 def test_ocr_metadata_is_kept_when_the_pdf_declares_none() -> None:
@@ -326,91 +334,54 @@ def test_ocr_metadata_is_kept_when_the_pdf_declares_none() -> None:
 
 
 def test_pdf_fails_when_pdfium_is_still_held(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A stuck earlier conversion holding pdfium fails the next one, typed."""
+    """A stuck earlier page-count operation fails the next one, typed."""
     monkeypatch.setattr(time_limit, "CONVERTER_TIME_LIMIT_S", 0.05)
     assert pdf._PDFIUM_LOCK.acquire(timeout=1)  # pyright: ignore[reportPrivateUsage]
     try:
         with pytest.raises(ConversionError, match="still held"):
-            PdfConverter(ocr=None).convert(
+            PdfConverter(ocr=_FakeOcr()).convert(
                 content=_pdf(pages=["x"]), mime="application/pdf"
             )
     finally:
         pdf._PDFIUM_LOCK.release()  # pyright: ignore[reportPrivateUsage]
 
 
-def test_pdf_info_dictionary_becomes_d134_metadata() -> None:
-    """Title, Author, CreationDate and ModDate map onto D134 fields."""
-    content = _pdf(
-        pages=["Body"],
-        info={
-            "Title": "Audit 2025",
-            "Author": "Dana Lee",
-            "CreationDate": "D:20250301120000+01'00'",
-            "ModDate": "D:20250302",
-        },
-    )
-    result = PdfConverter(ocr=None).convert(content=content, mime="application/pdf")
-    assert result.manifest.coverage.complete is True
-    assert result.metadata is not None
-    assert result.metadata.title == "Audit 2025"
-    assert result.metadata.authors == (DocumentPerson(name="Dana Lee"),)
-    assert result.metadata.created_at == datetime(2025, 3, 1, 11, tzinfo=timezone.utc)
-    assert result.metadata.modified_at == datetime(2025, 3, 2, tzinfo=timezone.utc)
-
-
-def test_scanned_pdf_goes_to_the_configured_ocr_route() -> None:
-    """Mostly text-less pages hand the file to OCR; the Info metadata stays."""
-    ocr = _FakeOcr()
-    converter = PdfConverter(ocr=ocr)
-    assert converter.version.endswith("+fake-ocr-1")
-    content = _pdf(pages=[None, None, "Page three only"], info={"Title": "Scan"})
-    result = converter.convert(content=content, mime="application/pdf")
-    assert ocr.calls == 1
-    assert result.document_md == "OCR text\n"
-    assert result.metadata is not None
-    assert result.metadata.title == "Scan"
-    text_pdf = _pdf(pages=["One", "Two", None])
-    assert (
-        "One" in converter.convert(content=text_pdf, mime="application/pdf").document_md
-    )
-    assert ocr.calls == 1
-
-
-def test_route_table_with_mistral_ocr_gives_the_pdf_route_ocr(
+def test_pdf_route_parks_without_key_and_rejects_non_ocr_overlay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The pdf route picks up OCR only when the table routes to mistral_ocr."""
-    plain = build_conversion_routes(route_names={"application/pdf": "pdf"})
-    assert plain["application/pdf"].version == "pdf-2026.09"
-    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "test-key")
-    routes = build_conversion_routes(
-        route_names={"application/pdf": "pdf", "image/tiff": "mistral_ocr"}
+    """The stock PDF entry only composes when the OCR provider is ready."""
+    monkeypatch.delenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", raising=False)
+    assert "application/pdf" not in build_conversion_routes(
+        route_names={"application/pdf": "pdf"}
     )
-    assert routes["application/pdf"].version.startswith("pdf-2026.09+mistral-ocr")
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "test-key")
+    routes = build_conversion_routes(route_names={"application/pdf": "pdf"})
+    assert routes["application/pdf"].version.startswith("pdf-ocr-2026.09+mistral-ocr")
+    with pytest.raises(Exception, match="every-page OCR"):
+        build_conversion_routes(route_names={"application/pdf": "card"})
 
 
 def test_corrupt_pdf_fails_with_a_typed_error() -> None:
-    """No PDF header, or a header over garbage, fails the version."""
+    """No PDF body, or a header over garbage, fails before OCR."""
     with pytest.raises(ConversionError, match="not a PDF"):
-        PdfConverter(ocr=None).convert(content=b"hello", mime="application/pdf")
-    with pytest.raises(ConversionError, match="could not be opened"):
-        PdfConverter(ocr=None).convert(
+        PdfConverter(ocr=_FakeOcr()).convert(content=b"hello", mime="application/pdf")
+    with pytest.raises(ConversionError, match="not a PDF"):
+        PdfConverter(ocr=_FakeOcr()).convert(
             content=b"%PDF-1.4\ngarbage without objects", mime="application/pdf"
         )
 
 
-def test_oversized_documents_get_a_card_that_says_why() -> None:
-    """Office and PDF files over 100 MB are carded, not read (D138 §3)."""
+def test_oversized_non_pdf_documents_get_a_card() -> None:
+    """Office documents above the family limit still get a card."""
     for mime in ("application/pdf", _DOCX, _PPTX, "application/msword"):
         assert exceeds_reading_limit(mime=mime, byte_size=100_000_001), mime
         assert not exceeds_reading_limit(mime=mime, byte_size=100_000_000), mime
     card = CardConverter().convert(
         content=b"\0" * 100_000_001,
-        mime="application/pdf",
-        hints=FileHints(file_name="huge.pdf", source_path="docs/huge.pdf"),
+        mime=_DOCX,
+        hints=FileHints(file_name="huge.docx", source_path="docs/huge.docx"),
     )
-    assert "100,000,000-byte reading limit for pdf files" in card.document_md
-    assert card.manifest.derivation_ranges[0].derivation_kind == "file_card"
+    assert "100,000,000-byte reading limit for word files" in card.document_md
 
 
 # --- HTML and e-book (markitdown) --------------------------------------------
@@ -578,8 +549,11 @@ def test_invalid_notebook_fails_with_a_typed_error() -> None:
 # --- routing and limits ------------------------------------------------------
 
 
-def test_every_document_family_routes_through_the_stock_table() -> None:
+def test_every_document_family_routes_through_the_stock_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The registry's converter names all build and route by default."""
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "test-key")
     routes = stock_route_names(libreoffice_available=False)
     router = ConversionRouter(routes=build_conversion_routes(route_names=routes))
     for mime, name in (
@@ -612,9 +586,12 @@ def test_a_converter_that_overruns_its_time_limit_fails(
 class _FakeOcr:
     """A stand-in OCR route that counts its calls."""
 
-    def __init__(self, *, metadata: DocumentMetadata | None = None) -> None:
+    def __init__(
+        self, *, metadata: DocumentMetadata | None = None, pages: tuple[int, ...] = (1,)
+    ) -> None:
         self.calls = 0
         self._metadata = metadata
+        self._pages = pages
 
     @property
     def name(self) -> str:
@@ -629,6 +606,12 @@ class _FakeOcr:
         return ConversionResult(
             document_md="OCR text\n",
             metadata=self._metadata,
+            source_map=tuple(
+                SourceMapEntry(
+                    start=0, end=8, locators=(PageLocator(page=page, precision="page"),)
+                )
+                for page in self._pages
+            ),
             manifest=ConverterManifest(
                 components=(
                     ManifestComponent(

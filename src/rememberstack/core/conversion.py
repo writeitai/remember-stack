@@ -40,9 +40,10 @@ text, code, configuration and logs; ``markitdown`` for HTML and EPUB;
 ``office`` for Word documents and presentations; ``spreadsheet``, ``table``
 and ``dataset`` profiles for workbooks, delimited files and datasets; ``pdf``,
 ``email`` and ``notebook``; ``card`` for images, media, archives and
-unrecognized bytes. The formats LibreOffice converts first (doc, odt, rtf,
-ppt, odp, ods) route only where its ``soffice`` is on the PATH. Every route
-runs locally with no API key. A deployment's conversion-route setting adds
+unrecognized bytes. PDF requires an OCR provider: without its key the route
+is omitted and uploads park. The formats LibreOffice converts first (doc,
+odt, rtf, ppt, odp, ods) route only where its ``soffice`` is on the PATH.
+A deployment's conversion-route setting adds
 or overrides entries on top of this table; MIME types no route accepts (the
 LibreOffice formats without LibreOffice) are stored and parked as
 ``no_route`` until one does.

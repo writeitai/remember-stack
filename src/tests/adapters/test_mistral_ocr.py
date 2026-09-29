@@ -18,7 +18,9 @@ from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderErro
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
+from rememberstack.model import ConverterLaneError
 from rememberstack.model import ProviderCallError
+from tests.adapters.test_document_family_converters import _pdf
 
 _PNG_BYTES = b"\x89PNG-fake-payload"
 
@@ -255,17 +257,64 @@ def test_a_200_without_usable_pages_is_a_provider_failure() -> None:
 def test_registry_builds_the_route_only_with_a_configured_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Routing to mistral_ocr without a key refuses composition at startup."""
+    """A missing PDF OCR key parks the PDF instead of composing text fallback."""
     monkeypatch.delenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", raising=False)
-    with pytest.raises(Exception, match="api_key"):
-        build_conversion_routes(route_names={"application/pdf": "mistral_ocr"})
+    assert "application/pdf" not in build_conversion_routes(
+        route_names={"application/pdf": "mistral_ocr"}
+    )
 
     monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "test-key")
     routes = build_conversion_routes(
         route_names={"application/pdf": "mistral_ocr", "image/png": "mistral_ocr"}
     )
-    assert routes["application/pdf"].name == "mistral_ocr"
-    assert routes["application/pdf"] is routes["image/png"]
+    assert routes["application/pdf"].name == "pdf"
+    assert routes["application/pdf"] is not routes["image/png"]
+
+
+def test_pdf_metering_uses_source_pages_and_empty_page_has_status() -> None:
+    """Provider diagnostics cannot reduce the accepted source-page quantity."""
+    raw = json.loads(json.dumps(_RAW_RESPONSE))
+    raw["usage_info"]["pages_processed"] = 1
+    raw["pages"][0]["blocks"] = []
+    raw["pages"][1]["markdown"] = ""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Return one successful but empty OCR page."""
+        return httpx.Response(200, json=raw)
+
+    result = _converter(httpx.MockTransport(handle)).convert(
+        content=_pdf(pages=["Digital", None]), mime="application/pdf"
+    )
+    assert result.usage_events[0].usage.cost_usd == Decimal("0.002")
+    assert "[No visible text found by OCR]" in result.document_md
+    assert result.manifest.coverage.complete
+    assert any(
+        labeled.derivation_kind == "pdf_page_status"
+        for labeled in result.manifest.derivation_ranges
+    )
+    assert result.source_map is not None
+    assert {
+        entry.locators[0].page
+        for entry in result.source_map
+        if entry.locators[0].kind == "page"
+    } == {1, 2}  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def test_missing_pdf_ocr_page_is_typed_and_preserves_metered_usage() -> None:
+    """A billed response gap fails without producing a partial reading."""
+    raw = json.loads(json.dumps(_RAW_RESPONSE))
+    raw["pages"] = raw["pages"][:1]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Return a response missing its second source page."""
+        return httpx.Response(200, json=raw)
+
+    with pytest.raises(ConverterLaneError, match="PDF OCR incomplete") as error:
+        _converter(httpx.MockTransport(handle)).convert(
+            content=_pdf(pages=["Digital", None]), mime="application/pdf"
+        )
+    assert not error.value.retryable
+    assert error.value.usage_events[0].usage.cost_usd == Decimal("0.002")
 
 
 def test_markdown_image_links_point_at_the_stored_asset_paths() -> None:

@@ -873,7 +873,7 @@ def test_registry_builds_the_image_route_only_with_both_keys(
     )
     assert routes["image/png"].name == "image_ocr_description"
     assert routes["image/png"] is routes["image/jpeg"]
-    assert routes["application/pdf"].name == "mistral_ocr"
+    assert routes["application/pdf"].name == "pdf"
     assert routes["application/pdf"] is not routes["image/png"]
     assert isinstance(routes["image/png"], LaneCheckpointConverter)
 

@@ -132,7 +132,7 @@ objects itself, during a hard forget.
 | Key | Required | Used for |
 |---|---|---|
 | OpenRouter API key (`REMEMBERSTACK_OPENROUTER_API_KEY`) | Yes | Every model call: structure, claim extraction, entity resolution, fact adjudication, and all embeddings, including query embeddings for search |
-| Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Only if you route PDFs or images to OCR | The `mistral_ocr` and `image_ocr_description` converters |
+| Mistral API key (`REMEMBERSTACK_MISTRAL_OCR_API_KEY`) | Required to read PDFs, or images routed to OCR | The `mistral_ocr` and `image_ocr_description` converters |
 | A second OpenRouter key (`REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY`) | Only if you route images to `image_ocr_description` | The vision-model description of an image |
 | TypeSafe AI key (`REMEMBERSTACK_TYPESAFE_API_KEY`) | Only with `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev` | The alternative fact adjudicator |
 

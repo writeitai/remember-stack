@@ -471,6 +471,15 @@ class ConvertHandler:
         source = self._catalog.convert_source(
             version_id=_payload_uuid(work=work, field="version_id")
         )
+        if (
+            source.mime == "application/pdf"
+            and source.byte_size is not None
+            and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
+        ):
+            limit = family_for_mime(mime=source.mime).reading_limit_bytes
+            error = f"PDF exceeds the pre-OCR reading limit of {limit} bytes"
+            self._catalog.mark_version_failed(version_id=source.version_id, error=error)
+            raise NonRetryableHandlerError(error)
         try:
             converter = self._converter_for(source=source)
         except UnroutableMimeError as err:
@@ -675,13 +684,15 @@ class ConvertHandler:
         )
 
     def _converter_for(self, *, source: ConvertSource) -> Converter:
-        """The routed converter, or the card for a file over its reading limit.
+        """The routed converter, or a card for an oversized non-PDF file.
 
         D138 §3: an oversized file is always carded, whatever the deployment's
         route table maps; the card states the limit it exceeded.
         """
-        if source.byte_size is not None and exceeds_reading_limit(
-            mime=source.mime, byte_size=source.byte_size
+        if (
+            source.mime != "application/pdf"
+            and source.byte_size is not None
+            and exceeds_reading_limit(mime=source.mime, byte_size=source.byte_size)
         ):
             return CardConverter()
         return self._router.converter_for(mime=source.mime)

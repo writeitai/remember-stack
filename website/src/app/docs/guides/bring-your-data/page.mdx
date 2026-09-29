@@ -124,8 +124,10 @@ source system knows the real date (a document's last edit, a meeting's
 date), use that instead.
 
 Scanned PDFs have no text layer. markitdown returns little or nothing for
-them, which the loop skips; run them through an OCR tool first. A
-self-hosted deployment can do OCR itself with the `mistral_ocr` converter.
+them, which the loop skips; run them through an OCR tool first. When you
+ingest an original PDF into a self-hosted deployment, every page goes through
+Mistral OCR if you configure `REMEMBERSTACK_MISTRAL_OCR_API_KEY`. Without the
+key, the original is stored and its conversion parks.
 
 ## From a vector database
 
