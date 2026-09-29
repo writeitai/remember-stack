@@ -189,6 +189,27 @@ def test_pdf_signature_overrides_text_filename() -> None:
     assert store.classes == ["cold"]
 
 
+def test_unknown_archive_uses_registry_card_family() -> None:
+    """D138 keeps a named archive as an archive when bytes are unknown to D132."""
+    catalog, store = _RecordingCatalog(), _CountingStore()
+    ingestor = UploadIngestor(
+        catalog=cast(DocumentCatalog, catalog),
+        raw_store=store,
+        admission=_AllowingAdmission(),
+        routable_mimes=frozenset(_ROUTES),
+    )
+    ingestor.ingest(
+        deployment_id=_DEPLOYMENT_ID,
+        upload=DocumentUpload(
+            filename="bundle.zip",
+            mime="application/octet-stream",
+            content=b"PK\x03\x04unknown package",
+        ),
+    )
+    assert catalog.recorded_mime == "application/zip"
+    assert store.classes == ["cold"]
+
+
 def test_ingest_stores_the_registry_mime_the_router_keys_on() -> None:
     """D138: ingest stores the family's parameter-free MIME, never the declared one.
 

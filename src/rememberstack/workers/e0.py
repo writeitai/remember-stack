@@ -60,6 +60,7 @@ from rememberstack.core.extraction_eligibility import MixedEligibilityError
 from rememberstack.core.file_card import CardConverter
 from rememberstack.core.format_registry import detect_mime
 from rememberstack.core.format_registry import exceeds_reading_limit
+from rememberstack.core.format_registry import family_for_mime
 from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
@@ -373,18 +374,33 @@ class UploadIngestor:
         )
 
     def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
-        """Choose bytes for binary classes and the registry for text families."""
+        """Use byte classes first and registry hints within compatible families."""
         detected = detect_content_mime(
             content=upload.content, declared_mime=upload.mime
         )
-        if detected in {"text/plain", "text/markdown"}:
+        if detected in {"text/plain", "text/markdown", "application/octet-stream"}:
             routed = detect_mime(
                 file_name=upload.filename,
                 declared_mime=upload.mime,
                 content=upload.content,
                 routed_mimes=self._routable,
             )
-            if routed.startswith("text/"):
+            if (
+                detected.startswith("text/")
+                and routed.startswith("text/")
+                and routed != "text/html"
+            ):
+                detected = routed
+            elif detected == "application/octet-stream" and family_for_mime(
+                mime=routed
+            ).name not in {
+                "pdf",
+                "image",
+                "media",
+                "word",
+                "presentation",
+                "spreadsheet",
+            }:
                 detected = routed
         return upload.model_copy(update={"mime": detected})
 

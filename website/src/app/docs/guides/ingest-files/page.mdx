@@ -130,8 +130,8 @@ A self-hosted deployment decides the stored type itself: recognized PDF,
 image, audio, video, and Office bytes establish the class; within a compatible
 text class, the filename and declared type choose the format family
 ([how a family is chosen](/docs/self-hosting/converters#how-a-files-family-is-chosen)).
-A declaration contradicted by the bytes returns HTTP 422. Unknown binary is
-stored with a binary card.
+A declaration contradicted by the bytes returns HTTP 422. Binary that does
+not match a known family is stored with a binary card.
 
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type

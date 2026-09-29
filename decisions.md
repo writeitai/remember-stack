@@ -6185,7 +6185,9 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 **Refined by D133 and D138.** The registry chooses a text format family
 from the filename and declaration only after bytes establish that the input
-is text. Unknown binary is stored with a binary card rather than refused.
+is text. For binary families D132 cannot identify, registry hints may still
+select a family and its converter validates the full format. Otherwise unknown
+binary is stored with a binary card rather than refused.
 Recognized binary signatures override filename hints; PDF always remains PDF
 and follows D139's every-page OCR route.
 
@@ -6213,8 +6215,9 @@ avoid another licence, supply-chain, or wheel-size cost. Generic magic-only
 classification cannot reliably distinguish office ZIPs or UTF-8 text; a native
 libmagic dependency increases deployment and wheel-platform complexity.
 Signatures identify the class but do not replace converter validation of full
-format structure. Unknown binary receives the D138 binary card rather than an
-optimistic text or media rate. Existing rows retain their recorded MIME until re-ingested.
+format structure. Binary bytes with no recognized registry family receive the
+D138 binary card rather than an optimistic text or media rate. Existing rows
+retain their recorded MIME until re-ingested.
 
 **Authority:** [design](plan/designs/e0_files_design.md),
 [analysis](plan/analysis/content_detection_and_object_classes_20260923.md).

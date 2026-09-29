@@ -288,7 +288,7 @@ def test_parked_original_is_readable_from_configured_mount(
     from rememberstack.spine import ForgetCatalog
     from rememberstack.workers import UploadIngestor
 
-    original = b"%PDF-1.7\nunconverted original"
+    original = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF"
     raw_root = tmp_path / "provider-raw"
     raw_store = LocalFSObjectStore(root=raw_root)
     ingested = UploadIngestor(

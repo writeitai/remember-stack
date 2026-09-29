@@ -36,7 +36,9 @@ the detected text class, it chooses a format family in this order:
    route table names) decides. `application/octet-stream` and `text/plain`
    never do, because clients send them for anything.
 3. **The bytes.** Text with no recognized family becomes `other_text`.
-   Unknown binary becomes a `binary` card.
+   Binary with no recognized family becomes a `binary` card. Hints for
+   archive and data formats still reach their converters, which validate
+   those full formats.
 
 The stored MIME type is the family's (`text/x-code` for every code file,
 `text/x-config` for configuration, `text/x-log` for logs,

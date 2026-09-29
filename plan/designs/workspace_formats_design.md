@@ -48,8 +48,9 @@ ineligible kinds are `code`, `config`, `log`, `other_text`, `large_text`, `profi
 ## 3. Detection and routing
 
 First, D132 checks bytes for recognized PDF, media, Office packages, and text.
-The following hints choose a family only within that established byte class;
-a recognized PDF remains PDF even when named `notes.txt`. Unknown binary gets
+The following hints choose a family within the established text byte class,
+or among binary families D132 does not recognize; a recognized PDF remains PDF
+even when named `notes.txt`. Binary with no matching registry family gets
 the `binary` card. A declaration that contradicts recognizable bytes is
 refused before storage.
 
