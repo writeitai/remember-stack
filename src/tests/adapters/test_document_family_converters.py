@@ -303,6 +303,16 @@ def test_pdf_missing_ocr_page_fails_without_partial_reading() -> None:
         )
 
 
+def test_pdf_provider_limit_fails_before_page_count_or_ocr() -> None:
+    """The effective provider ceiling refuses bytes before PDF parsing."""
+    ocr = _FakeOcr()
+    with pytest.raises(ConversionError, match="pre-OCR provider limit"):
+        PdfConverter(ocr=ocr, provider_limit_bytes=3).convert(
+            content=b"larger than three", mime="application/pdf"
+        )
+    assert ocr.calls == 0
+
+
 def test_pdf_info_dictionary_becomes_d134_metadata() -> None:
     """Structural Info metadata survives the OCR reading."""
     content = _pdf(

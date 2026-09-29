@@ -277,6 +277,7 @@ def test_pdf_metering_uses_source_pages_and_empty_page_has_status() -> None:
     raw["usage_info"]["pages_processed"] = 1
     raw["pages"][0]["blocks"] = []
     raw["pages"][1]["markdown"] = ""
+    raw["pages"][1]["header"] = "Visible running head"
 
     def handle(request: httpx.Request) -> httpx.Response:
         """Return one successful but empty OCR page."""
@@ -345,11 +346,14 @@ def test_usage_meters_pages_at_the_configured_price() -> None:
     assert event.usage.tokens_in == 0
 
 
-def test_blank_api_key_refuses_composition(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A present-but-blank key is a startup error, never an empty Bearer."""
+def test_blank_pdf_api_key_parks_without_composing_an_empty_bearer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose's empty key acts like an absent PDF provider."""
     monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", "   ")
-    with pytest.raises(Exception, match="must not be blank"):
-        build_conversion_routes(route_names={"application/pdf": "mistral_ocr"})
+    assert "application/pdf" not in build_conversion_routes(
+        route_names={"application/pdf": "mistral_ocr"}
+    )
 
 
 def test_repeated_block_text_anchors_each_occurrence_separately() -> None:

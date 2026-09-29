@@ -47,9 +47,12 @@ class _PdfReading:
 class PdfConverter:
     """Count source pages, OCR all of them, and reject missing page results."""
 
-    def __init__(self, *, ocr: Converter) -> None:
+    def __init__(
+        self, *, ocr: Converter, provider_limit_bytes: int | None = None
+    ) -> None:
         """Bind the required OCR route."""
         self._ocr = ocr
+        self._provider_limit_bytes = provider_limit_bytes
 
     @property
     def name(self) -> str:
@@ -63,6 +66,14 @@ class PdfConverter:
 
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """OCR every structurally valid page and keep the PDF Info metadata."""
+        if (
+            self._provider_limit_bytes is not None
+            and len(content) > self._provider_limit_bytes
+        ):
+            raise ConversionError(
+                f"PDF exceeds the pre-OCR provider limit of "
+                f"{self._provider_limit_bytes} bytes"
+            )
         if not has_pdf_body(content=content):
             raise ConversionError("the file is not a PDF (invalid PDF body)")
         if not _PDFIUM_LOCK.acquire(timeout=time_limit.CONVERTER_TIME_LIMIT_S):

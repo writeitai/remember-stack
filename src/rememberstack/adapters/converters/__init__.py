@@ -27,7 +27,7 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
     unrouted so D117 parks it.
     """
     for mime, name in sorted(route_names.items()):
-        if name not in _CONVERTER_BUILDERS:
+        if name not in _CONVERTER_BUILDERS and name != "pdf":
             raise UnknownConverterError(
                 f"route {mime!r} names unknown converter adapter {name!r}; "
                 f"known adapters: {sorted(_CONVERTER_BUILDERS)}"
@@ -46,11 +46,14 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
 
     from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
 
+    settings = None
     try:
-        MistralOcrSettings.model_validate({}) if pdf_requested else None
+        if pdf_requested:
+            settings = MistralOcrSettings.model_validate({})
     except ValidationError as err:
-        if any(
-            item["loc"] == ("api_key",) and item["type"] == "missing"
+        if all(
+            item["loc"] == ("api_key",)
+            and (item["type"] == "missing" or "must not be blank" in item["msg"])
             for item in err.errors()
         ):
             pdf_requested = False
@@ -62,7 +65,8 @@ def build_conversion_routes(*, route_names: Mapping[str, str]) -> dict[str, Conv
     built = {name: _CONVERTER_BUILDERS[name]() for name in sorted(non_pdf_names)}
     if pdf_requested:
         ocr = built.get("mistral_ocr") or _mistral_ocr()
-        built["pdf"] = _pdf(ocr=ocr)
+        assert settings is not None
+        built["pdf"] = _pdf(ocr=ocr, provider_limit_bytes=settings.max_document_bytes)
     return {
         mime: built["pdf"] if mime == "application/pdf" else built[name]
         for mime, name in route_names.items()
@@ -96,11 +100,11 @@ def _office() -> Converter:
     return OfficeConverter()
 
 
-def _pdf(*, ocr: Converter) -> Converter:
+def _pdf(*, ocr: Converter, provider_limit_bytes: int | None = None) -> Converter:
     """The D139 PDF route; ``ocr`` reads every page."""
     from rememberstack.adapters.converters.pdf import PdfConverter
 
-    return PdfConverter(ocr=ocr)
+    return PdfConverter(ocr=ocr, provider_limit_bytes=provider_limit_bytes)
 
 
 def _email() -> Converter:
@@ -169,7 +173,6 @@ _CONVERTER_BUILDERS: Final[dict[str, Callable[[], Converter]]] = {
     "text": _text,
     "card": _card,
     "office": _office,
-    "pdf": _pdf,
     "email": _email,
     "notebook": _notebook,
     "spreadsheet": _spreadsheet,

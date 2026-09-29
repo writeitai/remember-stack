@@ -44,8 +44,8 @@ class FormatFamily:
     """The converter route this build ships for the family; None parks it."""
     extensions: frozenset[str]
     reading_limit_bytes: int | None = None
-    """Above this size the file gets an oversized card instead of a reading
-    (D138 §3 starting values); None means the family has no such limit."""
+    """Above this size non-PDF files get a card; PDFs fail conversion.
+    None means the family has no such limit (D138/D139)."""
 
 
 FAMILIES: Final[tuple[FormatFamily, ...]] = (
