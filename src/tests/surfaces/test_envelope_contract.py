@@ -75,6 +75,7 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         """Never called."""
         return ()

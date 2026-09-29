@@ -1510,6 +1510,33 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
+    # D134: deleted, not scrubbed in place — they hold names, paths and people.
+    text(
+        """
+        DELETE FROM document_names
+        WHERE deployment_id = :deployment_id
+          AND version_id IN (
+              SELECT version_id FROM document_versions
+              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          )
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_people
+        WHERE deployment_id = :deployment_id
+          AND version_id IN (
+              SELECT version_id FROM document_versions
+              WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+          )
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_metadata
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
     text(
         """
         DELETE FROM resolution_decisions
@@ -1761,6 +1788,21 @@ _VERIFY_POSTGRES_SCRUB = text(
         UNION ALL
         SELECT 1 FROM document_entity_bindings
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_metadata
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_names name
+        JOIN document_versions version
+          ON version.deployment_id = name.deployment_id
+         AND version.version_id = name.version_id
+        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_people person
+        JOIN document_versions version
+          ON version.deployment_id = person.deployment_id
+         AND version.version_id = person.version_id
+        WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM resolution_decisions
         WHERE deployment_id = :deployment_id AND mention_id = ANY(:mention_ids)

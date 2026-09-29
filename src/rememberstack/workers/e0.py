@@ -38,6 +38,7 @@ from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import ConversionRouter
 from rememberstack.core import Converter
 from rememberstack.core import deterministic_section_role
+from rememberstack.core import FileHintConverter
 from rememberstack.core import LaneCheckpointConverter
 from rememberstack.core import LaneUsageRecorder
 from rememberstack.core import LONG_TITLE
@@ -52,6 +53,13 @@ from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
 from rememberstack.core.content_detection import detect_content_mime
+from rememberstack.core.extraction_eligibility import block_eligibility
+from rememberstack.core.extraction_eligibility import is_model_free
+from rememberstack.core.extraction_eligibility import is_search_only_text
+from rememberstack.core.extraction_eligibility import MixedEligibilityError
+from rememberstack.core.file_card import CardConverter
+from rememberstack.core.format_registry import detect_mime
+from rememberstack.core.format_registry import exceeds_reading_limit
 from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
@@ -63,9 +71,12 @@ from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterLaneError
 from rememberstack.model import ConverterUsageEvent
+from rememberstack.model import ConvertSource
+from rememberstack.model import DerivationRange
 from rememberstack.model import DocumentUpload
 from rememberstack.model import EnqueueWork
 from rememberstack.model import FallbackStructureResponse
+from rememberstack.model import FileHints
 from rememberstack.model import IngestedVersion
 from rememberstack.model import IngestPrincipal
 from rememberstack.model import ModelRequest
@@ -92,6 +103,9 @@ from rememberstack.model import UnroutableMimeError
 from rememberstack.model import UploadRecord
 from rememberstack.model.metering import ManagedMeterScope
 from rememberstack.model.metering import ManagedTextMeasurementDraft
+from rememberstack.model.occurrence_provenance import (
+    parse_persisted_conversion_manifest,
+)
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -105,19 +119,21 @@ from rememberstack.workers.e1 import E1_CHUNK_VERSION
 E0_CONVERT_VERSION: Final = "e0-convert-2026.08"
 """The convert sub-worker's component version (D12 idempotency key member)."""
 
-E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07g:d79-wave2"
+E0_STRUCTURE_VERSION: Final = "e0-structure-2026.07h:d79-wave2"
 """The aggregate Wave-2 generation identity.
 
 Maps old ``e0-structure-2026.07c:temp0-1`` (one-shot offsets/tree/roles/
 summaries/placement) to the D79 split: deterministic/anchor skeleton, sanity
 check, role pass, bottom-up summaries, and root-reduction placement.
-The ``07g`` seed is input/seat identity only; provider output never mints.
-It includes the fallback wire field ``subsections`` (internal ``children``).
+The ``07h`` seed is input/seat identity only; provider output never mints.
+It includes the fallback wire field ``subsections`` (internal ``children``),
+D137 conversational section integrity and guidance prohibiting conversational
+micro-turns as section anchors.
 """
 
 E0_SKELETON_VERSION: Final = (
     f"e0-skeleton-2026.07a:d79:{SKELETON_PARSER_VERSION}"
-    f":anchor-v2-depth{MAX_FALLBACK_DEPTH}"
+    f":anchor-v3-depth{MAX_FALLBACK_DEPTH}"
 )
 """Skeleton contract: canonical heading stack plus exact-anchor fallback."""
 
@@ -139,6 +155,10 @@ E0_ROLE_VERSION: Final = (
     f"e0-role-2026.07a:title-rules-v1:classifier-v1:ceiling{ROLE_PROMPT_CEILING}"
 )
 """Deterministic normalized-title rules plus bounded title-only classifier."""
+
+E0_RULE_ROLE_VERSION: Final = "e0-role-2026.09a:title-rules-v1:no-model"
+"""Roles from the deterministic title rules alone, used when structuring a
+representation without model calls (D138 §1)."""
 
 UPLOAD_SOURCE_KIND: Final = "upload"
 """The one-shot upload connector's source kind (D55 lineage identity)."""
@@ -210,13 +230,7 @@ class UploadIngestor:
             source_ref=content_hash,
             content_hash=content_hash,
         )
-        upload = upload.model_copy(
-            update={
-                "mime": detect_content_mime(
-                    content=upload.content, declared_mime=upload.mime
-                )
-            }
-        )
+        upload = self._detect_upload(upload=upload)
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
@@ -247,11 +261,14 @@ class UploadIngestor:
                 byte_size=len(upload.content),
                 raw_uri=raw_uri,
                 ingested_by=ingested_by,
+                file_name=upload.filename,
+                declared_title=upload.title,
+                source_path=upload.source_path,
             ),
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
-            routable_mimes=self._routable,
+            routable_mimes=self._routable_for(upload=upload),
         )
 
     def ingest_observed(
@@ -282,13 +299,7 @@ class UploadIngestor:
             source_ref=source_ref,
             content_hash=content_hash,
         )
-        upload = upload.model_copy(
-            update={
-                "mime": detect_content_mime(
-                    content=upload.content, declared_mime=upload.mime
-                )
-            }
-        )
+        upload = self._detect_upload(upload=upload)
         upload, metering = self._prepare_managed_text(upload=upload)
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
@@ -311,6 +322,9 @@ class UploadIngestor:
             source_version_ref=source_version_ref,
             sync_cycle_id=sync_cycle_id,
             ingested_by=ingested_by,
+            file_name=upload.filename,
+            declared_title=upload.title,
+            source_path=upload.source_path,
         )
         if metering is None:
             try:
@@ -328,13 +342,13 @@ class UploadIngestor:
             convert_component_version=E0_CONVERT_VERSION,
             lane=lane,
             metering=metering,
-            routable_mimes=self._routable,
+            routable_mimes=self._routable_for(upload=upload),
         )
 
     def _prepare_managed_text(
         self, *, upload: DocumentUpload
     ) -> tuple[DocumentUpload, ManagedTextMeasurementDraft | None]:
-        """Classify/measure before any managed source version or work is accepted."""
+        """Measure managed text after the common byte-class admission check."""
         scope = self._meter_scope
         if scope is None:
             return upload, None
@@ -357,6 +371,32 @@ class UploadIngestor:
             identity_key=scope.identity_key,
             staged_content=upload.content,
         )
+
+    def _detect_upload(self, *, upload: DocumentUpload) -> DocumentUpload:
+        """Choose bytes for binary classes and the registry for text families."""
+        detected = detect_content_mime(
+            content=upload.content, declared_mime=upload.mime
+        )
+        if detected in {"text/plain", "text/markdown"}:
+            routed = detect_mime(
+                file_name=upload.filename,
+                declared_mime=upload.mime,
+                content=upload.content,
+                routed_mimes=self._routable,
+            )
+            if routed.startswith("text/"):
+                detected = routed
+        return upload.model_copy(update={"mime": detected})
+
+    def _routable_for(self, *, upload: DocumentUpload) -> frozenset[str]:
+        """The deployment's routable MIMEs; an oversized file is always routable.
+
+        A file over its family's reading limit is converted into a card
+        (D138 §3) whether or not its own MIME has a route, so it never parks.
+        """
+        if exceeds_reading_limit(mime=upload.mime, byte_size=len(upload.content)):
+            return self._routable | {upload.mime}
+        return self._routable
 
     def _guard_ingest(
         self,
@@ -408,12 +448,12 @@ class ConvertHandler:
             version_id=_payload_uuid(work=work, field="version_id")
         )
         try:
-            converter = self._router.converter_for(mime=source.mime)
+            converter = self._converter_for(source=source)
         except UnroutableMimeError as err:
             # Configuration can differ from the ingestor or resume command.
             # This runs before reading bytes or making a provider call, so the
             # runner may park and return the unused attempt (D117).
-            raise NoRouteHandlerError(str(err)) from err
+            raise NoRouteHandlerError(str(err), mime=source.mime) from err
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,
@@ -432,6 +472,9 @@ class ConvertHandler:
                 converter=converter,
                 content=content,
                 mime=source.mime,
+                hints=FileHints(
+                    file_name=source.file_name, source_path=source.source_path
+                ),
                 checkpoint_store=self._artifact_store,
                 checkpoint_prefix=(
                     f"{source.doc_id}/{source.content_hash}/conversion-checkpoints"
@@ -472,6 +515,14 @@ class ConvertHandler:
             )
             raise NonRetryableHandlerError(str(err)) from err
         blocks = blockize(document_md=result.document_md)
+        try:
+            # D133 §4.5: eligibility may change only at block boundaries
+            block_eligibility(blocks=blocks, ranges=result.manifest.derivation_ranges)
+        except MixedEligibilityError as err:
+            self._catalog.mark_version_failed(
+                version_id=source.version_id, error=f"invalid envelope: {err}"
+            )
+            raise NonRetryableHandlerError(str(err)) from err
 
         representation_id = uuid4()
         base = f"{source.doc_id}/{source.content_hash}/{representation_id}"
@@ -592,11 +643,24 @@ class ConvertHandler:
                 meta_uri=f"{base}/meta.json",
                 markdown_hash=markdown_hash,
                 manifest_hash=hashlib.sha256(manifest_bytes).hexdigest(),
-            )
+            ),
+            metadata=result.metadata,
         )
         return self._structure_follow_up(
             work=work, version_id=source.version_id, representation_id=representation_id
         )
+
+    def _converter_for(self, *, source: ConvertSource) -> Converter:
+        """The routed converter, or the card for a file over its reading limit.
+
+        D138 §3: an oversized file is always carded, whatever the deployment's
+        route table maps; the card states the limit it exceeded.
+        """
+        if source.byte_size is not None and exceeds_reading_limit(
+            mime=source.mime, byte_size=source.byte_size
+        ):
+            return CardConverter()
+        return self._router.converter_for(mime=source.mime)
 
     def finalize_terminal_failure(self, *, work: ClaimedWork, error: str) -> None:
         """A convert whose retries exhausted must not leave the version in-flight."""
@@ -673,6 +737,9 @@ enclosing parent's block range
 - subsections: nested nodes using the same shape
 
 Never return character offsets, block ordinals, roles, summaries, or placement.
+Individual conversational turns, rhetorical questions, and brief remarks must \
+not form section headings. Section anchors must represent substantive topic \
+shifts, meeting agenda items, or document sections.
 If no reliable internal sections exist, return an empty sections list.
 
 Document title: {title}
@@ -759,6 +826,15 @@ class StructureHandler:
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=markdown)
+        ranges = self._derivation_ranges(source=source)
+        if not blocks or is_model_free(ranges=ranges):
+            return self._structure_without_models(
+                work=work,
+                source=source,
+                blocks=blocks,
+                markdown=markdown,
+                flat=is_search_only_text(ranges=ranges),
+            )
         configured_check_version = _skeleton_check_version(
             settings=self._check_settings
         )
@@ -962,6 +1038,80 @@ class StructureHandler:
             placement_path=summary_result.placement_path,
             summary_cache_keys=summary_result.cache_keys,
             producer_family=producer_family,
+            make_current=True,
+        )
+        return _chunk_outcome(work=work, source=source)
+
+    def _derivation_ranges(
+        self, *, source: StructureSource
+    ) -> tuple[DerivationRange, ...]:
+        """The converter's labelled ranges; a legacy row without a manifest has none."""
+        if source.conversion_uri is None:
+            return ()
+        return parse_persisted_conversion_manifest(
+            payload=self._artifact_store.read_bytes(
+                key=ObjectKey(source.conversion_uri)
+            ),
+            uri=source.conversion_uri,
+        ).derivation_ranges
+
+    def _structure_without_models(
+        self,
+        *,
+        work: ClaimedWork,
+        source: StructureSource,
+        blocks: tuple[Block, ...],
+        markdown: str,
+        flat: bool,
+    ) -> HandlerOutcome:
+        """D138 §1: search-only text, profiles, cards and empty readings make
+        no model calls.
+
+        The parsed heading skeleton is kept as is (no check, no fallback),
+        roles come from the deterministic title rules alone, and no summary
+        or placement is written — the generation's summary slots stay null.
+        Search-only text (``flat``) keeps only the root section: in code,
+        configuration and logs a ``#`` line is a comment, not a heading.
+        """
+        parsed = parse_heading_skeleton(
+            blocks=blocks, title=source.title, markdown_chars=len(markdown)
+        )
+        if flat:
+            parsed = parsed[:1]
+        sections = tuple(
+            section.model_copy(
+                update={
+                    "role": (
+                        deterministic_section_role(
+                            normalized_title=section.normalized_title
+                        )
+                        if section.node_path != "0"
+                        else None
+                    )
+                    or "body",
+                    "summary": None,
+                }
+            )
+            for section in parsed
+        )
+        self._persist_generation(
+            source=source,
+            sections=sections,
+            blocks=blocks,
+            markdown=markdown,
+            route=StructureRouteTag.PARSER,
+            analysis=analyze_skeleton(
+                sections=parsed, blocks=blocks, markdown_chars=len(markdown)
+            ),
+            candidate_skeleton_hash=skeleton_hash(sections=parsed),
+            selecting_check_id=None,
+            check_version=None,
+            roles_version=E0_RULE_ROLE_VERSION,
+            summary_version=None,
+            placement_version=None,
+            placement_path=None,
+            summary_cache_keys={},
+            producer_family="N/A",
             make_current=True,
         )
         return _chunk_outcome(work=work, source=source)
@@ -1690,11 +1840,13 @@ def _convert_with_lane_checkpoints(
     converter: Converter,
     content: bytes,
     mime: str,
+    hints: FileHints,
     checkpoint_store: ObjectStorePort,
     checkpoint_prefix: str,
     record_usage: LaneUsageRecorder,
 ) -> ConversionResult:
-    """Call convert, supplying private lane checkpoints when the route uses them."""
+    """Call convert, supplying lane checkpoints or file hints when the route
+    uses them; every other route receives only bytes and MIME."""
     if isinstance(converter, LaneCheckpointConverter):
         from rememberstack.workers.lane_checkpoints import ObjectStoreLaneCheckpoints
 
@@ -1706,6 +1858,8 @@ def _convert_with_lane_checkpoints(
             ),
             record_usage=record_usage,
         )
+    if isinstance(converter, FileHintConverter):
+        return converter.convert(content=content, mime=mime, hints=hints)
     return converter.convert(content=content, mime=mime)
 
 

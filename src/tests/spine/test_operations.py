@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from rememberstack.adapters.testing import RecordingTaskQueue
 from rememberstack.adapters.testing import RecordingTelemetry
 from rememberstack.model import CostBudget
+from rememberstack.model import DeferReason
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import EnqueueWork
 from rememberstack.model import LaneRouteError
@@ -493,6 +494,16 @@ def test_budget_park_emits_one_worker_event_without_running_handler(
             .one()
         )
     assert state == {"status": "pending", "defer_reason": "budget", "attempts": 0}
+    report = OperationalCatalog(
+        engine=database_engine, settings=OperationalSettings()
+    ).inspect(deployment_id=_DEPLOYMENT_ID)
+    parked = [
+        (route.status, route.count)
+        for route in report.routes
+        if route.stage is PipelineStage.CONVERT
+        and route.defer_reason is DeferReason.BUDGET
+    ]
+    assert parked == [("pending", 1)]
 
 
 @pytest.mark.parametrize(

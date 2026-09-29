@@ -232,7 +232,11 @@ def _normalize_chunk_embed_row(row: dict) -> dict:
 _SELECT_CHUNK_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.markdown_uri, r.blocks_uri, r.conversion_uri, d.title, d.source_kind,
+           r.markdown_uri, r.blocks_uri, r.conversion_uri, d.title,
+           -- D134: the name and title recorded for THIS version (a rename
+           -- is a new version with a new file name); the lineage title
+           -- above keeps its meaning for embeddings and structure.
+           m.file_name, m.title AS version_title, d.source_kind,
            v.source_modified_at, v.published_at, v.language,
            r.structurer_version,
            coalesce(v.source_shape, 'document') AS source_shape,
@@ -240,6 +244,8 @@ _SELECT_CHUNK_SOURCE = text(
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id
+    LEFT JOIN document_metadata m
+      ON m.deployment_id = v.deployment_id AND m.version_id = v.version_id
     WHERE r.representation_id = :representation_id
     """
 )
@@ -272,12 +278,12 @@ _INSERT_CHUNK = text(
         chunk_id, deployment_id, doc_id, version_id, representation_id,
         section_id, ordinal, block_start, block_end, chunk_content_hash,
         extraction_input_hash, char_start, char_end, token_count,
-        chunker_version
+        chunker_version, extraction_eligible, extraction_eligibility_version
     ) VALUES (
         :chunk_id, :deployment_id, :doc_id, :version_id, :representation_id,
         :section_id, :ordinal, :block_start, :block_end, :chunk_content_hash,
         :extraction_input_hash, :char_start, :char_end, :token_count,
-        :chunker_version
+        :chunker_version, :extraction_eligible, :extraction_eligibility_version
     )
     """
 )
@@ -290,6 +296,7 @@ _SELECT_FOR_EMBEDDING = text(
            c.embedding_input_policy_version, c.policy_generation,
            c.embedding_ref, c.embedding_version, c.location_facts_json,
            c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+           c.extraction_eligible,
            s.role AS section_role, s.node_path AS section_path,
            s.title AS section_title
     FROM chunks c
@@ -324,6 +331,7 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
                c.embedding_input_policy_version, c.policy_generation,
                c.embedding_ref, c.embedding_version, c.location_facts_json,
                c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+               c.extraction_eligible,
                s.role AS section_role, s.node_path AS section_path,
                s.title AS section_title
         FROM chunks c

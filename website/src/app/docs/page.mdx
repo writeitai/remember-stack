@@ -1,26 +1,121 @@
 export const metadata = {
-  title: "Our mission",
-  description:
-    "Centralize all your information in a single place. Expose that information to AI agents in the best possible way.",
+  title: "Why RememberStack",
+  description: "Memory for AI agents that keeps what each source said, what is true now, and when, with the path back to the source.",
 };
 
-# Our mission
+# Give your agents a past
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
 
 <LeadBlock>
-  <Lead>Centralize all your information in a single place.</Lead>
-  <Lead>Expose that information to AI agents in the best possible way.</Lead>
+<Lead>Centralize all your information in a single place.</Lead>
+<Lead>Expose that information to AI agents in the best possible way.</Lead>
 </LeadBlock>
 
-Your information is scattered across your life / organization — email, Slack, documents, meeting notes, agent traces, and more.
+Your information is scattered across your life or your organisation: email,
+chat, documents, meeting notes, tickets, agent transcripts. Every AI session
+starts from zero. The agent does not know which decision still holds, which
+file said it, or what changed overnight. You paste the same notes in again,
+or the model fills the gap with something plausible.
 
-**RememberStack structures that information so AI agents can answer fast and well.** It knows what is true now and what was true a month ago. It accounts for what you know about a person, an event, or a company.
+RememberStack is memory for that agent. You give it the documents your work
+already produces. It reads them, keeps what matters, and answers your
+agent's questions with facts it can trace back to the source. It knows what
+is true now and what was true a month ago.
 
-**[RememberStack](https://github.com/writeitai/remember-stack)** is open-source memory infrastructure for AI agents. This repository is the complete engine.
+*RememberStack is the open-source memory engine. `remember` is its Python
+client and CLI.<Cloud> remember.dev runs RememberStack for you.</Cloud>*
+
+New to memory systems? Start with
+[What is a memory system?](/docs/start/what-is-a-memory-system), written for
+any reader.
+
+## What RememberStack keeps that a context window loses
+
+**What each source said.** Every statement worth keeping is stored as a
+claim, together with the exact passage it came from and the date the source
+said it. Claims are never edited. If a spec from March said the billing
+migration would ship in June, that stays on record even after the plan
+changes.
+
+**What is true now.** From those claims, RememberStack maintains facts about
+the people, systems and decisions in your work. When a newer source changes
+a fact, the fact changes, and the claim it replaced stays on record. When two
+sources disagree, you see both, marked as a contradiction.
+
+**When it was true.** Facts carry the period in which they held. You can ask
+what is true today, what was true on a given date, what held during a
+quarter, or how something changed over time.
+
+**Where it came from.** Every fact links to the claims that support it, and
+every claim to the characters in the source document. Your agent can quote
+and cite. You can check.
+
+## What your agent gets back
+
+When your agent asks a question, RememberStack does not return the passages
+most similar to the question. It returns the facts that answer it, each with
+its time window, the evidence behind it, and any contradiction, in one typed
+result that is ready to put into a prompt.
+
+If the memory has nothing on the subject, the result says so. It does not
+hand back the closest text it could find. If a name could mean two different
+people, it says that too. An agent that is told "unknown" stops inventing.
+
+No language model writes the answer. The only model involved in reading is
+the embedding model that turns your question into a search vector. The same
+question against the same memory returns the same result, and you can
+inspect exactly why each item is there.
+
+## Why not a vector database
+
+A vector search finds the passages that sound most like your question. It
+cannot tell you which of them is still current, which one a later document
+corrected, or whether two of them contradict each other. It has no idea when
+anything was true. And it always returns something, even when nothing
+relevant exists.
+
+| Where typical agent memory goes wrong | What RememberStack does instead |
+|---|---|
+| Source text is treated as the truth | What a source said (a claim) is kept apart from what is held true now (a fact). Claims are the transcript; facts are the verdict. |
+| A correction overwrites what came before | The old fact's time window is closed, not erased. You can still ask what held before. |
+| Contradictions are averaged away or hidden | Both sides come back, marked as a contradiction. |
+| Re-sending a file makes it look more certain | Support counts distinct documents. Re-processing a file, editing it or repeating a sentence does not add support. |
+| The search index is the authority | Indexes only nominate candidates. The database confirms each one against what is currently held before it is returned, and the result says how many were dropped. |
+| A model writes the answer at query time | No language model writes the answer. Your agent plans; RememberStack returns what is known, with its evidence. |
+| "No results" could mean anything | The result says which: the entity is unknown, or it is known and nothing matches. |
+
+RememberStack still uses vector search, as one signal among several. The
+others are keyword search, the graph of how entities relate, and time.
+
+## Where it runs
+
+RememberStack is open source under Apache-2.0 and runs on your own
+infrastructure. Everything it does with your documents is in the public
+repository. [Requirements](/docs/self-hosting/requirements) says what it
+needs.
+
+<Cloud>
+
+**remember.dev** runs the same engine for you. Each project gets its own
+isolated deployment with its own database, storage and HTTPS endpoint. You
+install the client and start sending documents. Reading from memory is not
+charged. Nothing is held back for the managed service, and nothing about how
+memory works changes between the two.
+
+[Compare remember.dev and self-hosted](/docs/start/choose)
+
+</Cloud>
 
 ## Start here
 
-1. [Getting started](/docs/getting-started) — `uvx remember setup`, a file in, an answer back.
-2. [What is a memory system](/docs/why) — testimony vs truth, and why passage RAG is not enough.
-3. [Architecture](/docs/architecture) — the durable store: what lives where, how reads and writes relate.
-
-The vocabulary (claim, fact, grain, clocks) lives on [Concepts](/docs/concepts) when you need it.
+- [What is a memory system?](/docs/start/what-is-a-memory-system): the idea
+  in plain language, for any reader.
+- [A five-minute tour](/docs/start/how-it-works): what happens to a document
+  from the moment you send it to the moment your agent asks about it.
+- [Quickstart](/docs/start/quickstart): send a document and ask your first
+  question.
+- [Connect your coding agent](/docs/start/connect-your-agent): give Claude Code,
+  Cursor, Codex or Claude Desktop access to your memory.
+- [Time](/docs/concepts/time): the idea that sets RememberStack apart from
+  retrieval over text.

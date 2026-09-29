@@ -5,6 +5,12 @@ Ensures all docs pages in website/src/app/docs:
 2. Adhere to honesty contracts (no forbidden promotional claims without negation).
 3. Align with release version pin (0.17.0).
 4. Resolve internal /docs/... cross-references to existing MDX pages or static assets.
+5. List hosted-service pages (`page.cloud.mdx`) only in navigation.ts's DOCS_CLOUD branches.
+
+By default it checks the public build: `page.cloud.mdx` pages are not routes,
+and `<Cloud>` passages and cloud tabs are dropped before checking, so a public
+page must not link to a hosted-service page. --cloud checks the cloud build
+(`DOCS_CLOUD=1`).
 """
 
 from __future__ import annotations
@@ -13,6 +19,8 @@ import argparse
 from pathlib import Path
 import re
 import sys
+
+from generate_docs_llms import NAVIGATION, select_variant
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS_DIR = REPO_ROOT / "website" / "src" / "app" / "docs"
@@ -42,22 +50,54 @@ FORBIDDEN_CLAIMS: tuple[tuple[str, str], ...] = tuple(
 _LINK_PATTERN = re.compile(r"""\[([^\]]+)\]\((/docs/[^)#?\s]*)(?:#[^)]*)?\)""")
 
 
-def check_docs(docs_dir: Path) -> list[str]:
+_NAV_CLOUD = re.compile(r'process\.env\.DOCS_CLOUD === "1"\s*\?\s*\[(.*?)\]\s*:\s*\[\]\)', re.S)
+_NAV_HREF = re.compile(r'href: "(/docs[^"]*)"')
+
+
+def check_navigation(docs_dir: Path) -> list[str]:
+    """Every navigation entry has a page, and page.cloud.mdx entries sit in a DOCS_CLOUD branch."""
+    text = NAVIGATION.read_text(encoding="utf-8")
+    cloud_spans = [m.span(1) for m in _NAV_CLOUD.finditer(text)]
+    errors: list[str] = []
+    for match in _NAV_HREF.finditer(text):
+        href = match.group(1)
+        in_cloud = any(start <= match.start() < end for start, end in cloud_spans)
+        folder = docs_dir / href.removeprefix("/docs").lstrip("/")
+        if (folder / "page.mdx").exists():
+            if in_cloud:
+                errors.append(f"navigation.ts: '{href}' is not a page.cloud.mdx but is in a DOCS_CLOUD branch")
+        elif (folder / "page.cloud.mdx").exists():
+            if not in_cloud:
+                errors.append(f"navigation.ts: '{href}' is a page.cloud.mdx; list it in a DOCS_CLOUD branch")
+        else:
+            errors.append(f"navigation.ts: no page for '{href}'")
+    return errors
+
+
+def check_docs(docs_dir: Path, *, cloud: bool = False) -> list[str]:
     errors: list[str] = []
     if not docs_dir.is_dir():
         return [f"Docs directory not found: {docs_dir}"]
 
-    pages = sorted(docs_dir.rglob("*.mdx"))
+    pages = sorted(
+        page
+        for page in docs_dir.rglob("*.mdx")
+        if cloud or not page.name.endswith(".cloud.mdx")
+    )
     known_routes: set[str] = set()
 
     for page in pages:
         rel = page.relative_to(docs_dir)
-        route_parts = rel.parts[:-1] if rel.name == "page.mdx" else rel.with_suffix("").parts
+        route_parts = (
+            rel.parts[:-1]
+            if rel.name in ("page.mdx", "page.cloud.mdx")
+            else rel.with_suffix("").parts
+        )
         route = "/docs/" + "/".join(route_parts) if route_parts else "/docs"
         known_routes.add(route.rstrip("/"))
 
     for page in pages:
-        text = page.read_text(encoding="utf-8")
+        text = select_variant(text=page.read_text(encoding="utf-8"), cloud=cloud)
         rel_str = str(page.relative_to(REPO_ROOT))
 
         # 1. Metadata export check
@@ -93,9 +133,12 @@ def check_docs(docs_dir: Path) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check docs truth, metadata, and links.")
     parser.add_argument("--docs-dir", type=Path, default=DEFAULT_DOCS_DIR)
+    parser.add_argument(
+        "--cloud", action="store_true", help="check the cloud build (DOCS_CLOUD=1)"
+    )
     args = parser.parse_args(argv)
 
-    errors = check_docs(args.docs_dir)
+    errors = check_docs(args.docs_dir, cloud=args.cloud) + check_navigation(args.docs_dir)
     if errors:
         for err in errors:
             print(f"error: {err}", file=sys.stderr)

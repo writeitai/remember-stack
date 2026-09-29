@@ -964,7 +964,7 @@ reconcile
 label_relation
 ```
 
-All use the same deployment ID, PostgreSQL authority/P1 database, MinIO stores, and OpenRouter
+All use the same deployment ID, PostgreSQL authority/P1 database, object stores, and OpenRouter
 adapter. One route per process preserves the existing queue/rate-limit design; no workflow engine
 is introduced.
 
@@ -1086,7 +1086,7 @@ returns at most 400 lines from a file no larger than 256 KiB. These operative
 limits are present in the hashed descriptors, not only in implementation
 constants.
 
-No benchmark tool reads Postgres, MinIO, graph files, or internal
+No benchmark tool reads Postgres, the object store, graph files, or internal
 handlers directly. Product reads go through `MemoryClient`; filesystem reads
 stay inside the normal P3 mount.
 

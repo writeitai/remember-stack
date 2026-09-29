@@ -1,25 +1,21 @@
-"""The remember.dev clients (D53/D62/D65).
+"""The remember memory clients (D62/D65/D136).
 
-- :class:: Ergonomic memory client connecting directly to tenant deployment
-  ingress for memory storage and retrieval (D65).
-- :class:: Core typed synchronous client for memory operations.
-- :class:: Control-plane client for organisation status, deployment
-  inspection, and billing balances (D53).
+- :class:`MemoryClient`: the typed synchronous client for one engine's HTTP API.
+- :class:`Client`: the same, plus file-path ingest and ``client.account``.
+
+Both resolve their connection with :func:`remember.connection.resolve_connection`
+— explicit arguments, then ``REMEMBER_*`` environment variables, then the
+stored credential file — exactly as the CLI does.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
-from contextlib import contextmanager
 from datetime import datetime
 from datetime import timedelta
-import mimetypes
 from pathlib import Path
 import time
-from types import TracebackType
-from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Self
@@ -28,45 +24,45 @@ from urllib.parse import quote
 from uuid import UUID
 
 import httpx
-from pydantic import AliasChoices
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
-from pydantic import SecretStr
 from pydantic import ValidationError
-from pydantic_settings import BaseSettings
-from pydantic_settings import SettingsConfigDict
 
-from remember.errors import CloudError
+from remember.connection import Connection
+from remember.connection import EngineRoute
+from remember.connection import resolve_connection
+from remember.errors import AccountApiUnavailable
 from remember.errors import MemoryApiError
-from remember.errors import NotPermitted
+from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
-from remember.errors import Unauthenticated
+from remember.issuer import fetch_issuer_metadata
+from remember.issuer import IssuerError
+from remember.issuer import send_same_origin
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import validate_arguments
+from remember.mcp_tools import validate_saved_query_identifier
+from remember.mime import infer_upload_mime
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
-from remember.models import BillingStatus
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
-from remember.models import Deployment
 from remember.models import DeploymentBuildInfo
+from remember.models import DocumentDeletion
+from remember.models import DocumentPage
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchRequest
+from remember.models import DocumentStatusFilter
 from remember.models import Envelope
 from remember.models import IngestedVersion
-from remember.models import LedgerEntry
 from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
-from remember.models import SpendGate
+from remember.models import SearchRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
-
-
-def _mime_hint_for_path(*, path: Path) -> str | None:
-    """Give Markdown a stable hint across OS MIME databases."""
-    if path.suffix.lower() in {".md", ".markdown"}:
-        return "text/markdown"
-    return mimetypes.guess_type(path.name)[0]
-
 
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
@@ -99,46 +95,6 @@ _QUERY_ERROR_HTTP_STATUS: Final[dict[str, int]] = {
     "invalid_parameter": 422,
     "unbounded_recursion": 422,
 }
-
-
-class ClientSettings(BaseSettings):
-    """How a client reaches one deployment API."""
-
-    model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_", extra="ignore")
-
-    api_url: str = Field(
-        default="http://127.0.0.1:8000",
-        validation_alias=AliasChoices(
-            "REMEMBER_DATA_PLANE_URL",
-            "REMEMBER_API_URL",
-            "REMEMBERSTACK_API_URL",
-            "api_url",
-        ),
-    )
-    api_authorization: SecretStr | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "REMEMBER_API_KEY",
-            "REMEMBER_TOKEN",
-            "REMEMBER_API_AUTHORIZATION",
-            "REMEMBERSTACK_API_AUTHORIZATION",
-            "api_authorization",
-        ),
-    )
-    api_timeout_seconds: float = Field(default=30.0, gt=0)
-
-
-class ExplicitEnvSettings(BaseSettings):
-    """Explicit environment overrides for client data-plane connectivity."""
-
-    model_config = SettingsConfigDict(extra="ignore")
-
-    data_plane_url: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "REMEMBER_DATA_PLANE_URL", "REMEMBER_API_URL", "REMEMBERSTACK_API_URL"
-        ),
-    )
 
 
 class _DiscoveryHit(BaseModel):
@@ -176,70 +132,44 @@ class MemoryClient:
     def __init__(
         self,
         *,
+        api_key: str | None = None,
         base_url: str | None = None,
-        api_url: str | None = None,
-        data_plane_url: str | None = None,
-        token: str | None = None,
-        authorization: str | None = None,
+        project: str | None = None,
+        timeout: float = 30.0,
         client: httpx.Client | None = None,
-        timeout: float | None = None,
-        settings: ClientSettings | None = None,
+        transport: httpx.BaseTransport | None = None,
     ) -> None:
-        """Bind either an owned HTTP client or an injected transport client."""
-        if client is not None and any(
-            value is not None
-            for value in (
-                base_url,
-                api_url,
-                data_plane_url,
-                token,
-                authorization,
-                timeout,
-                settings,
-            )
-        ):
-            raise ValueError(
-                "an injected client cannot be combined with client settings"
-            )
-        self._owned = client is None
+        """Resolve the connection, or wrap an injected ``httpx.Client`` as is.
+
+        ``api_key``, ``base_url`` and ``project`` take precedence over
+        ``REMEMBER_API_KEY``, ``REMEMBER_API_URL`` and ``REMEMBER_PROJECT``,
+        which take precedence over the stored credential file. Construction
+        makes no network call; a signed key's deployment is resolved on first
+        use. ``transport`` replaces the network (tests, proxies).
+
+        An injected ``client`` is used unchanged — its base URL and headers are
+        the caller's — and cannot be combined with the other settings.
+        """
         if client is not None:
-            self._client = client
+            if any(
+                value is not None for value in (api_key, base_url, project, transport)
+            ):
+                raise ValueError(
+                    "an injected client cannot be combined with client settings"
+                )
+            self._owned = False
+            self._http = client
+            self._connection: Connection | None = None
+            self._route: EngineRoute | None = None
             return
-        resolved = settings or ClientSettings.model_validate({})
-        raw_auth = (
-            authorization
-            or token
-            or (
-                resolved.api_authorization.get_secret_value()
-                if resolved.api_authorization is not None
-                else None
-            )
+        self._owned = True
+        self._http = httpx.Client(
+            timeout=timeout, transport=transport, follow_redirects=False
         )
-        env_settings = ExplicitEnvSettings.model_validate({})
-        env_url = env_settings.data_plane_url
-        explicit_url = data_plane_url or base_url or api_url or env_url
-        resolved_url = explicit_url or resolved.api_url
-
-        resolved_authorization = None
-        if raw_auth:
-            resolved_authorization = (
-                raw_auth if raw_auth.startswith("Bearer ") else f"Bearer {raw_auth}"
-            )
-
-        self._client = httpx.Client(
-            base_url=resolved_url,
-            headers=(
-                {"Authorization": resolved_authorization}
-                if resolved_authorization
-                else None
-            ),
-            timeout=(timeout if timeout is not None else resolved.api_timeout_seconds),
+        self._connection = resolve_connection(
+            api_key=api_key, api_url=base_url, project=project
         )
-
-    @classmethod
-    def from_settings(cls) -> "MemoryClient":
-        """Build from the deployment API environment settings."""
-        return cls(settings=ClientSettings.model_validate({}))
+        self._route = EngineRoute(connection=self._connection, http=self._http)
 
     def __enter__(self) -> "MemoryClient":
         return self
@@ -250,7 +180,7 @@ class MemoryClient:
     def close(self) -> None:
         """Close only a transport the SDK created itself."""
         if self._owned:
-            self._client.close()
+            self._http.close()
 
     def list_operations(self) -> tuple[ToolDescriptor, ...]:
         """Return the deployment's four assured-operation descriptors."""
@@ -462,9 +392,9 @@ class MemoryClient:
         without duplicating route knowledge in the transport loop. Arguments
         are validated strictly (same rules as local MCP) before the HTTP call.
         """
-        from remember.query_sandbox.mcp_tools import validate_open_query_arguments
-
-        args = validate_open_query_arguments(name=name, arguments=arguments)
+        if name not in OPEN_QUERY_TOOL_NAMES:
+            raise ValueError(f"unknown open-query tool {name!r}")
+        args = validate_arguments(name, arguments)
         if name == "query_sql":
             return self.query_sql(
                 sql=str(args["sql"]),
@@ -536,9 +466,10 @@ class MemoryClient:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
+        k: int = 50,
     ) -> Envelope:
         """Read current or valid-time relations matching an optional pattern."""
-        params: dict[str, str] = {}
+        params: dict[str, str | int] = {"k": k}
         if subject_entity_id is not None:
             params["subject_entity_id"] = str(subject_entity_id)
         if predicate is not None:
@@ -549,7 +480,7 @@ class MemoryClient:
             params["valid_at"] = valid_at.isoformat()
         return _validated(
             Envelope,
-            self._json("GET", "/lookup/relations", params=params if params else None),
+            self._json("GET", "/lookup/relations", params=params),
             endpoint="GET /lookup/relations",
         )
 
@@ -580,8 +511,27 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search source claims; the returned envelope remains evidence grain."""
+        """Search source claims; the returned envelope remains evidence grain.
+
+        ``documents`` (D134) keeps only claims found in a document version
+        matching the filters ``search_documents`` takes; each returned claim
+        still cites its origin. The filter travels in a body,
+        so a filtered search uses ``POST /search/claims``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/claims",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/claims",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -598,8 +548,26 @@ class MemoryClient:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source passages as separately typed evidence."""
+        """Search live source passages as separately typed evidence.
+
+        ``documents`` (D134) keeps only chunks whose document version matches
+        the filters ``search_documents`` takes. The filter travels in a body,
+        so a filtered search uses ``POST /search/chunks``.
+        """
+        if documents is not None:
+            return _validated(
+                Envelope,
+                self._json(
+                    "POST",
+                    "/search/chunks",
+                    json_body=SearchRequest(
+                        query=query, k=k, channel=channel, documents=documents
+                    ).model_dump(mode="json", exclude_none=True),
+                ),
+                endpoint="POST /search/chunks",
+            )
         return _validated(
             Envelope,
             self._json(
@@ -746,27 +714,50 @@ class MemoryClient:
         self,
         version_ids: Sequence[str | UUID],
         *,
-        timeout: float = 30.0,
-        poll_interval: float = 0.5,
+        timeout: float = 1800.0,
+        poll_interval: float = 15.0,
         require_p3: bool = False,
     ) -> PipelineReadinessReport:
-        """Poll /readiness until all requested version_ids are ready or timeout expires."""
-        start = time.monotonic()
-        req_ids = [UUID(str(v)) for v in version_ids]
+        """Poll /readiness until every listed version is ready.
+
+        The first check is immediate, so a version that is already processed
+        (for example one whose ingest returned ``created=False``) returns at
+        once. Later checks are ``poll_interval`` seconds apart.
+
+        The defaults — ``timeout`` 30 minutes, ``poll_interval`` 15 seconds —
+        are starting points sized for single documents, where processing takes
+        minutes; raise ``timeout`` for bulk loads.
+
+        A stage whose status is ``failed`` has a retry scheduled and can still
+        succeed, so waiting continues. A stage that is ``dead_letter`` has used
+        all its retries and never becomes ready, so the wait stops at once with
+        :class:`~remember.errors.PipelineDeadLettered`. ``TimeoutError`` is
+        raised when ``timeout`` seconds pass first.
+        """
+        deadline = time.monotonic() + timeout
+        req_ids = tuple(UUID(str(v)) for v in version_ids)
         require = ReadinessRequirements(
             pipeline=True, p1=True, live_graph=True, p3=require_p3
         )
         while True:
-            report = self.pipeline_readiness(
-                version_ids=tuple(req_ids), require=require
-            )
+            report = self.pipeline_readiness(version_ids=req_ids, require=require)
             if report.ready:
                 return report
-            if time.monotonic() - start > timeout:
+            dead_lettered = tuple(
+                (version.version_id, stage.stage, stage.status)
+                for version in report.versions
+                for stage in version.stages
+                if stage.status == "dead_letter"
+            )
+            if dead_lettered:
+                raise PipelineDeadLettered(dead_lettered=dead_lettered, report=report)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise TimeoutError(
-                    f"Version IDs {version_ids} not ready after {timeout}s: {report}"
+                    f"Version IDs {list(version_ids)} not ready after {timeout}s:"
+                    f" {report}"
                 )
-            time.sleep(poll_interval)
+            time.sleep(min(poll_interval, remaining))
 
     def ingest(
         self,
@@ -781,11 +772,15 @@ class MemoryClient:
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
         ``source_kind`` and ``source_ref`` are a pair. Reusing them creates a
         new immutable version of the same document when the bytes change.
+        ``source_path`` records where the file lives at its source (a folder
+        path or URL) with the version's metadata; sending the same bytes
+        again under a new name, title or path records that name too.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -804,6 +799,9 @@ class MemoryClient:
         ):
             raise ValueError("source_modified_at must be timezone-aware UTC")
 
+        # An explicit mime always wins. Otherwise a file path's type comes
+        # from the real path name (an overridden filename does not change
+        # it), and bytes take the type of the filename they are sent under.
         payload_bytes: bytes
         if content is not None:
             payload_bytes = content
@@ -812,7 +810,7 @@ class MemoryClient:
         elif isinstance(source, Path):
             payload_bytes = source.read_bytes()
             filename = filename or source.name
-            mime = mime or _mime_hint_for_path(path=source)
+            mime = mime or infer_upload_mime(source.name)
         elif isinstance(source, bytes):
             payload_bytes = source
         elif isinstance(source, str):
@@ -820,7 +818,7 @@ class MemoryClient:
             if p.is_file():
                 payload_bytes = p.read_bytes()
                 filename = filename or p.name
-                mime = mime or _mime_hint_for_path(path=p)
+                mime = mime or infer_upload_mime(p.name)
             else:
                 raise ValueError(f"file not found: {source}")
         else:
@@ -828,8 +826,7 @@ class MemoryClient:
 
         if not filename:
             raise ValueError("filename is required when ingesting bytes")
-        if not mime:
-            mime = "application/octet-stream"
+        mime = mime or infer_upload_mime(filename) or "application/octet-stream"
         params: dict[str, str] = {
             "filename": filename,
             "mime": mime,
@@ -844,6 +841,7 @@ class MemoryClient:
                 source_modified_at.isoformat() if source_modified_at else None,
             ),
             ("source_version_ref", source_version_ref),
+            ("source_path", source_path),
         ):
             if value is not None:
                 params[key] = value
@@ -857,6 +855,88 @@ class MemoryClient:
                 headers={"Content-Type": "application/octet-stream"},
             ),
             endpoint="POST /ingest",
+        )
+
+    def list_documents(
+        self,
+        *,
+        limit: int = 50,
+        cursor: str | None = None,
+        status: DocumentStatusFilter | None = None,
+    ) -> DocumentPage:
+        """One page of the deployment's documents, newest lineage first.
+
+        Pass the returned ``cursor`` back to read the next page; ``None``
+        means there are no more. ``status`` filters on each document's newest
+        version, for example ``"failed"``.
+        """
+        params: dict[str, str | int] = {"limit": limit}
+        if cursor is not None:
+            params["cursor"] = cursor
+        if status is not None:
+            params["status"] = status
+        return _validated(
+            DocumentPage,
+            self._json("GET", "/documents", params=params),
+            endpoint="GET /documents",
+        )
+
+    def search_documents(
+        self,
+        query: str | None = None,
+        *,
+        filters: DocumentSearchFilters | None = None,
+        versions: Literal["current", "all"] = "current",
+        k: int = 20,
+        cursor: str | None = None,
+    ) -> DocumentSearchPage:
+        """Find documents by name, general metadata and content (D134).
+
+        ``query`` matches every name a document was stored under (file name,
+        title, source path, old names after a rename; partial and misspelled
+        names too) and its text. ``filters`` narrow by family, authors,
+        recipients, date ranges, language, thread and doc ids. Without a
+        ``query`` results are newest first and ``cursor`` pages them; with one
+        they are ranked and not paged. Invalid combinations raise
+        ``pydantic.ValidationError`` before any request is sent.
+        """
+        return self.search_documents_request(
+            request=DocumentSearchRequest(
+                query=query,
+                filters=filters if filters is not None else DocumentSearchFilters(),
+                versions=versions,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def search_documents_request(
+        self, *, request: DocumentSearchRequest
+    ) -> DocumentSearchPage:
+        """Send one prepared :class:`DocumentSearchRequest` (``POST /documents/search``)."""
+        return _validated(
+            DocumentSearchPage,
+            self._json(
+                "POST",
+                "/documents/search",
+                json_body=request.model_dump(mode="json", exclude_defaults=True),
+            ),
+            endpoint="POST /documents/search",
+        )
+
+    def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
+        """Remove one document from the live memory.
+
+        Its claims stop being current testimony and facts that no other
+        document supports are closed. The claims and the stored original stay
+        as history. An unknown or already deleted ``doc_id`` raises
+        ``MemoryApiError`` with ``status_code`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            DocumentDeletion,
+            self._json("DELETE", f"/documents/{document}"),
+            endpoint="DELETE /documents/{doc_id}",
         )
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
@@ -897,6 +977,71 @@ class MemoryClient:
             endpoint=f"GET /connectors/{connector_id}",
         )
 
+    def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | tuple[tuple[str, str], ...] | None = None,
+        json: object | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """Send one engine request, re-resolving a moved deployment once.
+
+        Only a key-routed client re-resolves (D136 §8.3), and retries once when
+        the deployment URL changed. A read (``GET``/``HEAD``) retries after any
+        network failure, a ``421``, or a ``404`` that is not the engine's error
+        envelope. Any other request retries only after a failure that happens
+        before the request reaches the server — a connect error, a connect
+        timeout, or a ``421`` — so a write is never sent twice.
+        """
+        merged: dict[str, str] = dict(headers or {})
+        if self._route is None:
+            try:
+                return self._http.request(
+                    method,
+                    path,
+                    params=params,
+                    json=json,
+                    content=content,
+                    headers=merged,
+                )
+            except httpx.HTTPError as error:
+                raise MemoryApiError(status_code=0, detail=str(error)) from error
+        read = method in ("GET", "HEAD")
+        for attempt in (1, 2):
+            base, authorization = self._route.target()
+            if authorization is not None:
+                merged["Authorization"] = authorization
+            url = base.rstrip("/") + path
+            try:
+                response = self._http.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json,
+                    content=content,
+                    headers=merged,
+                )
+            except (httpx.NetworkError, httpx.ConnectTimeout) as error:
+                unsent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+                if attempt == 1 and (read or unsent) and self._route.re_resolve():
+                    continue
+                raise MemoryApiError(status_code=0, detail=str(error)) from error
+            except httpx.HTTPError as error:
+                raise MemoryApiError(status_code=0, detail=str(error)) from error
+            if (
+                attempt == 1
+                and (response.status_code == 421 or (read and _looks_moved(response)))
+                and self._route.key_routed
+                and self._route.re_resolve()
+            ):
+                response.close()
+                continue
+            return response
+        raise AssertionError("unreachable")  # pragma: no cover
+
     def _json(
         self,
         method: str,
@@ -908,17 +1053,16 @@ class MemoryClient:
         headers: dict[str, str] | None = None,
     ) -> object:
         """Send one request, map typed HTTP failure, and decode JSON."""
-        try:
-            response = self._client.request(
-                method,
-                path,
-                params=params,
-                json=json_body,
-                content=content,
-                headers=headers,
-            )
-        except httpx.HTTPError as error:
-            raise MemoryApiError(status_code=0, detail=str(error)) from error
+        response = self._send(
+            method,
+            path,
+            params=params,
+            json=json_body,
+            content=content,
+            headers=headers,
+        )
+        if response.status_code == 429:
+            raise _rate_limited(response)
         if not response.is_success:
             detail = response.text
             code: str | None = None
@@ -981,7 +1125,6 @@ def _sdk_param_list(value: object) -> list[object]:
 def _saved_query_path_segment(*, value: str, field: str) -> str:
     """Validate a registry identifier before encoding it as one URL segment."""
     from remember.query_sandbox.errors import SandboxRejection
-    from remember.query_sandbox.mcp_tools import validate_saved_query_identifier
 
     try:
         validated = validate_saved_query_identifier(value=value, field=field)
@@ -1040,138 +1183,29 @@ def _validated(model: type[_ModelT], payload: object, *, endpoint: str) -> _Mode
         ) from error
 
 
-DEFAULT_BASE_URL = "https://remember.dev/app/api"
-
-#: Environment variables, named so they cannot be confused with the memory
-#: client's ``REMEMBERSTACK_*`` pair — a machine often holds both.
-TOKEN_ENV = "REMEMBER_CLOUD_TOKEN"
-ORG_ENV = "REMEMBER_CLOUD_ORG"
-BASE_URL_ENV = "REMEMBER_CLOUD_URL"
-
-#: Environment variables for the unified data-plane client (D65).
-API_KEY_ENV = "REMEMBER_API_KEY"
-API_URL_ENV = "REMEMBER_API_URL"
-REMEMBERSTACK_AUTH_ENV = "REMEMBERSTACK_API_AUTHORIZATION"
-REMEMBERSTACK_URL_ENV = "REMEMBERSTACK_API_URL"
-
-
-class _ClientEnv(BaseSettings):
-    """Configuration read from environment variables via pydantic-settings (TID251)."""
-
-    model_config = SettingsConfigDict(extra="ignore")
-
-    remember_api_key: str | None = None
-    remember_data_plane_url: str | None = None
-    remember_api_url: str | None = None
-    rememberstack_api_authorization: str | None = None
-    rememberstack_api_url: str | None = None
-    remember_cloud_token: str | None = None
-    remember_cloud_org: str | None = None
-    remember_cloud_url: str | None = None
-
-
-def _format_bearer(token: str) -> str:
-    """Ensure a token string has the standard Bearer header prefix."""
-    if not token or not token.strip():
-        raise ValueError("API key or authorization token cannot be empty")
-    if "\r" in token or "\n" in token:
-        raise ValueError("Authorization token must not contain newline characters")
-    cleaned = token.strip()
-    if cleaned.lower() == "bearer":
-        raise ValueError("Bearer token value cannot be empty")
-    if cleaned.lower().startswith("bearer "):
-        rest = cleaned[7:].strip()
-        if not rest:
-            raise ValueError("Bearer token value cannot be empty")
-        return f"Bearer {rest}"
-    return f"Bearer {cleaned}"
-
-
 class Client(MemoryClient):
-    """Ergonomic data-plane memory client for remember.dev (D65).
+    """The memory client, plus file-path ingest and the issuer's account API.
 
-    Subclasses :class:`rememberstack.client.MemoryClient`, providing:
-    - ``api_key`` parameter accepting bare secrets (``umc_dp_...``) or full
-      ``Bearer`` headers.
-    - Path string support in :meth:`ingest` (accepts ``str``, ``Path``, or ``bytes``).
-    - Environment configuration from ``REMEMBER_API_KEY`` and ``REMEMBER_API_URL``
-      with fallbacks to ``REMEMBERSTACK_API_AUTHORIZATION`` and ``REMEMBERSTACK_API_URL``.
-    - Direct connection to deployment ingress (queries are never proxied through
-      the control plane).
+    ``Client(api_key="rmb_…")`` reaches the key's default project without the
+    caller naming a host; ``Client(api_key="rmb_…", project="docs")`` another
+    project the key covers; ``Client()`` a self-hosted engine at
+    ``REMEMBER_API_URL`` or ``http://127.0.0.1:8000``. See
+    :class:`MemoryClient` for the arguments.
     """
 
-    def __init__(
-        self,
-        *,
-        api_key: str | None = None,
-        base_url: str | None = None,
-        api_url: str | None = None,
-        data_plane_url: str | None = None,
-        authorization: str | None = None,
-        client: httpx.Client | None = None,
-        timeout: float | None = None,
-        settings: ClientSettings | None = None,
-    ) -> None:
-        if client is not None and any(
-            value is not None
-            for value in (
-                api_key,
-                base_url,
-                api_url,
-                data_plane_url,
-                authorization,
-                timeout,
-                settings,
-            )
-        ):
-            raise ValueError(
-                "an injected client cannot be combined with client settings"
-            )
-        if client is not None:
-            super().__init__(client=client)
-            return
-
-        env = _ClientEnv.model_validate({})
-        resolved_authorization: str | None = None
-        if api_key is not None:
-            resolved_authorization = _format_bearer(api_key)
-        elif authorization is not None:
-            resolved_authorization = authorization
-        elif settings is not None and settings.api_authorization is not None:
-            resolved_authorization = settings.api_authorization.get_secret_value()
-        elif env.remember_api_key:
-            resolved_authorization = _format_bearer(env.remember_api_key)
-        elif env.rememberstack_api_authorization:
-            resolved_authorization = env.rememberstack_api_authorization
-
-        effective_base_url = (
-            data_plane_url
-            if data_plane_url is not None
-            else (base_url if base_url is not None else api_url)
-        )
-        resolved_base_url: str | None = None
-        if effective_base_url is not None:
-            resolved_base_url = effective_base_url
-        elif settings is not None and settings.api_url:
-            resolved_base_url = settings.api_url
-        elif env.remember_data_plane_url:
-            resolved_base_url = env.remember_data_plane_url
-        elif env.remember_api_url:
-            resolved_base_url = env.remember_api_url
-        elif env.rememberstack_api_url:
-            resolved_base_url = env.rememberstack_api_url
-
-        super().__init__(
-            base_url=resolved_base_url,
-            authorization=resolved_authorization,
-            timeout=timeout,
-            settings=settings,
-        )
-
     @classmethod
-    def from_env(cls, **overrides: Any) -> Self:
-        """Build from environment variables with keyword argument overrides."""
-        return cls(**overrides)
+    def from_env(cls, **overrides: object) -> Self:
+        """Same as ``Client(**overrides)``: arguments, then environment, then the file."""
+        return cls(**overrides)  # type: ignore[arg-type]
+
+    @property
+    def account(self) -> AccountApi:
+        """The key issuer's account API, called with the same key.
+
+        Raises :class:`~remember.errors.AccountApiUnavailable` on use when the
+        key has no issuer or the issuer advertises no account API.
+        """
+        return AccountApi(connection=self._connection, http=self._http)
 
     def ingest(
         self,
@@ -1186,6 +1220,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Ingest a document from a file path, string path, or raw bytes."""
         resolved_source = Path(source) if isinstance(source, str) else source
@@ -1200,6 +1235,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def ingest_file(
@@ -1214,6 +1250,7 @@ class Client(MemoryClient):
         source_modified_at: datetime | None = None,
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
+        source_path: str | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1226,6 +1263,7 @@ class Client(MemoryClient):
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            source_path=source_path,
         )
 
     def __enter__(self) -> Self:
@@ -1234,195 +1272,124 @@ class Client(MemoryClient):
         return self
 
 
-class CloudClient:
-    """Ask the control plane what it knows about one organisation.
+class AccountApi:
+    """Calls to the account API of the key's issuer (D136 §8.3).
 
-    The credential is organisation-bound, so the organisation is fixed for the
-    life of the client rather than passed per call: a control token cannot act
-    on another organisation, and an API that invited you to try would be
-    misleading.
+    The issuer is the signed key's ``iss``; the API's base URL is the issuer
+    metadata's ``remember_account_endpoint``. Which operations exist, and
+    which permissions they need, is the issuer's to define.
     """
 
-    def __init__(
-        self,
-        *,
-        token: str,
-        org_id: str,
-        base_url: str = DEFAULT_BASE_URL,
-        timeout: float = 30.0,
-        transport: httpx.BaseTransport | None = None,
-    ) -> None:
-        """Bind a credential to one organisation."""
-        if not token:
-            raise ValueError("a control-plane token is required")
-        if not org_id:
-            raise ValueError("an organisation id is required")
-        self._org_id = org_id
-        self._http = httpx.Client(
-            base_url=base_url.rstrip("/"),
-            timeout=timeout,
-            transport=transport,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-        )
+    def __init__(self, *, connection: Connection | None, http: httpx.Client) -> None:
+        """Bind the client's resolved connection and HTTP client."""
+        self._connection = connection
+        self._http = http
 
-    @classmethod
-    def from_env(cls, **overrides: Any) -> Self:
-        """Build from ``REMEMBER_CLOUD_TOKEN`` / ``_ORG`` / ``_URL``.
-
-        The usual shape for an agent: credentials in the environment, nothing in
-        the code.
-        """
-        env = _ClientEnv.model_validate({})
-        token = overrides.pop("token", None) or env.remember_cloud_token or ""
-        org_id = overrides.pop("org_id", None) or env.remember_cloud_org or ""
-        base_url = (
-            overrides.pop("base_url", None)
-            or env.remember_cloud_url
-            or DEFAULT_BASE_URL
-        )
-        if not token:
-            raise ValueError(
-                f"set {TOKEN_ENV} to a control-plane token (umc_cp_…). "
-                "Mint one with POST /v1/orgs/<org>/control-tokens while signed "
-                "in; a deployment token (umc_dp_…) is a different credential "
-                "and the control plane rejects it"
+    def whoami(self) -> dict[str, object]:
+        """The issuer's view of this key: person, organisation, projects, permissions."""
+        payload = self.get("/v1/keys/self")
+        if not isinstance(payload, dict):
+            raise MemoryApiError(
+                status_code=200, detail="GET /v1/keys/self did not return an object"
             )
-        if not org_id:
-            raise ValueError(f"set {ORG_ENV} to your organisation id")
-        return cls(token=token, org_id=org_id, base_url=base_url, **overrides)
+        return payload
 
-    @property
-    def org_id(self) -> str:
-        """The organisation this credential is bound to."""
-        return self._org_id
-
-    # -- the questions -------------------------------------------------
-
-    def billing_status(self) -> BillingStatus:
-        """Whether chargeable work may run, and what the balance is."""
-        return BillingStatus.from_payload(
-            self._get(f"/v1/orgs/{self._org_id}/billing/status")
+    def get(
+        self, path: str, *, params: Mapping[str, str | int] | None = None
+    ) -> object:
+        """``GET`` one account-API path (relative to the account endpoint)."""
+        base = self._base_url()
+        assert self._connection is not None and self._connection.authorization
+        request = self._http.build_request(
+            "GET",
+            base.rstrip("/") + "/" + path.lstrip("/"),
+            params=params,
+            headers={
+                "Authorization": self._connection.authorization,
+                "Accept": "application/json",
+            },
         )
-
-    def deployments(self) -> list[Deployment]:
-        """Every deployment this organisation has (today, zero or one)."""
-        payload = self._get(f"/v1/orgs/{self._org_id}/deployments")
-        rows = payload if isinstance(payload, list) else payload.get("items", [])
-        return [Deployment.from_payload(row) for row in rows]
-
-    def deployment(self) -> Deployment | None:
-        """The organisation's deployment, or None before one is provisioned."""
-        found = self.deployments()
-        return found[0] if found else None
-
-    def ledger(self, *, limit: int = 50) -> list[LedgerEntry]:
-        """The credit ledger: what was charged, newest first as the server sends.
-
-        ``limit`` is bounded by the server to 1..200; values outside that range
-        are rejected there rather than silently clamped here, so a caller sees
-        its own mistake.
-        """
-        payload = self._get(
-            f"/v1/orgs/{self._org_id}/billing/ledger", params={"limit": limit}
-        )
-        rows = payload if isinstance(payload, list) else payload.get("items", [])
-        return [LedgerEntry.from_payload(row) for row in rows]
-
-    def spend_gate(self, *, deployment_id: str) -> SpendGate:
-        """May work dispatch right now — and if not, why.
-
-        Worth asking before a large ingest: a refusal here is cheaper than a
-        refusal halfway through one.
-        """
-        return SpendGate.from_payload(
-            self._get(
-                f"/v1/orgs/{self._org_id}/deployments/{deployment_id}/spend-safety/gate"
-            )
-        )
-
-    def is_ready(self) -> bool:
-        """One call an agent can branch on: is there a deployment able to serve.
-
-        Convenience over :meth:`deployment`, because "am I ready" is the
-        question actually being asked.
-        """
-        found = self.deployment()
-        return found is not None and found.is_ready
-
-    # -- plumbing ------------------------------------------------------
-
-    def _get(self, path: str, *, params: Mapping[str, Any] | None = None) -> Any:
-        """Perform a read, translating D41 error envelopes into exceptions."""
         try:
-            response = self._http.get(path, params=params)
-        except httpx.TimeoutException as error:
-            raise CloudError(f"timed out calling {path}", retryable=True) from error
+            response = send_same_origin(self._http, request)
         except httpx.HTTPError as error:
-            raise CloudError(f"could not reach {path}: {error}") from error
-
-        if response.is_success:
+            raise MemoryApiError(status_code=0, detail=str(error)) from error
+        if response.status_code == 429:
+            raise _rate_limited(response)
+        if not response.is_success:
+            raise MemoryApiError(
+                status_code=response.status_code, detail=_error_detail(response)
+            )
+        try:
             return response.json()
-        raise _as_error(response)
+        except ValueError as error:
+            raise MemoryApiError(
+                status_code=response.status_code,
+                detail=f"GET {path} returned invalid JSON",
+            ) from error
 
-    def close(self) -> None:
-        """Release the underlying connection pool."""
-        self._http.close()
+    def _base_url(self) -> str:
+        connection = self._connection
+        if connection is None or connection.claims is None:
+            raise AccountApiUnavailable(
+                detail=(
+                    "the account API needs a signed key from an issuer; this "
+                    "client has none (a self-hosted engine has no account API)"
+                )
+            )
+        metadata = fetch_issuer_metadata(connection.claims.iss, http=self._http)
+        if not metadata.remember_account_endpoint:
+            raise AccountApiUnavailable(
+                detail=f"issuer {metadata.issuer} advertises no remember_account_endpoint"
+            )
+        try:
+            return metadata.endpoint("remember_account_endpoint")
+        except IssuerError as error:
+            raise AccountApiUnavailable(detail=error.detail) from error
 
-    def __enter__(self) -> Self:
-        """Support ``with CloudClient(...) as cloud:``."""
-        return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        """Close on exit."""
-        self.close()
-
-
-def _as_error(response: httpx.Response) -> CloudError:
-    """Turn a non-success response into the narrowest exception that fits.
-
-    D41's envelope is ``{"detail": {code, message, retryable, request_id}}``. A
-    response that does not carry it — a proxy error page, say — still produces a
-    typed exception, so a caller never has to handle two failure shapes.
-    """
-    code: str | None = None
-    message = f"HTTP {response.status_code}"
-    retryable = False
-    request_id = response.headers.get("X-Request-Id")
-
-    with _tolerating_bad_json():
+def _looks_moved(response: httpx.Response) -> bool:
+    """``421``, or a ``404`` whose body is not the engine's error envelope."""
+    if response.status_code == 421:
+        return True
+    if response.status_code != 404:
+        return False
+    try:
         body = response.json()
-        detail = body.get("detail") if isinstance(body, dict) else None
-        if isinstance(detail, dict):
-            code = detail.get("code")
-            message = detail.get("message") or message
-            retryable = bool(detail.get("retryable", False))
-            request_id = detail.get("request_id") or request_id
-        elif isinstance(detail, str):
-            # Pre-D41 routes still answer with a bare string.
-            message = detail
+    except ValueError:
+        return True
+    return not (isinstance(body, dict) and "detail" in body)
 
-    shared = {
-        "status_code": response.status_code,
-        "code": code,
-        "retryable": retryable,
-        "request_id": request_id,
-    }
-    if response.status_code == 401:
-        return Unauthenticated(message, **shared)  # type: ignore[arg-type]
-    if response.status_code == 403:
-        return NotPermitted(message, **shared)  # type: ignore[arg-type]
-    if response.status_code == 429:
-        return RateLimited(
-            message,
-            retry_after=_retry_after(response),
-            **shared,  # type: ignore[arg-type]
-        )
-    return CloudError(message, **shared)  # type: ignore[arg-type]
+
+def _rate_limited(response: httpx.Response) -> RateLimited:
+    """The typed ``429``: admission code, message, and ``Retry-After``."""
+    code: str | None = None
+    detail = "rate limited"
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    envelope = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(envelope, dict):
+        if isinstance(envelope.get("code"), str):
+            code = envelope["code"]
+        detail = str(envelope.get("message") or code or detail)
+    elif isinstance(envelope, str):
+        detail = envelope
+    return RateLimited(detail=detail, code=code, retry_after=_retry_after(response))
+
+
+def _error_detail(response: httpx.Response) -> str:
+    """The message of an error response, whatever envelope it came in."""
+    try:
+        body = response.json()
+    except ValueError:
+        return response.text
+    envelope = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(envelope, dict):
+        return str(envelope.get("message") or envelope.get("code") or envelope)
+    if envelope is not None:
+        return str(envelope)
+    return response.text
 
 
 def _retry_after(response: httpx.Response) -> float | None:
@@ -1435,12 +1402,3 @@ def _retry_after(response: httpx.Response) -> float | None:
     except ValueError:
         # HTTP-date form; the caller's own backoff is better than a bad guess.
         return None
-
-
-@contextmanager
-def _tolerating_bad_json() -> Iterator[None]:
-    """Ignore an unparseable error body rather than masking the real failure."""
-    try:
-        yield
-    except (ValueError, AttributeError):
-        return

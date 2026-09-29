@@ -26,15 +26,17 @@ from benchmarks.locomo.retrieval import RetrievalInfrastructureError
 from benchmarks.locomo.retrieval import RetrievalToolError
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
+from remember.mcp_engine import EngineMcpServer
+from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
+from remember.mcp_tools import render_tools_list
+from remember.mcp_tools import tool as catalogue_tool
 from remember.query_sandbox.errors import QueryErrorCode
 from remember.query_sandbox.errors import SandboxRejection
-from remember.query_sandbox.mcp_tools import open_query_tool_descriptors
-from remember.remote_mcp import RemoteOperationMcpServer
 from rememberstack.adapters import CodexSubscriptionAccessError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports import ModelProviderPort
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 
 class _FakeMcpServer:
@@ -80,10 +82,17 @@ def test_mcp_catalog_is_read_only_input_schema_only() -> None:
         }
         for descriptor in assured_tool_catalog()
     ]
-    tools.extend(cast(list[dict[str, object]], open_query_tool_descriptors()))
+    tools.extend(
+        render_tools_list(
+            [catalogue_tool(name) for name in OPEN_QUERY_TOOL_NAMES],
+            project=False,
+            path_ingest=False,
+            read_only=True,
+        )
+    )
 
     catalog = ablation._mcp_catalog(  # noqa: SLF001
-        server=cast(RemoteOperationMcpServer, _FakeMcpServer(tools=tools))
+        server=cast(EngineMcpServer, _FakeMcpServer(tools=tools))
     )
     prompt = ablation._answer_template(profile="mcp").format(  # noqa: SLF001
         tools=json.dumps(
@@ -104,7 +113,7 @@ def test_mcp_catalog_is_read_only_input_schema_only() -> None:
 
     assert {tool.name for tool in catalog} == {
         tool.name for tool in assured_tool_catalog()
-    } | {str(tool["name"]) for tool in open_query_tool_descriptors()}
+    } | set(OPEN_QUERY_TOOL_NAMES)
     assert all(tool.mutates is False for tool in catalog)
     assert "result_schema" not in prompt
     assert "ingest" not in {tool.name for tool in catalog}
@@ -182,13 +191,15 @@ def test_remote_mcp_preserves_api_failure_status_for_the_answer_loop() -> None:
                 status_code=503, detail="database unavailable", code="pg_unavailable"
             )
 
-    server = RemoteOperationMcpServer(
-        client=cast(MemoryClient, _UnavailableClient()), read_only=True
+    server = EngineMcpServer(
+        client=cast(MemoryClient, _UnavailableClient()),
+        read_only=True,
+        path_ingest=False,
     )
 
     with pytest.raises(MemoryApiError) as unavailable:
         ablation._decode_mcp_result(  # noqa: SLF001
-            result=server.call_tool(name="facts_context", arguments={})
+            result=server.call_tool(name="facts_context", arguments={"query": "x"})
         )
 
     assert unavailable.value.status_code == 503
@@ -493,7 +504,7 @@ def test_codex_hybrid_overrides_are_secret_free_and_read_only() -> None:
     assert "enabled_tools" in joined
     assert "facts_context" in joined
     assert "env_vars" in joined
-    assert "REMEMBERSTACK_API_AUTHORIZATION" in joined
+    assert "REMEMBER_API_KEY" in joined
     assert "Bearer " not in joined
 
 

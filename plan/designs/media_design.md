@@ -174,7 +174,15 @@ SourceLocator =                          -- a discriminated union on `kind`
   | { kind: time,         start_ms, end_ms, track?,          precision: word | segment | shot }
   | { kind: video_region, start_ms, end_ms, region?,
       keyframe_asset_id?,                                    precision: segment | shot | frame }
+  | { kind: sheet_range,  sheet, range?,                     precision: sheet | range | cell }
+  | { kind: table_region, table, column?, row_start?, row_end?,
+                                                             precision: table | column | rows }
+  | { kind: json_pointer, pointer,                           precision: exact }
+  | { kind: line_range,   start_line, end_line,              precision: exact }
 ```
+
+The last four kinds (D133) point into structured and line-oriented sources;
+their field conventions are in [`format_conversion_design.md`](format_conversion_design.md) §7.
 
 Field conventions (fixed here so two implementers cannot diverge):
 
@@ -418,6 +426,7 @@ to the source:
 | `source_expression` | a fallible rendering of symbols/speech *present in the source* | a transcript sentence; OCR'd slide text; an embedded caption |
 | `model_observation` | the model's account of what the source *shows* | "the image shows a red valve"; "Alice enters the room" |
 | `model_interpretation` | the model's *reading into* the source | "the speaker sounds hesitant"; "the chart implies strong growth" |
+| `computed` | a deterministic library's derivation from source values (D133) — not the source's words, no model involved | "48,210 rows"; "`order_date` spans 2025-01-02 to 2025-12-30" |
 
 Implementation is deliberately cheap and deterministic — **no per-claim judgment exists
 anywhere**: the converter's manifest (§2) labels contiguous, **mode-homogeneous** character
@@ -427,7 +436,7 @@ text routes label everything `passthrough`/`source_expression`), so the labeling
 not a media special case. **Claims inherit the labels through their `source_span` →
 labeled-range intersection** — with one deterministic tie-break: a claim whose span crosses
 ranges with *different* modes takes the **most-mediated** mode of any range it touches
-(`model_interpretation` > `model_observation` > `source_expression`) — disclosure errs toward
+(`model_interpretation` > `model_observation` > `computed` > `source_expression`) — disclosure errs toward
 disclosing more mediation, never less, and no splitting machinery is needed. The resolved
 labels are **cached on the claim's occurrence record** (`chunk_claims`, together with the
 resolved locator set — the occurrence-grain provenance home, schema §7), because they are

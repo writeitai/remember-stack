@@ -7,17 +7,20 @@ version bump, never a silent difference.
 """
 
 from collections.abc import Mapping
+import shutil
 from typing import Final
 from typing import Literal
 from typing import Protocol
 from typing import runtime_checkable
 
+from rememberstack.core.format_registry import stock_route_names
 from rememberstack.model import ConversionCoverage
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterManifest
 from rememberstack.model import ConverterUsageEvent
 from rememberstack.model import DerivationRange
+from rememberstack.model import FileHints
 from rememberstack.model import ManifestComponent
 from rememberstack.model import UnroutableMimeError
 
@@ -26,15 +29,23 @@ PASSTHROUGH_CONVERTER_VERSION: Final = "passthrough-2026.09-bom"
 D65 envelope emission (manifest + total labeling). A contract change here
 must bump this so replay never reuses artifacts from the old shape."""
 
-STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = {
-    "text/markdown": "passthrough",
-    "text/plain": "passthrough",
-}
-"""The stock self-host MIME → converter-name table (the settings default).
+STOCK_CONVERSION_ROUTE_NAMES: Final[dict[str, str]] = stock_route_names(
+    libreoffice_available=shutil.which("soffice") is not None
+)
+"""The engine's default MIME → converter-name table (D138 §3/§4).
 
-The CLI/SDK guess ``.txt`` as ``text/plain`` and MCP ``text`` ingest defaults
-to the same. Routing only ``text/markdown`` dead-letters those converts
-(UMC #228 / RememberStack #301).
+Derived from the format registry: every stored MIME of a family whose
+converter ships in this build routes to it — ``text`` for Markdown, plain
+text, code, configuration and logs; ``markitdown`` for HTML and EPUB;
+``office`` for Word documents and presentations; ``spreadsheet``, ``table``
+and ``dataset`` profiles for workbooks, delimited files and datasets; ``pdf``,
+``email`` and ``notebook``; ``card`` for images, media, archives and
+unrecognized bytes. The formats LibreOffice converts first (doc, odt, rtf,
+ppt, odp, ods) route only where its ``soffice`` is on the PATH. Every route
+runs locally with no API key. A deployment's conversion-route setting adds
+or overrides entries on top of this table; MIME types no route accepts (the
+LibreOffice formats without LibreOffice) are stored and parked as
+``no_route`` until one does.
 """
 
 
@@ -117,6 +128,33 @@ class LaneCheckpointConverter(Protocol):
         ...
 
 
+@runtime_checkable
+class FileHintConverter(Protocol):
+    """A converter that also reads the file's name and source path (D138).
+
+    The convert worker passes the version's D134 file name and source path
+    to such a route; every other route receives only bytes and MIME.
+    """
+
+    accepts_file_hints: bool
+
+    @property
+    def name(self) -> str:
+        """The route name recorded on representations."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """The converter version (D38): a bump creates new representations."""
+        ...
+
+    def convert(
+        self, *, content: bytes, mime: str, hints: FileHints | None = None
+    ) -> ConversionResult:
+        """Produce the Markdown reading, naming the file when hints are given."""
+        ...
+
+
 class ConversionRouter:
     """Route an input MIME type to its configured converter (D38 routing table)."""
 
@@ -178,7 +216,7 @@ def entire_document_labeling(
     document_md: str,
     derivation_kind: str,
     evidence_mode: Literal[
-        "source_expression", "model_observation", "model_interpretation"
+        "source_expression", "computed", "model_observation", "model_interpretation"
     ],
 ) -> tuple[DerivationRange, ...]:
     """Label the whole output as one range — labeling is total, even for text (§5)."""
@@ -192,9 +230,3 @@ def entire_document_labeling(
             evidence_mode=evidence_mode,
         ),
     )
-
-
-def stock_passthrough_routes() -> dict[str, Converter]:
-    """Materialize ``STOCK_CONVERSION_ROUTE_NAMES`` (all passthrough) as a table."""
-    passthrough = MarkdownPassthroughConverter()
-    return {mime: passthrough for mime in STOCK_CONVERSION_ROUTE_NAMES}

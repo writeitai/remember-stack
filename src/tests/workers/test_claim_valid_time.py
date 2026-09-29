@@ -41,13 +41,14 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
     )
 
     assert _header_text(source=source) == (
-        "title Unknown time; source upload; date unknown; language en"
+        "title Unknown time; file unknown; source upload; date unknown; language en"
     )
     dated = source.model_copy(
         update={"source_modified_at": datetime(2023, 5, 1, 13, tzinfo=UTC)}
     )
     assert _header_text(source=dated) == (
-        "title Unknown time; source upload; date 2023-05-01T13:00:00+00:00; language en"
+        "title Unknown time; file unknown; source upload;"
+        " date 2023-05-01T13:00:00+00:00; language en"
     )
 
 

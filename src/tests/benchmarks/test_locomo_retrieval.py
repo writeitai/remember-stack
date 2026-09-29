@@ -17,9 +17,9 @@ from benchmarks.locomo.retrieval import RetrievalToolError
 import httpx
 import pytest
 
+from remember.client import MemoryClient
+from remember.errors import MemoryApiError
 from remember.models import Envelope
-from rememberstack.surfaces.sdk import MemoryApiError
-from rememberstack.surfaces.sdk import MemoryClient
 
 _RELATION_ID = UUID("57000000-0000-0000-0000-000000000020")
 _ENTITY_ID = UUID("57000000-0000-0000-0000-000000000021")

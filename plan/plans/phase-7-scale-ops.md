@@ -103,10 +103,9 @@ until the window boundary without starting a handler, consuming an attempt, chan
 error, or creating a second scheduling ledger. The worker re-announces that existing row through
 the delivery port with the stored resume time.
 
-`WorkLedger.budget_status` and `remember budget inspect` read the same two authoritative Postgres
-tables. They expose configured ceiling, current-window spend, remaining amount, tier attribution,
-aligned bounds, and parked-work count; they do not add a dashboard, hosted billing policy, cache,
-or control plane. The PostgreSQL acceptance fixture records two attributed calls, proves an
+Budgets have no read model or command: `WorkLedger.budget_status` and `remember budget inspect`
+were deleted (D108, PR #460). Parked work shows as `defer_reason = 'budget'` in
+`processing_state`; spend is in the cost ledger (`remember ops cost-export`). The PostgreSQL acceptance fixture records two attributed calls, proves an
 over-budget handler never starts, then crosses the fixture window and proves the exact row resumes
 and completes normally.
 

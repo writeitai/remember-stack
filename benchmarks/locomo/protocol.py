@@ -69,12 +69,12 @@ _E2_EXTRACTOR_GENERATION: Final = (
     "e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     "token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     "d79-section-orientation-v1:max-chars2048:target-first:unicode-ellipsis:"
-    "assertion-clarity-4:d122-source-references-1:d131-anaphora-1"
+    "assertion-clarity-4:d122-source-references-1:d131-anaphora-1:d134-selfref-1"
 )
 EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
     {
         "convert": "e0-convert-2026.08",
-        "structure": "e0-structure-2026.07g:d79-wave2",
+        "structure": "e0-structure-2026.07h:d79-wave2",
         "chunk": (
             "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
             "blockizer-heading-metadata"
@@ -108,10 +108,7 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
 )
 EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "chunk_embedding": "qwen/qwen3-embedding-8b",
         "claim_extraction": "openai/gpt-5.6-luna",
-        "context_prefix": "openai/gpt-5.6-luna",
-        "fact_label": "openai/gpt-5.6-luna",
         "entity_resolution": "openai/gpt-5.6-luna",
         "fact_adjudication": "openai/gpt-5.6-luna",
         "openrouter_embedding_provider": "nebius",
@@ -169,8 +166,6 @@ GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
         **EXPECTED_INGEST_MODEL_BINDINGS,
         "claim_extraction": GLM_GENERATION_MODEL,
-        "context_prefix": GLM_GENERATION_MODEL,
-        "fact_label": GLM_GENERATION_MODEL,
         "entity_resolution": GLM_GENERATION_MODEL,
         "fact_adjudication": GLM_GENERATION_MODEL,
         "openrouter_reasoning_effort_map": '{"z-ai/glm-5.3-flash": "minimal"}',

@@ -28,10 +28,15 @@ from rememberstack.core.embedding_input_policy import EmbeddingInputRender
 from rememberstack.core.embedding_input_policy import location_facts_json
 from rememberstack.core.embedding_input_policy import LocationFacts
 from rememberstack.core.embedding_input_policy import render_embedding_input
+from rememberstack.core.extraction_eligibility import block_eligibility
+from rememberstack.core.extraction_eligibility import (
+    EXTRACTION_ELIGIBILITY_POLICY_VERSION,
+)
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
+from rememberstack.model import DerivationRange
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import EnqueueWork
@@ -43,6 +48,9 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model.occurrence_provenance import (
+    parse_persisted_conversion_manifest,
+)
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -65,7 +73,7 @@ E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-4:d122-source-references-1:"
-    f"d131-anaphora-1"
+    f"d131-anaphora-1:d134-selfref-1"
 )
 """Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
 coherent claims cite engine-labeled source passages; occurrence rows store
@@ -74,21 +82,24 @@ windows whose previous/next slots keep side identity. 08a: D80 typed
 location elements replace free-form context_prefix in the bundle/grounding
 union. temporal-anchor-4: a resolved relative date is written into
 claim_text as its ISO value and grounded by the claim's own valid-time
-fields (D41/D32 amendments of 2026-09-11)."""
+fields (D41/D32 amendments of 2026-09-11). d134-selfref-1: the header
+carries the version's file name and title, and a claim about its own
+document names it (the gate records the inserted name's span)."""
 
 _EMBED_BATCH_SIZE: Final = 64
 """Default provider batch size for chunk embeddings (capability starting point)."""
 
 
 class E1Settings(BaseSettings):
-    """The E1 model bindings: per-deployment port configuration (D61/D63/D80)."""
+    """The E1 batching configuration (D61/D63/D80).
+
+    The embedding model itself is the deployment's one P1 embedding model
+    (``REMEMBERSTACK_P1_EMBEDDING_MODEL``), passed to the handler explicitly.
+    """
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_E1_")
 
-    embedding_model: str = Field(default="qwen/qwen3-embedding-8b")
     embed_batch_size: int = Field(default=_EMBED_BATCH_SIZE, ge=1, le=512)
-    # Retired: kept so old env files do not fail validation; unused on D80 path.
-    prefix_model: str = Field(default="openai/gpt-5.6-luna")
 
 
 class ChunkHandler:
@@ -129,11 +140,19 @@ class ChunkHandler:
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
+        eligible = block_eligibility(
+            blocks=blocks, ranges=self._derivation_ranges(source=source)
+        )
         packed = pack_blocks(
             blocks=blocks,
             sections=source.sections,
             document_md=document_md,
             params=self._params,
+            ineligible_ordinals=frozenset(
+                block.ordinal
+                for block, is_eligible in zip(blocks, eligible, strict=True)
+                if not is_eligible
+            ),
         )
         self._catalog.record_chunks(
             records=tuple(
@@ -147,6 +166,17 @@ class ChunkHandler:
             )
         )
         return _embed_follow_up(work=work, source=source)
+
+    def _derivation_ranges(self, *, source: ChunkSource) -> tuple[DerivationRange, ...]:
+        """The converter's labelled ranges; a legacy row without a manifest has none."""
+        if source.conversion_uri is None:
+            return ()
+        return parse_persisted_conversion_manifest(
+            payload=self._artifact_store.read_bytes(
+                key=ObjectKey(source.conversion_uri)
+            ),
+            uri=source.conversion_uri,
+        ).derivation_ranges
 
 
 class EmbedChunksHandler:
@@ -164,6 +194,7 @@ class EmbedChunksHandler:
         model_provider: ModelProviderPort,
         chunk_index: ChunkIndexPort,
         settings: E1Settings,
+        embedding_model: str,
         params: ChunkerParams,
     ) -> None:
         """Bind the handler to its catalog, stores, provider, and P1 index.
@@ -176,6 +207,7 @@ class EmbedChunksHandler:
         self._model_provider = model_provider
         self._chunk_index = chunk_index
         self._settings = settings
+        self._embedding_model = embedding_model
         self._chunker_version = chunker_version(params=params)
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
@@ -198,7 +230,7 @@ class EmbedChunksHandler:
             key=ObjectKey(source.markdown_uri)
         ).decode("utf-8")
         policy_generation = EMBEDDING_INPUT_POLICY_VERSION
-        embedder_generation = self._settings.embedding_model
+        embedder_generation = self._embedding_model
         carry = self._catalog.carry_forward_sources(
             deployment_id=work.deployment_id,
             doc_id=source.doc_id,
@@ -592,13 +624,25 @@ def _chunk_record(
         else ""
     )
     neighbor_hashes = (previous_hash, next_hash)
+    # D134: the file name is a header fact — a self-referencing claim names
+    # the file, so a renamed version must never reuse claims naming the old one.
     header_facts = (
-        source.title or "",
+        source.header_title() or "",
         source.source_kind,
         _isoformat_or_empty(value=source.source_modified_at),
         _isoformat_or_empty(value=source.published_at),
         source.language or "",
+        source.file_name or "",
     )
+    if not chunk.extraction_eligible:
+        # D133 §4.5: the policy version joins the reuse basis of ineligible
+        # chunks, so they never share a Selection result with an eligible
+        # chunk and a policy change re-keys exactly them. Eligible chunks keep
+        # their key, so the policy never re-extracts prose.
+        header_facts = (
+            *header_facts,
+            f"ineligible:{EXTRACTION_ELIGIBILITY_POLICY_VERSION}",
+        )
     return ChunkRecord(
         chunk_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -621,6 +665,8 @@ def _chunk_record(
         char_end=chunk.char_end,
         token_count=chunk.token_count,
         chunker_version=chunker_version,
+        extraction_eligible=chunk.extraction_eligible,
+        extraction_eligibility_version=EXTRACTION_ELIGIBILITY_POLICY_VERSION,
     )
 
 

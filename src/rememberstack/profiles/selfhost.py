@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
 import json
 import logging
@@ -12,6 +14,7 @@ import time
 from typing import Annotated
 from typing import Self
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 from uuid import UUID
 
 from alembic import command
@@ -42,10 +45,10 @@ from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DeploymentBuildInfo
+from rememberstack.model import DocumentDeletion
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import PublishedMounts
-from rememberstack.model import ReviewDecisionError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
@@ -69,12 +72,13 @@ _logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterStateStore
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterTrust
     from rememberstack.adapters.selfhost import SelfHostWorkerLoop
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
     )
     from rememberstack.ports.telemetry import TelemetryPort
-    from rememberstack.spine.review import ReviewQueue
     from rememberstack.workers import StageHandler
 
 _SUPPORTED_WORKER_STAGES = (
@@ -152,11 +156,13 @@ class SelfHostSettings(BaseSettings):
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
-    """The D38 MIME → converter-adapter-name table; setting the env replaces it.
+    """The effective D38 MIME → converter-adapter-name table (D138 §3).
 
-    Decoding is explicit (NoDecode) so Compose's empty-string interpolation of
-    an unset variable falls back to the stock table instead of failing JSON
-    parsing inside the settings source."""
+    The engine's stock table, overlaid by the environment's JSON object: an
+    entry there adds a MIME type or overrides the stock converter for it; it
+    never removes the rest of the table. Decoding is explicit (NoDecode) so
+    Compose's empty-string interpolation of an unset variable means "no
+    overlay" instead of failing JSON parsing inside the settings source."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -175,14 +181,35 @@ class SelfHostSettings(BaseSettings):
     worker_fallback_poll_s: float = Field(default=5.0, gt=0)
     worker_session_s: float = Field(default=3_600.0, gt=0)
     api_bearer_bind: str | None = None
-    #: A JWKS document of public keys that verify signed credentials (D59).
-    #: Absent for self-host, which has no issuer to trust.
-    api_signing_keys: str | None = None
-    #: Credential ids refused despite a good signature. Comma-separated,
-    #: bounded by revocation rate times credential lifetime.
-    api_revoked_credential_ids: str | None = None
+    #: Signed keys (D136 §7.1). Setting the issuer enables them; the tenant id
+    #: and both URLs are then required. Absent for a self-host deployment that
+    #: has no issuer to trust.
+    api_key_issuer: str | None = None
+    #: The issuer tenant this deployment belongs to (remember.dev: the
+    #: organisation id); keys carry ``aud = org:<this>`` and ``org = <this>``.
+    api_key_tenant_id: str | None = None
+    #: The issuer's project id for this deployment; default: the deployment id.
+    api_key_project_id: str | None = None
+    #: Where the issuer's JWKS (Ed25519 public keys) is fetched.
+    api_signing_keys_url: str | None = None
+    #: Where the issuer's signed revocation document for this deployment is fetched.
+    api_revocation_url: str | None = None
+    #: R: how often both are fetched (starting value).
+    api_key_refresh_s: float = Field(default=60.0, gt=0)
+    #: S: the maximum age of an accepted revocation document (starting value).
+    api_revocation_max_age_s: float = Field(default=3_600.0, gt=0)
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
+    #: Optional direct-path admission limits (D136 §7.6), counted in this API
+    #: process. Each is off unless set to a positive number (``0``, the
+    #: default, means no limit). Per credential (a signed token's ``jti``) and
+    #: for the whole deployment; the shared secret is bounded by the deployment
+    #: limits only. With N API replicas the effective ceilings are N times
+    #: these numbers.
+    api_admission_key_per_minute: int = Field(default=0, ge=0)
+    api_admission_key_in_flight: int = Field(default=0, ge=0)
+    api_admission_deployment_per_minute: int = Field(default=0, ge=0)
+    api_admission_deployment_in_flight: int = Field(default=0, ge=0)
     spend_lease_url: str | None = None
     meter_ingest_url: str | None = None
     meter_ingest_token: SecretStr | None = None
@@ -255,6 +282,53 @@ class SelfHostSettings(BaseSettings):
             raise ValueError("meter_identity_key must be a high-entropy umc_mik_ key")
         return self
 
+    @field_validator(
+        "api_key_issuer",
+        "api_key_tenant_id",
+        "api_key_project_id",
+        "api_signing_keys_url",
+        "api_revocation_url",
+        mode="before",
+    )
+    @classmethod
+    def _blank_signed_key_setting_is_unset(cls, value: object) -> object:
+        """Treat an empty Compose interpolation as an unset signed-key setting."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @model_validator(mode="after")
+    def signed_keys_are_complete(self) -> Self:
+        """An issuer needs its tenant and both URLs; the others need an issuer."""
+        if self.api_key_issuer is None:
+            if any(
+                value is not None
+                for value in (
+                    self.api_key_tenant_id,
+                    self.api_key_project_id,
+                    self.api_signing_keys_url,
+                    self.api_revocation_url,
+                )
+            ):
+                raise ValueError(
+                    "signed-key settings are set but REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is not"
+                )
+            return self
+        if self.api_key_tenant_id is None:
+            raise ValueError("REMEMBERSTACK_SELFHOST_API_KEY_TENANT_ID is required")
+        for name, url in (
+            ("API_SIGNING_KEYS_URL", self.api_signing_keys_url),
+            ("API_REVOCATION_URL", self.api_revocation_url),
+        ):
+            if url is None:
+                raise ValueError(f"REMEMBERSTACK_SELFHOST_{name} is required")
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(
+                    f"REMEMBERSTACK_SELFHOST_{name} must be an absolute http(s) URL"
+                )
+        return self
+
     @field_validator("ingest_body_max_bytes", mode="before")
     @classmethod
     def _blank_body_max_is_unset(cls, value: object) -> object:
@@ -266,13 +340,19 @@ class SelfHostSettings(BaseSettings):
     @field_validator("conversion_routes", mode="before")
     @classmethod
     def _parse_routes(cls, value: object) -> object:
-        """Decode the routes env: blank means stock, else strict JSON object."""
+        """Decode the routes env: blank means no overlay, else a JSON object."""
         if not isinstance(value, str):
             return value
         text = value.strip()
         if not text:
-            return dict(STOCK_CONVERSION_ROUTE_NAMES)
+            return {}
         return json.loads(text)
+
+    @field_validator("conversion_routes", mode="after")
+    @classmethod
+    def _overlay_stock_routes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Lay the configured routes over the stock table (D138 §3)."""
+        return {**STOCK_CONVERSION_ROUTE_NAMES, **value}
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
@@ -331,20 +411,39 @@ def _browser_origins(configured: str) -> tuple[str, ...]:
     return tuple(origin.strip() for origin in configured.split(","))
 
 
+def resolve_selfhost_perimeter_trust(
+    *, settings: SelfHostSettings, store: PerimeterStateStore
+) -> PerimeterTrust | None:
+    """The signed-key trust source (D136 §7.5), or None without an issuer."""
+    if settings.api_key_issuer is None:
+        return None
+    from rememberstack.adapters.managed.perimeter_trust import PerimeterTrust
+
+    assert settings.api_signing_keys_url is not None
+    assert settings.api_revocation_url is not None
+    return PerimeterTrust(
+        issuer=settings.api_key_issuer,
+        deployment_id=settings.deployment_id,
+        signing_keys_url=settings.api_signing_keys_url,
+        revocation_url=settings.api_revocation_url,
+        refresh_s=settings.api_key_refresh_s,
+        max_age_s=settings.api_revocation_max_age_s,
+        store=store,
+    )
+
+
 def resolve_selfhost_api_auth(
-    *, settings: SelfHostSettings
+    *, settings: SelfHostSettings, trust: PerimeterTrust | None = None
 ) -> AuthPerimeterPort | None:
     """Return the perimeter adapter, or None for the open quickstart.
 
-    A deployment may be reached by a shared secret, by signed credentials, or
-    by both; when both are configured they are composed rather than chosen
-    between, because they serve different callers on the same routes.
+    A deployment may be reached by a shared secret, by signed keys, or by
+    both; when both are configured they are composed rather than chosen
+    between, because they serve different callers on the same routes. Signed
+    keys need ``trust`` (from :func:`resolve_selfhost_perimeter_trust`).
 
-    ``require_api_auth`` refuses to start when **no** adapter has usable
-    material, so a managed host cannot silently serve memory routes open. It
-    asks whether there is a perimeter at all, not whether there is a particular
-    one — a host configured with signing keys and no shared secret is properly
-    protected.
+    ``require_api_auth`` refuses to start when **no** adapter is configured, so
+    a managed host cannot silently serve memory routes open.
     """
     from rememberstack.adapters.selfhost.hashed_bearer_auth import digest_bearer_secret
     from rememberstack.adapters.selfhost.hashed_bearer_auth import parse_bearer_bind
@@ -355,13 +454,19 @@ def resolve_selfhost_api_auth(
         raw = settings.api_bearer_token.get_secret_value().strip()
         token_value = raw or None
 
-    signed = _resolve_signed_auth(settings=settings)
+    signed = _resolve_signed_auth(settings=settings, trust=trust)
 
-    if settings.require_api_auth and not bind_text and signed is None:
+    if (
+        settings.require_api_auth
+        and bind_text is None
+        and token_value is None
+        and signed is None
+    ):
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but neither "
-            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND nor "
-            "REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is usable"
+            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but none of "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_TOKEN, "
+            "REMEMBERSTACK_SELFHOST_API_BEARER_BIND or "
+            "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set"
         )
     if bind_text is None and token_value is None:
         return signed
@@ -387,32 +492,59 @@ def resolve_selfhost_api_auth(
     return _compose(digest=bind_auth, signed=signed)
 
 
-def _resolve_signed_auth(*, settings: SelfHostSettings) -> AuthPerimeterPort | None:
-    """Build a verifier for explicit JWKS, including an empty deny-only key set."""
-    jwks = (settings.api_signing_keys or "").strip()
-    if not jwks:
+def _resolve_signed_auth(
+    *, settings: SelfHostSettings, trust: PerimeterTrust | None
+) -> AuthPerimeterPort | None:
+    """Build the signed-key verifier when an issuer is configured."""
+    if settings.api_key_issuer is None:
         return None
-
-    from rememberstack.adapters.managed.signed_token_auth import load_verification_keys
+    if trust is None:
+        raise RuntimeError(
+            "REMEMBERSTACK_SELFHOST_API_KEY_ISSUER is set but no perimeter trust "
+            "source was composed"
+        )
     from rememberstack.adapters.managed.signed_token_auth import SignedTokenAuth
 
-    try:
-        keys = load_verification_keys(jwks=jwks)
-    except ValueError as error:
-        # Refuse to start rather than run with a key set that half loaded: a
-        # deployment that silently drops a key is a rotation that half works.
-        raise RuntimeError(
-            f"REMEMBERSTACK_SELFHOST_API_SIGNING_KEYS is unusable: {error}"
-        ) from error
-
-    revoked = [
-        item.strip()
-        for item in (settings.api_revoked_credential_ids or "").split(",")
-        if item.strip()
-    ]
+    assert settings.api_key_tenant_id is not None
     return SignedTokenAuth(
-        deployment_id=settings.deployment_id, keys=keys, revoked_ids=revoked
+        deployment_id=settings.deployment_id,
+        issuer=settings.api_key_issuer,
+        tenant_id=settings.api_key_tenant_id,
+        project_id=settings.api_key_project_id or str(settings.deployment_id),
+        trust=trust,
     )
+
+
+def attach_perimeter_trust_refresh(*, app: FastAPI, trust: PerimeterTrust) -> None:
+    """Load the persisted document and refresh every R for the app's lifetime.
+
+    The persisted document is loaded when the app starts, then a daemon thread
+    refreshes immediately and every R until shutdown. Nothing signed is
+    accepted until a fresh document is.
+    """
+    import threading
+
+    original = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def lifespan(host: FastAPI) -> AsyncIterator[None]:
+        trust.load()
+        stop = threading.Event()
+        thread = threading.Thread(
+            target=trust.run,
+            kwargs={"stop": stop},
+            name="rememberstack-perimeter-trust",
+            daemon=True,
+        )
+        thread.start()
+        try:
+            async with original(host):
+                yield
+        finally:
+            stop.set()
+            thread.join(timeout=5.0)
+
+    app.router.lifespan_context = lifespan
 
 
 def _compose(
@@ -429,21 +561,22 @@ def _compose(
 def resolve_selfhost_spend_lease(
     *, settings: SelfHostSettings
 ) -> ControlPlaneSpendLease | None:
-    """Return the D46 lease adapter, or None for unpaid-open OSS quickstart.
+    """Return the D46 lease adapter, or None when this deployment is not billed.
 
-    ``require_api_auth`` without a well-formed lease URL refuses to start so a
-    managed BIND-only process cannot serve unpaid writes.
+    Managed billing (the metering settings) without a lease URL refuses to
+    start, so a billed deployment cannot serve unpaid writes. Authentication
+    alone does not need a lease: a self-hosted API behind a bearer token is
+    not billed by anyone.
     """
-    from urllib.parse import urlparse
 
     from rememberstack.adapters.selfhost.control_plane_spend_lease import (
         ControlPlaneSpendLease,
     )
 
     url = settings.spend_lease_url
-    if settings.require_api_auth and not url:
+    if settings.meter_ingest_url is not None and not url:
         raise RuntimeError(
-            "REMEMBERSTACK_SELFHOST_REQUIRE_API_AUTH is set but "
+            "managed billing (REMEMBERSTACK_SELFHOST_METER_*) is set but "
             "REMEMBERSTACK_SELFHOST_SPEND_LEASE_URL is missing"
         )
     if not url:
@@ -769,7 +902,8 @@ class SelfHostProfile:
                 raw_bucket=f"s3://{self._settings.raw_bucket_name}",
                 artifacts_bucket=f"s3://{self._settings.artifacts_bucket_name}",
                 corpusfs_bucket=f"s3://{self._settings.corpusfs_bucket_name}",
-            )
+            ),
+            sole_deployment=True,
         )
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
@@ -834,6 +968,9 @@ class SelfHostProfile:
         p1_index = PostgresP1Index(
             engine=self._engine, embedding_model=p1_settings.embedding_model
         )
+        p1_index.require_stored_embedding_model(
+            deployment_id=self._settings.deployment_id
+        )
         profile_meter = SurfaceCostMeter(
             recorder=SqlSurfaceCostRecorder(
                 engine=self._engine, deployment_id=self._settings.deployment_id
@@ -866,9 +1003,11 @@ class SelfHostProfile:
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
+        from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
         from rememberstack.surfaces import build_api
@@ -876,6 +1015,8 @@ class SelfHostProfile:
         from rememberstack.surfaces import OperationExecutor
         from rememberstack.surfaces import OperationSurface
         from rememberstack.surfaces import QueryEngine
+        from rememberstack.surfaces.direct_admission import AdmissionLimits
+        from rememberstack.surfaces.direct_admission import DirectPathAdmission
         from rememberstack.surfaces.query_sandbox.audit import AuditTrail
         from rememberstack.surfaces.query_sandbox.audit import KillSwitches
         from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
@@ -883,6 +1024,9 @@ class SelfHostProfile:
         from rememberstack.workers import P1Settings
         from rememberstack.workers.e0 import UploadIngestor
 
+        trust = resolve_selfhost_perimeter_trust(
+            settings=self._settings, store=PerimeterStateCatalog(engine=self._engine)
+        )
         # D94 has one active vector space across every P1 target.
         p1_settings = P1Settings.model_validate({})
         projection_catalog = ProjectionCatalog(engine=self._engine)
@@ -945,6 +1089,12 @@ class SelfHostProfile:
             max_concurrency=self._settings.graph_max_concurrency,
             pool_wait_seconds=self._settings.graph_pool_timeout_s,
         )
+        admission_limits = AdmissionLimits(
+            key_per_minute=self._settings.api_admission_key_per_minute,
+            key_in_flight=self._settings.api_admission_key_in_flight,
+            deployment_per_minute=self._settings.api_admission_deployment_per_minute,
+            deployment_in_flight=self._settings.api_admission_deployment_in_flight,
+        )
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
@@ -952,7 +1102,12 @@ class SelfHostProfile:
             trusted_principal_source=self._settings.trusted_principal_source,
             browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
-            auth=resolve_selfhost_api_auth(settings=self._settings),
+            auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
+            direct_admission=(
+                DirectPathAdmission(limits=admission_limits)
+                if admission_limits.enabled
+                else None
+            ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
             readiness=_FreshDeploymentReadiness(
                 store=LocalFSForgetManifestStore(
@@ -986,9 +1141,18 @@ class SelfHostProfile:
                 build_revision=_build_revision(),
             ),
             documents=DocumentInventory(engine=self._engine),
+            document_search=DocumentSearch(engine=self._engine),
+            deletion=_SelfHostDocumentDeletion(
+                engine=self._engine,
+                model_provider=self._model_provider,
+                embedding_model=embedding_model,
+            ),
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
+
+        if trust is not None:
+            attach_perimeter_trust_refresh(app=app, trust=trust)
 
         @app.get("/healthz", include_in_schema=False)
         def healthz() -> dict[str, str]:
@@ -1184,7 +1348,6 @@ class SelfHostProfile:
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
-        from rememberstack.spine import SupersessionSettings
         from rememberstack.workers import AdjudicateObservationsHandler
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
@@ -1256,15 +1419,13 @@ class SelfHostProfile:
                 catalog=chunks, artifact_store=self._artifact_store, params=params
             )
         if stage is PipelineStage.EMBED_CHUNK:
-            e1_settings = E1Settings.model_validate({}).model_copy(
-                update={"embedding_model": p1_settings.embedding_model}
-            )
             return EmbedChunksHandler(
                 catalog=chunks,
                 artifact_store=self._artifact_store,
                 model_provider=self._model_provider,
                 chunk_index=index,
-                settings=e1_settings,
+                settings=E1Settings.model_validate({}),
+                embedding_model=p1_settings.embedding_model,
                 params=params,
             )
         if stage in (PipelineStage.EXTRACT_CLAIMS, PipelineStage.GROUND_CLAIMS):
@@ -1307,7 +1468,6 @@ class SelfHostProfile:
                 chunker_version=chunk_generation,
             )
         if stage is PipelineStage.ADJUDICATE_OBSERVATIONS:
-            observation_settings = ObservationSettings.model_validate({})
             fact_settings = FactAdjudicationSettings()
             return AdjudicateObservationsHandler(
                 facts=facts,
@@ -1329,9 +1489,7 @@ class SelfHostProfile:
         if stage is PipelineStage.ADJUDICATE_SUPERSESSION:
             return AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
-                    engine=self._engine,
-                    model_provider=self._model_provider,
-                    settings=SupersessionSettings.model_validate({}),
+                    engine=self._engine, model_provider=self._model_provider
                 ),
                 profile_refresher=profile_refresher,
                 facts=facts,
@@ -1366,40 +1524,6 @@ class SelfHostProfile:
                 profile_refresher=profile_refresher,
             )
         raise ValueError(f"the self-host profile has no handler for stage {stage}")
-
-
-def build_selfhost_review_queue(
-    *, engine: Engine, deployment_id: UUID, project_profiles: bool
-) -> ReviewQueue:
-    """Compose review reads and only load the provider for profile mutations."""
-    from rememberstack.spine import EntityProfileRefresher
-    from rememberstack.spine import ReviewQueue
-    from rememberstack.workers import P1Settings
-
-    if not project_profiles:
-        return ReviewQueue(engine=engine)
-    p1_settings = P1Settings.model_validate({})
-    try:
-        provider = OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({})
-        )
-    except ValueError as error:
-        raise ReviewDecisionError(
-            "profile-changing review verdicts require REMEMBERSTACK_OPENROUTER_API_KEY"
-        ) from error
-    return ReviewQueue(
-        engine=engine,
-        profile_refresher=EntityProfileRefresher(
-            engine=engine,
-            model_provider=provider,
-            embedding_model=p1_settings.embedding_model,
-        ),
-        meter=SurfaceCostMeter(
-            recorder=SqlSurfaceCostRecorder(engine=engine, deployment_id=deployment_id),
-            deployment_id=deployment_id,
-            call_site=SurfaceCallSite.PROFILE_REVIEW,
-        ),
-    )
 
 
 def create_api() -> FastAPI:
@@ -1475,7 +1599,7 @@ def main(argv: list[str] | None = None) -> int:
                     root=args.root,
                     raw_root=args.raw_root,
                     artifacts_root=args.artifacts_root,
-                ).model_dump_json()
+                ).model_dump_json(exclude_none=True)
             )
             return 0
         if args.command == "meter-receipts":
@@ -1545,6 +1669,47 @@ def _expected_components() -> dict[PipelineStage, str]:
     }
 
 
+class _SelfHostDocumentDeletion:
+    """Serve `DELETE /documents/{doc_id}` (D135) over this profile's spine.
+
+    The deletion is database work; the one provider call it can make is the
+    entity-profile re-embedding afterwards. That call is recorded on the
+    surface cost ledger under its own call site, like a review verdict's
+    profile refresh, rather than disappearing.
+    """
+
+    def __init__(
+        self, *, engine: Engine, model_provider: ModelProviderPort, embedding_model: str
+    ) -> None:
+        """Compose the lifecycle catalog and the profile projection it touches."""
+        from rememberstack.spine import EntityProfileRefresher
+        from rememberstack.workers import DocumentDeleter
+
+        self._engine = engine
+        self._deleter = DocumentDeleter(
+            engine=engine,
+            profile_refresher=EntityProfileRefresher(
+                engine=engine,
+                model_provider=model_provider,
+                embedding_model=embedding_model,
+            ),
+        )
+
+    def delete_document(self, *, deployment_id: UUID, doc_id: UUID) -> DocumentDeletion:
+        """Delete one lineage with metered, best-effort profile refresh."""
+        meter = SurfaceCostMeter(
+            recorder=SqlSurfaceCostRecorder(
+                engine=self._engine, deployment_id=deployment_id
+            ),
+            deployment_id=deployment_id,
+            call_site=SurfaceCallSite.PROFILE_DELETE,
+        )
+        with open_surface_scope(surface=SurfaceCostKind.OPERATION):
+            return self._deleter.delete_document(
+                deployment_id=deployment_id, doc_id=doc_id, meter=meter
+            )
+
+
 class _BuildInfo:
     """Answer `GET /deployment` from the spine this profile serves.
 
@@ -1588,7 +1753,6 @@ def _model_bindings() -> dict[str, str]:
     """Non-secret provider model identities used by the composed pipeline."""
     from rememberstack.spine import ObservationSettings
     from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
-    from rememberstack.workers import E1Settings
     from rememberstack.workers import E2Settings
     from rememberstack.workers import E3Settings
     from rememberstack.workers import P1Settings
@@ -1601,7 +1765,6 @@ def _model_bindings() -> dict[str, str]:
     skeleton_check = SkeletonCheckSettings.model_validate({})
     roles = RoleSettings.model_validate({})
     summaries = SummarySettings.model_validate({})
-    e1 = E1Settings.model_validate({})
     e2 = E2Settings.model_validate({})
     e3 = E3Settings.model_validate({})
     observations = ObservationSettings.model_validate({})
@@ -1619,14 +1782,11 @@ def _model_bindings() -> dict[str, str]:
         "skeleton_check": skeleton_check.model,
         "section_role": roles.model,
         "section_summary": summaries.model,
-        "chunk_embedding": e1.embedding_model,
-        "context_prefix": e1.prefix_model,
         "claim_extraction": e2.extract_model,
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
         "fact_adjudication": fact_adjudication_model,
         "p1_embedding": p1.embedding_model,
-        "fact_label": p1.label_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
         "openrouter_embedding_provider_order": (
             ",".join(openrouter.embedding_provider_order)

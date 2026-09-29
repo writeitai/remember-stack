@@ -41,3 +41,33 @@ def isolate_optional_provider_pins(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     for name in _LEAKY_OPTIONAL_PINS:
         monkeypatch.delenv(name, raising=False)
+
+
+#: The client connection variables (D136 §8.2). A developer's own key, engine
+#: URL or project must never leak into a test, and no test may read or write the
+#: developer's real credential file.
+_CLIENT_CONNECTION_VARIABLES = (
+    "REMEMBER_API_KEY",
+    "REMEMBER_API_URL",
+    "REMEMBER_PROJECT",
+    "REMEMBER_ISSUER",
+    "REMEMBER_MCP_URL",
+    "XDG_CONFIG_HOME",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolate_client_connection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """Give every test an empty client environment and its own config directory."""
+    from remember.connection import clear_host_cache
+    from remember.issuer import clear_metadata_cache
+
+    for name in _CLIENT_CONNECTION_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(
+        "REMEMBER_CONFIG_DIR", str(tmp_path_factory.mktemp("remember-config"))
+    )
+    clear_host_cache()
+    clear_metadata_cache()

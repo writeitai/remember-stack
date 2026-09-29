@@ -658,6 +658,12 @@ neighbouring slice; a closed end is never reopened) and replayed
 idempotently after caps and retractions. Full contract:
 `plan/designs/temporal_clocks_design.md` §4.3.
 
+**Amendment (2026-09-24, D108, PR #460).** The `remember review` CLI
+(`review list`, `review decide`) is deleted, including its internal-ops
+path; no command exposes the queue to humans. The engine's review-queue
+store and its append-only, reversible verdict records remain; adjudication
+is autonomous (D3/D43/D107).
+
 ## D25. No pre-extraction value/salience gate — junk-control is in-call at E2 Selection + D2
 
 **Decision.** There is **no E1.5 stage and no value/salience gate**. Plane E is `E0 → E1 → E2 → E3`;
@@ -947,6 +953,17 @@ text lives where it can be mounted.
 change re-converts by version (D7).
 
 ## D38. Configurable raw → Markdown conversion module
+
+**Partially superseded by D139 (2026-09-27).** The example route that extracts a
+digital PDF's text layer or selects OCR only for scanned/complex PDFs is replaced:
+every page of every accepted PDF goes through OCR. D133's registry refinement,
+the pluggable/versioned converter contract, and D57/D65's later contract and
+media refinements remain binding.
+
+**Refined by D133.** The operator-built MIME → converter table is replaced by an
+engine-shipped format registry (family → posture → converter) that deployments
+overlay rather than replace; routing keys are normalized. The pluggable, versioned
+converter module and its contract remain binding.
 
 **Decision.** A pluggable, **configurable** conversion module (a reusable open-source library):
 interface `convert(bytes, mime, hints) -> { markdown, blocks[] }` where `blocks` carry **page +
@@ -1588,6 +1605,16 @@ access-isolation arm; `retrieval_design.md` §9.)
 > a saved query, not minting a top-level MCP tool. A fifth assured operation
 > requires the evidence gate in `open_query_space_design.md` §1.13.
 
+> **Refined by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> "MCP tools render from the registry" now means: the agent-facing fields of the
+> four operations (name, description, input schema, `mutates`, version) are defined
+> once in the public `remember.mcp_tools` catalogue, the engine registry generates
+> them from it, and every MCP host — including hosts outside this repository —
+> renders from the catalogue rather than from `GET /operations`. The registry still
+> owns the primitive chain, grain and intent enums and the linter; the trust model
+> above (one deployment, one trust domain) is unchanged, and the host-resolved
+> `project` argument never reaches the engine.
+
 ## D51. Consumption is filesystem-first for agent harnesses; four read-only mounts (raw included, off-path); a consumption skill ships with the system
 
 **Refined by D132.** The original MIME class is decided from bytes before this
@@ -1702,6 +1729,10 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+**Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
+counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
+the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
+
 > **Refined by D73.** The testimony-currency and counting contract stands. Only D54's former
 > K3-eligibility consequence is removed because there is no shipped K3 tier.
 
@@ -1763,6 +1794,13 @@ coordinate is persisted on occurrence records and currency transitions.
 `evidence_lifecycle_design.md` §1/§3; `plan/designs/media_design.md` §6.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
+
+> **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
+> (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
+> with the lineage. The identical-byte no-op below therefore never matches a deleted version:
+> bytes that return after a deletion become a new version and are processed afresh, and D56
+> reuse never draws on a deleted version. "Resurrecting" a tombstoned lineage still revives the
+> lineage identity, not its retired testimony. Everything else here remains binding.
 
 > **Clarified 2026-07-30 (metadata no-op):** an identical-byte observation may
 > advance `source_version_ref` so a connector does not refetch forever, but it
@@ -2067,7 +2105,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 
 | Port | Self-host adapter | Reference adapter |
 |---|---|---|
-| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. MinIO); local FS for dev | GCS |
+| Object store (raw, artifacts, snapshots) | S3-compatible (e.g. SeaweedFS, which the Compose profile bundles); local FS for dev | GCS |
 | Task queue / scheduler (at-least-once announcement, scheduled delivery, rate limits) | Postgres-backed queue (`SKIP LOCKED`; application retry/DLQ state is the row, D12/D67) | Cloud Tasks + Cloud Run jobs |
 | Mount publication (P3 + artifact/raw/K mounts, D51) | local directory trees | GCS + gcsfuse |
 | K git remote | any git remote | hosted per-deployment repo |
@@ -2130,6 +2168,16 @@ never permission to skip a separately restored store or database.
 > `plan/designs/packaging_distribution_design.md`.
 
 ## D62. Delivery artifacts, delivery-only task execution, and the enforced code architecture
+
+> **Amended 2026-09-24 (bundled object store):** the Compose self-host profile
+> runs **SeaweedFS** (`chrislusf/seaweedfs`, Apache-2.0) as its S3-compatible
+> object store instead of MinIO. The pinned MinIO image became unpullable
+> (quay.io answers 401 for `minio/minio`, and Docker Hub has no matching
+> tag). SeaweedFS covers everything the self-host object-store adapter uses
+> (path-style SigV4, bucket create, conditional create with
+> `If-None-Match: *`, user metadata, list/delete) and is the store the
+> commercial cloud already runs. "Postgres + MinIO + api + worker" below
+> reads "Postgres + SeaweedFS + api + worker"; the rest of D62 is unchanged.
 
 **Decision.** The library ships as **three artifacts**: the GitHub repo (source + the design
 corpus), **one PyPI package positioned as the client** (base install = typed SDK + CLI + MCP
@@ -2284,6 +2332,10 @@ the person holding the role).
 > measured (CLAUDE.md).
 
 ## D65. Media is an E0 input modality — bound routes, typed source locators, derivation disclosure, and direct media search
+
+**Refined by D133.** The locator union gains `sheet_range`, `table_region`,
+`json_pointer` and `line_range`; `evidence_mode` gains `computed`. The media
+routes, contract shape and every other D65 binding remain.
 
 **Decision.** Standalone images, audio, and video enter the system as **E0 inputs, never a new
 plane or parallel pipeline**: a media file is a source whose testimony reaches the system
@@ -2786,6 +2838,9 @@ status documentation, but adds no new public runtime feature or configuration su
 D66.
 
 ## D74. Hard-forget is an append-first, fail-closed lineage purge with one portable manifest
+
+**Refined by D134** (document metadata, people and observed-name rows are deleted with their
+lineage). An earlier D133 container rule here is withdrawn by D138: containers are not expanded.
 
 > **D98 amendment.** The graph is removed from the external purge inventory.
 > PostgreSQL authority/P1 scrubbing removes it from later live graph statements;
@@ -3927,6 +3982,19 @@ export on the customer perimeter; derive token host from API URL (that is D92).
 
 ## D92. `remember login` is a CLI device-grant client, not a second credential store
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> Replaced: the required explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`
+> (login now discovers endpoints from the issuer's OAuth metadata, default issuer
+> `https://remember.dev`, `--issuer` / `REMEMBER_ISSUER` to override), the D92/D108
+> credential-file shape (now version 2 holding one key), and the JSON device-grant
+> variant (now the standard RFC 8628 grant). Also replaced: "the credential file is
+> CLI-only" — the SDK now reads the same stored file with the same precedence as the
+> CLI (explicit > environment > file), and the stored-key origin rule (D136 design
+> §8.2) is what stops a stored key reaching a host the caller never named; and
+> "revoke, then replace" on re-login — now mint, persist, then revoke with the
+> pending-revocation journal. Still binding: logout revokes then unlinks; the engine
+> grows no second credential store.
+
 **Decision (2026-08-13).** `remember login` / `logout` live in the base CLI.
 They require an explicit `--token-host` / `REMEMBERSTACK_TOKEN_HOST`. The
 credential file is CLI-only; `MemoryClient` / `ClientSettings` do not read it.
@@ -4177,6 +4245,9 @@ a shipped switch.
 D20, or D21.
 
 ## D96. No entity types; profile is observation prose
+
+**Refined by D134.** When Claimify replaced a self-reference with the document's own name, the
+one reference at that recorded span is not minted or resolved; the claim keeps the name as text. No entity type is introduced.
 
 > **D98 amendment (2026-08-27).** Untyped entity identity and profile prose
 > remain binding. The consequence below applies to live property-graph
@@ -5286,9 +5357,19 @@ D32, D43's untyped statement, D98, D100–D105.
 
 ## D108. Single canonical PyPI distribution (`remember`), container-first engine (`remember-stack`), and platform CLI
 
+> **Partly superseded by [D136](#d136-one-signed-key-one-shared-mcp-tool-catalogue-and-a-bridging-remember-mcp) (2026-09-23).**
+> In item 4, the *Authentication & Project Context* host (`https://api.remember.dev`
+> was never a live host; login now uses the issuer's metadata, default issuer
+> `https://remember.dev`), the *Credential Separation* clause (control-plane session
+> plus per-project data-plane tokens is replaced by one signed key; `remember switch`
+> changes only the default project), and the *Data Plane* default of `remember setup`
+> (now: remote MCP entry, stdio bridge, or self-hosted entry per D136) are replaced,
+> as is the D92 part of **Amends**. Items 1–3 and 5, the platform-CLI taxonomy and
+> the durable launcher rule remain binding.
+
 **Context.** In D62 the distribution was designed as a single monolithic package family on PyPI (`rememberstack`) carrying the `remember` CLI binary, client SDK, and server extras (`[server]`), while `remember` existed as an early standalone client package. In practice, this created three compounding problems:
 1. Users and AI coding agents were confused by the dual-package presence on PyPI, frequently installing `rememberstack` when they only needed the client or hitting executable name collisions.
-2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, MinIO, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
+2. Self-hosting the bitemporal engine requires PostgreSQL 19 with SQL/PGQ, `pgvector`, an S3-compatible object store, and complex C-extensions (`pglast`, `psycopg`, `pyarrow`). Bare-metal `pip install` on developer workstations is an anti-pattern prone to compilation and environment failures. Modern infrastructure projects (Supabase, Sentry, PostHog, Temporal) distribute the server strictly via Docker/Kubernetes while publishing only the client SDK/CLI to package managers.
 3. Early D24 review-queue tooling (`remember review`) and spend inspection (`remember budget`) remained in the CLI entry point despite the production engine evolving to fully autonomous bitemporal adjudication (D3/D43/D107), with zero human review queues in managed cloud or public documentation.
 
 **Decision.**
@@ -5707,9 +5788,9 @@ are accessed is a D5 claim-governance matter in the cloud repository, not settle
 
 ## D117. Store originals, park missing conversion routes, and expose raw availability separately
 
-**Refined by D132.** "Otherwise admissible" now requires a recognizable byte
-class and no contradictory declared class; only those accepted originals park
-when a conversion route is absent.
+**Refined by D133 and D138.** Parking applies to recognized families whose converter needs
+an unconfigured provider or is not yet built. Unrecognized bytes are stored and get a card
+(D138); only a declaration the bytes contradict is refused (D132).
 
 **Status:** accepted (2026-09-07), per the user's store-and-park decision.
 
@@ -5879,6 +5960,7 @@ promising billed tokens or a fixed saving.
 [delivery](plan/plans/lean_processing_delivery.md).
 
 ## D122. Share frozen source reference context between extraction chunks
+
 
 **Status:** accepted 2026-09-14, binding when merged. Extend the existing
 Selection response with exact-source-backed reference cards, freeze/reuse it,
@@ -6062,7 +6144,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D130. Adjacent chunks retrieval primitive (`adjacent_chunks`)
 
-**Status:** accepted. **Date:** 2026-09-21.
+**Status:** accepted (superseded in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-21.
 
 **Context.** Arbitrary chunk boundary cutoffs in documents and conversational transcripts frequently split multi-turn dialogues, answers to questions, or lists across chunk boundaries. When callers query `search_chunks` or `claims_and_sources_context`, relevant context from preceding or succeeding chunks often lacks search query keywords and is omitted from top-$K$ candidates. Previously, callers had no direct mechanism to read neighboring chunks for a given chunk, forcing prompt workarounds or leading to missing context (e.g. `conv-42/qa/0094`).
 
@@ -6070,7 +6152,7 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 1. Implement a first-class retrieval primitive `adjacent_chunks(chunk_id, window=1)` on `QueryEngine`.
 2. Given a target `chunk_id`, the engine looks up its `(doc_id, version_id, ordinal)` in `memory_v1.chunks_live` and queries all live chunks within `[ordinal - window, ordinal + window]` for that document version, returning hydrated chunks in document order (`ordinal ASC`).
 3. Bound `window` strictly between 1 and 2 (default 1), preventing context flooding while providing immediate preceding/succeeding dialogue turns.
-4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and does not mint a top-level MCP tool (D50, D83, D87).
+4. Expose the primitive across the HTTP API (`GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent`), Python SDK (`MemoryClient.adjacent_chunks`), CLI (`remember query adjacent-chunks`), and the benchmark catalog/runner. Like other zero-LLM primitives, it is not an assured operation and originally did not mint a top-level MCP tool (D50, D83, D87). *(Superseded in part by D137: adjacent_chunks is now exposed in the shared MCP catalogue for surface parity).*
 5. Register `adjacent_chunks` in the benchmark tool catalog (expanding to 22 tools) and execution dispatch table.
 
 **Alternatives and consequences.** Adding an automatic `chunk_window` expansion parameter to `claims_and_sources_context` was rejected because it inflates response token counts indiscriminately across all $K$ candidates. Asymmetric `before`/`after` parameters were rejected in favor of symmetric `window` to minimize LLM cognitive burden and avoid parameter-guessing failures. Existing PostgreSQL index `ix_chunks_doc (deployment_id, doc_id)` prefixes the lookup and per-document row counts are bounded, requiring no schema migrations.
@@ -6101,6 +6183,12 @@ Gemma-vertex/Codex-subscription precedent, not a pipeline change).
 
 ## D132. Decide ingest class from bytes and label every object write
 
+**Refined by D133 and D138.** The registry chooses a text format family
+from the filename and declaration only after bytes establish that the input
+is text. Unknown binary is stored with a binary card rather than refused.
+Recognized binary signatures override filename hints; PDF always remains PDF
+and follows D139's every-page OCR route.
+
 **Status:** accepted. **Date:** 2026-09-23.
 
 **Context.** Declared MIME could select conversion, metering, and storage for a
@@ -6109,10 +6197,10 @@ object writes unlabelled, which a managed object gateway rejected.
 
 **Decision.** E0 classifies bytes before any raw write or catalog transaction.
 Signatures identify PDF, image, audio, and video; office ZIP member names and
-legacy OLE signatures identify office; strict UTF-8 identifies text. Unknown
-binary or a declaration contradicting the detected class raises a typed client
-error. For formats indistinguishable within a class, the declaration is only a
-hint: Markdown vs plain/CSV/code affects rendering but not text billing, while
+legacy OLE signatures identify office; strict UTF-8 identifies text. A
+declaration contradicting a recognizable byte class raises a typed client
+error. For formats indistinguishable within a class, the filename and
+declaration select the D133/D138 registry family and posture, while
 legacy OLE needs a declared office subtype. Store the resulting MIME, and use
 it consistently for the conversion route, original storage class, and managed
 text metering. Every object-store write must provide a class: raw media hot,
@@ -6125,8 +6213,467 @@ avoid another licence, supply-chain, or wheel-size cost. Generic magic-only
 classification cannot reliably distinguish office ZIPs or UTF-8 text; a native
 libmagic dependency increases deployment and wheel-platform complexity.
 Signatures identify the class but do not replace converter validation of full
-format structure. Unknown binary is refused rather than assigned an optimistic
-rate. Existing rows retain their recorded MIME until re-ingested.
+format structure. Unknown binary receives the D138 binary card rather than an
+optimistic text or media rate. Existing rows retain their recorded MIME until re-ingested.
 
 **Authority:** [design](plan/designs/e0_files_design.md),
 [analysis](plan/analysis/content_detection_and_object_classes_20260923.md).
+
+## D133. One format registry: every family gets a posture, structured data is profiled, containers expand
+
+**Partially superseded by D139 (2026-09-27).** Any PDF-family route or
+deployment overlay that would read a text layer instead of OCR, or split PDF
+pages between text extraction and OCR, is replaced by OCR for every page of
+every accepted PDF. The format registry framework, family/posture mapping,
+extraction eligibility, locators, and D138's other refinements remain binding.
+No PDF-specific cost optimization can bypass this route.
+
+**Refined by D138.** Items 1, 3 and 6 remain binding (registry framework, extraction eligibility,
+locators). D138 replaces: the detection order (extension first; unknown bytes get a card), the
+profile content in item 2 (deterministic, search-only, no model call), and **items 4 and 5
+entirely** — `data_query` and container expansion are not part of the system; their reviewed
+designs are proposals (`plan/proposals/data_query.md`, `plan/proposals/container_expansion.md`). D138 also
+replaces item 1's "turn families off": deployments add or override routes, and every file is
+stored.
+
+**Status:** accepted. **Date:** 2026-09-23. (Numbered after D132, proposed in
+PR #452, which this decision builds on.)
+
+**Context.** Out of the box the engine converts two formats (text, Markdown).
+Routes are an exact lookup on the declared MIME in a table each deployment must
+rebuild by hand, and configuring one route replaces the defaults. The office/HTML
+converter is the thinnest and emits no source map, and the parser extras it needs
+are not installed. The pipeline assumes every file is prose to extract claims
+from, which is wrong for structured data: row-by-row extraction scales model cost
+with rows and still cannot answer aggregations. Containers (archives, email with
+attachments, mailboxes, message exports, documents with embedded images) have no
+way to become several documents.
+
+**Decision.**
+1. An engine-shipped **format registry** maps each format family to detection,
+   canonical MIME types, a **posture**, a converter, provider requirements, a size
+   limit and an opaque cost-class label; one registry-wide alias table maps
+   non-canonical MIME spellings, and originals keep D132's storage-class rule.
+   Deployments overlay it (turn families off, configure providers, lower limits);
+   they never replace it. Detection is byte-first in a fixed precedence (D132's
+   binary classes extended with SQLite, Parquet, Arrow, archives, mail containers;
+   then deterministic structural tests on text). **This refines D132's text-flavour
+   rule:** JSON, NDJSON, delimited and log text route to their own families when
+   their structural test passes. A family needing an unconfigured provider parks
+   (D117); a disabled family is refused.
+2. Four postures: **full** (complete reading), **profile** (a description of a data
+   file — overview, structure, identifying values, formulas — never its rows),
+   **expand** (members become child documents routed on their own), and **card**
+   (a deterministic file card for recognized formats with no reading). Structured
+   families are read fully only within hard bounds (200 rows, 20,000 characters).
+3. `evidence_mode` gains `computed`. An extraction eligibility policy makes profile
+   structure searchable but not claim-extracted. Converters must change eligibility
+   only at block boundaries (validated at conversion); E1 forces a chunk boundary
+   there and E2 schedules Selection only for eligible chunks.
+4. Profiled tables are stored as normalized Parquet in a new **private store** (a
+   third object-store root no mount, P3 or `hydrate` reads), and a new direct
+   primitive, **`data_query`**, runs one read-only SQL statement over them in DuckDB
+   inside a worker process with no network, OS resource limits, a staged read-only
+   input directory, a separate scratch directory, disabled external access and
+   extensions, and a parent-enforced wall time; a platform that cannot sandbox it
+   answers with a typed `boundary`. It returns its own `DataQueryResult/v1` and is
+   exposed on MCP beside `source_open`.
+5. Expansion is a new E0 sub-worker (`convert → expand → structure`). Children are
+   ordinary E0 lineages keyed by a content- or identifier-based member key (never a
+   position), linked by mutable member records; the parent's immutable
+   representation lists members by stable handle and does not wait for them. A
+   container and its members count as one source (`counting_lineage_id`, refining
+   D54). Delete and hard forget act on the uploaded document and cover every member
+   expanded from it; a member is never deleted or forgotten on its own (refining
+   D74). Bounds apply to the whole tree.
+6. Locators gain `sheet_range`, `table_region`, `json_pointer`, `line_range`.
+7. D133 binds the framework, not individual formats. The family table is the
+   target coverage. **Each family is delivered one at a time through its own
+   family design, implementation and test suite** (fixtures, detection, golden
+   rendering, source map, failures, end-to-end retrieval, performance), and is
+   supported only when all three are merged; until then its uploads are stored
+   and parked (D117).
+
+**Alternatives and consequences.** Full-row extraction for structured data,
+loading rows into PostgreSQL for the open-query sandbox (violates D37), per-format
+query dialects, in-process DuckDB relying on its settings alone, a separate
+conversation-ingest path, and OCR-provider captions instead of image children were
+rejected (analysis §6–§7). Normalized Parquet stores data a second time. The log
+event digest is a documented alternative with an adoption trigger.
+
+**Authority:** [design](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md),
+[delivery order](plan/plans/format_coverage_delivery.md).
+
+## D134. General document metadata, document search, and self-references that name the document
+
+**Status:** accepted. **Date:** 2026-09-24.
+
+**Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
+who and when ("emails from Alice"), and for information limited to certain
+files ("everything about Project X from Alice's emails"). Every derived record
+already links to its document, but nothing about a document — author,
+recipients, dates, title — is stored in a filterable form, `GET /documents`
+only pages by status, retrieval has no document search or document filters,
+and a claim like "this report summarizes the 2025 audit" does not say which
+report.
+
+**Decision.**
+1. **General document metadata.** Every version gets the same fields whatever
+   its format — `file_name`, `title`, `authors`, `recipients` (people as name
+   plus address or handle), `created_at`, `modified_at`, `language`,
+   `thread_ref`, `family` — with per-field provenance (source or connector),
+   plus every name a version was observed under (`document_names`), so renames
+   are searchable.
+   Each family design maps its native fields onto them (an email's From is
+   `authors`); family-only fields go in `extra`. Stored in PostgreSQL as
+   `document_metadata` and `document_people`.
+2. **`search_documents`**, a direct retrieval primitive on API, SDK, CLI and
+   MCP: results are documents judged by their current version (or any live
+   version on request), filtered on the general fields, with a query matched
+   on names (file name, title, source path) and content (the document's best
+   `chunk_search` hit — no new search index), and carrying the judged
+   version's metadata and access handles. Ambiguous people matches are listed.
+3. **Document filters on `search`** for chunks, claims (through their live
+   occurrences, refining D80's origin-chunk join so reused claims are tested
+   per version) and facts (through supporting claims), applied before the
+   top-k cut. Only live versions match.
+4. **Self-references name the document.** When a passage refers to its own
+   document, Claimify writes the title (else file name) from the extraction
+   header, which gains the file name (and the extraction reuse key with it),
+   and returns the exact inserted name; the gate stores its span on the claim
+   only when it is one of the document's names, occurs once, and came from the
+   header. Ordinary claims never get the name. Extractor version bumps.
+5. **A document's own name is not an entity.** E3 skips only the reference
+   whose text is exactly that stored span (refining D96's eligibility rule), so same-named files never
+   merge while a person who shares a document's title still resolves. The
+   unused D18-era `documents.document_entity_id` bridge is not used and is removed
+   in a separate cleanup.
+
+**Alternatives and consequences.** Making documents entities bound to their
+lineage (the first D134 draft) was rejected as heavier than the questions
+require and kept as a proposal with an adoption trigger. Per-family metadata
+only, metadata only as Markdown text, appending the file name to every claim,
+and resolving file names as entities were rejected (design §7). Metadata values
+are what sources declare, not verified facts.
+
+**Authority:** [design](plan/designs/document_metadata_and_search_design.md),
+[proposal not chosen](plan/proposals/document_subject_entities.md),
+[analysis](plan/analysis/format_coverage_and_conversion_architecture.md) §5.
+
+## D135. A caller can delete a document: soft, lineage grain, finish-or-refuse
+
+**Note (D133, withdrawn by D138).** D133 briefly extended this entry to container members; D138
+removed container expansion, so deletion stays exactly as written here.
+
+**Status:** accepted. **Date:** 2026-09-23.
+
+**Context.** D55 and the evidence-lifecycle design §8 always defined deleting a document —
+its claims stop being current testimony, support is recounted, and facts only it supported
+close with a recorded `retracted_source_removal` — and the engine implemented it
+(`LifecycleCatalog`, `DeletionService`), but no public surface could call it. Exposing it
+raised questions the internal service never answered: a repeated or interrupted delete,
+pipeline work still running for the document, the same file ingested again afterwards
+(which returned a live document that contributed nothing), who may delete, and whether it
+is charged. Analysis: `plan/analysis/public_document_deletion.md`.
+
+**Decision.**
+1. Lineage deletion is a public write: `DELETE /documents/{doc_id}` returning
+   `DocumentDeletion` (`doc_id`, `deleted_at`, `claims_retired`, `relations_closed`,
+   `observations_closed`), `MemoryClient.delete_document`, `remember documents delete`, and a
+   `delete_document` MCP tool omitted by `--read-only`. `MemoryClient.list_documents` and
+   `remember documents list` read the existing `GET /documents`.
+2. It requires full write scope, runs behind the D74 admission barrier, and is not
+   spend-gated. Its only provider call — re-embedding entity profiles whose facts changed —
+   is metered on the surface cost ledger (`profile_delete`) and is best effort.
+3. **One fenced, atomic episode; finish or refuse.** The tombstone and the whole cascade
+   commit in one transaction that holds the D74 hard-forget fence (shared advisory lock)
+   from start to commit: a forget already preparing refuses the delete
+   (`forget_in_progress`, 503) before any change, a forget requested mid-delete waits for
+   it, and a concurrent re-ingest of the lineage waits on the lineage row. The cascade
+   retires only testimony no live version carries. Each episode has its own run id, derived
+   from the lineage and its tombstone instant (stable for a repeat, new after a re-add), so
+   every episode gets its own ledger rows and `evidence_changed` event. An unknown id is
+   `document_not_found` (404). For a lineage already tombstoned by another path, the cascade
+   reruns; if nothing changes the answer is `document_not_found`, otherwise the call
+   finishes it and answers 200.
+4. Lineage deletion (operator or source-observed) tombstones every version with the
+   lineage. Returning bytes are a new version processed afresh; D56 reuse never draws on a
+   deleted version (refines D55). Source-observed deletions clear T4 anchors with the
+   tombstone and are finalized per episode against their deleted versions: an episode is
+   pending while a claim no live version carries is current, under an open support
+   review, or evidencing an open zero-support fact; one lineage-locked transaction and one
+   run id per episode, so a recreate before finalization neither strands the old testimony
+   nor loses the new.
+5. Claim publication refuses a deleted version as well as a deleted lineage. Fact work
+   that lands after a delete is retired at the reconcile stage through the same cascade,
+   recounting and closing every fact the deleted testimony touches; T4 anchors are cleared
+   for a deleted lineage and rebuilt from live testimony for a re-added one (D102). The
+   chain ends there.
+6. A `support_withdrawn` review on a claim no live version carries is closed as
+   `auto_resolved` by the deletion, so it no longer holds the fact open, and
+   `restore_support` refuses a claim of a deleted document or one only deleted versions
+   carry; a verdict locks the claim's lineage and versions (shared, deletion's order)
+   before checking, so it cannot race a deletion.
+7. Only the lineage grain is public. The version grain and D74 hard-forget stay operator
+   operations.
+
+**Alternatives and consequences.** Idempotent 200 for every repeat hides a wrong id;
+plain 404 strands an interrupted cascade. Refusing deletion while work is pending leaves
+stuck documents undeletable; cancelling work needs a ledger state no stage has. Refusing
+re-ingest breaks delete-then-re-add; undelete would need a fact-reopening outcome and
+revives testimony the person removed. Deletion stays auditable, and adding the document
+again restores its contribution as new testimony; it is not erasure — stored originals
+and retired claims remain, and D74 is the only erasure. Queued extraction for a deleted
+document still runs once. The library boundary (D60/D61) is unchanged: deletion is fully
+in the engine.
+
+**Authority:** [design §8](plan/designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly),
+[analysis](plan/analysis/public_document_deletion.md).
+
+## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
+
+**Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
+
+**Context.** On 2026-09-23 the owner approved one credential for every client
+surface of remember.dev — a signed key covering one or more projects with the
+permissions `memory:read`, `memory:write`, `account:read`, `account:manage` —
+one hosted MCP endpoint, and one set of memory tools defined once in the
+open-source `remember` package. The engine side needed answers the old corpus
+contradicted: tool definitions lived in three places here and were copied by
+hand into the hosted server (which shipped stale names and still lacks the
+SQL tools and most `ingest` arguments); `remember mcp` was stdio-only and could
+only call an engine directly; the perimeter accepted signed tokens only with
+exactly one audience and an engine-specific `scope` claim; `remember login`
+chose between deployment and control tokens against a hard-coded
+`https://api.remember.dev` that is not a live host; and the SDK read
+`REMEMBER_API_KEY` while the CLI ignored it.
+
+**Decision.**
+1. **One catalogue.** `remember.mcp_tools` is the public, versioned module
+   that defines every memory tool (`ingest`, `pipeline_readiness`,
+   `delete_document`, the four assured operations, `source_open`, the seven SQL tools):
+   names, descriptions, input schemas, validation, error envelopes, required
+   permission, and a per-tool version. Every MCP host imports it; the engine
+   registry generates `GET /operations`' agent-facing fields from it; each
+   deployment advertises the tool versions it serves in `GET /deployment`, and
+   hosts render a tool only at an equal version.
+2. **`project` is host-resolved routing.** The catalogue defines one optional
+   `project` argument that hosts serving several deployments add and strip
+   before calling one. The engine API and `remember mcp` (which serves one
+   engine) refuse it.
+3. **`remember mcp`** has an engine mode (stdio, and Streamable HTTP that
+   forwards each caller's bearer to the engine) and a bridge mode that relays
+   stdio to any remote MCP URL with a bearer key. A stored key is attached only to the
+   issuer-advertised `remember_mcp_endpoint` origin; `--read-only` passes only
+   tools annotated `readOnlyHint: true`. `remember setup` writes a remote entry
+   (OAuth, or a key header by variable reference) where the harness supports
+   it, a stdio bridge otherwise, and a self-hosted entry for local engines.
+4. **Perimeter contract.** The signed-credential adapter requires a
+   configured issuer and complete claim sets per `kind`. A bearer is
+   `<letters>_<JWS>` (remember.dev: `rmb_`) so secret scanners can catch leaked
+   keys; the engine strips the prefix when the token does not start with `eyJ`. A `key` must carry
+   `aud = org:<tenant>` and `org = <tenant>` (the deployment's configured
+   issuer-tenant id) and `projects` of `"org:*"` or at most 20 project ids
+   including this one; a derived `session` credential must carry `aud` = this
+   deployment's id and `projects` = exactly this project; any other `aud`
+   (such as a hosted-MCP OAuth token's) is refused. It maps `memory:read` → read,
+   `memory:write` → write (ingest included), `memory:ingest` → ingest only,
+   ignores non-memory permissions, refuses unknown memory permissions,
+   records a credential `kind` for audit, and takes revocation only as a
+   signed document whose `aud` is this deployment, with a sequence that
+   advances on every issued document including the heartbeat every R (lower
+   sequences rejected, last sequence persisted, the first validly signed
+   document accepted, later ones signed by a key active in the previous one),
+   with `exp = iat + S`, and whose `active_kids` list retires signing-key
+   generations. Without a fresh accepted document (at first start, or once
+   it is older than S) every signed credential is refused; a revoked key
+   stops working by r + S + leeway. S is one hour (R = 60 s), so a short
+   account-service outage does not take every data plane down.
+   The `service` credential kind (`dpcred:` subject) remains part of the
+   generic contract. The perimeter enforces per-key and per-deployment rate
+   and in-flight limits on the direct path (`429` with `Retry-After`),
+   counted in process per API replica.
+5. **Clients.** One resolver gives the SDK and CLI identical environment
+   precedence (`REMEMBER_API_KEY`, `REMEMBER_API_URL`, `REMEMBER_PROJECT`,
+   `REMEMBER_MCP_URL`, `REMEMBER_ISSUER`, `REMEMBER_CONFIG_DIR`; older aliases
+   removed), and both read the stored credential file after the environment;
+   a stored key is only ever sent to its issuer, its advertised MCP endpoint,
+   its recorded URL or an issuer-resolved deployment. `CloudClient` is
+   removed; account calls are a namespace of `remember.Client` calling the
+   issuer's account API. A signed key resolves its data-plane host from the
+   issuer's project endpoint (`{project, name, api_url}`), cached with a bounded lifetime and
+   re-resolved when a deployment moves. Re-login journals the old key durably,
+   then mints and persists the new key, then revokes the old one from the
+   journal. Issuer metadata also
+   names the account API (`remember_account_endpoint`).
+   `remember login` runs the standard device grant discovered from the
+   issuer's OAuth metadata and stores one key (`credentials.json` version 2).
+
+**Why.** Shared import is the only arrangement under which a separately
+deployed host cannot drift. Resolving routing in hosts and verifying keys at
+the engine against operator-configured issuer, keys and audiences meets
+remember.dev's needs through the existing D61 auth-perimeter port without the
+engine learning organisations, members or billing (D60, CLAUDE.md Rule 3).
+The bridge keeps the one key usable by harnesses that only run local servers.
+
+**Consequences.** A leaked multi-project key is valid at several deployments
+until revoked, which the old strict single audience prevented; revocation is
+therefore signed, sequenced, audience-bound and bounded in age. A host may carry
+memory traffic to the engine (the hosted MCP path); the engine treats it like any
+other caller holding a credential. Public docs change when the behaviour ships.
+
+**Simplicity.** Left out as unnecessary machinery: local multi-target
+routing, per-tool compatibility ranges, prefix configuration, inline key-set or
+revocation configuration, bridge path-ingest rewriting, and routing hints
+inside keys.
+
+**Rejected.** Per-host copies with contract tests; hosts rendering from
+`GET /operations`; the engine accepting `project`; one MCP connection per
+project; key-for-token exchange in the SDK; `remember mcp` holding its own
+credential behind the HTTP transport; keeping environment aliases.
+
+**Supersedes.** D92 in part (explicit token host, credential file shape, CLI-only file, revoke-before-replace re-login);
+D108 item 4's authentication, credential-separation and `setup` default
+clauses and its amendment of D92; the metering design's §6 login contract;
+the distribution design's §3.1/§3.4/§4 credential text. Cloud-side
+supersessions are recorded in the companion cloud design. *(Amended in part by D137:
+adjacent_chunks is added to remember.mcp_tools as an exposed read tool).*
+
+**Authority:** [design](plan/designs/one_key_client_surfaces_design.md),
+[analysis](plan/analysis/one_key_client_surfaces_analysis.md). Companion:
+the remember.dev one-key design (`writeitai/ultimate-memory-cloud`, branch
+`design/one-key-one-mcp`).
+
+---
+
+## D137. Conversational section integrity and MCP adjacent_chunks parity
+
+**Status:** accepted. **Date:** 2026-09-25.
+
+**Context.** In multi-turn conversational transcripts and dialogue-heavy documents, two structural fractures impaired recall:
+1. **Fallback section fragmentation in E0:** When documents lack Markdown headings, the E0 fallback structure pass prompts the model for section anchors. The model frequently proposed individual dialogue turns (e.g. Joanna asking "So what's your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62) as section boundaries. Each turn became a single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`, `_neighbour_text`) inspects surrounding turns only within the *same section* (`same_section_neighbours`), the answering turn was extracted without the question turn in view, defeating cross-turn anaphora resolution (D131) and stranding facts without their question context.
+2. **MCP catalogue surface parity:** While `adjacent_chunks` was implemented across the HTTP API, SDK, CLI, and benchmark harness in D130, D130 excluded it from the shared MCP catalogue (`remember.mcp_tools`, D136) on the grounds that raw primitives should not mint top-level MCP tools. However, in practice coding agents connecting via MCP had no capability to expand dialogue context around a retrieved chunk, creating an artificial capability gap between MCP agents and SDK/CLI callers.
+
+**Decision.**
+1. **Deterministic run-merging of single-block leaf sections in fallback skeletons (`structure_skeleton.py`):**
+   - In `resolve_fallback_skeleton()`, identify runs of contiguous single-block leaf sections (sections with `block_start == block_end` and no child subsections).
+   - If a run is followed by an immediate next leaf section without subsections, the run is merged forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+   - If the run is at the end of the document or followed by a section with subsections, the run collapses into a single merged section starting at `nodes[run_start].block_start` and ending at `nodes[run_end].block_end`.
+   - In all cases, the merged section is titled by the proposal at `run_start` (its first block), so title, heading level, and starting position remain aligned without in-place mutation.
+   - Sections with subsections are never absorbed and never absorb single-block runs, preserving hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+2. **Fallback prompt guidance (`e0.py`):**
+   - Update `_FALLBACK_PROMPT` to explicitly instruct models that individual conversational turns, rhetorical questions, and brief remarks must not form section headings. Section anchors must represent substantive topic shifts or document sections.
+3. **Skeleton cache invalidation (`e0.py`):**
+   - Bump `E0_SKELETON_VERSION` to `:anchor-v3-depth{MAX_FALLBACK_DEPTH}` and `E0_STRUCTURE_VERSION` to `e0-structure-2026.07h:d79-wave2`. This guarantees that existing documents re-structure under the new integrity rules upon re-ingestion or rebuild.
+4. **First-class MCP tool parity for `adjacent_chunks` (`remember.mcp_tools`, `mcp.py`, `http_api.py`):**
+   - Add `adjacent_chunks` as an exposed read tool in `remember.mcp_tools._definitions.py` with `permission="memory:read"`, `tool_version=1`, `http_route="GET /chunks/{chunk_id}/adjacent"`, and description referencing neighbouring chunks.
+   - Keep `OPERATION_TOOL_NAMES` strictly to the four assured operations (`resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`) to preserve the D50 contract with `AssuredOperationRegistry`.
+   - Expose `adjacent_chunks` in `OperationMcpServer` and `EngineMcpServer` `list_tools()` and dispatch tables.
+   - In `http_api._served_tools`, advertise `adjacent_chunks` whenever operations are composed.
+
+**Consequences.**
+- Question turns and answer turns in dialogue transcripts now usually share the same section in E0 (bounded by non-contiguous section boundaries per Cost 3), allowing E2 claim extraction to resolve cross-turn anaphora and question-affirmations per D131.
+- Re-ingesting existing documents updates their skeleton cache keys via `anchor-v3`.
+- Coding agents connecting over MCP (Claude Code, Cursor, Codex) can call `adjacent_chunks` to read preceding/succeeding passages, matching CLI/SDK parity.
+- Public documentation across `website/` updated to reflect 15 tools (3 write + 4 operations + 1 adjacent_chunks + 7 query).
+
+**Costs and boundaries.**
+1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE` title. Hierarchy protection relies on the model emitting subsections.
+2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and the answer begins the next section, or a single-block turn is stranded at document end without an answer, run-merging does not bridge across multi-block sections. Such cross-boundary dialogue remains a documented boundary of section-scoped context.
+
+**Supersedes.**
+- D130 item 4 in part: supersedes the restriction that `adjacent_chunks` does not mint an MCP tool.
+- D136 item 1 in part: expands `remember.mcp_tools` catalogue with `adjacent_chunks`.
+
+**Authority:** [adjacent_chunks_retrieval_design.md](plan/designs/adjacent_chunks_retrieval_design.md), [e0_files_design.md](plan/designs/e0_files_design.md), [one_key_client_surfaces_design.md](plan/designs/one_key_client_surfaces_design.md). Companion to cloud offering decision D75 (`writeitai/ultimate-memory-cloud`).
+
+## D138. Coding-agent-first ingestion of workspace formats
+
+**Partially superseded by D139 (2026-09-27).** The PDF text-layer converter and
+the conditional OCR route in its family design are replaced by OCR on every
+accepted PDF page. Its oversized-file card outcome no longer applies to PDFs:
+an oversized PDF fails conversion with a typed reason and no card. Its other
+family routes, detection order, postures, profiles, cards, and metadata rules
+remain binding.
+
+**Status:** accepted. **Date:** 2026-09-27.
+
+**Context.** D133 bound the format framework but left each family to its own design. A matched
+Workspace-Bench run must ingest whole professional workspaces: 23,268 files across 89 extensions,
+dominated by spreadsheets, PDFs, office documents, code and config. The readers of the result are
+coding agents that open files and compute on them.
+
+**Decision.** Memory is a map for coding agents: it holds prose, and for everything else records
+what the file is, where it is and how it is shaped. One shipped registry routes 20 families by
+extension, then declared MIME, then content; byte detection (D132) may refuse only contradicted
+declarations. Prose (markdown, text, HTML, email, word, presentation, PDF text layer) is read in
+full and claim-extracted. Code, config and logs are read in full but search-only. Spreadsheets,
+delimited files and statistical datasets always get a deterministic, search-only profile
+(structure, types from a 5-row head sample, defined names), never their rows and never a model
+call. Text over 1 MB gets a head/tail profile. Images (without configured providers), media,
+archives (with a bounded member listing) and unknown bytes get cards; oversized files are stored
+and carded. Legacy Office goes through headless LibreOffice. Converters fill D134 metadata.
+Deployment route settings overlay the registry instead of replacing it.
+
+**Alternatives and consequences.** Rendering everything through markitdown, skipping files the
+tasks do not name, path-based ignore rules, and keeping the model-written overview were rejected
+(analysis §7). `data_query` and container expansion leave the system; their reviewed designs are
+proposals with adoption triggers. LibreOffice adds
+several hundred megabytes to the engine image.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[analysis](plan/analysis/coding_agent_first_ingestion_analysis.md).
+
+## D139. Every accepted PDF page goes through OCR
+
+**Status:** accepted. **Date:** 2026-09-27. **Supersedes:** the PDF routing
+clauses of D38, D133 and D138; their other contracts remain binding as noted
+inside those entries.
+
+**Decision.** The PDF family's converter sends **every page of every accepted
+PDF through OCR**, regardless of whether the page has selectable text. The
+format registry and deployment overlays cannot select a PDF text-layer
+extraction route or split pages into text and scan routes. A PDF produces one
+OCR-derived reading with page locators and honest coverage; an unreadable or
+failed page is a visible gap/failure, never a silent text-layer fallback.
+The converter counts pages from the PDF page tree before OCR, without reading
+its text layer. Successful empty pages get page-located, extraction-ineligible
+status markers; a missing page in the OCR response fails conversion with a
+typed reason and no partial reading.
+The PDF has one effective pre-OCR size limit: the lower of the family reading
+limit and the configured provider's input ceiling. Exceeding it leaves the
+original stored but fails the version with a typed limit reason, without a
+card or `document.md` reading.
+
+**Context and alternatives.** The owner restated the explicit requirement on
+2026-09-27: “EVERY PDF and every page goes through OCR. No question asked.”
+The earlier D38 route for digital PDF text extraction and D138's text-layer
+converter with conditional OCR contradict it. Text-layer extraction and a
+per-page text-versus-scan split could save provider cost, but both violate the
+owner's requirement and yield different reading and layout behavior within a
+single document. OCR gives one consistent conversion path across born-digital,
+scanned and mixed PDFs. D115 establishes the analogous always-OCR rule for
+standalone images, not an earlier PDF-specific mandate; no earlier
+PDF-specific owner statement was found in this repo.
+
+**Consequences.** An accepted PDF page is a source page in a valid PDF whose
+structural page count is known and that passed the effective pre-OCR limit for
+OCR processing. The quantity is the
+source page count, including pages with selectable text, successful empty OCR,
+or an OCR response gap; admission failures contribute zero pages. OCR cost
+therefore scales with every accepted page. The engine records only the
+registry's `scan_page` cost class with that quantity; provider-reported
+`pages_processed` is diagnostic evidence, not the billable quantity. The
+separate managed cloud copies the same quantity to a `doc-scan` receipt and
+does not also charge `doc-text` for that PDF. This receipt mapping is a
+required cloud follow-up, not a claim about current cloud behavior.
+Conversion, source mapping and coverage stay in the engine under D60/D61.
+The PDF route needs a configured OCR provider and parks under D117 when it is
+unavailable. Converter and route changes require versioned re-conversion;
+tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
+
+**Authority:** [design](plan/designs/workspace_formats_design.md),
+[format framework](plan/designs/format_conversion_design.md),
+[analysis](plan/analysis/pdf_always_ocr.md).

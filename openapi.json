@@ -584,9 +584,56 @@
             },
             "title": "Model Bindings",
             "type": "object"
+          },
+          "tools": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Tools",
+            "type": "object"
           }
         },
         "title": "DeploymentBuildInfo",
+        "type": "object"
+      },
+      "DocumentDeletion": {
+        "additionalProperties": false,
+        "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+        "properties": {
+          "claims_retired": {
+            "minimum": 0.0,
+            "title": "Claims Retired",
+            "type": "integer"
+          },
+          "deleted_at": {
+            "format": "date-time",
+            "title": "Deleted At",
+            "type": "string"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "observations_closed": {
+            "minimum": 0.0,
+            "title": "Observations Closed",
+            "type": "integer"
+          },
+          "relations_closed": {
+            "minimum": 0.0,
+            "title": "Relations Closed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "deleted_at",
+          "claims_retired",
+          "relations_closed",
+          "observations_closed"
+        ],
+        "title": "DocumentDeletion",
         "type": "object"
       },
       "DocumentPage": {
@@ -615,6 +662,501 @@
           "documents"
         ],
         "title": "DocumentPage",
+        "type": "object"
+      },
+      "DocumentPeopleMatch": {
+        "additionalProperties": false,
+        "description": "One distinct person an authors/recipients filter matched.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "documents": {
+            "minimum": 0.0,
+            "title": "Documents",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "role": {
+            "enum": [
+              "author",
+              "recipient"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "documents"
+        ],
+        "title": "DocumentPeopleMatch",
+        "type": "object"
+      },
+      "DocumentSearchFilters": {
+        "additionalProperties": false,
+        "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+        "properties": {
+          "authors": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "created_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created From"
+          },
+          "created_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created To"
+          },
+          "doc_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Doc Ids",
+            "type": "array"
+          },
+          "family": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Family",
+            "type": "array"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "modified_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified From"
+          },
+          "modified_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified To"
+          },
+          "recipients": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "thread_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ref"
+          }
+        },
+        "title": "DocumentSearchFilters",
+        "type": "object"
+      },
+      "DocumentSearchPage": {
+        "additionalProperties": false,
+        "description": "A page of ``search_documents`` results.",
+        "properties": {
+          "as_of": {
+            "format": "date-time",
+            "title": "As Of",
+            "type": "string"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "documents": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchResult"
+            },
+            "title": "Documents",
+            "type": "array"
+          },
+          "people_matched": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentPeopleMatch"
+            },
+            "title": "People Matched",
+            "type": "array"
+          }
+        },
+        "required": [
+          "documents",
+          "as_of"
+        ],
+        "title": "DocumentSearchPage",
+        "type": "object"
+      },
+      "DocumentSearchPerson": {
+        "additionalProperties": false,
+        "description": "One author or recipient as the document declares them.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "DocumentSearchPerson",
+        "type": "object"
+      },
+      "DocumentSearchRequest": {
+        "additionalProperties": false,
+        "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+        "properties": {
+          "cursor": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "filters": {
+            "$ref": "#/components/schemas/DocumentSearchFilters",
+            "default": {
+              "authors": [],
+              "doc_ids": [],
+              "family": [],
+              "recipients": []
+            }
+          },
+          "k": {
+            "default": 20,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 4096,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "versions": {
+            "default": "current",
+            "enum": [
+              "current",
+              "all"
+            ],
+            "title": "Versions",
+            "type": "string"
+          }
+        },
+        "title": "DocumentSearchRequest",
+        "type": "object"
+      },
+      "DocumentSearchResult": {
+        "additionalProperties": false,
+        "description": "One matching document, described by the version it was judged by.",
+        "properties": {
+          "authors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchPerson"
+            },
+            "title": "Authors",
+            "type": "array"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "extra": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Extra",
+            "type": "object"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "file_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Name"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "lineage_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lineage Title"
+          },
+          "matched_by": {
+            "default": [],
+            "items": {
+              "enum": [
+                "name",
+                "content"
+              ],
+              "type": "string"
+            },
+            "title": "Matched By",
+            "type": "array"
+          },
+          "modified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modified At"
+          },
+          "other_matching_version_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Other Matching Version Ids",
+            "type": "array"
+          },
+          "overview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overview"
+          },
+          "p3_path": {
+            "title": "P3 Path",
+            "type": "string"
+          },
+          "recipients": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DocumentSearchPerson"
+            },
+            "title": "Recipients",
+            "type": "array"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "source_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Path"
+          },
+          "status": {
+            "enum": [
+              "ingesting",
+              "converting",
+              "structuring",
+              "ready",
+              "failed",
+              "deleted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "thread_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Ref"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "version_no",
+          "status",
+          "p3_path",
+          "family"
+        ],
+        "title": "DocumentSearchResult",
         "type": "object"
       },
       "DocumentSummary": {
@@ -1907,10 +2449,59 @@
             "title": "Doc Id",
             "type": "string"
           },
+          "mime": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime"
+          },
+          "parked": {
+            "anyOf": [
+              {
+                "const": "no_route",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parked"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
           "version_id": {
             "format": "uuid",
             "title": "Version Id",
             "type": "string"
+          },
+          "versioning_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "snapshot",
+                  "living"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Versioning Mode"
           }
         },
         "required": [
@@ -1923,6 +2514,7 @@
         "title": "IngestedVersion",
         "type": "object"
       },
+      "JsonValue": {},
       "KFreshness": {
         "additionalProperties": false,
         "description": "The compiled-grain honesty block (retrieval \u00a75): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it \u2014 the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -2210,6 +2802,23 @@
           "component_version": {
             "title": "Component Version",
             "type": "string"
+          },
+          "defer_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "scheduled",
+                  "retry_backoff",
+                  "budget",
+                  "no_route"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defer Reason"
           },
           "finished_at": {
             "anyOf": [
@@ -2707,6 +3316,16 @@
             ],
             "title": "Channel",
             "type": "string"
+          },
+          "documents": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentSearchFilters"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "k": {
             "default": 10,
@@ -3346,7 +3965,7 @@
   },
   "info": {
     "title": "RememberStack query API",
-    "version": "0.17.0"
+    "version": "0.17.2"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -3354,24 +3973,6 @@
       "post": {
         "description": "Fetch surrounding source chunks within a window around a target chunk in document order.",
         "operationId": "post_adjacent_chunks_chunks_adjacent_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3438,22 +4039,6 @@
               "title": "Window",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -3488,26 +4073,8 @@
     },
     "/deployment": {
       "get": {
-        "description": "Report which code and model bindings are serving, before any work.",
+        "description": "Report which code, model bindings and tools are serving, before any work.",
         "operationId": "deployment_build_info_deployment_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -3518,16 +4085,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
@@ -3593,22 +4150,6 @@
               ],
               "title": "Status"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -3641,28 +4182,106 @@
         "summary": "List Documents"
       }
     },
+    "/documents/search": {
+      "post": {
+        "description": "Find documents by observed name, general metadata and content.\n\nEach result is a document judged by one version: its current version\nby default, or with ``versions: all`` the newest live version that\nmatches. With a ``query`` results are ranked and not paged; with\nfilters only they are ordered by declared creation date and paged by\n``cursor``, which pins the first call's as-of instant.",
+        "operationId": "search_documents_documents_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentSearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentSearchPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "cursor is malformed"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Search Documents"
+      }
+    },
+    "/documents/{doc_id}": {
+      "delete": {
+        "description": "Remove one document from the live memory.\n\nIts claims stop counting as current testimony, facts that no other\ndocument supports are closed with a recorded retraction, and it\nleaves the inventory and every read. The claims and the stored\noriginal are kept as history: this is not an erasure.\n\nThe deletion is all or nothing. An unknown id and an already deleted\ndocument are both 404: from the caller's side each is absent. A\ndocument hidden by another path whose evidence was never updated is\nfinished and answers 200 instead.",
+        "operationId": "delete_document_documents__doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentDeletion"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Document"
+      }
+    },
     "/graph/citation-path": {
       "post": {
         "description": "Return bounded directed citation paths between two documents.",
         "operationId": "graph_citation_path_graph_citation_path_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3707,24 +4326,6 @@
       "post": {
         "description": "Return a current or bitemporal bounded entity neighborhood.",
         "operationId": "graph_neighborhood_graph_neighborhood_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3769,24 +4370,6 @@
       "post": {
         "description": "Return bounded equal-length shortest paths between two entities.",
         "operationId": "graph_path_graph_path_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -3840,22 +4423,6 @@
               "format": "uuid",
               "title": "Relation Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4012,6 +4579,25 @@
             }
           },
           {
+            "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
+            "in": "query",
+            "name": "source_path",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
+              "title": "Source Path"
+            }
+          },
+          {
             "description": "One of: user | api_credential | service. Sent with X-Ingest-Principal-Ref. Ignored unless the deployment declares a trusted principal source and, where API authentication is configured, the presenting credential carries full write authority; malformed values are 422 only for a trusted assertion.",
             "in": "header",
             "name": "X-Ingest-Principal-Kind",
@@ -4045,22 +4631,6 @@
               ],
               "description": "Opaque caller-stable actor id, 1..255 printable ASCII characters. Sent with X-Ingest-Principal-Kind.",
               "title": "X-Ingest-Principal-Ref"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4143,24 +4713,10 @@
             "required": false,
             "schema": {
               "default": 10,
+              "maximum": 400,
+              "minimum": 1,
               "title": "K",
               "type": "integer"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4267,19 +4823,15 @@
             }
           },
           {
-            "in": "header",
-            "name": "authorization",
+            "in": "query",
+            "name": "k",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
+              "default": 50,
+              "maximum": 400,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
             }
           }
         ],
@@ -4317,24 +4869,6 @@
       "get": {
         "description": "The four assured operations for this deployment.",
         "operationId": "list_operations_operations_get",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "responses": {
           "200": {
             "content": {
@@ -4349,16 +4883,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "security": [
@@ -4381,22 +4905,6 @@
             "schema": {
               "title": "Name",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4477,6 +4985,14 @@
             "schema": {
               "anyOf": [
                 {
+                  "enum": [
+                    "draft",
+                    "pending_revalidation",
+                    "active",
+                    "deprecated",
+                    "disabled",
+                    "broken"
+                  ],
                   "type": "string"
                 },
                 {
@@ -4484,22 +5000,6 @@
                 }
               ],
               "title": "Status"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4576,22 +5076,6 @@
               ],
               "title": "Version"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4647,22 +5131,6 @@
             "schema": {
               "title": "Name",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],
@@ -4736,22 +5204,6 @@
               "title": "Include Examples",
               "type": "boolean"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4812,22 +5264,6 @@
               "title": "K",
               "type": "integer"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -4869,24 +5305,6 @@
       "post": {
         "description": "One sandboxed SQL statement; QueryResult/v1.",
         "operationId": "query_sql_query_sql_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4931,24 +5349,6 @@
       "post": {
         "description": "EXPLAIN one SQL statement without executing it.",
         "operationId": "explain_sql_query_sql_explain_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -4993,24 +5393,6 @@
       "post": {
         "description": "Inspect exact pipeline and explicitly requested capabilities.",
         "operationId": "pipeline_readiness_readiness_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5085,22 +5467,6 @@
               ],
               "title": "Context Entity Ids"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5172,22 +5538,6 @@
               "title": "Channel",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5220,26 +5570,8 @@
         "summary": "Search Chunks"
       },
       "post": {
-        "description": "Search live source chunks as separately typed evidence.",
+        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134).",
         "operationId": "post_search_chunks_search_chunks_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5319,22 +5651,6 @@
               "title": "Channel",
               "type": "string"
             }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
           }
         ],
         "responses": {
@@ -5367,26 +5683,8 @@
         "summary": "Search Claims"
       },
       "post": {
-        "description": "Claim search \u2014 evidence grain, never current-fact truth.",
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter.",
         "operationId": "post_search_claims_search_claims_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -5440,22 +5738,6 @@
               "format": "uuid",
               "title": "Relation Id",
               "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
             }
           }
         ],

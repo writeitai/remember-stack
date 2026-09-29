@@ -40,6 +40,9 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_version_matches
+from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
@@ -87,6 +90,7 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.fact_windows import FactWindow
 from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -1255,8 +1259,12 @@ class QueryEngine:
         predicate: str | None = None,
         object_entity_id: UUID | None = None,
         valid_at: datetime | None = None,
+        k: int = 50,
     ) -> Envelope:
         """Relations matching the (s, p, o) pattern — fact grain (S1/S3/S9).
+
+        At most `k` relations return, strongest evidence first; when more
+        match, the envelope's `truncation` says so (no silent top-k, S18).
 
         Without `valid_at`, current means both clocks: still believed AND the
         valid-time window covers now. With `valid_at`, the window test moves
@@ -1277,11 +1285,14 @@ class QueryEngine:
                         "predicate": predicate,
                         "object_entity_id": object_entity_id,
                         "as_of": as_of,
+                        "limit": k + 1,
                     },
                 )
                 .mappings()
                 .all()
             )
+        truncated = len(rows) > k
+        rows = rows[:k]
         # Every candidate carries its own temporal_match; an undated fact is a
         # flagged possible match here, exactly as in facts_context.
         facts = self._enrich_facts(
@@ -1300,6 +1311,7 @@ class QueryEngine:
             ),
             facts=facts,
             freshness=_freshness(),
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -1328,6 +1340,7 @@ class QueryEngine:
         is read directly.
         """
         dropped = 0
+        truncated = False
         evaluated_at = datetime.now(tz=UTC)
         as_of = valid_at or evaluated_at
         if property_query is None:
@@ -1339,11 +1352,14 @@ class QueryEngine:
                             "deployment_id": deployment_id,
                             "entity_id": entity_id,
                             "as_of": as_of,
+                            "limit": k + 1,
                         },
                     )
                     .mappings()
                     .all()
                 )
+            truncated = len(rows) > k
+            rows = rows[:k]
         else:
             nominated = self._search_index.search_facts(
                 deployment_id=str(deployment_id),
@@ -1380,6 +1396,7 @@ class QueryEngine:
             facts=facts,
             freshness=_freshness(),
             dropped_by_hydration=dropped,
+            truncation=_lookup_truncation(returned=len(facts), truncated=truncated),
             negative=None
             if facts
             else Negative(
@@ -1397,23 +1414,32 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
         The claims channel nominates (current-testimony-only by default);
         hydration re-reads each claim from the spine and drops what no longer
         confirms, counting the drops (D48 nominate-then-drop honesty).
+
+        ``documents`` (D134) keeps a claim only when a live occurrence lies in
+        a matching document version — applied inside the ranked statement,
+        before the top-k cut, and re-checked at hydration. It decides
+        inclusion only: the evidence is the claim's origin occurrence.
         """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_claim_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CLAIMS,
+            documents=documents,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id,
             claim_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1463,18 +1489,26 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        documents: DocumentSearchFilters | None = None,
     ) -> Envelope:
-        """Search live source chunks without pretending they are claims."""
+        """Search live source chunks without pretending they are claims.
+
+        ``documents`` (D134) keeps a chunk only when its document version
+        matches, inside the ranked statement before the top-k cut.
+        """
+        documents = None if documents is None or is_empty(documents) else documents
         nominated = self._nominate_chunk_ids(
             deployment_id=deployment_id,
             query=query,
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CHUNKS,
+            documents=documents,
         )
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
             chunk_ids=tuple(UUID(item) for item in nominated),
+            documents=documents,
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1582,9 +1616,13 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        # Passed only when present, so an index without document filters is
+        # never handed an argument it does not take.
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_claims(
                 deployment_id=str(deployment_id),
@@ -1593,9 +1631,14 @@ class QueryEngine:
                 ),
                 k=k,
                 current_only=True,
+                **scope,
             )
         return self._search_index.search_claims_lexical(
-            deployment_id=str(deployment_id), query=query, k=k, current_only=True
+            deployment_id=str(deployment_id),
+            query=query,
+            k=k,
+            current_only=True,
+            **scope,
         )
 
     def _nominate_chunk_ids(
@@ -1606,9 +1649,11 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
+        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
         if channel == "semantic":
             return self._search_index.search_chunks(
                 deployment_id=str(deployment_id),
@@ -1618,6 +1663,7 @@ class QueryEngine:
                 k=k,
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
+                **scope,
             )
         return self._search_index.search_chunks_lexical(
             deployment_id=str(deployment_id),
@@ -1625,6 +1671,7 @@ class QueryEngine:
             k=k,
             policy_generation=self._policy_generation,
             embedder_generation=self._embedder_generation,
+            **scope,
         )
 
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
@@ -2938,12 +2985,38 @@ class QueryEngine:
         claim_ids: tuple[UUID, ...],
         current_only: bool = True,
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[EvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm claim content and any entity scope in one PostgreSQL read."""
+        """Confirm claim content and any entity scope in one PostgreSQL read.
+
+        With ``documents`` (D134) each claim is re-checked for a live
+        occurrence in a matching document version; the evidence is still the
+        claim's origin occurrence.
+        """
         if not claim_ids:
             return (), 0, {}
         if entity_ids and not current_only:
             raise ValueError("entity-scoped historical claim hydration is unsupported")
+        if documents is not None and (entity_ids or not current_only):
+            raise ValueError(
+                "document-filtered claim hydration is current and unscoped only"
+            )
+        statement = (
+            _CONFIRM_CLAIMS_CURRENT_SCOPED
+            if entity_ids
+            else _CONFIRM_CLAIMS_CURRENT
+            if current_only
+            else _CONFIRM_CLAIMS_HISTORY
+        )
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            # D134: the filter decides inclusion only. The claim is re-checked
+            # for a live occurrence in a matching version, and the evidence is
+            # its origin occurrence, exactly as without a filter.
+            occurrence_sql, extra = matching_occurrence_exists(
+                filters=documents, claim="c.claim_id", prefix="documents_"
+            )
+            statement = text(f"{_CONFIRM_CLAIMS_CURRENT.text}  AND {occurrence_sql}\n")
         rows: list[RowMapping] = []
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
@@ -2953,17 +3026,12 @@ class QueryEngine:
             for batch in batched(claim_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        (
-                            _CONFIRM_CLAIMS_CURRENT_SCOPED
-                            if entity_ids
-                            else _CONFIRM_CLAIMS_CURRENT
-                            if current_only
-                            else _CONFIRM_CLAIMS_HISTORY
-                        ),
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "claim_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -2993,10 +3061,25 @@ class QueryEngine:
         deployment_id: UUID,
         chunk_ids: tuple[UUID, ...],
         entity_ids: tuple[UUID, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
-        """Confirm chunk content and any entity scope, then hydrate P1 bodies."""
+        """Confirm chunk content and any entity scope, then hydrate P1 bodies.
+
+        With ``documents`` (D134) the document filter is re-checked at
+        confirmation, so metadata that changed after nomination drops the
+        chunk (counted in ``dropped_by_hydration``) instead of returning it.
+        """
         if not chunk_ids:
             return (), 0, {}
+        if documents is not None and entity_ids:
+            raise ValueError("document-filtered chunk hydration is unscoped only")
+        statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
+        extra: dict[str, Any] = {}
+        if documents is not None:
+            version_sql, extra = live_version_matches(
+                filters=documents, version="ch.version_id", prefix="documents_"
+            )
+            statement = text(f"{_CONFIRM_CHUNKS.text}  AND {version_sql}\n")
         rows: list[RowMapping] = []
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
@@ -3004,11 +3087,12 @@ class QueryEngine:
             for batch in batched(chunk_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
-                        _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS,
+                        statement,
                         {
                             "deployment_id": deployment_id,
                             "chunk_ids": list(batch),
                             "entity_ids": list(entity_ids),
+                            **extra,
                         },
                     )
                     .mappings()
@@ -3906,6 +3990,19 @@ def _unknown_entity(*, name: str) -> Envelope:
     )
 
 
+def _lookup_truncation(*, returned: int, truncated: bool) -> Truncation | None:
+    """Disclose that a fact lookup's `k` cap left matching rows out."""
+    if not truncated:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=returned + 1,
+        total_is_exact=False,
+        reason="lookup_k_limit",
+    )
+
+
 def _resolve_truncation(*, returned: int, truncated: bool) -> Truncation | None:
     """Disclose a blocking cap without inventing an exact remainder."""
     if not truncated:
@@ -4110,7 +4207,8 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, relation_id
+    LIMIT :limit
     """
 )
 
@@ -4125,7 +4223,8 @@ _LOOKUP_OBSERVATIONS = text(
       AND invalidated_at IS NULL
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-    ORDER BY evidence_count DESC, ingested_at
+    ORDER BY evidence_count DESC, ingested_at, observation_id
+    LIMIT :limit
     """
 )
 

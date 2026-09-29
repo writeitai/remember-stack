@@ -35,6 +35,7 @@ from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model import ReasoningEffort
+from rememberstack.model import record_embedding_usage
 from rememberstack.model import StructuredResponseModel
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
@@ -863,6 +864,8 @@ class OpenRouterModelProvider:
         usage = _usage(
             body=body, latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000
         )
+        # Billed from here on, even if the body below proves unusable.
+        record_embedding_usage(usage=usage)
         try:
             ordered = sorted(body["data"], key=lambda item: item["index"])
             vectors = tuple(tuple(item["embedding"]) for item in ordered)

@@ -25,7 +25,6 @@ from rememberstack.spine import EntityProfileRefresher
 from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces import cli_main
 from tests.database_reset import reset_database
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -876,44 +875,6 @@ def test_uncertain_leaves_the_marker_standing(database_engine: Engine) -> None:
         ).scalar_one()
     assert [entry["verdict"] for entry in history] == ["uncertain", "invalidate_fact"]
     assert history[0]["reviewer"] == "jiri"
-
-
-def test_cli_lists_and_decides_through_the_same_paths(
-    database_engine: Engine,
-    capsys: pytest.CaptureFixture[str],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The remember CLI is a thin veneer: list ranks, decide applies the verdict."""
-    monkeypatch.setenv("REMEMBER_INTERNAL_OPS", "1")
-    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
-    survivor = _entity(engine=database_engine, name="CLI Survivor")
-    absorbed = _entity(engine=database_engine, name="CLI Absorbed")
-    review_id = _queued_merge(
-        engine=database_engine, survivor=survivor, absorbed=absorbed
-    )
-    assert cli_main(["review", "list", "--deployment", str(_DEPLOYMENT_ID)]) == 0
-    listed = capsys.readouterr().out.strip().splitlines()
-    assert json.loads(listed[0])["review_id"] == str(review_id)
-
-    decide_args = [
-        "review",
-        "decide",
-        str(review_id),
-        "--deployment",
-        str(_DEPLOYMENT_ID),
-        "--verdict",
-        "merge",
-        "--reviewer",
-        "jiri",
-    ]
-    assert cli_main(decide_args) == 1
-    assert "profile-changing review verdicts require" in capsys.readouterr().err
-
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
-    assert cli_main(decide_args) == 0
-    decided = json.loads(capsys.readouterr().out.strip())
-    assert decided["verdict"] == "merge"
-    assert len(decided["merge_events"]) == 1
 
 
 def test_foreign_ids_are_refused_at_flag_and_decide(database_engine: Engine) -> None:

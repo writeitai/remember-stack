@@ -68,6 +68,7 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: object = None,
     ) -> tuple[str, ...]:
         """Return no claim nominations."""
         return ()

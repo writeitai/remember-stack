@@ -1,0 +1,170 @@
+export const metadata = {
+  title: "Connect your coding agent",
+  description: "Give Claude Code, Cursor, Codex, Antigravity or Claude Desktop access to your memory over MCP.",
+};
+
+# Connect your coding agent
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Your coding agent can read from and write to RememberStack directly, as a
+set of MCP tools (Model Context Protocol, the standard way agents call
+external tools). Once connected, the agent can look up what the project
+decided, who owns what, and what changed, and it can store new notes as it
+works.
+
+<Tabs>
+
+<Tab cloud label="remember.dev">
+
+remember.dev hosts an MCP server for you. You add one URL; the agent
+opens a browser, you sign in, and you choose the projects and permissions
+it gets. No key goes into the agent's configuration.
+
+```
+https://remember.dev/mcp
+```
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http remember https://remember.dev/mcp
+```
+
+**Cursor**: add to `.cursor/mcp.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "remember": { "url": "https://remember.dev/mcp" }
+  }
+}
+```
+
+Or let the `remember` package write the configuration for every agent it
+finds:
+
+```bash
+pip install remember
+remember setup --cloud
+```
+
+Cursor, Claude Code and Codex get the endpoint URL and sign in through the
+browser. Claude Desktop and Antigravity, which only start local programs,
+get `remember mcp` as a bridge to the endpoint, using the key from
+`remember login` (the command runs it first if you are not signed in). On a
+machine without a browser, such as CI, add `--headless`: the agents then
+send the key from `REMEMBER_API_KEY`. No key is written into any agent's
+configuration. See [`remember setup`](/docs/reference/cli#remember-setup).
+
+Setup for other clients, signing in with an API key instead, the account
+tools, and how to disconnect are on [Hosted MCP](/docs/cloud/hosted-mcp).
+
+</Tab>
+
+<Tab label="Self-hosted">
+
+The `remember` package includes an MCP server that runs next to your
+agent and talks to your engine. `remember setup` writes the
+configuration for you:
+
+```bash
+pip install remember
+remember setup --self-hosted
+```
+
+It detects which agents you use in the current directory and on your
+machine (Cursor, Claude Code, Claude Desktop, Codex, Antigravity) and
+configures each one. To configure one agent only:
+
+```bash
+remember setup --self-hosted --agent cursor   # or claude, codex, agy
+```
+
+Add `--dry-run` to see what it would write, and `--api-url` if your engine
+is not at `http://localhost:8000`. Then check the result:
+
+```bash
+remember doctor
+```
+
+The files `remember setup` writes, and how to write them by hand, are
+in the [MCP reference](/docs/reference/mcp).
+
+For an agent that connects to a URL rather than starting a program, run the
+server over HTTP and point the agent at `http://127.0.0.1:8765/mcp`:
+
+```bash
+remember mcp --transport http --api-url http://localhost:8000
+remember setup --mcp-url http://127.0.0.1:8765/mcp
+```
+
+Cursor, Claude Code and Codex get the URL; Claude Desktop and Antigravity
+still start `remember mcp` themselves.
+
+The HTTP server holds no key: it passes each agent's `Authorization` header
+to the engine. See [MCP tools: Over HTTP](/docs/reference/mcp#over-http).
+
+</Tab>
+</Tabs>
+
+## What the agent can do
+
+The `remember mcp` server gives the agent these tools:
+
+| Tool | What it is for |
+|---|---|
+| `resolve_entity` | Find which person, system or thing a name refers to. Reports ambiguity instead of guessing. |
+| `facts_context` | The current facts about the entities in a question, with evidence and time windows. The usual first call. |
+| `claims_and_sources_context` | What sources said, with the passages. Use it when the exact wording matters. |
+| `combined_context` | Facts and claims together, when the agent wants everything in one call. |
+| `ingest` | Store a note, a decision or a file. |
+| `pipeline_readiness` | Check whether stored documents have finished processing. |
+| `delete_document` | Remove a document from the memory when the user asks. |
+| `search_documents` | Find a file by its name, title, path, authors, dates or text. |
+| `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
+| `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
+
+Run `remember mcp --read-only` instead of `remember mcp` to leave out the
+two tools that change memory (`ingest` and `delete_document`).
+
+<Cloud>
+
+The hosted remember.dev server exposes the tools of the engine version
+remember.dev runs, which does not have `search_documents` or
+`adjacent_chunks` yet, plus account tools for projects, keys and balance.
+Every tool there takes a `project` argument. See
+[Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.
+
+For an agent that can only start a local program, `remember mcp` with a
+remember.dev key relays to the MCP endpoint remember.dev advertises for that
+key, using the key from `remember login`. See
+[Bridge mode](/docs/reference/mcp#bridge-mode-remember-mcp-with-a-rememberdev-key).
+
+</Cloud>
+
+## Teach the agent the order
+
+Agents use memory best when they follow one order: resolve the entity,
+then ask for facts, then fall back to claims and sources, then to SQL.
+`remember setup` writes this guidance as a Cursor rule
+(`.cursor/rules/remember.mdc`) and an Antigravity skill
+(`.agents/skills/remember/SKILL.md`). For other agents, put this in the
+system prompt or project instructions:
+
+```text
+You have a project memory available through the "remember" tools.
+1. When a question names a person, system or thing, call resolve_entity first.
+   If it returns more than one candidate, ask which one is meant.
+2. Call facts_context for what is currently true. Pass time={"mode": "history"}
+   when the question is about how something changed.
+3. When the exact wording or the source matters, call claims_and_sources_context.
+4. If the memory reports it knows nothing, say so. Do not guess.
+5. Quote evidence with its document when you rely on it.
+```
+
+## Next
+
+- [Give an agent context](/docs/guides/agent-context): which operation fits
+  which question.
+- [Handle unknowns and ambiguity](/docs/guides/unknowns-and-ambiguity).

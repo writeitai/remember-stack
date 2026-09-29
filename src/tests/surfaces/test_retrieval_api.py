@@ -50,7 +50,6 @@ from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
-from rememberstack.spine import SupersessionSettings
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
@@ -285,6 +284,7 @@ class _ApiRig:
                 model_provider=self.provider,
                 chunk_index=self.p1,
                 settings=E1Settings(),
+                embedding_model=P1Settings().embedding_model,
                 params=_PARAMS,
             ),
         )
@@ -345,9 +345,7 @@ class _ApiRig:
             stage=PipelineStage.ADJUDICATE_SUPERSESSION,
             handler=AdjudicateSupersessionHandler(
                 adjudicator=SupersessionAdjudicator(
-                    engine=engine,
-                    model_provider=self.provider,
-                    settings=SupersessionSettings(),
+                    engine=engine, model_provider=self.provider
                 ),
                 profile_refresher=profile_refresher,
             ),
@@ -577,6 +575,73 @@ def test_s1_current_employer_via_resolve_and_lookup(rig: _ApiRig) -> None:
     assert fact["evidence_count"] == 1
     assert fact["validity"]["invalidated_at"] is None
     assert relations["freshness"]["pg_live_ts"] is not None
+
+
+def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
+    """G28: a lookup never returns an unbounded list; a cap is disclosed."""
+    alice = rig.client.get("/resolve", params={"name": "Alice Novak"}).json()[
+        "entities"
+    ][0]
+    acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id,"
+                " normalizer_version, evidence_count, ingested_at, valid_from,"
+                " valid_precision, window_claim_ids) VALUES"
+                " (:relation_id, :deployment_id, :subject_id, 'member_of',"
+                " :object_id, 'g28', 1, now(), '2024-01-01Z', 'open',"
+                " ARRAY[:claim]::uuid[])"
+            ),
+            {
+                "relation_id": uuid4(),
+                "claim": uuid4(),
+                "deployment_id": _DEPLOYMENT_ID,
+                "subject_id": alice["entity_id"],
+                "object_id": acme["entity_id"],
+            },
+        )
+    capped = rig.client.get(
+        "/lookup/relations", params={"subject_entity_id": alice["entity_id"], "k": 1}
+    ).json()
+    assert len(capped["facts"]) == 1
+    assert capped["truncation"]["truncated"] is True
+    assert capped["truncation"]["returned"] == 1
+    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    assert capped["truncation"]["total_is_exact"] is False
+
+    unfiltered = rig.client.get("/lookup/relations").json()
+    assert len(unfiltered["facts"]) == 2
+    assert unfiltered["truncation"] is None
+
+
+def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) -> None:
+    """G28: the direct entity read is capped by `k` like the semantic one."""
+    acme = rig.client.get("/resolve", params={"name": "Acme"}).json()["entities"][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO observations (observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version,"
+                " evidence_count, ingested_at)"
+                " SELECT :observation_id, deployment_id, subject_entity_id,"
+                " 'Acme is based in Prague.', normalizer_version, 1, now()"
+                " FROM observations WHERE subject_entity_id = :entity_id LIMIT 1"
+            ),
+            {"observation_id": uuid4(), "entity_id": acme["entity_id"]},
+        )
+    capped = rig.client.get(
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 1}
+    ).json()
+    assert len(capped["facts"]) == 1
+    assert capped["truncation"]["truncated"] is True
+    assert capped["truncation"]["reason"] == "lookup_k_limit"
+    whole = rig.client.get(
+        "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 2}
+    ).json()
+    assert len(whole["facts"]) == 2
+    assert whole["truncation"] is None
 
 
 def test_s2_headcount_via_semantic_observation_lookup(rig: _ApiRig) -> None:

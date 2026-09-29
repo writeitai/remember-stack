@@ -91,7 +91,7 @@ GitHub Pages at `docs.remember.dev`). Two standing obligations when implementing
   surface, configuration, mounts, connectors, deployment, the consumption skill — updates
   the affected `website/src/app/docs/**/page.mdx` in the *same PR* (creating the page per
   the target IA in `website/README.md` if it doesn't exist yet), and keeps
-  `/docs/project-status` truthful.
+  `/docs/project/not-built-yet` truthful.
 - **Docs describe what ships, designs describe the full scope.** A `page.mdx` documents
   behavior that exists on `main` — never aspirations (readers will run what it says). The
   full-scope intent lives in `plan/`; do not blur the two. Authoring conventions and the

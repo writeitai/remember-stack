@@ -49,6 +49,7 @@ class LocalDirectoryWatcher:
                     modified_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
                     filename=path.name,
                     mime=_MIME_BY_SUFFIX[path.suffix],
+                    source_path=ref,
                 )
             )
         for ref in sorted(set(known) - seen):

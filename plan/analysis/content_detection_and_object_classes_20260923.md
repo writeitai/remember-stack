@@ -1,5 +1,11 @@
 # Byte-authoritative ingest and object classes (2026-09-23)
 
+**Reconciled 2026-09-29 with D133/D138/D139.** D138 changed the unknown-binary
+outcome from refusal to a stored binary card, and its registry gives compatible
+text formats distinct postures. D132 still rejects a declaration contradicted
+by recognizable bytes. D139 requires every accepted PDF page to use OCR;
+byte detection never selects a PDF text-layer route.
+
 ## Problem and constraints
 
 An uploader can call a PDF `text/plain`, causing the wrong converter, rate class,

@@ -13,7 +13,14 @@ from remember.models import CapabilityReadiness
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import DeploymentBuildInfo
+from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentPeopleMatch
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchPage
+from remember.models import DocumentSearchPerson
+from remember.models import DocumentSearchRequest
+from remember.models import DocumentSearchResult
 from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
@@ -34,7 +41,14 @@ __all__ = (
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "DeploymentBuildInfo",
+    "DocumentDeletion",
     "DocumentPage",
+    "DocumentPeopleMatch",
+    "DocumentSearchFilters",
+    "DocumentSearchPage",
+    "DocumentSearchPerson",
+    "DocumentSearchRequest",
+    "DocumentSearchResult",
     "DocumentStatus",
     "DocumentStatusFilter",
     "DocumentSummary",

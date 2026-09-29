@@ -584,6 +584,16 @@ James’s Unity strategy game). Prefer dropping the relation or
 observation over inventing a referent. Protocol/boilerplate lines
 (adapter banners, “X is a participant”) are the same class.
 
+**The source document's own name (D134).** When Claimify replaced
+"this report" with the document's name, the claim records that name's span
+(`own_document_name_span`); the one reference whose text is exactly that span
+is not minted or resolved, and the claim keeps the name as text. Claims
+without the span are unaffected, so a person who shares a document's title
+still resolves; if two references share the span's text, none is skipped. This
+stops two same-named files from merging through a name entity. Mentions of
+*other* files by name resolve normally. Authority:
+[`document_metadata_and_search_design.md`](document_metadata_and_search_design.md) §6.
+
 This is extract eligibility, not a new mentions subsystem.
 
 ### 4.4 Aliases

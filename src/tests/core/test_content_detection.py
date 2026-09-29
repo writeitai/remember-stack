@@ -40,7 +40,11 @@ def _bmff_bytes(*, brand: bytes, compatible: bytes | None = None) -> bytes:
         (b"const answer = 42;\n", "application/javascript", "text/plain"),
         (b'{"answer":42}\n', "application/json", "text/plain"),
         (b"\xef\xbb\xbf# Heading\r\n", "text/markdown", "text/markdown"),
-        (b"%PDF-1.7\n" + b"x" * 1_000_000, "application/pdf", "application/pdf"),
+        (
+            b"%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF",
+            "application/pdf",
+            "application/pdf",
+        ),
         (b"\x89PNG\r\n\x1a\n" + b"bytes", "image/png", "image/png"),
         (b"GIF89a\x01\x00\x01\x00\x80\x00\x00;", "image/gif", "image/gif"),
         (
@@ -100,10 +104,10 @@ def test_contradictory_declarations_are_typed(content: bytes, declared: str) -> 
 
 
 def test_unknown_binary_is_not_text() -> None:
-    """An unrecognized binary cannot fall through to the text rate class."""
+    """An unrecognized binary cannot be declared as text."""
     with pytest.raises(ContentDetectionError) as raised:
         detect_content_mime(content=b"\x00\x01payload", declared_mime="text/plain")
-    assert raised.value.code == "unsupported_binary_content"
+    assert raised.value.code == "content_type_mismatch"
 
 
 @pytest.mark.parametrize("declared", ("text/plain", "application/octet-stream"))
@@ -115,10 +119,11 @@ def test_printable_magic_prefixes_remain_text(content: bytes, declared: str) -> 
 
 @pytest.mark.parametrize("content", (b"\xff\xfeA\x00", b"\xff\xfb\x90\x00\x00\x01"))
 def test_short_binary_cannot_spoof_mpeg(content: bytes) -> None:
-    """A partial frame and UTF-16 BOM cannot enter the audio class."""
-    with pytest.raises(ContentDetectionError) as raised:
+    """A partial frame and UTF-16 BOM get a binary card, never audio."""
+    assert (
         detect_content_mime(content=content, declared_mime="application/octet-stream")
-    assert raised.value.code == "unsupported_binary_content"
+        == "application/octet-stream"
+    )
 
 
 def test_complete_mpeg_frame_is_audio() -> None:

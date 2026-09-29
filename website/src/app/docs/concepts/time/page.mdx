@@ -1,0 +1,275 @@
+export const metadata = {
+  title: "Time",
+  description: "How RememberStack records when something was true, when a source said it, and when the memory learned it, and how you ask about any of the three.",
+};
+
+# Time
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+Ask a vector store "who works on the billing migration?" and it returns the
+passages that sound most like the question. The January note that says Ravi
+joined, and the June retro that says he left, both sound like the question.
+The store has no idea that one replaced the other. Your agent gets both,
+with nothing to tell them apart, and answers with whichever the model
+happened to read first.
+
+Time is where memory for agents most often fails, and where RememberStack
+does the most work. Every fact knows when it was true in the world. Every
+claim knows when its source said it. Every fact knows when the memory
+learned it and when the memory stopped believing it. And every query says
+which time it is asking about.
+
+## Three clocks
+
+RememberStack keeps three separate clocks. Mixing them up is the most common
+source of wrong answers about time, so they never share a field.
+
+| Clock | Question it answers | Fields |
+|---|---|---|
+| **World time** (valid time) | When was this true, or when did it happen? | Facts: `valid_from`, `valid_until`, `valid_precision`. Claims: `claim_valid_from`, `claim_valid_until`, `claim_valid_precision`, `claim_valid_kind`. |
+| **Said-on time** | When did the source say it? | Claims: `asserted_at`. |
+| **Belief time** (system time) | When did the memory learn it, and when did it stop believing it? | Facts: `ingested_at`, `invalidated_at`. |
+
+![One fact on three timelines: valid 14 January to 1 June in the world, said on 15 January and 12 June by two sources, learned by the memory on 15 January and still believed. A query at 1 March finds it true; a query at 1 July finds it ended.](/docs/diagrams/three-clocks.svg)
+
+A worked example makes the difference concrete. The team's notes contain
+two documents:
+
+- **Kickoff notes**, ingested with `source_modified_at` 2026-01-15 10:00 UTC:
+  "Ravi has been on the billing migration since yesterday."
+- **Retro notes**, ingested with `source_modified_at` 2026-06-12 14:00 UTC:
+  "Ravi moved from the billing migration to the search team on 1 June."
+
+For the fact "Ravi works on billing migration", the three clocks read:
+
+| Clock | Value | Where it came from |
+|---|---|---|
+| World time | from 2026-01-14 until 2026-06-01 | "since yesterday", resolved against the kickoff date; closed by the retro's "on 1 June" |
+| Said-on time | 2026-01-15 (kickoff claim), 2026-06-12 (retro claim) | each document's `source_modified_at` |
+| Belief time | learned 2026-01-15, a few minutes after ingest; still believed | when the pipeline wrote the fact; no retraction since |
+
+Notice what the retro did *not* do. It did not end the fact on 12 June, the
+day the retro was written. Said-on time is provenance, never validity. The
+fact ends on 1 June because that is when the retro says the move happened.
+
+## World time on claims
+
+Every [claim](/docs/concepts/claims) carries the world time its source stated, if any,
+as four fields:
+
+- `claim_valid_from` and `claim_valid_until`: the stated bounds.
+- `claim_valid_precision`: how exact they are (see
+  [Precision](#precision)).
+- `claim_valid_kind`: what the bounds describe:
+
+| Kind | Meaning | Example |
+|---|---|---|
+| `event_time` | When something happened. | "Ravi merged the schema change on 2026-03-03." |
+| `effective_period` | When a state or arrangement applied. | "Ravi worked on the billing migration from January to May." |
+| `measurement_period` | The period a figure covers. | "Q1 billing errors fell to 12." |
+| `proposition_validity` | When a proposition holds. | "Dana has led product since 2024." |
+
+Most claims state no world time. They keep `unknown` precision and empty
+bounds. RememberStack never falls back to the said-on time or the ingest
+time to fill the gap; an undated statement stays undated.
+
+**Relative dates are resolved.** When a source says "yesterday", "last
+Friday" or "last year" and the document has a date, the extractor resolves
+the expression and writes the absolute date into both the structured fields
+and the claim text: "since yesterday" in a note dated 2026-01-15 becomes
+"since 2026-01-14". The original wording stays in `source_span`. When there
+is no date to resolve against, or the expression is too vague ("a few weeks
+ago"), the wording is kept as spoken and no date is invented. A relative
+phrase still present in `claim_text` is itself the signal: read it against
+`asserted_at`.
+
+The document date comes from `source_modified_at` when you ingest. Set it,
+especially for transcripts and chat logs, where "yesterday" is common. See
+[Documents, versions and sources](/docs/concepts/documents-and-sources#source_modified_at-becomes-the-said-on-time).
+
+Claim times never change. Two sources may state different, even conflicting,
+windows for the same thing; both stand as evidence.
+
+## World time on facts
+
+Each [fact](/docs/concepts/facts) has **one** chosen world-time window: `valid_from`,
+`valid_until` and `valid_precision`, returned together in the fact's
+`validity`. Unlike a claim's window, a fact's window changes as evidence
+arrives:
+
+- A new fact takes the window of the claim it came from, but only when that
+  window describes this particular assertion. A claim that mentions a 2019
+  hire and a 1990 founding does not give both facts the same dates.
+- A later claim can correct the dates ("the cutover was 9 June, not 8
+  June"). The fact keeps its identity; its window is replaced, and the
+  decision names the claims that justify it.
+- A successor closes its predecessor. Ravi's move to the search team caps
+  "Ravi works on billing migration" at 2026-06-01, the successor's start in
+  the world.
+
+Each change is written to the fact's decision transcript with the window
+before and after. See [Evidence](/docs/concepts/evidence#why-do-we-believe-this).
+
+### Precision
+
+Precision says how exact a window is. It is never faked: a claim that says
+"in 2025" is a year, not 1 January 2025.
+
+| Precision | Meaning | Example |
+|---|---|---|
+| `instant` | An exact moment. | "the deploy finished at 16:30 UTC" |
+| `day` | A calendar day. | "on 2026-06-01" |
+| `month` | A calendar month. | "in March 2026" |
+| `quarter` | A calendar quarter. | "in Q2 2026" |
+| `year` | A calendar year. | "in 2025" |
+| `open` | A known start, still ongoing. | "since 2026-01-14" |
+| `unknown` | No usable date. | "Ravi is the on-call engineer" |
+
+<Callout type="note" title="Claim ends are inclusive; fact ends are exclusive">
+
+A claim stores the bounds as the source stated them, with an inclusive
+end: "in 2025" is `claim_valid_from` 2025-01-01, `claim_valid_until`
+2025-12-31, precision `year`. A fact stores the canonical interval with
+an exclusive end: `valid_from` 2025-01-01T00:00:00Z, `valid_until`
+2026-01-01T00:00:00Z. A day-precision fact for 2026-06-01 ends at
+2026-06-02T00:00:00Z. Compare fact bounds with `valid_from &lt;= t &lt;
+valid_until`.
+
+</Callout>
+
+A fact's window may also be partly known: a start without an end (and not
+`open`), or an end without a start. Partial windows are kept as they are,
+never completed with an invented date.
+
+## Asking about time
+
+`facts_context` and `combined_context` take a `time` argument that selects
+which facts count, by their world-time window. There are four modes.
+
+| Mode | Returns facts that… | Use it for |
+|---|---|---|
+| `current` (default) | are true now: start at or before now, and end after now or have no end. | "Who works on the billing migration?" |
+| `at` | were true at one instant `at`. | "Who worked on it on 1 March?" |
+| `overlap` | overlap the inclusive range `from`–`to`. | "Who worked on it in May and June?" |
+| `history` | began at or before now, whether or not they have ended. | "Who has ever worked on it?" |
+
+```python
+import remember
+
+with remember.Client() as memory:
+    now = memory.facts_context("who works on the billing migration")
+    march = memory.facts_context(
+        "who works on the billing migration",
+        time={"mode": "at", "at": "2026-03-01T00:00:00Z"},
+    )
+    summer = memory.facts_context(
+        "who works on the billing migration",
+        time={"mode": "overlap", "from": "2026-05-15T00:00:00Z", "to": "2026-06-15T00:00:00Z"},
+    )
+    ever = memory.facts_context(
+        "who works on the billing migration",
+        time={"mode": "history"},
+    )
+```
+
+Instants must carry a timezone. The mode you asked for comes back in the
+result's `temporal_scope`, with the instant the query was evaluated
+(`evaluated_at`), so an answer always states the time it describes. See
+[Reading a result](/docs/concepts/reading-results).
+
+All four modes read **current belief**: only facts the memory believes now
+(`invalidated_at` is empty) are returned.
+
+### Confirmed and possible
+
+A fact with no dates, or with only one known end, cannot be ruled in or out
+by a time filter. RememberStack does not drop it and does not pretend it
+matches. It returns it with `temporal_match: "possible"`.
+
+| `temporal_match` | Meaning |
+|---|---|
+| `confirmed` | The fact's window is complete (both ends known, or a known start that is `open`), so the match is established. |
+| `possible` | The window is missing or partial. The fact passed the filter because nothing rules it out, not because its dates match. |
+
+Your agent should treat a `possible` fact as a lead, not an answer, when the
+question is about time.
+
+### The worked example, queried
+
+Add a third fact with no date, "Ravi is the on-call engineer for billing
+incidents". Evaluated on 2026-09-23, the modes return:
+
+| Query | Ravi works on billing migration (2026-01-14 to 2026-06-01) | Ravi works on search team (since 2026-06-01, open) | Ravi is on-call (no date) |
+|---|---|---|---|
+| `current` | not returned (ended) | `confirmed` | `possible` |
+| `at` 2026-03-01 | `confirmed` | not returned (not started) | `possible` |
+| `overlap` 2026-05-15 to 2026-06-15 | `confirmed` | `confirmed` | `possible` |
+| `history` | `confirmed` | `confirmed` | `possible` |
+
+A vector search over the same notes has one mode: similar text. It returns
+the kickoff line and the retro line side by side in every case.
+
+## Belief time and "as of"
+
+`ingested_at` is when the memory first held a fact. `invalidated_at` is when
+it stopped believing it, for example because a `living` source removed the
+fact's only support (see [Updating a source](/docs/concepts/updating-sources)). Facts
+are never deleted by this: an invalidated fact stays in memory with the
+instant it ended.
+
+The graph operations take both clocks together, for a two-axis question:
+"what did the memory believe on `believed_at` about the world on
+`valid_at`?"
+
+```python
+from datetime import datetime, UTC
+
+import remember
+
+with remember.Client() as memory:
+    ravi = memory.resolve_entity("Ravi").entities[0]
+    before_the_retro = memory.graph_neighborhood(
+        entity_id=ravi.entity_id,
+        valid_at=datetime(2026, 5, 1, tzinfo=UTC),
+        believed_at=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+```
+
+`valid_at` and `believed_at` must be given together or not at all. The
+result's `temporal_scope` has mode `as_of` and names both. See
+[Graph](/docs/reference/http-api/graph).
+
+<Callout type="note">
+
+A fact's window is corrected in place. A `believed_at` read filters on
+`ingested_at` and `invalidated_at`, and shows each fact with its window
+as it stands today. The windows a fact had before a correction are kept
+in its decision transcript, not replayed by the read.
+
+</Callout>
+
+## Time on claims and passages
+
+The claims-and-sources side of memory answers "what did the sources say?",
+and there the said-on time is what matters. Every evidence result carries
+`asserted_at` and the claim's own world-time fields; every passage
+(`ChunkEvidenceResult`) carries its version's `source_modified_at`.
+
+To ask what sources asserted about a period, the `examples.claims_as_of`
+saved query returns the claims whose stated window overlaps the range you
+give it. Claims with `unknown` precision cannot match a window; the query
+leaves them out and reports how many there are in its
+`unknown_precision_excluded` column, so an empty answer is never mistaken
+for "nothing was said". See [Saved queries](/docs/guides/saved-queries)
+and [Ask about the past](/docs/guides/ask-about-the-past).
+
+## Where to go next
+
+- [Ask about the past](/docs/guides/ask-about-the-past): recipes for
+  point-in-time and period questions.
+- [Facts](/docs/concepts/facts): how windows are chosen and corrected.
+- [Reading a result](/docs/concepts/reading-results): `validity`, `temporal_match` and
+  `temporal_scope` field by field.
+- [Assured operations](/docs/reference/assured-operations): the `time`
+  argument schema.

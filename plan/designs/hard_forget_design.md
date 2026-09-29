@@ -25,6 +25,9 @@ cannot surface content unique to that lineage, and their public negative is the 
 that never existed (S55). Information independently supported by another live lineage remains: the
 operation forgets a source contribution, not every independently obtained copy of a fact.
 
+> **Amended 2026-09-23 (D134).** D134's `document_metadata`, `document_people` and
+> `document_names` rows are deleted with the lineage.
+
 > **Amended 2026-08-26 (D95–D96).** `profile_summary` and the profile embedding
 > are a **derived cache**. Forgetting a lineage that contributed to a **shared**
 > surviving entity must invalidate and recompute that cache from remaining

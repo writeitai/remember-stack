@@ -60,6 +60,7 @@ class SurfaceCallSite(StrEnum):
     PROFILE_BACKFILL = "profile_backfill"
     PROFILE_REVIEW = "profile_review"
     PROFILE_FORGET_RECOVERY = "profile_forget_recovery"
+    PROFILE_DELETE = "profile_delete"
 
 
 @dataclass(frozen=True, slots=True)

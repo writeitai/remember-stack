@@ -1,18 +1,15 @@
-"""Typed models for remember: control plane and data plane (D49/D53/D65).
+"""Typed models for the remember memory client (D62/D65).
 
 Dependency-light: standard library and Pydantic only.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from enum import StrEnum
 from typing import Annotated
-from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Self
@@ -20,6 +17,7 @@ from typing import TypeAlias
 from uuid import UUID
 
 from pydantic import AfterValidator
+from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
@@ -41,138 +39,6 @@ def _require_utc(value: datetime) -> datetime:
 UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
-
-
-def _text(payload: Mapping[str, Any], key: str) -> str | None:
-    value = payload.get(key)
-    return value if isinstance(value, str) and value else None
-
-
-def _money(payload: Mapping[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return str(value)
-    return None
-
-
-def _moment(payload: Mapping[str, Any], key: str) -> datetime | None:
-    raw = _text(payload, key)
-    if raw is None:
-        return None
-    try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Control Plane Models (D53)
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Deployment:
-    """One deployment's identity and where a client reaches it."""
-
-    id: str
-    state: str
-    hostname: str | None
-    hostname_live: bool
-    created_at: datetime | None
-
-    @property
-    def is_ready(self) -> bool:
-        return self.state.lower() == "active" and self.hostname_live
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> Deployment:
-        return cls(
-            id=_text(payload, "id") or "",
-            state=_text(payload, "state") or "unknown",
-            hostname=_text(payload, "data_plane_hostname"),
-            hostname_live=bool(payload.get("data_plane_hostname_live", False)),
-            created_at=_moment(payload, "created_at"),
-        )
-
-
-@dataclass(frozen=True)
-class BillingStatus:
-    """Whether this organisation may incur chargeable work, and what it has."""
-
-    state: str
-    balance: str | None
-    cap: str | None
-
-    @property
-    def can_spend(self) -> bool:
-        return self.state.upper() == "ACTIVE"
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> BillingStatus:
-        return cls(
-            state=_text(payload, "billing_state") or "unknown",
-            balance=_money(payload, "balance_credits"),
-            cap=_money(payload, "monthly_cap_credits"),
-        )
-
-
-@dataclass(frozen=True)
-class SpendGate:
-    """The pre-dispatch decision: may work run right now, and if not, why."""
-
-    decision: str
-    reason_code: str | None
-    spent_usd: str | None
-    ceiling_usd: str | None
-    parked: bool
-
-    @property
-    def allows_work(self) -> bool:
-        return self.decision.lower() == "allow"
-
-    @property
-    def is_parked(self) -> bool:
-        return self.parked
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> SpendGate:
-        decision = _text(payload, "decision") or "unknown"
-        return cls(
-            decision=decision,
-            reason_code=_text(payload, "reason_code"),
-            spent_usd=_money(payload, "estimate_spent_usd", "spent_usd"),
-            ceiling_usd=_money(payload, "ceiling_usd"),
-            parked=bool(payload.get("is_parked", decision.lower() == "park")),
-        )
-
-
-@dataclass(frozen=True)
-class LedgerEntry:
-    """One append-only credit-ledger line: what was charged, and what remained."""
-
-    entry_id: str
-    position: int | None
-    entry_type: str
-    amount: str | None
-    balance_after: str | None
-    description: str | None
-    created_at: datetime | None
-
-    @classmethod
-    def from_payload(cls, payload: Mapping[str, Any]) -> LedgerEntry:
-        position = payload.get("ledger_position")
-        return cls(
-            entry_id=_text(payload, "credit_entry_id") or "",
-            position=position if isinstance(position, int) else None,
-            entry_type=_text(payload, "entry_type") or "unknown",
-            amount=_money(payload, "amount"),
-            balance_after=_money(payload, "balance_after"),
-            description=_text(payload, "description"),
-            created_at=_moment(payload, "created_at"),
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +100,12 @@ class PipelineStageReadiness(BaseModel):
         "missing", "pending", "running", "succeeded", "failed", "dead_letter", "skipped"
     ]
     finished_at: datetime | None = None
+    # Why waiting work waits: `no_route` (no converter for the file's type),
+    # `budget` (the spend budget is exhausted), `scheduled` (due later), or
+    # `retry_backoff` (a `failed` stage waiting for its next attempt).
+    defer_reason: Literal["scheduled", "retry_backoff", "budget", "no_route"] | None = (
+        None
+    )
 
 
 class VersionPipelineReadiness(BaseModel):
@@ -277,11 +149,138 @@ class DocumentPage(BaseModel):
     cursor: str | None = None
 
 
+class DocumentDeletion(BaseModel):
+    """What deleting one document changed in the live memory.
+
+    The counts describe this call. A call that finishes a deletion another
+    path started reports only the work it finished.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    deleted_at: datetime
+    claims_retired: int = Field(ge=0)
+    relations_closed: int = Field(ge=0)
+    observations_closed: int = Field(ge=0)
+
+
+DOCUMENT_SEARCH_MAX_K: Final = 200
+DOCUMENT_SEARCH_DEFAULT_K: Final = 20
+
+
+class DocumentSearchFilters(BaseModel):
+    """General document metadata filters (D134 §3); every one given must hold.
+
+    ``authors`` and ``recipients`` match a person when any listed term equals
+    their normalized address or appears as whole words in their normalized
+    name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
+    Date ranges are inclusive and exclude documents that do not declare the
+    date.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    family: tuple[str, ...] = ()
+    authors: tuple[str, ...] = ()
+    recipients: tuple[str, ...] = ()
+    created_from: AwareDatetime | None = None
+    created_to: AwareDatetime | None = None
+    modified_from: AwareDatetime | None = None
+    modified_to: AwareDatetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    doc_ids: tuple[UUID, ...] = ()
+
+
+class DocumentSearchRequest(BaseModel):
+    """One ``search_documents`` call.
+
+    With a ``query`` the results are ranked by name and content matches and
+    there is no cursor. Without one they are every document the filters
+    match, newest declared creation date first, paged by ``cursor``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    query: str | None = Field(default=None, min_length=1, max_length=4096)
+    filters: DocumentSearchFilters = DocumentSearchFilters()
+    versions: Literal["current", "all"] = "current"
+    k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def cursor_pages_filters_only(self) -> Self:
+        """A ranked query has no stable order to page, so it takes no cursor."""
+        if self.query is not None and self.cursor is not None:
+            raise ValueError("cursor pages filter-only searches; drop query or cursor")
+        return self
+
+
+class DocumentSearchPerson(BaseModel):
+    """One author or recipient as the document declares them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: str | None = None
+    address: str | None = None
+
+
+class DocumentSearchResult(BaseModel):
+    """One matching document, described by the version it was judged by."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    version_no: int
+    status: DocumentStatus
+    lineage_title: str | None = None
+    file_name: str | None = None
+    title: str | None = None
+    source_path: str | None = None
+    p3_path: str
+    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
+    the corpus root; present in a published snapshot only where the
+    deployment builds the filesystem view."""
+    family: str
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    authors: tuple[DocumentSearchPerson, ...] = ()
+    recipients: tuple[DocumentSearchPerson, ...] = ()
+    extra: dict[str, JsonValue] = Field(default_factory=dict)
+    overview: str | None = None
+    other_matching_version_ids: tuple[UUID, ...] = ()
+    matched_by: tuple[Literal["name", "content"], ...] = ()
+    score: float | None = None
+
+
+class DocumentPeopleMatch(BaseModel):
+    """One distinct person an authors/recipients filter matched."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    role: Literal["author", "recipient"]
+    name: str | None = None
+    address: str | None = None
+    documents: int = Field(ge=0)
+
+
+class DocumentSearchPage(BaseModel):
+    """A page of ``search_documents`` results."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    documents: tuple[DocumentSearchResult, ...]
+    cursor: str | None = None
+    as_of: datetime
+    people_matched: tuple[DocumentPeopleMatch, ...] = ()
+
+
 class SearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=1, max_length=4096)
     k: int = Field(default=10, ge=1, le=400)
     channel: Literal["semantic", "bm25"] = "semantic"
+    documents: DocumentSearchFilters | None = None
+    """D134: only results found in a document version matching these
+    general-metadata filters (the ``search_documents`` filters), applied before
+    the top-k; returned claims still cite their origin."""
 
 
 ADJACENT_CHUNKS_MIN_WINDOW: Final = 1
@@ -332,6 +331,9 @@ class DeploymentBuildInfo(BaseModel):
     build_revision: str = Field(default="")
     model_bindings: dict[str, str] = Field(default_factory=dict)
     document_binding_generation: str | None = Field(default=None)
+    # Catalogue tool name -> tool_version for every memory tool this deployment
+    # serves (D136). A host renders a tool only at an equal version.
+    tools: dict[str, int] = Field(default_factory=dict)
 
 
 class ConnectorCreate(BaseModel):
@@ -370,6 +372,22 @@ class IngestedVersion(BaseModel):
     version_id: UUID
     content_hash: str
     created: bool
+    # The engine always sets these three. They default to None only so this
+    # client still parses receipts from released engines that predate them
+    # (the client-vs-engine compatibility matrix).
+    mime: str | None = None
+    """The MIME type recorded for these bytes, which conversion uses."""
+    title: str | None = None
+    """The document's title. Set by the first ingest of the lineage."""
+    versioning_mode: Literal["snapshot", "living"] | None = None
+    """The lineage's versioning mode. Set by the first ingest of the lineage."""
+    parked: Literal["no_route"] | None = None
+    """``no_route`` when conversion is parked waiting for a route for this MIME type.
+
+    The original is stored, but it is not converted, searched or extracted
+    until an operator adds a conversion route and releases the parked work.
+    ``None`` means only that it is not parked for ``no_route``; processing
+    state comes from readiness."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )

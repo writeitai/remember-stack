@@ -90,6 +90,18 @@ class ClaimForNormalization(BaseModel):
     claim_valid_until: datetime | None = None
     claim_valid_precision: str = "unknown"
     claim_valid_kind: str | None = None
+    # D134: [start, end) of the document's own name in claim_text, when
+    # Claimify wrote it in place of a self-reference.
+    own_document_name_start: int | None = None
+    own_document_name_end: int | None = None
+
+    def own_document_name(self) -> str | None:
+        """The document's own name at the recorded span, or None without one."""
+        if self.own_document_name_start is None or self.own_document_name_end is None:
+            return None
+        return self.claim_text[
+            self.own_document_name_start : self.own_document_name_end
+        ]
 
 
 class ResolvedEntity(BaseModel):

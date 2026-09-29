@@ -1103,19 +1103,16 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the lineage's current snapshot (real FK added after that table)
-  document_entity_id uuid,                      -- OPTIONAL bridge to the Document-typed entity (see note below); composite FK
   title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
   deleted_at      timestamptz,                 -- lineage tombstone for hard-delete/forget (§13)
   UNIQUE (deployment_id, source_kind, source_ref),  -- lineage identity (D55)
-  UNIQUE (deployment_id, doc_id),               -- composite-FK target (tenancy isolation, §0)
-  FOREIGN KEY (deployment_id, document_entity_id) REFERENCES entities (deployment_id, entity_id) ON DELETE SET NULL (document_entity_id)
+  UNIQUE (deployment_id, doc_id)                -- composite-FK target (tenancy isolation, §0)
 );
 COMMENT ON TABLE documents IS
   'Document LINEAGES (D55): the logical document over time, connector-native identity. Snapshot state lives on document_versions; bytes on content_objects; bodies in GCS. versioning_mode drives testimony currency (D54); origin is the D42 stamp. A forget soft-tombstones the lineage.';
 CREATE INDEX ix_documents_live     ON documents (deployment_id) WHERE deleted_at IS NULL;
-CREATE INDEX ix_documents_entity   ON documents (document_entity_id) WHERE document_entity_id IS NOT NULL;
 
 -- D102 bounded same-document exact-name projection. Append-only decisions
 -- remain authority: replay validates the source pair against the exact monthly
@@ -1207,7 +1204,7 @@ CREATE TABLE document_representations (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   version_id      uuid NOT NULL,               -- composite FK below → document_versions: a representation reads ONE snapshot
   -- route + component identity (what produced this reading — the reuse key with content_hash):
-  route           text NOT NULL,               -- router route taken (digital_pdf | ocr | markitdown | asr_diarized | video_asr_keyframes | image_description | …, D38/D65)
+  route           text NOT NULL,               -- router route taken (pdf_ocr | markitdown | asr_diarized | video_asr_keyframes | image_description | …, D38/D65/D139)
   converter_name  text,
   converter_version text,                      -- LOGICAL FK → pipeline_component_versions; a bump creates a NEW representation (never mutates this one)
   blockizer_version text,                      -- LOGICAL FK → pipeline_component_versions; blocks = f(document.md, blockizer_version) (D57)
@@ -1266,16 +1263,74 @@ COMMENT ON TABLE connector_sync_cycles IS
   'D55 retract-timing barrier: living-mode retraction evaluates only at cycle finalization, after every lineage the cycle observed finished extraction — an intra-cycle move is a support swap, never a retract flicker. document_versions.sync_cycle_id stamps membership. FINALIZATION CONTRACT: the connector worker sets completed_at when the poll pass ends; an async finalization job runs when every stamped lineage''s extraction is done (or a timeout elapses), sets finalized_at, and evaluates retractions; lineages still extracting defer to the NEXT finalization — the deferral is visible as (completed_at set, finalized_at null) plus the lineage''s processing_state.';
 ```
 
-> **Document ↔ entity bridge (D18, Codex review).** D18 makes `Document ⊂ CreativeWork` a core
-> *entity* type with predicates `authored: Person → Document` and `about: Document → any`, so
-> documents participate in relations as entities. The corpus's *ingested files* and the *registry's
-> Document entities* are distinct but linkable: `documents.document_entity_id` points an ingested
-> file at its registry entity **when one exists**. Policy: an ingested document gets a Document
-> entity when it is referenced as the subject/object of a relation (e.g. "Alice authored this
-> report") or by a deployment-configured default; a Document entity may also exist for a
-> *cited-but-not-ingested* paper (created from a `document_crossrefs` row with no `to_doc_id`),
-> which has a registry entity but no `documents` row. So the bridge is nullable in both directions
-> and neither side is mandatory.
+```sql
+
+-- D134: general document metadata, one row per version, the same fields for every format family.
+CREATE TABLE document_metadata (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  doc_id          uuid NOT NULL,               -- denormalized lineage for filters
+  family          text NOT NULL,               -- D133 format family
+  file_name       text,                        -- as observed for this version
+  source_path     text,                        -- the source location as observed for this version (lineage source_uri is mutable)
+  title           text,
+  created_at      timestamptz,                 -- source-declared created/sent
+  modified_at     timestamptz,                 -- source-declared last modified
+  language        text,
+  thread_ref      text,                        -- opaque conversation/thread key
+  provenance      jsonb NOT NULL DEFAULT '{}', -- field → source | connector
+  extra           jsonb NOT NULL DEFAULT '{}', -- family-specific fields; returned, not a general filter
+  metadata_mapping_version text NOT NULL,      -- the family's metadata mapping (converter/connector), distinct from the E2 extractor version
+  PRIMARY KEY (deployment_id, version_id),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_metadata_family  ON document_metadata (deployment_id, family, created_at DESC);
+CREATE INDEX ix_document_metadata_thread  ON document_metadata (deployment_id, thread_ref) WHERE thread_ref IS NOT NULL;
+
+-- D134: every name a version was observed under — the name at conversion, then one row per
+-- metadata observation (identical bytes arriving under a new file name, title or path, which
+-- creates no version). search_documents' name channel reads this table, so a renamed file is
+-- found by its new name and its old ones.
+CREATE TABLE document_names (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  observed_at     timestamptz NOT NULL,
+  file_name       text,
+  title           text,
+  source_path     text,
+  origin          text NOT NULL CHECK (origin IN ('ingest','observation','converter','backfill')), -- where this name came from; 'backfill' marks a legacy lineage title, not an observed declared one
+  name_text       text NOT NULL,              -- file_name + title + source_path, space-joined; the indexed search text
+  PRIMARY KEY (deployment_id, version_id, observed_at),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_names_trgm ON document_names USING gin (name_text gin_trgm_ops);
+CREATE INDEX ix_document_names_bm25 ON document_names USING bm25 (name_text) WITH (text_config='simple');
+
+-- D134: the people in authors/recipients, one row each, for filtering by name or address.
+CREATE TABLE document_people (
+  deployment_id   uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  role            text NOT NULL CHECK (role IN ('author','recipient')),
+  ordinal         integer NOT NULL,
+  display_name    text,
+  address         text,                        -- email address or handle
+  normalized_name text,                        -- lower case, unaccented, whitespace collapsed
+  normalized_address text,
+  provenance      text NOT NULL CHECK (provenance IN ('source','connector')),
+  CHECK (display_name IS NOT NULL OR address IS NOT NULL),
+  PRIMARY KEY (deployment_id, version_id, role, ordinal),
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_metadata (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE INDEX ix_document_people_name    ON document_people USING gin (normalized_name gin_trgm_ops);
+CREATE INDEX ix_document_people_address ON document_people (deployment_id, normalized_address);
+```
+
+> **Documents are not entities (D134; replaces the D18-era Document-typed bridge).** Entity types
+> no longer exist (D96), and D134 finds, filters and names documents through `document_metadata`,
+> `document_people` and `search_documents`, not through the entity registry. There is no
+> document→entity column; a document's own name is never minted as an entity. A file *mentioned*
+> by another document is an ordinary name. Making documents entities is an unchosen proposal
+> (`plan/proposals/document_subject_entities.md`).
 
 ```sql
 -- ─────────────────────────────────────────────────────────────────────────
@@ -1367,10 +1422,12 @@ CREATE TABLE chunks (
   block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
   chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, source_kind, source_modified_at/published_at, language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, source_modified_at/published_at, language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
+  extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
+  extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
   -- stored here (D37); chunk_search holds normalized body + one current vector.
   location_facts_json jsonb,                   -- typed location-facts snapshot (schema version inside JSON); null until prepare
@@ -1438,7 +1495,7 @@ CREATE TABLE chunk_claims (
   chunk_id        uuid NOT NULL,               -- LOGICAL FK → chunks (a specific version's chunk row; representation via chunks.representation_id)
   claim_id        uuid NOT NULL,               -- LOGICAL FK → claims
   derivation_kind text,                        -- D65 disclosure, resolved from the manifest's labeled ranges: asr | acoustic_events | vlm_description | ocr | shot_notes | passthrough | …
-  evidence_mode   text,                        -- D65: source_expression | model_observation | model_interpretation (most-mediated wins on range-crossing spans)
+  evidence_mode   text,                        -- D65/D133: source_expression | computed | model_observation | model_interpretation (most-mediated wins on range-crossing spans)
   source_locators jsonb,                       -- D65: resolved locator set for THIS occurrence (SourceLocator[], media_design §4) — the span→source-map intersection, cached
   evidence_spans  jsonb NOT NULL,              -- D119: complete supporting body ranges for THIS occurrence, origin first: [{char_start, char_end}, …] in the owning chunk's representation
   created_at      timestamptz NOT NULL DEFAULT now(),  -- partition key
@@ -1496,6 +1553,7 @@ CREATE TABLE claims (
   added_context   jsonb NOT NULL DEFAULT '[]', -- [{text, source_kind: header|neighbour|prefix|hint, source_ref}] — each substring decontextualization ADDED (D32 layer 2)
   temporal_class  claim_temporal_class,        -- static | dynamic | atemporal — the "temporally classified" requirement (see reconciliation note)
   is_attributed   boolean NOT NULL DEFAULT false, -- preserves a "X said Y" attribution (entailment rule: entails "X said Y", not "Y" — D32)
+  own_document_name_span int4range,            -- D134: validated self-reference — the [start, end) span of claim_text where Claimify wrote the document's own name in place of "this report"; NULL otherwise
   -- grounding verdicts (D32). Deterministic layers 1-2 are an ACCEPTANCE GATE (must be true here);
   -- the LLM layers 3-4 are advisory/sampled and may be false on a kept-but-borderline claim:
   anchor_ok       boolean NOT NULL,            -- layer 1: source_span is a real in-bounds slice of the chunk (deterministic)
@@ -2486,6 +2544,7 @@ transaction); the real composite FKs on the smaller tables are the integrity bac
 
 ### 13.1 Normal delete (remove a document; retain audit history)
 
+
 1. **K tombstone first.** Before touching evidence, enqueue a `knowledge_refresh_queue` row with
    `trigger='tombstone'` carrying the doc/claim ids (found via `knowledge_artifact_evidence`), so
    the K driver recompiles affected **compiled** pages without the removed evidence and raises
@@ -2553,7 +2612,9 @@ test fails when a new source-bearing field is not classified. At minimum it cove
   content-free guards, sections, cross-reference citation text, representation metadata, and assets;
 - chunks/occurrences, claims and their text/spans/added context, mentions and aliases exclusive to
   the lineage, extraction decisions, grounding/resolution decisions, review payloads, locators,
-  audit rationales/features, every `document_entity_bindings` row for the lineage, and
+  audit rationales/features, every `document_entity_bindings` row for the lineage, the
+  lineage's `document_metadata`, `document_people` and `document_names`
+  rows (D134 — deleted, not scrubbed in place: they hold names, paths and people), and
   source-exclusive relation/observation evidence;
 - source-exclusive observation values and entity names/profiles, while facts/entities with
   independent live support retain only that independently supported state;
@@ -2698,6 +2759,8 @@ Labs."*
 | D58 chunk packing + multi-granularity retrieval | `chunks.block_start/end` + `chunk_content_hash` (= ordered block hashes); role filter joins chunk/section authority; no-overlap invariant is worker discipline, not DDL |
 | D67 normalized queue route, due time, parking, retry/DLQ, and lane costs | `processing_lane` / `processing_defer_reason`; `processing_state.lane/not_before/defer_reason/attempts/max_attempts`; transactional `tr_processing_state_initial_wake`; `ix_procstate_due`; `cost_ledger.processing_id/attempt/call_key/lane` + per-call UNIQUE; `ix_cost_budget_window`; `payload` explicitly non-authoritative |
 | D68 schema-/database-per-deployment | §0 tenancy contract; one deployment identity row; composite scoped keys retained as defense in depth; single-column `ix_entities_name_trgm`, `ix_aliases_lemma_trgm`, `ix_aliases_lemma_dm`; no `btree_gin` |
+| D133/D138 format families and extraction eligibility | `chunks.extraction_eligible` + policy version; `computed` evidence mode; formats themselves need no new table |
+| D134 document metadata and search | `document_metadata`, `document_people` (general fields per version), `document_names` (every observed name, trigram + BM25 indexes); `claims.own_document_name_span`; search filters join them; no new search sidecar (content channel reuses `chunk_search`) |
 | D69 unbounded graph-edge retention + post-head deployment bootstrap | `memory_v1.graph_edges_visible_history` in `p2_graph_design.md` (endpoint-bounded, no invalidation-age filter); §2 typed input map, sequence, transaction/idempotency/conflict contract; §3 bootstrap-owned universal core cross-link |
 
 ---

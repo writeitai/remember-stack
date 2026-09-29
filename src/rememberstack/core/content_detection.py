@@ -229,7 +229,7 @@ def _office_zip_mime(*, content: bytes) -> str | None:
 
 def _detected_mime(*, content: bytes) -> str:
     """Choose a class from signatures, package structure, or strict UTF-8."""
-    if content.startswith(b"%PDF-"):
+    if has_pdf_body(content=content) and b"%%EOF" in content:
         return "application/pdf"
     for signature, mime in (
         (b"\x89PNG\r\n\x1a\n", "image/png"),
@@ -270,22 +270,18 @@ def _detected_mime(*, content: bytes) -> str:
         office = _office_zip_mime(content=content)
         if office is not None:
             return office
-        raise ContentDetectionError(code="unsupported_binary_content")
+        return "application/octet-stream"
     if content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
         return "application/x-ole-office"
-    if has_pdf_body(content=content):
-        if b"%%EOF" in content:
-            return "application/pdf"
-        raise ContentDetectionError(code="unsupported_binary_content")
     try:
         decoded = content.decode("utf-8-sig")
-    except UnicodeDecodeError as error:
-        raise ContentDetectionError(code="unsupported_binary_content") from error
+    except UnicodeDecodeError:
+        return "application/octet-stream"
     if any(
         (ord(char) < 32 and char not in "\t\r\n") or ord(char) == 127
         for char in decoded
     ):
-        raise ContentDetectionError(code="unsupported_binary_content")
+        return "application/octet-stream"
     stripped_text = decoded.lstrip("\ufeff \t\r\n")
     if re.match(r"(?:<!doctype\s+html\b|<html(?:\s|>))", stripped_text, re.IGNORECASE):
         return "text/html"
@@ -298,6 +294,14 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
     declared = declared_mime.partition(";")[0].strip().lower()
     declared = _IMAGE_MIME_ALIASES.get(declared, declared)
     declared = _AUDIO_MIME_ALIASES.get(declared, declared)
+    if detected == "application/octet-stream":
+        if (
+            declared.startswith(("text/", "image/", "audio/", "video/"))
+            or declared == "application/pdf"
+            or declared in _OFFICE_MIMES
+        ):
+            raise ContentDetectionError(code="content_type_mismatch")
+        return detected
     if detected.startswith("text/"):
         if detected == "text/html":
             if declared not in {"", "application/octet-stream", "text/html"}:
@@ -322,6 +326,12 @@ def detect_content_mime(*, content: bytes, declared_mime: str) -> str:
         declared not in {"", "application/octet-stream"}
         and declared_class != detected_class
     ):
+        raise ContentDetectionError(code="content_type_mismatch")
+    if detected == "application/pdf" and declared not in {
+        "",
+        "application/octet-stream",
+        detected,
+    }:
         raise ContentDetectionError(code="content_type_mismatch")
     if (
         detected.startswith("image/")

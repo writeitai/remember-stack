@@ -1,0 +1,99 @@
+export const metadata = {
+  title: "Supported file types",
+  description: "Which file types RememberStack reads, and what to do with everything else.",
+};
+
+# Supported file types
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+RememberStack reads text. Every document is turned into Markdown before
+anything else happens, so what a deployment accepts depends on which
+formats it can turn into Markdown.<Cloud> That differs between remember.dev and a
+self-hosted deployment.</Cloud>
+
+## At a glance
+
+On a self-hosted deployment:
+
+| Format | As installed | With converters configured |
+|---|---|---|
+| Markdown, plain text, subtitles (`.md`, `.rst`, `.txt`, `.srt`, `.vtt`, …) | Read; claims extracted | Same |
+| Chat logs and transcripts, as Markdown or text | Read; claims extracted | Same |
+| HTML, EPUB | Read; claims extracted | Same |
+| Word (`.docx`, `.docm`, `.dotx`), PowerPoint (`.pptx`, `.pptm`, `.ppsx`, `.potx`) | Read; claims extracted | Same |
+| Spreadsheets (`.xlsx`, `.xlsm`, `.xltx`, `.xls`), CSV/TSV, data files (Parquet, Arrow, SPSS, SAS, Stata, SQLite) | [Profile](/docs/self-hosting/converters#data-file-profiles): sheets, columns, counts and the first 5 rows; searchable, no claims | Same |
+| `.ods` | Profiled through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
+| `.doc`, `.odt`, `.rtf`, `.ppt`, `.odp` | Read through LibreOffice (in the published image); stored and parked when the engine runs without it | Same |
+| PDF with a text layer | Read page by page; claims extracted | Same |
+| Scanned PDF | Stored; pages without text are not read | Read with `mistral_ocr` (needs a Mistral API key) |
+| Email (`.eml`) | Read; attachments listed, not read | Same |
+| Jupyter notebooks (`.ipynb`) | Markdown cells read (claims extracted); code cells searchable, no claims; outputs dropped | Same |
+| Code, configuration, logs (`.py`, `.ts`, `.json`, `.yaml`, `.log`, `Dockerfile`, …) | Read and searchable; no claims | Same |
+| Text files of unknown kind | Read and searchable; no claims | Same |
+| Images | File card (name, path, size, dimensions) | Read with `image_ocr_description` (PNG and JPEG; OCR plus a written description) |
+| Audio and video | File card | Same |
+| Archives (`.zip`, `.tar`, `.tar.gz`, `.7z`, …) | File card; zip and tar list their members | Same |
+| Other binary files | File card | Same |
+| Web addresses (URLs) | No | No: download the page and send the HTML |
+
+A Word, PowerPoint or PDF file over 100 MB, or a spreadsheet over 200 MB,
+gets a file card instead of a reading; a spreadsheet over 50 MB is profiled
+from its sheet list and dimensions only. A text file over 1 MB is described
+by its size, line count, first 50 and last 20 lines instead of read in
+full.
+
+## Formats and converters
+
+A new self-hosted deployment reads the formats above locally, with no API
+key, and describes images, media and archives with a card. Formats it
+cannot read yet are accepted and stored, but they wait unprocessed. The
+upload response tells you: its `parked` field is `"no_route"`, and
+`remember ingest` prints a warning.
+
+To read scanned PDFs and images with OCR, map their type to a converter in
+`REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`. [File formats and
+converters](/docs/self-hosting/converters) shows the setting, what each
+converter does and costs, and how to release files that were stored before
+you added a route.
+
+<Cloud>
+
+## remember.dev
+
+remember.dev accepts UTF-8 Markdown and plain text, up to 10,000,000 bytes
+of text per document. Send it with the type `text/markdown`,
+`text/x-markdown` or `text/plain`. A binary file, such as a PDF, an image or
+a Word document, is refused with `409`. Text that is not valid UTF-8, or
+that starts with HTML or XML markup, is refused with `422`. The full list of
+limits and error codes is on [Limits](/docs/cloud/limits).
+
+To store a PDF, a Word document or a web page on remember.dev, convert it
+to Markdown first and send the Markdown.
+
+</Cloud>
+
+## Send the right type
+
+A self-hosted deployment recognizes a file by its extension first. The type
+sent with the upload decides only when the name does not say what the file
+is; a text file with neither is searchable but no claims are extracted
+from it. The `remember` CLI, Python client and MCP `ingest` tool send a
+type taken from the extension ([the full
+table](/docs/guides/ingest-files#the-mime-type)). A file whose extension
+does not say what it is needs the type passed explicitly:
+
+```python
+client.ingest("notes/standup", mime="text/markdown")
+```
+
+```bash
+remember ingest notes/standup --mime text/markdown
+```
+
+## Conversations
+
+There is no separate conversation format. Write each conversation as one
+Markdown document with one line per turn, and send it like any other file.
+[Ingest conversations and transcripts](/docs/guides/ingest-conversations)
+shows the layout.

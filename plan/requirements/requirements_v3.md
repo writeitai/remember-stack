@@ -240,7 +240,7 @@ adapters:
 - **Reference deployment** (the fixed production profile; also what the cloud offering runs):
   Postgres on **Hetzner**; workers on **GCP Cloud Run jobs** via **Cloud Tasks**; **GCS** buckets
   with **gcsfuse** mounts.
-- **Self-host profile**: S3-compatible object store (e.g. MinIO), Postgres-backed queue, local
+- **Self-host profile**: S3-compatible object store (e.g. SeaweedFS), Postgres-backed queue, local
   directory mounts, any git remote, BYO model keys.
 
 ## Code

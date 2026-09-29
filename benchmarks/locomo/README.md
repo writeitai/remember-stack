@@ -242,7 +242,7 @@ run and retain the provider/cost artifacts.
 The primary protocol uses a bounded answer agent over the complete public read
 plane: four assured operations, seven direct primitives, seven open-query
 operations, and list/search/read over the ordinary P3 mount. It does not read
-Postgres, MinIO, graph files, or internal handlers directly. Limits are
+Postgres, the object store, graph files, or internal handlers directly. Limits are
 run-absolute: allow up to nine agent calls per selected question and one judge
 call per answer. The shared evaluator-cost value is a reported-spend stop threshold: a completed
 call can cross it, is recorded, and stops the run. Use the provider account cap as the hard

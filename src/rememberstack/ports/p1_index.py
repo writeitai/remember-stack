@@ -11,6 +11,7 @@ from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.client import DocumentSearchFilters
 
 P1_VECTOR_DIMENSIONS = 1_536
 """Fixed D94 semantic dimension for every current P1 target."""
@@ -103,12 +104,23 @@ class P1SearchPort(Protocol):
         vector: tuple[float, ...],
         k: int,
         current_only: bool,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
-        """Ranked claim-id nominations from the claims channel."""
+        """Ranked claim-id nominations from the claims channel.
+
+        ``documents`` (D134) keeps a claim only when a live occurrence lies in
+        a matching document version, applied before the top-k cut.
+        """
         ...
 
     def search_claims_lexical(
-        self, *, deployment_id: str, query: str, k: int, current_only: bool
+        self,
+        *,
+        deployment_id: str,
+        query: str,
+        k: int,
+        current_only: bool,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Ranked claim-id nominations from the lexical claims channel."""
         ...
@@ -121,8 +133,13 @@ class P1SearchPort(Protocol):
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
-        """Ranked chunk-id nominations from the semantic source channel."""
+        """Ranked chunk-id nominations from the semantic source channel.
+
+        ``documents`` (D134) keeps a chunk only when its document version
+        matches, applied before the top-k cut.
+        """
         ...
 
     def search_chunks_lexical(
@@ -133,6 +150,7 @@ class P1SearchPort(Protocol):
         k: int,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[str, ...]:
         """Ranked chunk-id nominations from the lexical source channel."""
         ...
@@ -195,6 +213,7 @@ class P1ScoredSearchPort(Protocol):
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
@@ -209,6 +228,7 @@ class P1ScoredSearchPort(Protocol):
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -224,6 +244,7 @@ class P1ScoredSearchPort(Protocol):
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel.
 
@@ -244,6 +265,7 @@ class P1ScoredSearchPort(Protocol):
         equality_filters: Mapping[str, str] | None = None,
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...
@@ -262,8 +284,13 @@ class P1ScoredSearchPort(Protocol):
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
+        documents: DocumentSearchFilters | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Scored facts with separate eligible scope and ranking anchors."""
+        """Scored facts with separate eligible scope and ranking anchors.
+
+        ``documents`` (D134) keeps a fact only when a live supporting claim
+        comes from a matching document version.
+        """
         ...
 
     def search_entities_scored(

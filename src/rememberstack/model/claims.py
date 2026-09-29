@@ -230,6 +230,14 @@ class CandidateClaim(BaseModel):
             "missing or unrepresentable time. Part-of-day uncertainty is not an instant."
         ),
     )
+    own_document_name: str | None = Field(
+        default=None,
+        description=(
+            "Only when the claim replaced a reference to its own document "
+            "(this report, the attached spreadsheet): the exact document name "
+            "written into claim_text in its place. Null for every other claim."
+        ),
+    )
 
 
 class ClaimifyResponse(BaseModel):
@@ -266,6 +274,23 @@ class ClaimRecord(BaseModel):
     claim_valid_until: UTCDateTime | None = None
     claim_valid_precision: ClaimValidPrecision = ClaimValidPrecision.UNKNOWN
     claim_valid_kind: ClaimValidKind | None = None
+    # D134: [start, end) of the document's own name Claimify wrote into
+    # claim_text in place of a self-reference; None for every other claim.
+    own_document_name_start: int | None = Field(default=None, ge=0)
+    own_document_name_end: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _own_document_name_span_is_a_range(self) -> Self:
+        start, end = self.own_document_name_start, self.own_document_name_end
+        if (start is None) != (end is None):
+            raise ValueError("own_document_name span needs both ends or neither")
+        if (
+            start is not None
+            and end is not None
+            and not start < end <= len(self.claim_text)
+        ):
+            raise ValueError("own_document_name span must be a range in claim_text")
+        return self
 
 
 class DecisionType(StrEnum):

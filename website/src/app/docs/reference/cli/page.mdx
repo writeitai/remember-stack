@@ -1,211 +1,743 @@
 export const metadata = {
-  title: "CLI Reference",
-  description:
-    "Complete reference for the canonical remember platform CLI: setup, doctor, cloud control plane, ingest, query, and MCP.",
+  title: "CLI",
+  description: "Every remember command, flag, default, environment variable and exit code.",
 };
 
-# Remember CLI Reference
+# CLI
 
-RememberStack has two deliberately separate truth layers. Claims are
-immutable source testimony (“what was asserted, by whom, when”);
-facts—relations and observations—are the adjudicated worldview (“what the
-system holds or held true”):
-supersession-adjudicated, clocked on two time axes (when a fact held in
-the world, and when the system learned it), evidence-counted per
-distinct source—repetition is not corroboration—and
-contradiction-tracked. The `fact_claim_evidence` association is the
-auditable bridge between the layers, recording which claims support or
-contradict each fact. Query claims to inspect testimony; query facts to
-answer current or historical truth questions, then follow the bridge to see
-why the system believes or believed the fact.
+<AppliesTo products={["remember.dev", "self-hosted"]} />
 
-(Internally these guarantees are decisions D41 and D54.)
+This page describes the `remember` CLI (v0.17.2), installed by `pip install remember`.
 
-The canonical `remember` CLI (v0.17.0+) ships in the lightweight `remember` package on PyPI (`pip install remember` or `uvx remember`). Surfaces besides the CLI: [Choose your path](/docs/getting-started/choose-your-path). Org / project / keys: [How Remember Cloud works](/docs/cloud/how-it-works).
-
-It provides a single unified command-line tool for:
-- **Agent Onboarding**: Interactive setup and diagnostic verification (`setup`, `doctor`).
-- **Cloud Control Plane**: Session management, credit balance, project switching, and team seats (`login`, `whoami`, `balance`, `projects`, `switch`, `members`).
-- **Data Plane Operations**: Document ingestion, assured retrieval, sandboxed SQL queries, and the MCP server (`ingest`, `operations`, `query`, `mcp`).
+The `remember` command stores documents, asks the memory questions and
+connects coding agents<Cloud>. It also signs you in to remember.dev</Cloud>. It
+comes with the `remember` Python package:
 
 ```bash
+pip install remember
 remember --version
-# Remember 0.17.0
 ```
 
----
+It needs Python 3.12 or newer. `uv tool install remember` installs it as a
+standalone tool; `uvx remember …` runs it without installing.
 
-## 1. Universal Quickstart & Diagnostics
+## Commands at a glance
 
-### `remember setup`
-Interactively configures your coding agent harnesses (Cursor, Claude Code, Claude Desktop, Codex, Antigravity) to connect to Remember:
+| Group | Command | What it does |
+|---|---|---|
+| Memory | [`ingest`](#remember-ingest) | Upload one file. |
+| | [`query`](#remember-query) | Ask a question, or run SQL queries and saved queries. |
+| | [`operations`](#remember-operations) | List or run assured operations by name. |
+| | [`documents`](#remember-documents) | List documents, or delete one from the memory. |
+| Agents | [`mcp`](#remember-mcp) | Serve the memory to a coding agent over MCP. |
+| | [`setup`](#remember-setup) | Write MCP configuration for your coding agents. |
+| | [`doctor`](#remember-doctor) | Check installation, credentials, connectivity and agent configuration. |
+| Not served | [`connectors`](#remember-connectors) | Talks to routes no deployment serves yet. |
+| Engine operators | [`ops`](#self-hosted-operations-remember-ops) | Pipeline repair inside the engine container. |
+
+<Cloud>
+
+For remember.dev:
+
+| Group | Command | What it does |
+|---|---|---|
+| Account | [`login`](#remember-login) | Sign in from the terminal and store one API key. |
+| | [`logout`](#remember-logout) | Revoke the stored key and delete the credential file. |
+| | [`whoami`](#remember-whoami) | Show the stored key's projects, permissions and expiry. |
+| | [`switch`](#remember-switch) | Choose the default project for the stored key. |
+
+</Cloud>
+
+`remember` with no command prints help and exits with status 2.
+`remember <command> --help` prints that command's flags.
+
+## How the CLI finds your deployment
+
+Every command that talks to a deployment (`ingest`, `query`, `operations`,
+`documents`, `mcp`, `connectors`, `doctor`) accepts the same three flags:
+
+| Flag | Meaning |
+|---|---|
+| `--api-url URL` | The deployment address. |
+| `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
+| `--project PROJECT` | Which project to use, by id or name, when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
+
+Put flags after the subcommand: `remember query sql --api-url … "SELECT 1"`.
+
+Each setting is resolved on its own. First match wins:
+
+| Setting | 1. Flag | 2. Environment | 3. [Credential file](#credential-file) | 4. Otherwise |
+|---|---|---|---|---|
+| Key | `--api-key` | `REMEMBER_API_KEY` | `key` | no key |
+| Address | `--api-url` | `REMEMBER_API_URL` | `api_url` | `http://127.0.0.1:8000`<Cloud>, or the project's address for a remember.dev key</Cloud> |
+| Project | `--project` | `REMEMBER_PROJECT` | `default_project` | none<Cloud>, or the key's default project</Cloud> |
+
+The Python SDK resolves the same settings the same way
+([Python SDK](/docs/reference/python-sdk#connecting)).
+
+A key read from the credential file is only sent to the address stored beside
+it<Cloud>, to remember.dev, or to a project address remember.dev returns for
+that key</Cloud>. If `--api-url` or `REMEMBER_API_URL` names another address,
+the command exits with status 2 and asks for the key explicitly, with
+`--api-key` or `REMEMBER_API_KEY`. A key you pass explicitly is sent wherever
+you point it.
+
+<Tabs>
+
+<Tab cloud label="remember.dev">
 
 ```bash
-remember setup
+remember login
+remember query "Who owns the billing migration?"
+remember query "Who owns the billing migration?" --project docs
 ```
 
-Flags:
-- `--self-hosted`: Connect to a local Docker Compose engine (`http://localhost:8000`) instead of Remember Cloud.
-- `--url <url>`: Override the default data plane endpoint.
-- `--token <token>`: Provide a project data-plane token directly.
-- `--dry-run`: Preview planned harness configuration files without writing them.
+`remember login` stores one key. Each command asks remember.dev which address
+serves the project, then talks to that address directly, so you pass neither
+an address nor a key.
 
-### `remember doctor`
-Validates your environment, token health, active project context, backend connectivity, and agent harness registrations:
+</Tab>
+
+<Tab label="Self-hosted">
 
 ```bash
-remember doctor
+export REMEMBER_API_URL=http://localhost:8000
+export REMEMBER_API_KEY=<the key your engine accepts, if any>
+remember query "Who owns the billing migration?"
 ```
+
+</Tab>
+</Tabs>
+
+### Output
+
+Commands print their results to standard output: JSON for memory
+commands<Cloud>, plain text for account commands</Cloud>. Warnings and errors go to standard error, so
+you can pipe the output into `jq` safely.
+
+<Cloud>
+
+When the stored key expires within 30 days, or has expired, memory commands
+print a warning on standard error.
+
+</Cloud>
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. |
+| 1 | The request failed (network, HTTP error, rejected key), the credential file is unusable, or a check in `doctor` failed.<Cloud> Also when remember.dev cannot resolve the project.</Cloud> |
+| 2 | Usage error: unknown command or flag, missing argument, or an argument the CLI could not parse (for example `--parameters` that is not a JSON array). Also a stored key refused for the address you named. |
+
+<Cloud>
+
+`remember login` exits with status 130 when it is interrupted with Ctrl-C.
+
+</Cloud>
+
+## Memory commands
+
+### `remember ingest`
 
 ```text
-Remember Diagnostics (CLI v0.17.0)
-----------------------------------------
-[✓] Configuration: ~/.config/remember/credentials.json (0600)
-[✓] Backend connectivity: https://api.remember.dev (200 OK)
-[✓] Authentication: Valid session (project: prj_prod_acme)
-[✓] MCP Server: uvx remember mcp runnable
-[✓] Harnesses configured: Cursor (.cursor/mcp.json), Claude Code
-All systems operational.
+remember ingest FILE [--mime MIME] [--title TITLE]
+                     [--source-kind KIND --source-ref REF]
+                     [--source-modified-at ISO8601]
+                     [--versioning-mode {snapshot,living}]
+                     [--source-version-ref REF]
+                     [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
----
+Uploads one file and prints the new version as JSON:
 
-## 2. Remember Cloud Control Plane
+```json
+{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot"}
+```
 
-The control plane commands interact with Remember Cloud (`https://api.remember.dev`) to manage identity, workspaces, billing, and team collaboration.
+`created` is `false` when these exact bytes are already stored for the same
+document; nothing is processed again.
 
-> **Self-Hosted Note**: If you run control plane commands with `--self-hosted` or pointing to a local engine, the CLI outputs an informative notice:
-> *"Note: You are connected to a self-hosted engine. Projects, team members, and billing are cloud-managed services on remember.dev."*
+| Flag | Default | Meaning |
+|---|---|---|
+| `FILE` | required | Path of the file to upload. |
+| `--mime` | from the file's extension (`.md` is `text/markdown`, `.pdf` is `application/pdf`; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type)), else `application/octet-stream` | Media type. The engine processes only types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
+| `--title` | none | Human title. |
+| `--source-kind`, `--source-ref` | none | The document's stable identity. Give both or neither. Re-ingesting with the same pair makes a new version of the same document. |
+| `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
+| `--versioning-mode` | `snapshot` | `snapshot` or `living`; `living` needs `--source-kind`/`--source-ref`. See [Updating a source](/docs/concepts/updating-sources). |
+| `--source-version-ref` | none | The source system's revision label. Needs `--source-kind`/`--source-ref`. |
 
-### `remember login` / `remember logout`
-Authenticates via secure browser-based OAuth device grant:
+Exit status 2 when the source arguments break these rules or the timestamp is
+not UTC; 1 when the file cannot be read or the upload fails.
 
 ```bash
-# Authenticate against Remember Cloud
-remember login
+remember ingest notes/2026-09-18-billing-sync.md \
+  --title "Billing sync, 18 September" \
+  --source-kind meeting-notes --source-ref billing-sync/2026-09-18
+```
 
-# Log out and revoke stored tokens
+It prints the `IngestedVersion` as one JSON line. When the file's
+conversion is parked waiting for a conversion route, the line has
+`"parked":"no_route"` and the command also prints a warning to stderr that
+names the release step (`remember ops resume-no-route`); the exit status stays 0,
+because the file is stored. See
+[File formats and converters](/docs/self-hosting/converters#files-no-route-accepts).
+
+Ingest returns before processing ends. To wait, use the SDK's
+`wait_for_readiness` or the MCP `pipeline_readiness` tool; the CLI has no
+readiness command. See [Wait until a document is queryable](/docs/guides/wait-for-readiness).
+
+### `remember documents`
+
+```text
+remember documents list [--limit N] [--cursor CURSOR]
+                        [--status {ingesting,converting,structuring,ready,failed}]
+                        [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents search [QUERY] [--family FAMILY]... [--author NAME_OR_ADDRESS]...
+                          [--recipient NAME_OR_ADDRESS]...
+                          [--created-from T] [--created-to T]
+                          [--modified-from T] [--modified-to T]
+                          [--language LANG] [--thread-ref REF] [--doc-id DOC_ID]...
+                          [--versions {current,all}] [--limit N] [--cursor CURSOR]
+                          [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember documents delete DOC_ID [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+`list` prints one page of documents as JSON, newest document first, in the
+shape of [`DocumentPage`](/docs/reference/result-types#documentpage). Pass the
+page's `cursor` to `--cursor` to read the next page; `cursor` is `null` on
+the last page. `--limit` is 1 to 200 (default 50). `--status` keeps only
+documents whose newest version has that status.
+
+```bash
+remember documents list --status failed | jq -r '.documents[] | "\(.doc_id) \(.title)"'
+```
+
+`search` finds documents by name, metadata and text and prints a
+[`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage) as
+JSON. Repeat `--family`, `--author`, `--recipient` and `--doc-id` to list
+several; any listed value matches. Dates are ISO 8601 with a timezone, for
+example `2025-01-01T00:00:00+00:00`. With a `QUERY` the results are ranked and
+there is no next page; without one they are newest ingested first and
+`--cursor` reads the next page. `--limit` is 1 to 200 (default 20). See
+[`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+```bash
+remember documents search "q3 sales" --family spreadsheet | jq -r '.documents[] | "\(.doc_id) \(.file_name)"'
+remember documents search --author alice@acme.com --created-from 2025-01-01T00:00:00+00:00
+```
+
+`delete` removes one document, every version of it, from the memory and
+prints what changed:
+
+```json
+{"doc_id":"…","deleted_at":"2026-09-23T10:41:07.318000Z","claims_retired":12,"relations_closed":2,"observations_closed":1}
+```
+
+Its claims stop counting as evidence, and facts that only it supported are
+closed with a recorded retraction. The claims and the stored original stay
+as history. Deleting needs a `write` credential. Deleting a document that
+does not exist, or is already deleted, prints
+`error: API 404: document_not_found` and exits with status 1. See
+[`DELETE /documents/{doc_id}`](/docs/reference/http-api/ingest#delete-documentsdoc_id).
+
+```bash
+remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
+```
+
+### `remember query`
+
+```text
+remember query "QUESTION" [--combined]
+remember query text "QUESTION" [--combined]
+remember query sql STATEMENT [--parameters JSON] [--max-rows N]
+remember query explain-sql STATEMENT [--parameters JSON]
+remember query space [--pattern GLOB] [--include-examples]
+remember query search-space QUERY [--k N]
+remember query list-saved [--namespace NS] [--status STATUS]
+remember query describe-saved NAMESPACE NAME [--version N]
+remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max-rows N]
+remember query adjacent-chunks CHUNK_ID [--window {1,2}]
+```
+
+Every subcommand also takes `--api-url`, `--api-key` and `--project`.
+
+#### Asking a question
+
+`remember query "QUESTION"` is short for `remember query text "QUESTION"`.
+It runs the `facts_context` operation and prints the result
+[envelope](/docs/reference/result-types) as indented JSON. With `--combined` it runs
+`combined_context` instead and prints both the facts and what sources said.
+
+```bash
+remember query "Who owns the billing migration?"
+remember query --combined "Why did the cutover move to October?"
+```
+
+<Callout type="note">
+
+The shorthand applies only when no argument after `query` is exactly a
+subcommand name (`text`, `sql`, `explain-sql`, `space`, `search-space`,
+`list-saved`, `describe-saved`, `run-saved`, `adjacent-chunks`). To ask
+a one-word question such as "space", write `remember query text space`.
+
+</Callout>
+
+For other operation arguments (`time`, `entity_ids`, `k`), use
+[`remember operations run`](#remember-operations).
+
+#### SQL queries
+
+SQL queries run over the query space (`memory_v1`): prepared, read-only views
+and functions. The engine parses every statement and validates it against
+the query space before it runs; anything outside it is rejected. Output is
+the `QueryResult/v1` JSON object. See [Query space memory_v1](/docs/reference/query-space).
+
+| Subcommand | Arguments | What it prints |
+|---|---|---|
+| `sql` | `STATEMENT`; `--parameters` (JSON array of positional values for `$1`, `$2`, …); `--max-rows` (integer, 0 or more) | The result rows and their provenance. |
+| `explain-sql` | `STATEMENT`; `--parameters` | The plan, without running the statement. |
+| `space` | `--pattern` (shell-style filter over view names); `--include-examples` | The views, functions, comments and limits. |
+| `search-space` | `QUERY`; `--k` (default 10; the engine accepts 1–25) | Matching entries of the query space's own documentation, never your data. |
+| `list-saved` | `--namespace`; `--status` | Saved queries. Without `--status`, active versions only. |
+| `describe-saved` | `NAMESPACE NAME`; `--version` | One saved query's SQL, parameters and columns. |
+| `run-saved` | `NAMESPACE NAME`; `--version`; `--parameters`; `--max-rows` | The result of one active saved query. |
+
+`NAMESPACE` and `NAME` must match `^[a-z][a-z0-9_]*$`. A malformed
+`--parameters` value exits with status 2.
+
+```bash
+remember query sql \
+  "SELECT predicate, count(*) AS n FROM facts_current GROUP BY 1 ORDER BY 2 DESC LIMIT \$1" \
+  --parameters '[10]'
+```
+
+#### `adjacent-chunks`
+
+Prints the passages immediately before and after one chunk, in document order.
+`--window` is 1 (default) or 2.
+
+```bash
+remember query adjacent-chunks 6f1c2d0e-… --window 2
+```
+
+### `remember operations`
+
+```text
+remember operations list [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+`list` prints one JSON descriptor per line for the four assured operations,
+with each one's input schema.
+
+`run` runs one operation. Each `--arg` is `KEY=VALUE`; the value is parsed as
+JSON when it can be, otherwise kept as a string. The result prints as one
+line of JSON.
+
+```bash
+remember operations run facts_context \
+  --arg query="billing migration owner" \
+  --arg 'time={"mode":"history"}' \
+  --arg k=25
+```
+
+An `--arg` without `=` exits with status 2. Operation names and arguments are
+in [Assured operations](/docs/reference/assured-operations).
+
+## Agent commands
+
+### `remember mcp`
+
+```text
+remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
+```
+
+<Cloud>
+
+```text
+remember mcp [--read-only] [--remote-url URL] [--api-key KEY]
+```
+
+</Cloud>
+
+Runs an MCP server for a coding agent. By default it speaks on standard input
+and output and finds the deployment the same way as every other
+command<Cloud>, so after `remember login` it needs no flags</Cloud>.
+`--transport http` serves the same tools over HTTP at
+`http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
+`--read-only` removes the tools that change memory, `ingest` and
+`delete_document`.
+
+<Cloud>
+
+With a remember.dev key and no `--api-url`, it relays the agent's messages to
+the MCP endpoint remember.dev advertises for the key instead of serving the
+tools itself. `--remote-url` or `REMEMBER_MCP_URL` names another endpoint;
+the stored key is only sent to the advertised one, so another endpoint needs
+the key passed explicitly. `--remote-url` cannot be combined with `--api-url`,
+`--project` or `--transport http`.
+
+</Cloud>
+
+You rarely start it yourself; `remember setup` writes the agent
+configuration that starts it. The two transports, the tools, their parameters
+and the errors are in [MCP tools](/docs/reference/mcp).
+
+### `remember setup`
+
+```text
+remember setup [--self-hosted] [--api-url URL] [--api-key KEY] [--mcp-url URL]
+               [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
+```
+
+<Cloud>
+
+```text
+remember setup --cloud [--issuer URL] [--headless]
+               [--agent {cursor,claude,codex,agy,all}] [--dir DIR] [--dry-run]
+```
+
+</Cloud>
+
+Writes each coding agent's MCP entry for Remember.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--self-hosted` | | Configure for an engine at `--api-url`, default `http://127.0.0.1:8000`. |
+| `--api-url` | none | The engine address. It implies `--self-hosted` and is written into stdio entries as `REMEMBER_API_URL`. |
+| `--api-key` | none | With `--self-hosted`: the engine's key, stored in the [credential file](#credential-file) and never written into agent configuration. |
+| `--mcp-url` | none | The URL of your own `remember mcp --transport http` server. It implies `--self-hosted`. Agents that accept a URL entry connect to it; the others get a stdio entry. |
+| `--agent` | `all` | Which agent to configure. `agy` is Antigravity; `claude` means Claude Code and Claude Desktop. |
+| `--dir` | current directory | The project directory for project-level configuration. |
+| `--dry-run` | off | Print the entries it would write; write nothing. |
+
+<Cloud>
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--cloud` | | Configure for remember.dev, or for the issuer given with `--issuer`. |
+| `--issuer` | `REMEMBER_ISSUER`, else `https://remember.dev` | The key issuer to use. |
+| `--headless` | on when `CI` is set | For machines without a browser: agents send the key from `REMEMBER_API_KEY` instead of signing in. |
+
+`--cloud` asks the issuer for its MCP endpoint (`remember_mcp_endpoint` in
+its metadata) and points each agent at it. With no stored key and no
+`REMEMBER_API_KEY`, it runs [`remember login`](#remember-login) first,
+except with `--headless` or `--dry-run`. Only a key minted by the selected
+issuer counts: a stored key from elsewhere (or a self-hosted entry) is
+replaced by that login, and a `REMEMBER_API_KEY` from elsewhere is refused. It refuses `--api-key`,
+`--api-url` and `--mcp-url`: a remember.dev key comes from `remember login`
+or `REMEMBER_API_KEY`. With neither `--cloud` nor a self-hosted flag, on an
+interactive terminal, the command asks which backend to use; remember.dev
+is the default answer. When standard input is not a terminal, it chooses
+`--cloud`.
+
+</Cloud>
+
+What it does, in order:
+
+1. Finds the launcher. It prefers an installed `remember` binary; when that
+   binary lives in a virtual environment or a cache, or when there is none,
+   it uses `uvx remember mcp`. Paths are resolved to absolute paths so an
+   editor started from a desktop launcher finds them. With neither
+   `remember` nor `uvx` on `PATH` it exits with status 1.
+2. Chooses the agents. With `--agent all` it configures what it finds:
+   Cursor if `.cursor/` exists in the directory, Antigravity if `.agents/`
+   exists, Codex if `.codex/` exists or `codex` is installed, Claude Code if
+   `claude` is on `PATH`, Claude Desktop if its configuration file or
+   directory exists (or, on macOS, the app is installed). If it finds none,
+   it configures Cursor and Antigravity.
+3. For a self-hosted engine, stores the engine address and key in the
+   credential file (see the warning below).
+4. Writes one entry per agent. For a self-hosted engine the entry starts
+   `remember mcp` with `REMEMBER_API_URL`. With `--mcp-url`, Cursor, Claude
+   Code and Codex get a URL entry instead; Claude Desktop and Antigravity
+   keep the stdio entry. A key, if any, is never written: a URL entry refers
+   to the `REMEMBER_API_KEY` variable, which you set in the agent's
+   environment.<Cloud> For remember.dev, Cursor, Claude Code and Codex get the
+   endpoint URL and sign you in through the browser (for Codex, run
+   `codex mcp login remember` once, as the command prints), and the other agents
+   start `remember mcp` as a bridge to that endpoint. With `--headless`,
+   Cursor and Codex send `REMEMBER_API_KEY` as the bearer token, and Claude
+   Code gets the bridge.</Cloud>
+
+Claude Code and Codex count as accepting URL entries only when their
+installed command line supports them: `claude mcp add --help` must list
+`--transport`, and `codex mcp add --help` must list
+`--bearer-token-env-var`. Otherwise they get the stdio entry, which works
+everywhere.
+
+The exact files and their content are listed in
+[MCP tools: configuration that `remember setup` writes](/docs/reference/mcp#configuration-that-remember-setup-writes).
+
+<Callout type="warning">
+
+`remember setup --self-hosted` replaces the credential file with the engine's
+address and the key from `--api-key` (or no key). Afterwards every command
+talks to that engine.<Cloud> When a remember.dev key is stored, the command
+refuses; run `remember logout` first.</Cloud>
+
+</Callout>
+
+Existing configuration files must be valid JSON or TOML and must not be
+symbolic links; otherwise that agent is not configured and the command exits with status 1. A failure in
+one agent does not stop the others. Running the command again with the same
+flags leaves the files unchanged.
+
+```bash
+remember setup --self-hosted --agent cursor --dry-run
+```
+
+### `remember doctor`
+
+```text
+remember doctor [--api-url URL] [--api-key KEY] [--project PROJECT]
+```
+
+Checks your setup and prints one line per check:
+
+1. `remember` or `uvx` is on `PATH`.
+2. The credential file: whether it is readable, and what it holds<Cloud>
+   (the issuer, the key id and its expiry)</Cloud>.
+3. The deployment: `GET /deployment` with a 5-second timeout, resolved and
+   authenticated exactly as every other command.
+4. Agent configuration in the current directory: `.cursor/mcp.json`,
+   `.agents/mcp_config.json`, `.codex/config.toml`, and Claude Desktop's
+   configuration file. For each it checks the file parses and contains a
+   `remember` server. For a stdio entry it checks the command exists and is
+   executable; for a URL entry it prints the URL.
+
+`[✓]` is a pass, `[-]` is informational, `[!]` is a failure. Exit status 1
+when any check fails.
+
+<Cloud>
+
+## Account commands
+
+### `remember login`
+
+```text
+remember login [--issuer URL]
+```
+
+Signs you in with a device code. The command prints a link and a short code;
+you open the link, sign in to remember.dev, check that the code matches, and
+choose which projects and permissions the key gets. The command waits for
+your approval, then stores one API key in the
+[credential file](#credential-file). The key is never printed.
+
+The issuer is `--issuer`, else `REMEMBER_ISSUER`, else
+`https://remember.dev`. The command reads the issuer's OAuth metadata at
+`/.well-known/oauth-authorization-server` and runs the standard device
+authorization grant (RFC 8628) against the endpoints it names.
+
+```bash
+remember login
+```
+
+Behaviour worth knowing:
+
+- Waiting honours the server's pace: it slows down when asked, respects
+  `Retry-After`, and never waits more than 30 seconds between checks.
+- When you sign in again, the old key is revoked only after the new one is
+  safely stored. The old key is first recorded in `pending-revocation.json`;
+  if the command is interrupted, or the revocation cannot be confirmed, the
+  next `remember` command finishes the job. A key that was never replaced is
+  simply forgotten from that record, not revoked.
+- The browser step has a time limit set by the server. When it runs out, or
+  you deny the request, the command exits with status 1 and the stored key
+  is unchanged. Ctrl-C exits with status 130 and writes nothing.
+
+### `remember logout`
+
+```text
 remember logout
 ```
 
-Tokens are stored securely in `~/.config/remember/credentials.json` with strict directory permissions (`0700`) and file permissions (`0600`).
+Revokes the stored key at remember.dev (RFC 7009) and deletes the credential
+file. A key remember.dev no longer knows counts as revoked. If the revocation
+is not confirmed, the file is kept and the command exits with status 1. With
+no credential file it does nothing and exits 0. A stored self-hosted address
+and key are simply deleted.
 
 ### `remember whoami`
-Displays your current authenticated user, email, organization, and active project context:
 
-```bash
+```text
 remember whoami
 ```
 
-### `remember balance` (or `remember billing`)
-Checks your available credit balance, active subscription tier, and current monthly spend:
+Prints what the stored key says about itself: the issuer, key id, expiry,
+projects and permissions, and your default project. It never calls a
+deployment. When the key has the `account:read` permission, it also prints
+remember.dev's account view of the key. Exit status 1 when you are not
+signed in.
 
-```bash
-remember balance
-```
+### `remember switch`
 
 ```text
-Notice: Organization billing and subscription status are managed in the cloud console at https://remember.dev/app/billing.
+remember switch PROJECT
 ```
 
-### `remember projects list` / `remember projects create`
-View and manage isolated workspace projects:
+Makes `PROJECT` (an id or a name) the default project for the stored key.
+It asks remember.dev once to check that the key covers the project, then
+stores the project's id. No new key is created. Exit status 1 when the key
+does not cover the project.
 
-```bash
-# List available projects in your organization
-remember projects list
-```
+</Cloud>
 
-> Project creation and provisioning are managed directly in the cloud console at [`https://remember.dev/app/projects`](https://remember.dev/app/projects). Running `remember projects create` prints direct console guidance and exits.
+## `remember connectors`
 
-### `remember switch <project-id>`
-Switches your active default project context for subsequent CLI and MCP actions:
-
-```bash
-remember switch prj_prod_ecommerce
-```
-
-### `remember members list` / `remember members invite`
-Team collaborator management and seat allocations:
-
-> Organization member management is performed via the cloud console at [`https://remember.dev/app/team`](https://remember.dev/app/team). Running `remember members` prints direct console guidance and exits.
-
-
----
-
-## 3. Data Plane Operations
-
-The data plane commands run identically whether targeting Remember Cloud or a self-hosted engine.
-
-### `remember ingest <file>`
-Ingests a file into the content-addressed store, triggering chunk packing, claim extraction, and bitemporal adjudication:
-
-```bash
-remember ingest docs/architecture.md
-```
-
-### `remember operations list` / `remember operations run`
-Interacts with Remember's four assured operations:
-
-```bash
-# List available operations and their schema contracts
-remember operations list
-
-# Run facts_context
-remember operations run facts_context --arg query="Who is the lead architect?"
-```
-
-### `remember query sql <sql>` (Open Query Space)
-Executes an AST-sandboxed, read-only SQL query against the `memory_v1` view schema.
-
-**Open Query Space Parity**: Supported on Self-Hosted Engine; planned parity for Remember Cloud under active operator dogfooding.
-
-```bash
-remember query sql "SELECT fact_id, predicate, fact_label FROM facts_current WHERE predicate = 'works_at' LIMIT 10;"
-```
-
-### `remember query adjacent-chunks <chunk_id> [--window 1]`
-Fetches surrounding source chunks in document order within a symmetric window (1–2, default 1) around a target chunk:
-
-```bash
-remember query adjacent-chunks 57000000-0000-0000-0000-000000000001 --window 1
-```
-
-### `remember mcp`
-Launches the Model Context Protocol stdio server for AI coding agents:
-
-```bash
-remember mcp
-```
-
-### `remember connectors`
-Inspect and trigger external document ingestion connectors:
-
-```bash
+```text
 remember connectors list
+remember connectors add KIND --name NAME [--config KEY=VALUE]... [--credential-ref REF]
+remember connectors pause CONNECTOR_ID
+remember connectors status CONNECTOR_ID
 ```
 
----
+These commands call `/connectors` routes that no deployment serves today.
+Every one fails with `API 404` and exit status 1. Connectors are listed in
+[What is not built yet](/docs/project/not-built-yet).
 
-## 4. Retired Surfaces
+## Self-hosted operations: `remember ops`
 
-In accordance with Decision D108:
-- **`remember review`**: Retired. In early versions, review queues held human triage tasks. In modern Remember, contradiction adjudication is fully autonomous (D3/D43/D107) and runs live in the bitemporal store. Running `remember review` prints a helpful migration notice.
-- **`remember budget`**: Retired from the primary data-plane surface. Cloud spend and credit balances are managed via `remember balance`. Self-hosted engine spending is configured via `.env` provider rate limits.
-
-
-## Resume conversion after adding a route
-
-With engine extras installed and local database access, run:
+`remember ops` repairs and inspects a self-hosted engine's pipeline. It runs
+inside the engine container, which enables it by setting
+`REMEMBERSTACK_INTERNAL_OPS=1`. Elsewhere, including a `remember` installed
+from PyPI, it prints an error and exits with status 1, and the help output
+does not list it.
 
 ```bash
-remember ops resume-no-route --deployment <uuid>
+docker compose exec api \
+  remember ops inspect --deployment "$REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"
 ```
 
-The command reads `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES`, validates its
-adapter names, and releases only live convert rows parked with `no_route` whose
-stored MIME now has a converter. Restart workers with the same configuration
-first. Output is JSON with the released processing IDs; an empty list means
-nothing matched. Other MIME types stay parked. No original needs re-uploading.
-A worker still missing a route parks it again without using its attempt allowance.
-Existing dead-letter rows require the separate `remember ops replay` operation.
+`--deployment` is the engine's deployment id
+(`REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID`).
+
+| Subcommand | Flags | What it does | Output |
+|---|---|---|---|
+| `inspect` | `--deployment ID` | A bounded report of the pipeline: work in progress, dead letters, projections and freshness. | JSON |
+| `cost-export` | `--deployment ID`, `--cursor CURSOR`, `--limit N` (default 100) | One page of the cost export, which holds no document content. Exit 2 when `--deployment` does not match the engine or the cursor is invalid. | JSON |
+| `resume-no-route` | `--deployment ID` | Releases documents that were parked because no converter handled their media type, once a route now covers them. | `{"released": [...]}` |
+| `replay` | `PROCESSING_ID`, `--deployment ID`, `--attempts N` (default 1), `--lane {steady,backfill}`, `--not-before ISO8601` | Reopens one dead-lettered work item with N more attempts. | JSON |
+| `graph-catalog ensure` | none | Checks the database's graph metadata and repairs it when needed. | `{"ready", "changed", "problems_before", "problems_after", "definitions"}` |
+
+When and why to use each: [Operating the pipeline](/docs/self-hosting/operating).
+
+## Engine container commands
+
+The engine image `ghcr.io/writeitai/remember-stack` has its own entry point,
+`python -m rememberstack.profiles.selfhost`. `compose.yaml` runs each process
+with one of these commands; you use them when you write your own
+orchestration.
+
+| Command | What it runs |
+|---|---|
+| `setup` | Applies database migrations and prepares the deployment. Runs once; the other services start after it succeeds. |
+| `api` | The HTTP API. Listens on `REMEMBERSTACK_SELFHOST_API_HOST` (default `0.0.0.0`) and `REMEMBERSTACK_SELFHOST_API_PORT` (default `8000`). This is the image's default command. |
+| `worker --stage STAGE` | One pipeline worker. `STAGE` is one of `convert`, `structure`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `embed_claim`, `reconcile`, `label_relation`. Run one process per stage. |
+| `project --plane p3` | Builds the filesystem view snapshot once. In `compose.yaml` it belongs to the `operations` profile. |
+| `mounts --root PATH [--raw-root PATH] [--artifacts-root PATH]` | Publishes the latest snapshot under a local directory. |
+
+<Cloud>
+
+| Command | What it runs |
+|---|---|
+| `meter-receipts [--once] [--limit N]` | Sends ingest usage receipts to a metering service. `--limit` defaults to 100. In `compose.yaml` it belongs to the `managed` profile; a self-hosted engine does not need it. |
+
+</Cloud>
+
+The pipeline stages are explained in
+[The pipeline and readiness](/docs/concepts/pipeline); configuration in
+[Configuration](/docs/self-hosting/configuration); snapshots and mounts in
+[Filesystem views](/docs/self-hosting/filesystem-views).
+
+## Credential file
+
+`remember setup --self-hosted` stores the engine address and key in
+`credentials.json`<Cloud>, and `remember login` stores your remember.dev key
+there</Cloud>. The CLI and the Python SDK both read it, after flags (or
+arguments) and environment variables.
+
+Location, first match wins:
+
+1. `REMEMBER_CONFIG_DIR`
+2. `$XDG_CONFIG_HOME/remember/`
+3. `~/.config/remember/`
+
+Protection:
+
+- The directory is created with mode `0700` and the file with mode `0600`.
+  The file is written to a temporary name, synced and renamed, so a crash
+  leaves either the old file or the new one.
+- The CLI refuses to read a file that is a symbolic link or that group or
+  other users can read, and exits with status 1. Fix it with
+  `chmod 600 ~/.config/remember/credentials.json`.
+- Commands that change the file take a lock (`.lock` in the same directory).
+
+Format, version 2, for a self-hosted engine:
+
+```json
+{
+  "version": 2,
+  "api_url": "http://127.0.0.1:8000",
+  "key": "<the engine's key, or null>",
+  "issuer": null,
+  "key_id": null,
+  "expires_at": null,
+  "default_project": null
+}
+```
+
+<Cloud>
+
+After `remember login`:
+
+```json
+{
+  "version": 2,
+  "issuer": "https://remember.dev",
+  "key": "rmb_…",
+  "key_id": "…",
+  "expires_at": "2027-09-23T10:00:00+00:00",
+  "default_project": null,
+  "api_url": null
+}
+```
+
+Next to it, `pending-revocation.json` lists replaced keys whose revocation is
+not confirmed yet (at most 20). Every `remember` command retries them.
+
+</Cloud>
+
+A file in any other shape is refused. `remember setup --self-hosted` replaces
+it<Cloud>, and so does `remember login`</Cloud>.
+
+## Environment variables
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `REMEMBER_API_URL` | memory commands | Deployment address. |
+| `REMEMBER_API_KEY` | memory commands | API key, ahead of the credential file. |
+| `REMEMBER_PROJECT` | memory commands | Project id or name for a key that covers several projects. |
+| `REMEMBER_CONFIG_DIR` | all | Credential file directory. |
+| `XDG_CONFIG_HOME` | all | Base for the default credential directory. |
+| `REMEMBERSTACK_INTERNAL_OPS`, `REMEMBER_INTERNAL_OPS` | `ops` | Enables `remember ops`. The engine image sets it. |
+| `REMEMBERSTACK_MCP_INGEST_ROOTS`, `REMEMBERSTACK_MCP_PATH_READ_MAX_BYTES` | `mcp` | Path ingest; see [MCP tools](/docs/reference/mcp#ingest-from-a-path). |
+| `APPDATA` (Windows), `XDG_CONFIG_HOME` (Linux) | `setup`, `doctor` | Where Claude Desktop's configuration lives. |
+
+<Cloud>
+
+For remember.dev:
+
+| Variable | Used by | Meaning |
+|---|---|---|
+| `REMEMBER_ISSUER` | `login` | The key issuer; default `https://remember.dev`. |
+| `REMEMBER_MCP_URL` | `mcp` | A remote MCP endpoint to relay to; see [`remember mcp`](#remember-mcp). |
+
+</Cloud>
+
+Names are not case-sensitive. All client variables are in
+[Configuration variables](/docs/reference/configuration).
