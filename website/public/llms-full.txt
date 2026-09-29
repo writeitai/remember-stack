@@ -3546,9 +3546,9 @@ With bytes, the MIME type comes from the `filename` you pass.
 
 ## The MIME type
 
-The MIME type decides which converter reads the file. The client picks it
-from the extension: of the file's real name for a path, of `filename` for
-bytes. The formats a deployment can convert map the same way on every
+The client suggests a MIME type from the extension: of the file's real name
+for a path, or of `filename` for bytes. The server checks the bytes before
+storing them. The formats a deployment can convert map the same way on every
 Python installation:
 
 | Extension | MIME type |
@@ -3566,11 +3566,12 @@ name it does not know is sent as `application/octet-stream`. Pass `mime=`
 (or `--mime` on the CLI) to send a different type; an explicit value always
 wins.
 
-A self-hosted deployment decides the stored type itself: the file name's
-extension first, then the declared type when the name does not say, then
-the bytes ([how a family is chosen](https://remember.dev/docs/self-hosting/converters#how-a-files-family-is-chosen)).
-The declared type matters for a file whose name has no recognized
-extension.
+A self-hosted deployment decides the stored type itself: recognized PDF,
+image, audio, video, and Office bytes establish the class; within a compatible
+text class, the filename and declared type choose the format family
+([how a family is chosen](https://remember.dev/docs/self-hosting/converters#how-a-files-family-is-chosen)).
+A declaration contradicted by the bytes returns HTTP 422. Unknown binary is
+stored with a binary card.
 
 The deployment keeps the first MIME type it saw for a given set of bytes.
 If you send the same bytes again with a corrected `mime`, the stored type
@@ -6817,7 +6818,10 @@ ingest response says so at once with `"parked": "no_route"`.
 
 ## How a file's family is chosen
 
-The server decides, in this order:
+The server first checks bytes for recognizable PDF, image, audio, video and
+Office classes. It refuses a declaration that contradicts those bytes with
+HTTP 422. A recognized PDF stays a PDF regardless of its filename. Within
+the detected text class, it chooses a format family in this order:
 
 1. **The file name.** The lower-cased extension picks the family (`.py` is
    code, `.yaml` is configuration, `.tar.gz` is an archive). Files named
@@ -6829,8 +6833,8 @@ The server decides, in this order:
    type the server knows (`text/markdown`, `application/pdf`, a type your
    route table names) decides. `application/octet-stream` and `text/plain`
    never do, because clients send them for anything.
-3. **The bytes.** A file that is valid UTF-8 with no NUL byte in its first
-   64 KiB is unrecognized text; anything else is a binary file.
+3. **The bytes.** Text with no recognized family becomes `other_text`.
+   Unknown binary becomes a `binary` card.
 
 The stored MIME type is the family's (`text/x-code` for every code file,
 `text/x-config` for configuration, `text/x-log` for logs,
