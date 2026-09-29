@@ -562,6 +562,28 @@ def test_convert_fails_an_oversized_pdf_before_card_or_route(tmp_path: Path) -> 
     assert "pre-OCR reading limit" in catalog.failed
 
 
+def test_convert_fails_pdf_above_provider_limit_before_converter(
+    tmp_path: Path,
+) -> None:
+    """A PDF between provider and family limits fails before pdfium or OCR."""
+    from rememberstack.adapters.converters.pdf import PdfConverter
+
+    catalog = _ConvertCatalog(mime="application/pdf", byte_size=50_000_001)
+    with pytest.raises(NonRetryableHandlerError, match="pre-OCR provider limit"):
+        _convert(
+            tmp_path=tmp_path,
+            catalog=catalog,
+            routes={
+                "application/pdf": PdfConverter(
+                    ocr=_MixedConverter(), provider_limit_bytes=50_000_000
+                )
+            },
+        )
+    assert catalog.recorded is None
+    assert catalog.failed is not None
+    assert "pre-OCR provider limit" in catalog.failed
+
+
 def test_file_hints_reach_only_routes_that_accept_them() -> None:
     """The card receives the version's name and path; FileHints stays optional."""
     result = CardConverter().convert(

@@ -487,6 +487,16 @@ class ConvertHandler:
             # This runs before reading bytes or making a provider call, so the
             # runner may park and return the unused attempt (D117).
             raise NoRouteHandlerError(str(err), mime=source.mime) from err
+        provider_limit = getattr(converter, "provider_limit_bytes", None)
+        if (
+            source.mime == "application/pdf"
+            and source.byte_size is not None
+            and isinstance(provider_limit, int)
+            and source.byte_size > provider_limit
+        ):
+            error = f"PDF exceeds the pre-OCR provider limit of {provider_limit} bytes"
+            self._catalog.mark_version_failed(version_id=source.version_id, error=error)
+            raise NonRetryableHandlerError(error)
         existing = self._catalog.existing_representation(
             version_id=source.version_id,
             route=converter.name,

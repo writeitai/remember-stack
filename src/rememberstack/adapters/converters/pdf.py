@@ -64,6 +64,11 @@ class PdfConverter:
         """The pdf route version; the OCR route's version joins it (D38)."""
         return f"{PDF_CONVERTER_VERSION}+{self._ocr.version}"
 
+    @property
+    def provider_limit_bytes(self) -> int | None:
+        """The configured OCR input ceiling for pre-converter admission."""
+        return self._provider_limit_bytes
+
     def convert(self, *, content: bytes, mime: str) -> ConversionResult:
         """OCR every structurally valid page and keep the PDF Info metadata."""
         if (

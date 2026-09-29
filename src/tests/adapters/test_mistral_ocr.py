@@ -16,6 +16,9 @@ from rememberstack.adapters.converters import build_conversion_routes
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrConverter
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrProviderError
 from rememberstack.adapters.converters.mistral_ocr import MistralOcrSettings
+from rememberstack.core import blockize
+from rememberstack.core.extraction_eligibility import block_eligibility
+from rememberstack.core.extraction_eligibility import INELIGIBLE_DERIVATION_KINDS
 from rememberstack.model import ConversionError
 from rememberstack.model import ConversionResult
 from rememberstack.model import ConverterLaneError
@@ -289,10 +292,19 @@ def test_pdf_metering_uses_source_pages_and_empty_page_has_status() -> None:
     assert result.usage_events[0].usage.cost_usd == Decimal("0.002")
     assert "[No visible text found by OCR]" in result.document_md
     assert result.manifest.coverage.complete
-    assert any(
-        labeled.derivation_kind == "pdf_page_status"
+    status = [
+        labeled
         for labeled in result.manifest.derivation_ranges
+        if labeled.derivation_kind == "pdf_page_status"
+    ]
+    assert len(status) == 1
+    assert status[0].evidence_mode == "computed"
+    assert "pdf_page_status" in INELIGIBLE_DERIVATION_KINDS
+    eligible = block_eligibility(
+        blocks=blockize(document_md=result.document_md),
+        ranges=result.manifest.derivation_ranges,
     )
+    assert not eligible[-1]
     assert result.source_map is not None
     assert {
         entry.locators[0].page
@@ -309,6 +321,36 @@ def test_missing_pdf_ocr_page_is_typed_and_preserves_metered_usage() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         """Return a response missing its second source page."""
         return httpx.Response(200, json=raw)
+
+    with pytest.raises(ConverterLaneError, match="PDF OCR incomplete") as error:
+        _converter(httpx.MockTransport(handle)).convert(
+            content=_pdf(pages=["Digital", None]), mime="application/pdf"
+        )
+    assert not error.value.retryable
+    assert error.value.usage_events[0].usage.cost_usd == Decimal("0.002")
+
+
+def test_empty_pdf_ocr_response_is_nonretryable_and_metered() -> None:
+    """A billed 200 with no pages still charges accepted source pages."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Return no pages after the provider accepts the PDF."""
+        return httpx.Response(200, json={"model": "m", "pages": []})
+
+    with pytest.raises(ConverterLaneError, match="PDF OCR incomplete") as error:
+        _converter(httpx.MockTransport(handle)).convert(
+            content=_pdf(pages=["Digital", None]), mime="application/pdf"
+        )
+    assert not error.value.retryable
+    assert error.value.usage_events[0].usage.cost_usd == Decimal("0.002")
+
+
+def test_malformed_billed_pdf_response_preserves_source_page_usage() -> None:
+    """A 200 with invalid JSON still records the accepted PDF page count."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Return a malformed billed response."""
+        return httpx.Response(200, text="not JSON")
 
     with pytest.raises(ConverterLaneError, match="PDF OCR incomplete") as error:
         _converter(httpx.MockTransport(handle)).convert(

@@ -153,7 +153,9 @@ class MistralOcrConverter:
             else None
         )
         started_ns = time.monotonic_ns()
-        raw = self._process(content=content, mime=mime)
+        raw = self._process(
+            content=content, mime=mime, allow_empty_pages=source_pages is not None
+        )
         latency_ms = (time.monotonic_ns() - started_ns) // 1_000_000
         usage = _usage(
             raw=raw,
@@ -162,7 +164,13 @@ class MistralOcrConverter:
             source_pages=source_pages,
         )
         if source_pages is not None:
-            indexes = [page.get("index") for page in raw["pages"]]
+            pages = raw.get("pages")
+            indexes = (
+                [page.get("index") for page in pages]
+                if isinstance(pages, list)
+                and all(isinstance(page, dict) for page in pages)
+                else []
+            )
             if not all(type(index) is int for index in indexes) or sorted(
                 indexes
             ) != list(range(source_pages)):
@@ -190,7 +198,9 @@ class MistralOcrConverter:
             update={"usage_events": (ConverterUsageEvent(call_key="ocr", usage=usage),)}
         )
 
-    def _process(self, *, content: bytes, mime: str) -> dict[str, Any]:
+    def _process(
+        self, *, content: bytes, mime: str, allow_empty_pages: bool = False
+    ) -> dict[str, Any]:
         """One `/v1/ocr` call; 4xx is the input's fault, the rest retries."""
         encoded = base64.b64encode(content).decode("ascii")
         data_url = f"data:{mime};base64,{encoded}"
@@ -224,11 +234,18 @@ class MistralOcrConverter:
                 f"mistral ocr call failed (HTTP {response.status_code}): "
                 f"{response.text[:300]}"
             )
-        decoded = response.json()
+        try:
+            decoded = response.json()
+        except ValueError as err:
+            if allow_empty_pages:
+                return {"pages": None}
+            raise MistralOcrProviderError("mistral ocr returned invalid JSON") from err
         if not isinstance(decoded, dict):
+            if allow_empty_pages:
+                return {"pages": None}
             raise MistralOcrProviderError("mistral ocr returned a non-object JSON body")
         pages = decoded.get("pages")
-        if (
+        if not allow_empty_pages and (
             not isinstance(pages, list)
             or not pages
             or not all(isinstance(page, dict) for page in pages)
@@ -329,7 +346,9 @@ def _normalize(
                     start=start,
                     end=offset,
                     derivation_kind=kind,
-                    evidence_mode="source_expression",
+                    evidence_mode=(
+                        "computed" if kind == "pdf_page_status" else "source_expression"
+                    ),
                     confidence=confidence,
                 )
             )

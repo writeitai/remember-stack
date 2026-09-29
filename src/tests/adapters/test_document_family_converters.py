@@ -311,6 +311,12 @@ def test_pdf_provider_limit_fails_before_page_count_or_ocr() -> None:
             content=b"larger than three", mime="application/pdf"
         )
     assert ocr.calls == 0
+    content = _pdf(pages=["Admitted"])
+    admitted = PdfConverter(ocr=ocr, provider_limit_bytes=len(content)).convert(
+        content=content, mime="application/pdf"
+    )
+    assert admitted.document_md == "OCR text\n"
+    assert ocr.calls == 1
 
 
 def test_pdf_info_dictionary_becomes_d134_metadata() -> None:
