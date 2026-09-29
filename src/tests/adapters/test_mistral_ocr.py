@@ -280,7 +280,6 @@ def test_pdf_metering_uses_source_pages_and_empty_page_has_status() -> None:
     raw["usage_info"]["pages_processed"] = 1
     raw["pages"][0]["blocks"] = []
     raw["pages"][1]["markdown"] = ""
-    raw["pages"][1]["header"] = "Visible running head"
 
     def handle(request: httpx.Request) -> httpx.Response:
         """Return one successful but empty OCR page."""
@@ -328,6 +327,32 @@ def test_missing_pdf_ocr_page_is_typed_and_preserves_metered_usage() -> None:
         )
     assert not error.value.retryable
     assert error.value.usage_events[0].usage.cost_usd == Decimal("0.002")
+
+
+def test_pdf_page_with_only_header_and_footer_has_no_false_empty_marker() -> None:
+    """Visible OCR text in either field means the page is not empty."""
+    raw = json.loads(json.dumps(_RAW_RESPONSE))
+    raw["pages"][0]["blocks"] = []
+    raw["pages"][1]["markdown"] = ""
+    raw["pages"][1]["header"] = "Invoice 1042"
+    raw["pages"][1]["footer"] = "Page 2"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Return OCR text only in the second page's header and footer."""
+        return httpx.Response(200, json=raw)
+
+    result = _converter(httpx.MockTransport(handle)).convert(
+        content=_pdf(pages=["Digital", None]), mime="application/pdf"
+    )
+    assert "Invoice 1042" in result.document_md
+    assert "Page 2" in result.document_md
+    assert "[No visible text found by OCR]" not in result.document_md
+    assert result.manifest.coverage.complete
+    assert result.source_map is not None
+    assert any(
+        entry.locators[0].kind == "page" and entry.locators[0].page == 2
+        for entry in result.source_map
+    )  # pyright: ignore[reportAttributeAccessIssue]
 
 
 def test_empty_pdf_ocr_response_is_nonretryable_and_metered() -> None:

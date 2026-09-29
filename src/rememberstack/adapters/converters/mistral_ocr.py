@@ -322,15 +322,13 @@ def _normalize(
 
         confidence = _page_confidence(page=page)
         segments = _page_segments(page=page, body=body, last=position == len(pages) - 1)
-        if not body.strip() and not source_is_image:
-            insert_at = 1 if segments and segments[0][1] == "page_header" else 0
-            segments.insert(
-                insert_at,
+        if not segments and not source_is_image:
+            segments = [
                 (
                     f"## Page {number}\n\n[No visible text found by OCR]\n\n",
                     "pdf_page_status",
-                ),
-            )
+                )
+            ]
         elif not segments:
             warnings.append(f"page {number} produced no text")
         page_start = offset
