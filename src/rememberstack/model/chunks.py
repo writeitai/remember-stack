@@ -63,6 +63,8 @@ class ChunkSource(BaseModel):
     language: str | None
     structurer_version: str
     sections: tuple[SectionSpan, ...]
+    blockizer_version: str | None = None
+    """The representation's blockizer generation (part of the D140 reuse identity)."""
     # D80 connector packaging (defaults until connectors emit typed metadata).
     source_shape: str = "document"
     channel_ref: str | None = None
@@ -123,6 +125,13 @@ class ChunkRecord(BaseModel):
     extraction_eligible: bool = True
     extraction_eligibility_version: str | None = None
     """The eligibility policy version that decided ``extraction_eligible``."""
+    reuse_identity_hash: _NonEmpty
+    """The date-free identity that finds the chunk's text origin (D140 §5)."""
+    text_origin_at: UTCDateTime | None
+    """When the chunk's words were first written in the lineage (D140 §5).
+
+    Recorded once at creation and never recomputed; None when neither an
+    eligible earlier chunk nor the version's own date is known."""
 
 
 class ChunkForEmbedding(BaseModel):
@@ -157,6 +166,21 @@ class ChunkForEmbedding(BaseModel):
     location_facts_json: str | None = None
     extraction_eligible: bool = True
     """False when the eligibility policy excludes the chunk from Selection."""
+    text_origin_at: UTCDateTime | None = None
+    """The recorded text origin time (D140 §5). None for a chunk whose version
+    has no date and for chunks created before D140; E2 then uses the
+    version's own date, exactly as before."""
+
+
+class TextOriginMatch(BaseModel):
+    """An earlier chunk of the lineage with the same reuse identity (D140 §5)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    reuse_identity_hash: _NonEmpty
+    text_origin_at: UTCDateTime
+    version_no: int
+    ordinal: int = Field(ge=0)
 
 
 class CarryForwardSource(BaseModel):

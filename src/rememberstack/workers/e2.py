@@ -1291,8 +1291,9 @@ def _grounded_claim(
             for kept_start, kept_end in kept_ranges
         ),
         extractor_version=E2_EXTRACTOR_VERSION,
-        # D41 assertion-event time: when the source spoke (D55 source stamp).
-        asserted_at=source.source_modified_at or source.published_at,
+        # D41 assertion-event time: when the words were written — the
+        # chunk's text origin time (D140 §5), never later than the version's.
+        asserted_at=_chunk_date(source=source, chunk=chunk),
         claim_valid_from=valid_from,
         claim_valid_until=valid_until,
         claim_valid_precision=valid_precision,
@@ -1555,7 +1556,7 @@ def _bundle_text(
         target_section_id=chunk.section_id,
     )
     return (
-        f"DOCUMENT HEADER: {_header_text(source=source)}\n"
+        f"DOCUMENT HEADER: {_header_text(source=source, chunk=chunk)}\n"
         f"SECTION: path {chunk.section_path}, role {chunk.section_role}\n"
         "SECTION SUMMARIES (orientation only; never quote as source):\n"
         f"{summaries or '(none)'}\n"
@@ -1585,7 +1586,7 @@ def _source_grounding_elements(
     chunk = chunks[index]
     elements = [
         ("target_chunk", document_md[chunk.char_start : chunk.char_end]),
-        ("document_header", _header_text(source=source)),
+        ("document_header", _header_text(source=source, chunk=chunk)),
     ]
     for name, neighbour_index in (
         ("previous_same_section_neighbour", index - 1),
@@ -1738,9 +1739,23 @@ def _token_in_grounding_union(
     return any(folded_token in text.casefold() for _, text in grounding_elements)
 
 
-def _header_text(*, source: ChunkSource) -> str:
-    """The deterministic document header shared by every chunk's bundle."""
-    modified = source.source_modified_at or source.published_at
+def _chunk_date(*, source: ChunkSource, chunk: ChunkForEmbedding) -> datetime | None:
+    """The date a chunk's words are anchored to (D140 §5).
+
+    The recorded text origin time when there is one. A chunk created before
+    D140 (no origin recorded) and a chunk of an undated version fall back to
+    the version's own date — the same value, or the same unknown, as before.
+    """
+    return chunk.text_origin_at or source.source_modified_at or source.published_at
+
+
+def _header_text(*, source: ChunkSource, chunk: ChunkForEmbedding) -> str:
+    """The deterministic document header of one chunk's bundle.
+
+    Every field is the version's except the date, which is the chunk's text
+    origin time, so an unchanged chunk sees the header it was extracted under.
+    """
+    modified = _chunk_date(source=source, chunk=chunk)
     return (
         f"title {source.header_title() or 'untitled'};"
         f" file {source.file_name or 'unknown'}; source {source.source_kind};"

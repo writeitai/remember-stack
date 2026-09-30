@@ -281,6 +281,8 @@ def test_e1_records_eligibility_and_keys_ineligible_chunks_apart(
         ),
         index=1,
         chunker_version=chunker_version(params=params),
+        reuse_identity_hash="identity",
+        text_origin_at=None,
     )
     # the policy version joins only the ineligible chunk's reuse key
     assert catalog.records[1].extraction_input_hash != (
@@ -291,6 +293,8 @@ def test_e1_records_eligibility_and_keys_ineligible_chunks_apart(
         packed=packed,
         index=0,
         chunker_version=chunker_version(params=params),
+        reuse_identity_hash="identity",
+        text_origin_at=None,
     )
     assert catalog.records[0].extraction_input_hash == unchanged.extraction_input_hash
 
