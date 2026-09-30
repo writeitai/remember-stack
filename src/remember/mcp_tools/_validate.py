@@ -13,6 +13,7 @@ from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._documents import parse_search_documents_arguments
 from remember.mcp_tools._errors import invalid_arguments
@@ -24,6 +25,7 @@ from remember.mcp_tools._memory import parse_ingest_arguments
 from remember.mcp_tools._memory import parse_pipeline_readiness_arguments
 from remember.mcp_tools._memory import reject_unknown_keys
 from remember.mcp_tools._query import validate_open_query_arguments
+from remember.mcp_tools._sections import parse_section_history_arguments
 from remember.models import ADJACENT_CHUNKS_MAX_WINDOW
 from remember.models import ADJACENT_CHUNKS_MIN_WINDOW
 
@@ -80,7 +82,8 @@ def validate_arguments(
     allowlisted roots — and refuses an empty body or one over
     ``max_body_bytes``. ``pipeline_readiness`` returns ``version_ids`` and a
     ``require`` model; ``delete_document`` returns ``doc_id`` as a UUID;
-    ``search_documents`` returns its ``request`` model.
+    ``search_documents`` and ``section_history`` return their ``request``
+    model.
 
     Raises :class:`ToolArgumentError` for the memory write tools and the
     assured operations, and ``SandboxRejection`` (the open-query error
@@ -106,6 +109,8 @@ def validate_arguments(
         return {"doc_id": parse_delete_document_arguments(arguments=arguments)}
     if name == SEARCH_DOCUMENTS_TOOL_NAME:
         return {"request": parse_search_documents_arguments(arguments=arguments)}
+    if name == SECTION_HISTORY_TOOL_NAME:
+        return {"request": parse_section_history_arguments(arguments=arguments)}
     if name in OPEN_QUERY_TOOL_NAMES:
         return validate_open_query_arguments(name=name, arguments=arguments)
     if name == ADJACENT_CHUNKS_TOOL_NAME:

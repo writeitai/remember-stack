@@ -25,6 +25,7 @@ from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
 from remember.mcp_tools._documents import DocumentSearchBackend
@@ -40,6 +41,8 @@ from remember.mcp_tools._memory import handle_memory_write_tool
 from remember.mcp_tools._memory import McpMemorySettings
 from remember.mcp_tools._memory import MemoryWriteBackend
 from remember.mcp_tools._query import validate_saved_query_identifier
+from remember.mcp_tools._sections import handle_section_history_tool
+from remember.mcp_tools._sections import SectionHistoryBackend
 from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
@@ -52,6 +55,8 @@ __all__ = (
     "PIPELINE_READINESS_TOOL_NAME",
     "PROJECT_ARGUMENT",
     "SEARCH_DOCUMENTS_TOOL_NAME",
+    "SECTION_HISTORY_TOOL_NAME",
+    "SectionHistoryBackend",
     "DocumentDeleteBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
@@ -65,6 +70,7 @@ __all__ = (
     "invalid_arguments",
     "handle_memory_write_tool",
     "handle_search_documents_tool",
+    "handle_section_history_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",

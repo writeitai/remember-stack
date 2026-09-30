@@ -17,6 +17,7 @@ from typing import TypeAlias
 from uuid import UUID
 
 from pydantic import AfterValidator
+from pydantic import AliasChoices
 from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -293,6 +294,159 @@ class AdjacentChunksRequest(BaseModel):
     window: int = Field(
         default=1, ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW
     )
+
+
+SECTION_HISTORY_DEFAULT_K: Final = 50
+SECTION_HISTORY_MAX_K: Final = 200
+SECTION_KEY_MAX_LEN: Final = 200
+
+
+class CurrentReadTime(BaseModel):
+    """Text in force now."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["current"] = "current"
+
+
+class AtReadTime(BaseModel):
+    """Text in force at one instant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["at"] = "at"
+    at: AwareDatetime
+
+
+class OverlapReadTime(BaseModel):
+    """Text in force at any instant of an inclusive window."""
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
+    mode: Literal["overlap"] = "overlap"
+    from_: AwareDatetime = Field(
+        validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
+    )
+    to: AwareDatetime
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.to < self.from_:
+            raise ValueError("time.to must be at or after time.from")
+        return self
+
+
+class HistoryReadTime(BaseModel):
+    """Every text in force at any instant up to now."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["history"] = "history"
+
+
+ReadTime = Annotated[
+    CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime,
+    Field(discriminator="mode"),
+]
+"""The D140 §3.1 time scope of a text read (the MCP ``time`` argument)."""
+
+
+class SectionHistoryRequest(BaseModel):
+    """One ``section_history`` call (D140 §6.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    section_key: str = Field(
+        min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
+    )
+    time: ReadTime = HistoryReadTime()
+    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
+
+
+class EffectiveInterval(BaseModel):
+    """One in-force interval ``[from, until)``; null bounds are open."""
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
+    from_: datetime | None = Field(
+        validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
+    )
+    until: datetime | None = None
+    until_declared: bool = False
+    """True when the end was declared; false when it is derived from the
+    next declared start, or open."""
+
+
+class SectionHistorySection(BaseModel):
+    """The keyed section as one version holds it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    section_id: UUID
+    node_path: str
+    title: str | None = None
+    own_content_hash: str
+    subtree_content_hash: str
+    changed: bool | None = None
+    """Subtree hash differs from the previous row that held the key; null
+    when no earlier row held it."""
+    own_changed: bool | None = None
+    """Own-block hash differs from the previous row that held the key."""
+    first_chunk_ids: tuple[UUID, ...] = ()
+    """Chunks of the version's current representation holding the section's
+    first block."""
+
+
+class SectionHistoryRow(BaseModel):
+    """One selected version of the lineage and what it holds under the key.
+
+    ``status``: ``present`` (``section`` is set), ``absent`` (the version is
+    indexed and lacks the key — a removed section), ``not_indexed`` (its
+    sections predate section keys and are not backfilled yet, so absence
+    cannot be told) or ``processing`` (the version is not readable yet).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version_id: UUID
+    version_no: int
+    version_key: str | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    status: Literal["present", "absent", "not_indexed", "processing"]
+    section: SectionHistorySection | None = None
+
+
+class SectionAmendment(BaseModel):
+    """One live ``amends`` reference that targets the keyed section."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    crossref_id: UUID
+    from_doc_id: UUID
+    from_version_id: UUID
+    from_section_key: str | None = None
+    source_label: str | None = None
+    binding: Literal["floating", "pinned"]
+    to_version_key: str | None = None
+    change_effective_from: datetime | None = None
+    change_date_known: bool
+
+
+class SectionHistoryPage(BaseModel):
+    """A page of ``section_history`` rows.
+
+    Rows are ordered by effective start for a lineage with declared effective
+    periods (``periodised``) and by ``version_no`` otherwise. ``amendments``
+    is filled on the first page only. ``cursor`` pins ``evaluated_at`` and
+    ``believed_at`` for the following pages.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    section_key: str
+    periodised: bool
+    rows: tuple[SectionHistoryRow, ...]
+    amendments: tuple[SectionAmendment, ...] = ()
+    cursor: str | None = None
+    evaluated_at: datetime
+    believed_at: datetime
 
 
 class ReadinessRequirements(BaseModel):

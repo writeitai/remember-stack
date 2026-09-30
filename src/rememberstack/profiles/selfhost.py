@@ -1021,6 +1021,7 @@ class SelfHostProfile:
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine import SectionHistory
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
@@ -1157,6 +1158,7 @@ class SelfHostProfile:
             ),
             documents=DocumentInventory(engine=self._engine),
             document_search=DocumentSearch(engine=self._engine),
+            section_history=SectionHistory(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,

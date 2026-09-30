@@ -25,10 +25,19 @@ from remember.models import DocumentStatus
 from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
+from remember.models import EffectiveInterval
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
 from remember.models import ReadinessRequirements
+from remember.models import ReadTime
 from remember.models import SearchRequest
+from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SECTION_HISTORY_MAX_K
+from remember.models import SectionAmendment
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
+from remember.models import SectionHistoryRow
+from remember.models import SectionHistorySection
 from remember.models import ToolDescriptor
 from remember.models import VersionPipelineReadiness
 
@@ -49,6 +58,13 @@ __all__ = (
     "DocumentSearchPerson",
     "DocumentSearchRequest",
     "DocumentSearchResult",
+    "ReadTime",
+    "SectionHistoryPage",
+    "SectionHistoryRequest",
+    "SectionHistoryRow",
+    "SectionHistorySection",
+    "SectionAmendment",
+    "EffectiveInterval",
     "DocumentStatus",
     "DocumentStatusFilter",
     "DocumentSummary",
@@ -57,6 +73,8 @@ __all__ = (
     "PipelineStageReadiness",
     "ReadinessRequirements",
     "SearchRequest",
+    "SECTION_HISTORY_DEFAULT_K",
+    "SECTION_HISTORY_MAX_K",
     "ToolDescriptor",
     "VersionPipelineReadiness",
 )
