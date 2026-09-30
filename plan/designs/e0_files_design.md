@@ -371,8 +371,11 @@ unchanged):
 - **Section keys (D140).** A heading may end with a Pandoc/kramdown attribute block
   (`## 4. Per-diem allowance {#per-diem}`). The parser takes the block's `#identifier` as the
   section's stable `section_key` (1–200 characters from `[A-Za-z0-9_.:/-]`), strips the block
-  from the title, and stores a deterministic `section_content_hash` (the hash of the section's
-  own block hashes) on every section. Keys are unique per version (a duplicate keeps the first
+  from the title, and stores two deterministic hashes on every section: `own_content_hash` (the
+  section's own blocks) and `subtree_content_hash` (its whole span, children included — what
+  "this section changed" means). Sections that predate D140 get the hashes from a
+  deterministic backfill over stored `blocks.json`; a new parser generation is one D56/D65
+  extraction-basis rollover for each lineage's next version. Keys are unique per version (a duplicate keeps the first
   heading and records a structure warning); model-anchored fallback sections get no key.
   Keys identify a section across versions for section history and cross-references
   ([D140 design §4](effective_time_and_section_references_design.md#4-section-keys)).
@@ -597,9 +600,11 @@ and kinds `cites | links_to | attaches | replies_to | refers_to | amends | imple
 
 The sub-worker has two inputs and writes one table:
 
-- **Supplied references** (`origin = supplied`): a caller-provided reference set stored as an
-  artifact of the version (D140 §6.3) is validated against the version's structure and
-  materialized deterministically; no model is involved.
+- **Supplied references** (`origin = supplied`): a caller-provided NDJSON reference set stored
+  as an artifact of the version (D140 §6.3) is validated against the version's structure
+  all-or-nothing (an unknown source section key rejects the set, never broadens a reference to
+  document grain) and materialized deterministically; no model is involved. Pinned targets
+  name the target version's immutable `version_key`.
 - **Extracted references** (`origin = extracted`), below.
 
 **Extraction — deterministic per kind:**
@@ -620,14 +625,14 @@ via exact keys first (source identity `(source_kind, source_ref)`; normalized UR
 fuzzy title match (`pg_trgm` against `documents.title`, recall-first floor), and only the
 ambiguous residue goes to a small-model rung ("is citation string X document Y?"). Below
 threshold the row keeps `to_doc_id = NULL` — a cited-but-not-ingested reference: real
-provenance, no graph edge. Target *versions* and *sections* are resolved at read time
-(floating binding) or by the pinned `source_version_ref` (D140 §6.1).
+provenance, no graph edge. Extracted references are always `floating`; target *versions* and
+*sections* are resolved at read time by a temporal join with the reading scope (D140 §6.2).
 
 **Late binding.** Dangling references are not dead: when a new document is ingested, its
 identity keys (source identity, URI, DOI/ids, title) are matched against unresolved crossrefs —
 one indexed lookup on the ingest path — so earlier documents' references bind to it
-retroactively; a pinned reference binds its target version when that version arrives. No
-periodic sweep; resolution rides the write path in both directions.
+retroactively. Pinned version keys and section keys need no binding step: they resolve at
+read time. No periodic sweep; resolution rides the write path in both directions.
 
 Extracted rows are idempotent on the version's `content_hash` + crossreferencer version
 (D12); versioned because the fuzzy rung is non-deterministic; the citation `context` snippet

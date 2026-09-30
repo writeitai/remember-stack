@@ -118,6 +118,12 @@ In particular:
   other date; it is not a second window authority. A change to those periods
   enqueues ordinary re-adjudication of the facts the affected claims support
   ([effective time design §8](effective_time_and_section_references_design.md#8-facts-from-periodised-versions)).
+- Separately from adjudication, fact **reads** under a time scope apply D140's
+  deterministic evidence gate: a fact is returned only if its window matches the
+  scope **and** at least one supporting claim occurs in a version in force for the
+  scope (or in a lineage without declared periods). The gate never changes the
+  window; it prevents an answer that rests solely on an edition not yet or no
+  longer in force.
 
 Relation normalization must stage the assertion before identity selection. It
 must not merge every live `(subject, predicate, object)` triple and ask about

@@ -10,7 +10,7 @@
 ## 1. Principles (Binding)
 
 1. **Chunk Neighborhood Determinism:**
-   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any live, ready version — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
+   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
    * Expanding context around a chunk must never cross document or version boundaries.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).

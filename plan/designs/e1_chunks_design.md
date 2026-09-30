@@ -340,10 +340,14 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
-  LLM-derived). The text origin time (D140) is the source time of the earliest live version
-  of the lineage that already contained a chunk with the same own and neighbour block hashes
-  and the same date-free header facts; otherwise it is this version's
-  `source_modified_at`/`published_at`. The E2 header shows the same value, so relative dates
+  LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
+  `published_at` header facts. It is recorded once when the chunk is created: the
+  `text_origin_at` of the earliest chunk (by text origin time, version number, ordinal) of a
+  non-deleted version of the lineage with the same `reuse_identity_hash` — own and neighbour
+  block hashes, non-date header facts, blockizer/structurer/extractor versions, indexed per
+  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
+  and replayed, never recomputed; deleting the origin version later does not change it. The
+  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
   in unchanged text stay resolved against the time the text was written, and a dated new
   version reuses its unchanged chunks (with the version's own date in the key, nearly every
   new version would miss every key) — **no LLM *output* participates in the

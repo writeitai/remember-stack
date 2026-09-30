@@ -103,7 +103,9 @@ ordinary supersession path.)
 3. **Document version** — one observed immutable snapshot of a lineage, pointing at one
    content object, carrying the per-snapshot state: artifact URIs, conversion/structure
    provenance, `source_modified_at` (which feeds derived claims' `asserted_at` — testimony is
-   dated by *when the source said it*, D41), and processing status. Append-only; the lineage
+   dated by *when the source said it*, D41; since D140 through each chunk's text origin time,
+   so text carried unchanged into a later version keeps the date it was first written), and
+   processing status. Append-only; the lineage
    holds a `current_version_id` pointer.
 
 An identical-byte observation creates no new version. It may advance the existing row's
@@ -130,9 +132,15 @@ start in the lineage). This is the publisher's statement of force — a policy e
 from 1 January, a spec edition that supersedes the previous one on a stated date — and is
 distinct from `source_modified_at` (authorship time) and from ingest order. Time-scoped
 retrieval selects versions by these periods, while `current_version_id` keeps meaning "the
-newest observed version". Periods never change testimony currency, never trigger
-reprocessing, and are not accepted on `living` lineages, whose newest version is by
-definition the standing statement. The full contract is
+served version" (the newest non-deleted version whose processing completed). A lineage
+becomes periodised with its first declaration and stays so until the caller explicitly clears
+effective time, so retracting a withdrawn edition's last period never makes it current again.
+Periods never change testimony currency and never trigger reprocessing; fact reads apply a
+deterministic evidence gate so that no answer rests solely on text that is not in force at the
+scope. Periods are not accepted on `living` lineages, whose newest version is by definition
+the standing statement. Versions may also carry an immutable caller-chosen `version_key`, the
+stable address for pinned references (the `source_version_ref` cursor stays mutable). The full
+contract is
 [the effective time design §2–§3](effective_time_and_section_references_design.md#2-effective-periods).
 
 **Absence is never *silent* retraction — and in `living` mode, removal retracts.** The two
@@ -344,9 +352,11 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). The **text origin time** (D140) is the source time of the earliest live version
-   of the lineage that already held the identical chunk with the same neighbours; a new or
-   changed chunk takes its own version's `source_modified_at`/`published_at`. Keying on the
+   discipline). The **text origin time** (D140), recorded once at chunk creation, is the text
+   origin time of the earliest chunk of a non-deleted version of the lineage with the same
+   date-free reuse identity; a new or changed chunk takes its own version's
+   `source_modified_at` or `published_at`. It is one per-chunk date used by the reuse key, the
+   E2 header, and the `asserted_at` of claims freshly extracted from the chunk. Keying on the
    version's own date instead would change every key whenever the source stamps a new
    modification time — nearly every version — and no chunk would ever be reused. Unchanged
    text keeps being read against the time it was written, which is also the `asserted_at` of

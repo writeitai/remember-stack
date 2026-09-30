@@ -81,15 +81,24 @@ client, not in the engine.
 - A document **lineage** (`documents`, identity `(source_kind, source_ref)`) owns immutable
   **versions** (`document_versions`) and a `current_version_id` pointer
   (`plan/designs/evidence_lifecycle_design.md` §2, D55; schema in
-  `plan/designs/postgres_schema_design.md` §6). The pointer moves to the newest ingested
-  version.
+  `plan/designs/postgres_schema_design.md` §6). The pointer is the **served** version: it
+  moves to a version only when its representation has finished processing
+  (`src/rememberstack/spine/document_catalog.py:642-666`) and back to the newest remaining
+  ready version when the served one is deleted (`src/rememberstack/spine/lifecycle.py`
+  `_REPOINT_AFTER_VERSION_DELETE`). `document_inventory.py:11-17` keeps "newest observed" and
+  "served" apart.
+- Identical bytes to the lineage's *latest* version are a no-op that may advance the mutable
+  `source_version_ref` cursor (`document_catalog.py:160-215`, `_ADVANCE_VERSION_CURSOR`);
+  bytes identical to an *older* version (A→B→A) create a new version sharing the content
+  object — migration `p3_01_0008` dropped the per-lineage `UNIQUE (doc_id, content_hash)`
+  that the schema design still showed.
 - Every chunk read path selects chunks through `memory_v1.chunks_live`, which joins
   `dl.current_version_id = c.version_id`
   (`src/rememberstack/spine/migrations/versions/p9_04_0025_coordinate_binding.py:142-199`).
   Semantic and lexical chunk search (`src/rememberstack/adapters/postgres_p1.py:716-790`) and
   `adjacent_chunks` (`src/rememberstack/surfaces/query_engine.py:3930-3960`, `AND
-  d.current_version_id = ch.version_id`) therefore see **only the most recently ingested
-  version** of each lineage. Old versions are stored and their claims may stay current
+  d.current_version_id = ch.version_id`) therefore see **only the served version** of each
+  lineage. Old versions are stored and their claims may stay current
   testimony (`snapshot` mode), but their passages cannot be retrieved.
 - There is **no notion of when a version is in force.** `source_modified_at` is "when the
   source says this snapshot was authored/modified"; it is immutable, feeds claim
@@ -278,14 +287,18 @@ stated it *while v was in force*. Two options:
   instant): rejected at write with a conflict; nothing is stored. Idempotent repeats of the
   same declaration are no-ops.
 - **Declarations arriving out of order** (back-fill): derived ends make order irrelevant.
-- **A version deleted (D135)**: its periods disappear with it; the previous version's derived
-  end moves to the next remaining start automatically. Text-origin lookup only considers
-  live versions, so reuse never draws on a deleted version (D55 refinement already requires
-  this).
+- **A version deleted (D135)**: deletion is a soft tombstone (`lifecycle.py`
+  `_TOMBSTONE_VERSION`), so nothing cascades; every D140 read joins non-deleted versions, so
+  the version's declarations leave interval derivation and the previous version's derived end
+  moves to the next remaining start. Text-origin lookup only considers non-deleted versions
+  at chunk creation, so new chunks never draw on a deleted version; values already recorded
+  stay (they are extraction input, like `asserted_at`).
 - **A reference to a target not yet ingested**: stored with `to_doc_id = NULL`; late binding
-  resolves it when the target lineage appears. A floating reference whose target is not in
-  force at the reading instant is returned with an explicit status ("target not in force at
-  T"), never silently dropped. A section key missing in the chosen target version is
+  resolves it when the target lineage appears. Until then, and after the target is deleted
+  or forgotten, the row reads as `target_unavailable` — one status for all three cases so a
+  reader cannot learn that a document once existed. A floating reference whose target has no
+  version in force anywhere in the read window reads as `target_not_in_force`, never silently
+  dropped. A section key missing in the chosen target version is
   returned as "section not present in this version" (a provision can be repealed while its
   act remains).
 - **Hard forget of a target (D74)**: `to_doc_id` is cleared as today; the source's own
@@ -294,7 +307,10 @@ stated it *while v was in force*. Two options:
   an unresolved target (the existing `document_crossrefs_live` rule).
 - **Supplied reference sets replaced**: a new set for the same version is a new generation;
   rows of the previous generation stop being live in the same transaction (no window with
-  both or neither).
+  both or neither). An invalid set (unknown source section key) is rejected whole and the
+  previous set stays live.
+- **Last period retracted**: the lineage stays periodised, so the withdrawn edition is simply
+  not in force; only an explicit clear returns the lineage to served-version semantics.
 
 ## 6. Cost
 
@@ -326,3 +342,25 @@ Numbers are starting points to be measured, not commitments.
   operation, not SQL/PGQ traversal (bounded fan-out, and the graph's value is in entity
   relations).
 - No domain flag was needed. Nothing in the design is specific to legislation.
+
+## 8. Review round 1 (GPT-6 Sol) — choices made
+
+The first design review ([review](../../design/reviews/REVIEW_gpt-6-sol_d140_design_r1_2026-09-30.md),
+[response](../../design/reviews/RESPONSE_d140_design_r1_2026-09-30.md)) found twelve P1 and
+seven P2 problems. Where it offered alternatives, this section records the choice and why.
+
+| Question | Options | Chosen and why |
+| --- | --- | --- |
+| Address of a pinned target version | `source_version_ref`; lineage + `content_hash`; **a caller `version_key`** | `version_key`. The cursor mutates on identical-byte observations (D55) and is not unique; `content_hash` is not unique within a lineage after A→B→A. A caller key is immutable, unique per lineage, and is what publishers already have (edition numbers, consolidated-version ids). Pinning without a key is not offered: an address that can drift is worse than none. |
+| Handles on scoped results | make P3 paths version-aware; **return version-addressed handles and a P3 path only when it opens the selected version** | The second. P3 is a lineage projection (D40); making it version-aware is a separate filesystem design. `source_open` already takes a version. |
+| Claim evidence under a scope | the origin occurrence; **the occurrence in the selected version** | The occurrence: `chunk_claims` already stores per-occurrence spans and locators (D65/D119), so the returned coordinates match the returned version and survive deletion of the origin version. |
+| Retracting the last period | forbid it; fall back to the served version; **keep the lineage periodised until an explicit clear** | Sticky state. Forbidding it blocks a legitimate correction ("this edition was never in force"); falling back resurrects withdrawn text as current. |
+| Facts that rest only on text not in force | leave it to E3 adjudication; **a deterministic read-time evidence gate** | The gate. It needs no model call, cannot be skipped by an adjudication that has not yet run, and leaves D118's window as the only fact-time authority. E3 still receives the intervals as input (separate PR) to make windows better, not to make answers safe. The gate ships with time-scoped text retrieval so the two never disagree. |
+| Floating resolution under ranges | one version per reference; **a temporal join over the read window** | The join: a range can span a target amendment, so one row per target version with `applies_during`; overlapping target versions are all returned and flagged concurrent. |
+| Text-origin time and deletion | recompute when the origin is deleted; **record once, immutable** | Recording once. It is extraction input and becomes `asserted_at`; recomputing would change the meaning of already extracted claims and break replay (D7). New chunks never draw on deleted versions. |
+| One date per chunk | header only; **header, reuse key and fresh claims' `asserted_at`** | All three, so a re-extraction after a toolchain bump reads and stamps the same date. |
+| "Did this section change" | own-block hash; **subtree hash, with the own-block hash also kept** | Subtree for `changed` (a changed sub-paragraph changes the provision); own-block for `own_changed`. |
+| `versions: all` with a scope | reject the combination; **all versions within the scope** | Within the scope; `history` is the audit of all editions. No mode silently ignores a requested time restriction. |
+| Large supplied sets | multipart staged upload; **one NDJSON request bounded by bytes** | One request: complete-set replacement stays atomic and simple; per-version sets are expected to be far below the bound (to be measured on the statute corpus). |
+| Invalid source section in a supplied set | demote to document grain; keep with a status; **reject the whole set** | Reject: supplied data is deterministic and the caller can fix it; a partial or broadened set would misattribute references. |
+| Amendments without a date | nullable date; **explicit `change_date_known`** | Explicit, so a missing date is never read as "no timeline". |

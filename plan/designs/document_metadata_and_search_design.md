@@ -130,9 +130,15 @@ search_documents(query?, filters?, k) → documents
   declared effective periods, the shared `time` scope (`current` by default,
   or `at`, `overlap`, `history`) chooses the judged version(s) instead of the
   current pointer: under `current`, the version in force now; a lineage with
-  no version in force at the instant does not match. `versions: all` still
-  judges every live version. Results from such lineages carry their in-force
-  intervals. Lineages without periods ignore `time` and behave as above
+  no version in force at the instant does not match. For such lineages
+  `versions: all` means every version the scope selects (an audit of all
+  editions uses `time: history`); there is no option that ignores the scope.
+  Results carry their in-force intervals, their version id, and a P3 path only
+  when the judged version is the served one (`served_version`), with
+  `source_open(version_id)` otherwise, so an agent never opens a different
+  edition than it was shown. Filter-only paging uses the pinned `as_of` as the
+  belief instant for declarations, so a correction between pages moves no row.
+  Lineages without periods ignore `time` and behave as above
   ([effective time design §3](effective_time_and_section_references_design.md#3-time-scoped-retrieval)).
 - **`query`** is matched on two channels, fused by rank (the D9 fusion):
   - **names** — every name the judged version(s) were observed under
@@ -185,7 +191,11 @@ are cut (the existing D94 rule), never by filtering a finished top-k.
 `search` also takes the D140 `time` scope. It selects which versions of
 lineages with declared effective periods contribute chunks and claim
 occurrences, in the same statement as the `documents` filter; for other
-lineages the current version contributes, as before.
+lineages the current version contributes, as before. For scoped reads of
+periodised lineages the returned claim evidence is the claim's **occurrence
+in the selected version** (its chunk, version and per-occurrence spans), not
+its origin — this refines the origin rule above for that case only
+([effective time design §3.4](effective_time_and_section_references_design.md#34-claims-under-a-time-scope)).
 
 **Worked example.** "Everything about Project X from emails from Alice":
 
