@@ -387,14 +387,35 @@ def test_periodised_history_orders_by_effective_start(rig: _Rig) -> None:
 def _declare(
     *, rig: _Rig, doc_id: UUID, version_id: UUID, effective_from: datetime
 ) -> None:
-    """Declare one open period through the FOUNDATION period write path."""
-    from rememberstack.spine.effective_periods import (  # noqa: PLC0415
-        EffectivePeriodCatalog,
-    )
+    """Seed one open declaration and the lineage's declared event.
 
-    EffectivePeriodCatalog(engine=rig.engine).set_effective_periods(
-        deployment_id=_DEPLOYMENT_ID,
-        doc_id=doc_id,
-        version_id=version_id,
-        periods=({"effective_from": effective_from},),
-    )
+    The rows the period write path records (§2.3); the migration's triggers
+    rewrite the version-scope projection.
+    """
+    declared_at = datetime.now(UTC) - timedelta(seconds=5)
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO document_effective_time_events"
+                " (deployment_id, doc_id, event_at, event)"
+                " SELECT :d, :doc, :at, 'declared' WHERE NOT EXISTS ("
+                "  SELECT 1 FROM document_effective_time_events"
+                "  WHERE deployment_id = :d AND doc_id = :doc)"
+            ),
+            {"d": _DEPLOYMENT_ID, "doc": doc_id, "at": declared_at},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_effective_periods (period_id, deployment_id,"
+                " doc_id, version_id, effective_from, declared_at, declared_by)"
+                " VALUES (:p, :d, :doc, :v, :from, :at, 'period_api')"
+            ),
+            {
+                "p": uuid4(),
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "v": version_id,
+                "from": effective_from,
+                "at": declared_at,
+            },
+        )
