@@ -238,7 +238,9 @@ CREATE TYPE currency_reason        AS ENUM ('reextracted','version_superseded','
 -- judged the old claim correct and the new extractor regressed — the old claim stands as the
 -- chunk's current transcription until a fixed extractor re-derives it (lifecycle §4).
 CREATE TYPE section_role           AS ENUM ('body','abstract','introduction','results','methods','discussion','conclusion','references','appendix','table','figure_caption','nav','boilerplate','legal');
-CREATE TYPE crossref_kind          AS ENUM ('cites','links_to','attaches','replies_to');
+CREATE TYPE crossref_kind          AS ENUM ('cites','links_to','attaches','replies_to','refers_to','amends','implements'); -- D140 adds the last three
+CREATE TYPE crossref_binding       AS ENUM ('floating','pinned');       -- D140: target version resolved at read time vs one named version
+CREATE TYPE crossref_origin        AS ENUM ('extracted','supplied');    -- D140: E0 extraction rungs vs a caller-supplied reference set
 
 CREATE TYPE claim_temporal_class   AS ENUM ('static','dynamic','atemporal');
 -- D41 source-asserted validity on claims (immutable; never a relation-style revisable window):
@@ -1358,6 +1360,8 @@ CREATE TABLE document_sections (
   summary         text,                        -- per-section summary (D39): context for E1 prefixes/navigation/Selection-explainability; NOT a fact source
   placement_path  text,                        -- per-section placement hint for P3 (advisory; D39/D40)
   structurer_version text,                     -- LOGICAL FK → pipeline_component_versions; matches documents.structurer_version
+  section_key     text,                        -- D140: stable key from a trailing heading attribute {#key}; NULL when absent (never model-produced)
+  section_content_hash text NOT NULL,          -- D140: hash of the section's own ordered block hashes (children excluded) — "did this section change"
   UNIQUE (version_id, node_path),
   FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
   FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
@@ -1367,31 +1371,102 @@ COMMENT ON TABLE document_sections IS
 CREATE INDEX ix_sections_doc    ON document_sections (doc_id);
 CREATE INDEX ix_sections_role   ON document_sections (deployment_id, role);
 CREATE INDEX ix_sections_parent ON document_sections (parent_section_id);
+CREATE UNIQUE INDEX ux_sections_key ON document_sections (version_id, section_key) WHERE section_key IS NOT NULL; -- D140: a key is unique within a version
+CREATE INDEX ix_sections_doc_key ON document_sections (deployment_id, doc_id, section_key) WHERE section_key IS NOT NULL; -- section history across versions
 
 -- ─────────────────────────────────────────────────────────────────────────
--- document_crossrefs — citations / inter-document links (the crossref sub-worker, D36). to_doc_id
--- is NULL until/unless the cited target resolves to an ingested document. ON DELETE SET NULL uses
--- the PG15+ column-list form so only to_doc_id is cleared (deployment_id stays). Projected to graph
--- CITES edges (p2 §2).
+-- document_effective_periods — D140: declared periods during which a version's text is in force.
+-- Append-only in meaning (a correction retracts a row and inserts its replacement). An undeclared
+-- end is DERIVED at read time: the next live declared start in the lineage
+-- (memory_v1.document_effective_periods_live). Only snapshot lineages declare periods.
+-- ─────────────────────────────────────────────────────────────────────────
+CREATE TABLE document_effective_periods (
+  period_id       uuid PRIMARY KEY,
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  doc_id          uuid NOT NULL,               -- lineage (denormalized for per-lineage ordering)
+  version_id      uuid NOT NULL,               -- the version in force
+  effective_from  timestamptz NOT NULL,        -- inclusive
+  effective_until timestamptz,                 -- exclusive; NULL = until the next declared start in the lineage
+  declared_at     timestamptz NOT NULL DEFAULT now(),
+  declared_by     text NOT NULL CHECK (declared_by IN ('ingest','period_api')),
+  retracted_at    timestamptz,                 -- set when a correction replaces this declaration
+  retracted_by_period_id uuid,
+  CHECK (effective_until IS NULL OR effective_until > effective_from),
+  FOREIGN KEY (deployment_id, doc_id)     REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
+);
+CREATE UNIQUE INDEX ux_effective_periods_live_start
+  ON document_effective_periods (deployment_id, doc_id, effective_from) WHERE retracted_at IS NULL;
+CREATE INDEX ix_effective_periods_version
+  ON document_effective_periods (deployment_id, version_id) WHERE retracted_at IS NULL;
+COMMENT ON TABLE document_effective_periods IS
+  'D140 declared effective periods: when a snapshot-lineage version''s text is in force per its publisher. Not extraction input; never inferred. Time-scoped reads select versions through memory_v1.versions_in_scope. A version may hold several live periods (a text back in force).';
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- document_crossrefs — references made by ONE SOURCE VERSION (D36, extended by D140): extracted by the
+-- E0 crossref sub-worker or materialized by it from a caller-supplied reference set. Section endpoints
+-- are named by key and resolved at read time; floating targets resolve to the version in force at the
+-- reading instant, pinned ones to the named source_version_ref. to_doc_id is NULL until the target
+-- lineage is ingested (late binding). ON DELETE SET NULL uses the PG15+ column-list form.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_crossrefs (
   crossref_id     uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
-  from_doc_id     uuid NOT NULL,               -- composite FK below, ON DELETE CASCADE
-  to_doc_id       uuid,                        -- composite FK below, ON DELETE SET NULL(to_doc_id); NULL if cited doc not (yet) ingested
-  kind            crossref_kind NOT NULL,      -- cites | links_to | attaches | replies_to
-  raw_citation    text,                        -- the citation text as found; RETAINED even when resolved, so a forgotten target can be re-resolved (§13)
-  context         text,                        -- surrounding context of the reference
+  from_doc_id     uuid NOT NULL,               -- source lineage (denormalized), ON DELETE CASCADE
+  from_version_id uuid NOT NULL,               -- the version that makes the reference, ON DELETE CASCADE
+  from_section_key text,                       -- source section key, when known
+  from_char_start integer,                     -- source span in the version's current representation (extracted rows)
+  from_char_end   integer,
+  kind            crossref_kind NOT NULL,      -- cites | links_to | attaches | replies_to | refers_to | amends | implements
+  origin          crossref_origin NOT NULL,    -- extracted | supplied
+  reference_set_id uuid,                       -- supplied rows: the generation that wrote them (→ document_reference_sets)
+  source_label    text,                        -- caller's own type code, opaque, returned verbatim
+  to_source_kind  text,                        -- target lineage identity as named by the source (late-binding key)
+  to_source_ref   text,
+  to_source_version_ref text,                  -- pinned target version, by the target's source_version_ref
+  to_section_key  text,                        -- target section key; NULL = the whole document
+  binding         crossref_binding NOT NULL DEFAULT 'floating',
+  change_effective_from timestamptz,           -- kind = amends: when the change takes effect
+  to_doc_id       uuid,                        -- resolved target lineage; NULL if not (yet) ingested
+  to_version_id   uuid,                        -- resolved pinned target version
+  raw_citation    text,                        -- extracted rows: the citation text as found; RETAINED even when resolved, so a forgotten target can be re-resolved (§13)
+  context         text,                        -- bounded surrounding context of the reference
   resolved        boolean NOT NULL DEFAULT false, -- whether to_doc_id was matched
   crossref_version text,                       -- LOGICAL FK → pipeline_component_versions (crossreferencer); a bump re-extracts (D36/D7)
   created_at      timestamptz NOT NULL DEFAULT now(),
-  FOREIGN KEY (deployment_id, from_doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
-  FOREIGN KEY (deployment_id, to_doc_id)   REFERENCES documents (deployment_id, doc_id) ON DELETE SET NULL (to_doc_id)
+  CHECK (binding = 'floating' OR to_source_version_ref IS NOT NULL OR to_version_id IS NOT NULL),
+  CHECK (kind = 'amends' OR change_effective_from IS NULL),
+  CHECK (origin = 'extracted' OR reference_set_id IS NOT NULL),
+  FOREIGN KEY (deployment_id, from_doc_id)     REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, from_version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, to_doc_id)       REFERENCES documents (deployment_id, doc_id) ON DELETE SET NULL (to_doc_id),
+  FOREIGN KEY (deployment_id, to_version_id)   REFERENCES document_versions (deployment_id, version_id) ON DELETE SET NULL (to_version_id)
 );
 COMMENT ON TABLE document_crossrefs IS
-  'Cross-document references from the E0 crossref sub-worker (D36), versioned by crossref_version (D7 replay). Projected to graph CITES edges; raw_citation is retained even after resolution so a forgotten/re-ingested target can be re-resolved.';
-CREATE INDEX ix_crossrefs_from ON document_crossrefs (from_doc_id);
-CREATE INDEX ix_crossrefs_to   ON document_crossrefs (to_doc_id) WHERE to_doc_id IS NOT NULL;
+  'References made by one source version (D36/D140): extracted or caller-supplied, document- or section-grain, floating or pinned. Projected (deduplicated per lineage pair and kind) to graph document_crossref edges; raw_citation and the target identity are retained even after resolution so a forgotten/re-ingested target can be re-resolved, and are never exposed for an unresolved or dead target.';
+CREATE INDEX ix_crossrefs_from    ON document_crossrefs (deployment_id, from_version_id);
+CREATE INDEX ix_crossrefs_to      ON document_crossrefs (deployment_id, to_doc_id, to_section_key) WHERE to_doc_id IS NOT NULL;
+CREATE INDEX ix_crossrefs_pending ON document_crossrefs (deployment_id, to_source_kind, to_source_ref) WHERE to_doc_id IS NULL;
+CREATE INDEX ix_crossrefs_set     ON document_crossrefs (reference_set_id) WHERE reference_set_id IS NOT NULL;
+
+-- D140: one row per caller-supplied reference set (generation) of a version. The body is a
+-- content-addressed artifact; the crossref sub-worker materializes it. A newer set supersedes the
+-- previous one in the same transaction that materializes it.
+CREATE TABLE document_reference_sets (
+  reference_set_id uuid PRIMARY KEY,
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  doc_id          uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  set_hash        text NOT NULL,               -- sha256 of the canonical JSON body — idempotency key
+  artifact_uri    text NOT NULL,               -- …/<doc_id>/<content_hash>/references/<set_hash>.json
+  item_count      integer NOT NULL,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  materialized_at timestamptz,                 -- rows written by the crossref sub-worker
+  superseded_at   timestamptz,                 -- a newer set for the same version was materialized
+  UNIQUE (deployment_id, version_id, set_hash),
+  FOREIGN KEY (deployment_id, doc_id)     REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
+  FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
+);
 ```
 
 ---
@@ -1422,10 +1497,11 @@ CREATE TABLE chunks (
   block_start     integer NOT NULL,            -- first block ordinal packed into this chunk (D57/D58: a chunk = a run of whole blocks)
   block_end       integer NOT NULL,            -- last block ordinal (inclusive)
   chunk_content_hash text NOT NULL,            -- hash of the chunk's ORDERED BLOCK HASHES (D58) — embedding-reuse + occurrence identity
-  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, source_modified_at/published_at, language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
+  extraction_input_hash text NOT NULL,         -- hash of STABLE components only: own block hashes + neighbor block hashes + stable header facts (deterministic document metadata fed to the E2 bundle: title, file name (D134), source_kind, the chunk's text_origin_at (D140 — not the version's own date), language) + extractor_version + structurer_version (D56/D57/D58 — NO LLM output in the key; prefixes/summaries/section paths are carried forward, not keyed; a structurer bump is a re-extraction boundary)
   char_start      integer NOT NULL,            -- chunk span start, offset into document.md
   char_end        integer NOT NULL,            -- chunk span end
   token_count     integer,                     -- token length (sizing/budget)
+  text_origin_at  timestamptz,                 -- D140: source time of the earliest live version of the lineage that already held this chunk with the same neighbours (else this version's source_modified_at/published_at); the E2 header date and the reuse-key date
   extraction_eligible boolean NOT NULL DEFAULT true, -- D133 §4.5: from the labeled ranges it covers + the eligibility policy; E1 never mixes eligible and ineligible ranges in one chunk
   extraction_eligibility_policy_version text,  -- LOGICAL FK → pipeline_component_versions; joins the Selection reuse basis (D56)
   -- D80 embedding-input stamps (see e1_embedding_input_policy.md). Full embedding text is NOT
@@ -2739,6 +2815,7 @@ Labs."*
 | D33 extraction decision ledger | `claim_extraction_decisions` |
 | D35 Selection recall envelope | `claims.kept_flagged`, `selection_drop_reason`, `protected_class`, `golden_claim_labels` |
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_crossrefs.crossref_version` |
+| D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `document_sections.section_key`/`section_content_hash`; `chunks.text_origin_at`; `document_crossrefs` (version-grain, binding, origin, section keys) + `document_reference_sets` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
 | D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |
 | D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); same-statement normalized filter |

@@ -126,6 +126,14 @@ search_documents(query?, filters?, k) → documents
   result returns the newest matching version and lists the other matching
   version IDs. Either way the returned metadata is that of the returned
   version, so a result never shows metadata that did not match.
+- **Declared effective periods (D140).** For a lineage whose versions carry
+  declared effective periods, the shared `time` scope (`current` by default,
+  or `at`, `overlap`, `history`) chooses the judged version(s) instead of the
+  current pointer: under `current`, the version in force now; a lineage with
+  no version in force at the instant does not match. `versions: all` still
+  judges every live version. Results from such lineages carry their in-force
+  intervals. Lineages without periods ignore `time` and behave as above
+  ([effective time design §3](effective_time_and_section_references_design.md#3-time-scoped-retrieval)).
 - **`query`** is matched on two channels, fused by rank (the D9 fusion):
   - **names** — every name the judged version(s) were observed under
     (`document_names`: the name at conversion plus each later metadata
@@ -173,6 +181,11 @@ same fields as §3. It restricts results to evidence from matching documents:
 
 The filter is applied inside the ranked statement, before the top results
 are cut (the existing D94 rule), never by filtering a finished top-k.
+
+`search` also takes the D140 `time` scope. It selects which versions of
+lineages with declared effective periods contribute chunks and claim
+occurrences, in the same statement as the `documents` filter; for other
+lineages the current version contributes, as before.
 
 **Worked example.** "Everything about Project X from emails from Alice":
 

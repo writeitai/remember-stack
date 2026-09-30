@@ -121,7 +121,10 @@ over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `resolve_entity`, `facts_context`, `claims_and_sources_context`,
 `combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
-`describe_saved_query`, `run_saved_query`. (`adjacent_chunks` is D130/D137's
+`describe_saved_query`, `run_saved_query`, `search_documents` (D134), and D140's
+`document_references` and `section_history` (reading cross-references and a section's
+versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
+(`adjacent_chunks` is D130/D137's
 tool, for neighbouring chunk retrieval; `delete_document` is D135's tool,
 PR #456; `source_open` is D115's, [media_design.md §4a](media_design.md), and
 returns MCP content blocks — text, image or audio — rather than one JSON text

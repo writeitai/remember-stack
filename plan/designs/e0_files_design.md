@@ -368,6 +368,14 @@ unchanged):
   disambiguation, resolved by deterministic search — never raw character offsets; an anchor
   that resolves ambiguously or not at all degrades to the enclosing parent, mirroring the
   snap's degrade-to-parent rule.
+- **Section keys (D140).** A heading may end with a Pandoc/kramdown attribute block
+  (`## 4. Per-diem allowance {#per-diem}`). The parser takes the block's `#identifier` as the
+  section's stable `section_key` (1–200 characters from `[A-Za-z0-9_.:/-]`), strips the block
+  from the title, and stores a deterministic `section_content_hash` (the hash of the section's
+  own block hashes) on every section. Keys are unique per version (a duplicate keeps the first
+  heading and records a structure warning); model-anchored fallback sections get no key.
+  Keys identify a section across versions for section history and cross-references
+  ([D140 design §4](effective_time_and_section_references_design.md#4-section-keys)).
 - **Fallback section run-merging (D137):** When models propose section anchors in conversational
   transcripts or dialogue documents, individual dialogue turns (e.g. Joanna asking "So what's
   your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62)
@@ -573,40 +581,60 @@ in prose.
 
 > **D138:** for a representation with no claim-eligible range, cross-reference detection stays
 > deterministic; the ambiguous residue is left unresolved instead of going to a model.
+>
+> **D140:** references belong to a source *version*, may name sections by key, bind their
+> target `floating` or `pinned`, and are either extracted here or supplied by the caller. The
+> complete contract — schema, kinds, binding, supplied reference sets, reading operations —
+> is [the effective time and section references design §6](effective_time_and_section_references_design.md#6-cross-references);
+> this section keeps the extraction rungs.
 
 The last E0 sub-worker records how documents point at each other — the raw material for the
-live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints
-(design-review F7). Product: `document_crossrefs` rows `(from_doc_id, to_doc_id NULLABLE,
-kind, context)`, kinds `cites | links_to | attaches | replies_to`.
+live `document_crossref` graph edges, the `document_references` operation, and one source of
+the E2 bundle's entity hints (design-review F7). Product: `document_crossrefs` rows, one per
+reference **made by one source version** (`from_version_id`), with optional source and target
+section keys, a target named by source identity and resolved to `to_doc_id` when ingested,
+and kinds `cites | links_to | attaches | replies_to | refers_to | amends | implements`.
+
+The sub-worker has two inputs and writes one table:
+
+- **Supplied references** (`origin = supplied`): a caller-provided reference set stored as an
+  artifact of the version (D140 §6.3) is validated against the version's structure and
+  materialized deterministically; no model is involved.
+- **Extracted references** (`origin = extracted`), below.
 
 **Extraction — deterministic per kind:**
 
 - `links_to` — URLs and links in the converted Markdown (`conversion.json` blocks keep the
-  offsets);
+  offsets); a link whose resolved target carries an anchor (`page#heading`) becomes
+  `refers_to` with `to_section_key` set;
 - `attaches` — container relationships known at ingest/convert time (e-mail attachments,
   archive members);
 - `replies_to` — thread metadata (e-mail `In-Reply-To`/`References` headers, chat thread ids);
 - `cites` — citation strings, mined primarily from PageIndex `references`-role sections: DOIs,
-  arXiv ids, ISBNs, plus deployment-specific citation grammars (e.g. case citations in the law
-  deployment — configured per deployment, like the D38 converter routing table).
+  arXiv ids, ISBNs, plus deployment-specific citation grammars configured per deployment,
+  like the D38 converter routing table (e.g. case-law citations or standard numbers).
 
 **Resolution — cheap-first (the D4 discipline).** A reference resolves to an ingested document
-via exact keys first (normalized URL ↔ `documents.source_uri`; DOI/arXiv id ↔ document
-metadata; `content_hash` for attachments), then fuzzy title match (`pg_trgm` against
-`documents.title`, recall-first floor), and only the ambiguous residue goes to a small-model
-rung ("is citation string X document Y?"). Below threshold the row keeps `to_doc_id = NULL` —
-a cited-but-not-ingested reference: real provenance, no graph edge (`v_graph_crossref` filters
-nulls).
+via exact keys first (source identity `(source_kind, source_ref)`; normalized URL ↔
+`documents.source_uri`; DOI/arXiv id ↔ document metadata; `content_hash` for attachments), then
+fuzzy title match (`pg_trgm` against `documents.title`, recall-first floor), and only the
+ambiguous residue goes to a small-model rung ("is citation string X document Y?"). Below
+threshold the row keeps `to_doc_id = NULL` — a cited-but-not-ingested reference: real
+provenance, no graph edge. Target *versions* and *sections* are resolved at read time
+(floating binding) or by the pinned `source_version_ref` (D140 §6.1).
 
 **Late binding.** Dangling references are not dead: when a new document is ingested, its
-identity keys (URI, DOI/ids, title) are matched against unresolved crossrefs — one indexed
-lookup on the ingest path — so earlier documents' citations bind to it retroactively. No
+identity keys (source identity, URI, DOI/ids, title) are matched against unresolved crossrefs —
+one indexed lookup on the ingest path — so earlier documents' references bind to it
+retroactively; a pinned reference binds its target version when that version arrives. No
 periodic sweep; resolution rides the write path in both directions.
 
-Idempotent on `content_hash` + crossreferencer version (D12); versioned because the fuzzy rung
-is non-deterministic; the citation `context` snippet is stored for audit. Execution class
-(D52): deterministic first, one small-model rung for the residue — LLM spend scales with
-ambiguity, not volume (D4).
+Extracted rows are idempotent on the version's `content_hash` + crossreferencer version
+(D12); versioned because the fuzzy rung is non-deterministic; the citation `context` snippet
+is stored for audit. Supplied rows are idempotent on the reference set's hash. Execution
+class (D52): deterministic first, one small-model rung for the extraction residue — LLM
+spend scales with ambiguity, not volume (D4). A deployment that supplies references for a
+source kind may disable extraction for that source kind by configuration.
 
 ## 5. Mounting — agents read the memory on their filesystem
 

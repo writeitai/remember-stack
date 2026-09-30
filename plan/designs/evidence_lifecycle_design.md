@@ -123,6 +123,18 @@ such a contract.
   config pages). Claims present only in superseded versions lose testimony currency (§3) —
   they stop counting toward current belief while remaining immutable history.
 
+**Effective periods (D140) — when a version is in force.** Separately from the mode, a
+caller may declare for each version of a **`snapshot`** lineage the periods during which its
+text is in force (`[effective_from, effective_until)`; an undeclared end is the next declared
+start in the lineage). This is the publisher's statement of force — a policy edition in force
+from 1 January, a spec edition that supersedes the previous one on a stated date — and is
+distinct from `source_modified_at` (authorship time) and from ingest order. Time-scoped
+retrieval selects versions by these periods, while `current_version_id` keeps meaning "the
+newest observed version". Periods never change testimony currency, never trigger
+reprocessing, and are not accepted on `living` lineages, whose newest version is by
+definition the standing statement. The full contract is
+[the effective time design §2–§3](effective_time_and_section_references_design.md#2-effective-periods).
+
 **Absence is never *silent* retraction — and in `living` mode, removal retracts.** The two
 modes, side by side (stress-test amendment O-B; a `review` softener existed briefly and was
 **removed** — see below):
@@ -325,13 +337,21 @@ The efficiency ladder for the hourly watcher, cheapest exit first:
 4. **Chunk-grain extraction reuse** — the load-bearing lever. E2's idempotency key is the
    **`extraction_input_hash`** — a fingerprint of **stable components only**: the chunk's own
    block hashes + neighbor-chunk block hashes + stable header facts (deterministic document
-   metadata: title, source kind, source-modified date, language) + the extractor version + the
+   metadata: title, file name, source kind, the chunk's **text origin time**, language) + the
+   extractor version + the
    structurer version (a stable config string — a deliberate structurer bump is a
    re-extraction boundary, since section roles feed Selection).
    **No LLM output participates in the key** (section paths, summaries, and the E1 prefix are
    non-deterministic across re-runs and would make the key unmatchable — the ~0%-reuse hazard;
    LLM-derived context is instead *carried forward* for unchanged regions, D7 replay
-   discipline). A chunk whose key is already extracted for this lineage **reuses its claims**
+   discipline). The **text origin time** (D140) is the source time of the earliest live version
+   of the lineage that already held the identical chunk with the same neighbours; a new or
+   changed chunk takes its own version's `source_modified_at`/`published_at`. Keying on the
+   version's own date instead would change every key whenever the source stamps a new
+   modification time — nearly every version — and no chunk would ever be reused. Unchanged
+   text keeps being read against the time it was written, which is also the `asserted_at` of
+   the claim it reuses.
+   A chunk whose key is already extracted for this lineage **reuses its claims**
    (the new version's chunk row points at them); a chunk whose *neighbors* changed correctly
    re-extracts even though its own text didn't. Embeddings reuse on (chunk content hash,
    embedding version) the same way. **The mechanics — block-hash diff alignment,

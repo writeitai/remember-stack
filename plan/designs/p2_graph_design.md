@@ -398,6 +398,17 @@ Citation traversal is directed from `from_doc_id` to `to_doc_id`; it follows
 `document_crossref.from_doc_id -> to_doc_id`. It never treats co-citation or a
 reverse link as a citation chain.
 
+Reference rows are made by source *versions* and may name sections (D140). The
+private `crossrefs_live` source view therefore projects one lineage-to-lineage
+edge per `(from_doc_id, to_doc_id, kind)` among resolved, live references made
+by the versions `memory_v1.versions_in_scope` selects under `current` (in force
+now for lineages with declared effective periods; the current version
+otherwise); `crossref_id` is the smallest contributing row id. Traversal keeps
+this current, structural meaning. Time-scoped and section-level reference
+questions are answered by the `document_references` operation
+([D140 design §6.2](effective_time_and_section_references_design.md#62-reading-references)),
+not by graph traversal; sections are not graph vertices.
+
 ### 4.3 Temporal semantics
 
 With neither instant supplied, traversal reads `graph_edges_current`. With both

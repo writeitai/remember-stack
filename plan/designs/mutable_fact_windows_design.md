@@ -111,6 +111,13 @@ In particular:
 - High-confidence semantic adjudication can attach evidence, create a distinct
   fact, revise a fact, cap a predecessor, or preserve incompatible testimony.
   Existing confidence thresholds and conservative coexistence rules still apply.
+- A claim that occurs in versions with declared effective periods (D140) is shown
+  with its **in-force intervals** — the union of those versions' intervals — as
+  another dated input, beside the claim's own dates. It can justify or bound a
+  window ("the allowance was 45 per day from 2024-01-01 until 2026-01-01") like any
+  other date; it is not a second window authority. A change to those periods
+  enqueues ordinary re-adjudication of the facts the affected claims support
+  ([effective time design §8](effective_time_and_section_references_design.md#8-facts-from-periodised-versions)).
 
 Relation normalization must stage the assertion before identity selection. It
 must not merge every live `(subject, predicate, object)` triple and ask about

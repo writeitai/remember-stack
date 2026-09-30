@@ -70,3 +70,11 @@ For deleting a document through the API, SDK, CLI or MCP, see D135 in the
 [evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
 and the [analysis](analysis/public_document_deletion.md). Erasure remains
 [D74 hard-forget](designs/hard_forget_design.md).
+
+For documents whose versions are in force for declared periods (policies, price
+lists, standards editions, contract amendments, statutes), stable section keys,
+reading text as of a date, and section-level cross-references that are pinned or
+floating, start with [D140's design](designs/effective_time_and_section_references_design.md)
+and its [analysis](analysis/version_effective_time_and_section_references.md); the
+[delivery plan](plans/effective_time_and_section_references.md) says which parts ship
+together. It also makes D56's version reuse hold for dated versions (text origin time).
