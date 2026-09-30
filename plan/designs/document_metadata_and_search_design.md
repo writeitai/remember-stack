@@ -153,8 +153,13 @@ search_documents(query?, filters?, k) → documents
     each document scores by its best-ranked chunk in the judged version.
     A data file's profile, a card, and a document's top-level text are all
     ordinary chunks, so no second search index is needed.
-- With filters only, results are ordered newest first by when the judged
-  version was **ingested** (immutable per version), then by `doc_id`; the
+- With filters only, results are ordered newest first by the ingest time of
+  the lineage's **newest version ingested at or before the cursor's as-of
+  instant** (immutable), then by `doc_id` — independently of which version is
+  judged. For lineages without declared effective periods that is the judged
+  version, as before; for periodised lineages the judged (representative)
+  edition is chosen by the D140 scope and never affects the cursor key, so a
+  period correction between pages cannot move a row. The
   `created` range remains a filter. The keyset cursor pins the first call's
   **as-of instant**, and while paging each document is judged by its newest
   live version ingested at or before that instant, so neither a later

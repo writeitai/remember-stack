@@ -318,14 +318,15 @@ Numbers are starting points to be measured, not commitments.
 
 - **Storage.** Periods: a few rows per version. Section keys and section content hashes: two
   columns on existing rows. References: one row per reference per source version. For the
-  statute book the reference file is 328 MB compressed across all versions; the row count
-  must be measured on the real corpus before sizing indexes. Partitioning follows the
+  statute book this was measured (§10): 12.2 million reference rows over 113,446 source versions,
+  at most 13,975 per version. Partitioning follows the
   existing E0 tables if needed (D23).
 - **Read cost.** Current-belief selection reads a per-lineage projection
   (`document_version_scope`) maintained in the writing transaction; ranked search probes it by
-  primary key for each candidate inside the ranked statement, and filter-only listings use a
-  GiST index on the in-force ranges. Belief-pinned pages evaluate the ledgers only for the
-  page's candidate lineages. Floating reference resolution is one lookup per returned
+  primary key for each candidate inside the ranked statement. Filter-only listings walk the
+  stable lineage order (newest version ingested by the cursor's as-of instant, then `doc_id`) and
+  evaluate the scope per candidate batch — the projection for current belief, the ledgers for
+  the page's candidate lineages when the belief instant is pinned in the past. Floating reference resolution is one lookup per returned
   reference. The verification target is in design §3.2.
 - **Processing cost.** Declaring or correcting a period never reprocesses anything: periods
   are not extraction input. With text-origin keys, a consolidated version whose only change

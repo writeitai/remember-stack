@@ -375,8 +375,9 @@ unchanged):
   section's own blocks) and `subtree_content_hash` (its whole span, children included — what
   "this section changed" means). Sections that predate D140 get the hashes from a
   deterministic backfill over stored `blocks.json`; a new parser generation is one D56/D65
-  extraction-basis rollover for each lineage's next version. Keys are unique per version (a duplicate keeps the first
-  heading and records a structure warning); model-anchored fallback sections get no key.
+  extraction-basis rollover for each lineage's next version. Keys are unique per structure generation (a duplicate keeps the
+  first heading and records a structure warning); reads resolve a key in the version's current
+  representation's current structure generation; model-anchored fallback sections get no key.
   Keys identify a section across versions for section history and cross-references
   ([D140 design §4](effective_time_and_section_references_design.md#4-section-keys)).
 - **Fallback section run-merging (D137):** When models propose section anchors in conversational

@@ -1692,7 +1692,7 @@ CREATE TABLE claims (
   audit_status    grounding_audit_status NOT NULL DEFAULT 'unaudited', -- layer 4: unaudited | sampled_pass | sampled_fail | escalated (sampled, not per-claim)
   kept_flagged    boolean NOT NULL DEFAULT false, -- D35 low-confidence Selection outcome: kept but marked-for-review (mirrors a selection_keep_flagged ledger row — see invariant below)
   is_current_testimony boolean NOT NULL DEFAULT true, -- D54 CACHE of testimony currency (the ledger below is truth): false once a newer extraction generation covers this chunk, or (living mode) the chunk left the current version. Bookkeeping, NEVER validity — no adjudication, claims stay immutable in every D3 sense
-  asserted_at     timestamptz,                 -- ASSERTION-EVENT time: when the source asserted this (≈ the version's source_modified_at/published_at, D55) — immutable; NOT the fact's world-time (that is claim_valid_*, D41)
+  asserted_at     timestamptz,                 -- ASSERTION-EVENT time: the immutable chunks.text_origin_at of the chunk the claim was freshly extracted from (D140; the version's source_modified_at, else published_at, for text new in that version) — immutable; NOT the fact's world-time (that is claim_valid_*, D41)
   -- D41 source-asserted world-validity INTERVAL — immutable evidence about WHEN (not current belief).
   -- Overlap of these intervals across sources is EXPECTED (it is evidence), so there is deliberately
   -- NO uniqueness/EXCLUDE, NO invalidated_at, NO status here — the opposite of relations (§9):
@@ -2868,7 +2868,7 @@ Labs."*
 | D31/D32 Claimify staged extraction + grounding | `claims` (`source_span`, `added_context`, grounding flags + gate CHECK), `grounding_audits` |
 | D33 extraction decision ledger | `claim_extraction_decisions` |
 | D35 Selection recall envelope | `claims.kept_flagged`, `selection_drop_reason`, `protected_class`, `golden_claim_labels` |
-| D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_crossrefs.crossref_version` |
+| D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_reference_generations.crossref_version` |
 | D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `document_effective_time_events`; `document_version_scope` (projection); `document_versions.version_key`; `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`; `chunks.text_origin_at`/`reuse_identity_hash`; `document_crossrefs` (version-grain, generation, binding, origin, section keys) + `document_reference_generations` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
 | D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |

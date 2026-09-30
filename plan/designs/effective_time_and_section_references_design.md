@@ -169,8 +169,9 @@ Two access paths compute the same intervals:
   effective_from)`, over `ix_effective_periods_lineage`). It is used by paged reads whose
   cursor pins a past belief instant (§3.6), always after candidates are known.
 
-The public view `memory_v1.document_effective_periods_live` exposes the projection's periodised
-rows.
+The public view `memory_v1.document_effective_periods_live` has period grain: it derives its
+rows from the live declaration rows (`effective_intervals` at the current instant), one row per
+declaration with its derived end. The projection is used only for version-scope selection.
 
 Consequences a reader should check against the example:
 
@@ -854,7 +855,10 @@ excludes that edition. The gate closes this without touching fact windows:
   channel (semantic, lexical, entity-anchored and graph expansion) and of confirmation, before
   `ORDER BY … LIMIT`. Concretely each channel adds `EXISTS (evidence → chunk_claims → chunk →
   document_version_scope)` probed through primary keys and `ix_chunkclaims_claim`, the same
-  shape as §3.2. The ranking, `FACTS_CONTEXT_CANDIDATE_K` and work budget are unchanged; a
+  shape as §3.2, for current-belief reads. For a supplied past `believed_at` (open-query callers
+  and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the
+  candidate fact's bounded set of supporting lineages and evaluates them with
+  `versions_in_scope(…, believed_at, doc_ids)`, i.e. the ledgers. The ranking, `FACTS_CONTEXT_CANDIDATE_K` and work budget are unchanged; a
   fact supported only by out-of-force text is simply not a candidate, so it can never crowd an
   in-force fact out of the top k. Evidence is hydrated after confirmation and only from in-scope
   claims.
