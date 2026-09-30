@@ -616,6 +616,9 @@ class DocumentCatalog:
                                 else None
                             ),
                             "structurer_version": record.structurer_version,
+                            "section_key": section.section_key,
+                            "own_content_hash": section.own_content_hash,
+                            "subtree_content_hash": section.subtree_content_hash,
                         },
                     ).scalar_one()
                     ids_by_path[section.node_path] = section_id
@@ -974,12 +977,14 @@ _INSERT_SECTION = text(
         section_id, deployment_id, doc_id, version_id, representation_id,
         structure_generation_id, parent_section_id, node_path, block_start, block_end,
         title, role, char_start, char_end, ordinal,
-        heading_level, normalized_title, summary, placement_path, structurer_version
+        heading_level, normalized_title, summary, placement_path, structurer_version,
+        section_key, own_content_hash, subtree_content_hash
     ) VALUES (
         :section_id, :deployment_id, :doc_id, :version_id, :representation_id,
         :structure_generation_id, :parent_section_id, :node_path, :block_start, :block_end,
         :title, CAST(:role AS section_role), :char_start, :char_end, :ordinal,
-        :heading_level, :normalized_title, :summary, :placement_path, :structurer_version
+        :heading_level, :normalized_title, :summary, :placement_path, :structurer_version,
+        :section_key, :own_content_hash, :subtree_content_hash
     )
     ON CONFLICT (structure_generation_id, node_path) DO NOTHING
     RETURNING section_id
@@ -1027,7 +1032,8 @@ _SELECT_SECTION_TREE = text(
     """
     SELECT node_path, title, role::text AS role, block_start, block_end,
            char_start, char_end, summary, ordinal, placement_path,
-           structurer_version, heading_level, normalized_title
+           structurer_version, heading_level, normalized_title,
+           section_key, own_content_hash, subtree_content_hash
     FROM document_sections
     WHERE structure_generation_id = :structure_generation_id
     ORDER BY ordinal
@@ -1060,6 +1066,9 @@ def _persisted_tree(
                 ordinal=row["ordinal"],
                 heading_level=row["heading_level"],
                 normalized_title=row["normalized_title"],
+                section_key=row["section_key"],
+                own_content_hash=row["own_content_hash"],
+                subtree_content_hash=row["subtree_content_hash"],
             )
             for row in section_rows
         ),

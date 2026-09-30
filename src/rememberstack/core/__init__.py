@@ -82,6 +82,8 @@ from rememberstack.core.storage_routing import HOT_MIME_PREFIXES
 from rememberstack.core.storage_routing import storage_class_for
 from rememberstack.core.structure_skeleton import analyze_skeleton
 from rememberstack.core.structure_skeleton import deterministic_section_role
+from rememberstack.core.structure_skeleton import duplicate_section_key_warnings
+from rememberstack.core.structure_skeleton import heading_attributes
 from rememberstack.core.structure_skeleton import LONG_TITLE
 from rememberstack.core.structure_skeleton import MAX_FALLBACK_DEPTH
 from rememberstack.core.structure_skeleton import MIN_CHECK_SECTIONS
@@ -92,6 +94,7 @@ from rememberstack.core.structure_skeleton import SKELETON_PARSER_VERSION
 from rememberstack.core.structure_skeleton import SKELETON_STATS_VERSION
 from rememberstack.core.structure_skeleton import SkeletonAnalysis
 from rememberstack.core.structure_skeleton import TINY_FLOOR
+from rememberstack.core.structure_skeleton import with_content_hashes
 
 __all__ = (
     "BLOCKIZER_VERSION",
@@ -147,6 +150,8 @@ __all__ = (
     "resolve_source_refs",
     "analyze_skeleton",
     "deterministic_section_role",
+    "duplicate_section_key_warnings",
+    "heading_attributes",
     "LONG_TITLE",
     "MAX_FALLBACK_DEPTH",
     "MIN_CHECK_SECTIONS",
@@ -157,6 +162,7 @@ __all__ = (
     "skeleton_hash",
     "SkeletonAnalysis",
     "TINY_FLOOR",
+    "with_content_hashes",
     "DEFAULT_EVIDENCE_COUNT_WEIGHT",
     "DEFAULT_GRAPH_DISTANCE_WEIGHT",
     "DEFAULT_RRF_K",

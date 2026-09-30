@@ -39,9 +39,25 @@ structurally fake zero from materialized tree depth."""
 """Pins every formula, zero case, normalization, and named floor below."""
 
 SKELETON_PARSER_VERSION: Final = (
-    "e0-skeleton-parser-2026.07:d79-heading-stack:block-grid-v1"
+    "e0-skeleton-parser-2026.10:d79-heading-stack:block-grid-v1:d140-attr-keys"
 )
-"""The deterministic heading-stack skeleton producer generation."""
+"""The deterministic heading-stack skeleton producer generation.
+
+``d140-attr-keys``: a trailing Pandoc/kramdown attribute block on a heading
+(``## Per-diem {#per-diem}``) is stripped from the title and its
+``#identifier`` becomes the section key (D140 §4.1).
+"""
+
+SECTION_KEY_MAX_LEN: Final = 200
+"""The longest section key accepted from a heading attribute block."""
+
+_ATTRIBUTE_BLOCK = re.compile(r"\{([^{}]*)\}\s*$")
+_SECTION_KEY = re.compile(r"[A-Za-z0-9_.:/-]{1,%d}" % SECTION_KEY_MAX_LEN)
+_ATTRIBUTE_TOKEN = re.compile(
+    r"""#(?P<key>[^\s{}]+)"""
+    r"""|\.[^\s{}=#.][^\s{}]*"""
+    r"""|[A-Za-z_][\w:.-]*=(?:"[^"]*"|'[^']*'|[^\s"'{}]+)"""
+)
 
 _ARABIC_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)(?=$|[\s.)])")
 _ROMAN_NUMBER = re.compile(r"^([IVXLCDM]+)(?=$|[\s.)])", re.IGNORECASE)
@@ -119,9 +135,119 @@ def parse_heading_skeleton(
 
     output = [root]
     _materialize_heading_nodes(
-        nodes=roots, parent_path="0", blocks=blocks, output=output
+        nodes=roots, parent_path="0", blocks=blocks, output=output, seen_keys=set()
     )
     return tuple(output)
+
+
+def heading_attributes(*, title: str) -> tuple[str, str | None] | None:
+    """Split a trailing Pandoc/kramdown attribute block off a heading title.
+
+    Returns ``(title without the block, section key or None)`` when the title
+    ends with a well-formed ``{…}`` block of ``#identifier``, ``.class`` and
+    ``key=value`` items; ``None`` when there is no block or it is malformed,
+    and then the heading stays untouched (D140 §4.1). A block with classes
+    only is stripped and yields no key; an identifier outside the key syntax
+    (1–200 characters from ``[A-Za-z0-9_.:/-]``) invalidates the block.
+    """
+    block = _ATTRIBUTE_BLOCK.search(title)
+    if block is None:
+        return None
+    inner = block.group(1)
+    keys: list[str] = []
+    position = 0
+    tokens = 0
+    while True:
+        while position < len(inner) and inner[position].isspace():
+            position += 1
+        if position == len(inner):
+            break
+        token = _ATTRIBUTE_TOKEN.match(inner, position)
+        if token is None:
+            return None
+        position = token.end()
+        if position < len(inner) and not inner[position].isspace():
+            return None
+        tokens += 1
+        if token.group("key") is not None:
+            keys.append(token.group("key"))
+    if tokens == 0 or len(keys) > 1:
+        return None
+    if keys and _SECTION_KEY.fullmatch(keys[0]) is None:
+        return None
+    return title[: block.start()].rstrip(), (keys[0] if keys else None)
+
+
+def duplicate_section_key_warnings(
+    *, sections: tuple[SnappedSection, ...], blocks: tuple[Block, ...]
+) -> tuple[dict[str, str], ...]:
+    """Structure warnings for headings whose key an earlier heading already holds.
+
+    The parser keeps the first heading carrying a key and gives later ones
+    none (D140 §4.2). This reports each such later heading so the structure
+    generation records why its key was dropped. Trees that hold no keys
+    (model-anchored fallbacks, synthetic roots) report nothing.
+    """
+    holders = {
+        section.section_key: section.node_path
+        for section in sections
+        if section.section_key is not None
+    }
+    warnings: list[dict[str, str]] = []
+    for section in sections[1:]:
+        if section.section_key is not None or section.heading_level is None:
+            continue
+        if not 0 <= section.block_start < len(blocks):
+            continue
+        block = blocks[section.block_start]
+        if block.type is not BlockType.HEADING or block.heading_title is None:
+            continue
+        parsed = heading_attributes(title=block.heading_title)
+        if parsed is None or parsed[1] is None or parsed[1] not in holders:
+            continue
+        warnings.append(
+            {
+                "kind": "duplicate_section_key",
+                "section_key": parsed[1],
+                "node_path": section.node_path,
+                "kept_node_path": holders[parsed[1]],
+            }
+        )
+    return tuple(warnings)
+
+
+def with_content_hashes(
+    *, sections: tuple[SnappedSection, ...], blocks: tuple[Block, ...]
+) -> tuple[SnappedSection, ...]:
+    """Stamp every section's own and subtree content hashes (D140 §4.2).
+
+    Both are deterministic from the D57 block grid: ``subtree_content_hash``
+    covers every block of the section's span, children included;
+    ``own_content_hash`` leaves out the blocks of its direct children's spans
+    (and therefore of all descendants). A changed paragraph in a child moves
+    the parent's subtree hash, never its own hash.
+    """
+    children: defaultdict[str, list[SnappedSection]] = defaultdict(list)
+    for section in sections:
+        if section.parent_path is not None:
+            children[section.parent_path].append(section)
+    return tuple(
+        section.model_copy(
+            update={
+                "own_content_hash": _block_run_hash(
+                    blocks=blocks,
+                    ordinals=_own_ordinals(
+                        section=section, children=children.get(section.node_path, [])
+                    ),
+                ),
+                "subtree_content_hash": _block_run_hash(
+                    blocks=blocks,
+                    ordinals=range(section.block_start, section.block_end + 1),
+                ),
+            }
+        )
+        for section in sections
+    )
 
 
 def resolve_fallback_skeleton(
@@ -290,6 +416,12 @@ def skeleton_hash(*, sections: tuple[SnappedSection, ...]) -> str:
             "block_end": section.block_end,
             "char_start": section.char_start,
             "char_end": section.char_end,
+            # Keys only when present: keyless skeletons keep their D79 hash.
+            **(
+                {"section_key": section.section_key}
+                if section.section_key is not None
+                else {}
+            ),
         }
         for section in sections
     ]
@@ -373,15 +505,29 @@ def _materialize_heading_nodes(
     parent_path: str,
     blocks: tuple[Block, ...],
     output: list[SnappedSection],
+    seen_keys: set[str],
 ) -> None:
     for sibling_index, node in enumerate(nodes):
         path = f"{parent_path}.{sibling_index}"
         block = node.block
+        title = block.heading_title or ""
+        normalized_title = block.normalized_title or ""
+        section_key: str | None = None
+        attributes = heading_attributes(title=title)
+        if attributes is not None:
+            title, section_key = attributes
+            normalized_title = normalized_heading_title(title=title)
+            # Depth-first order is document order: the first heading keeps a
+            # duplicate key, later ones get none (a structure warning).
+            if section_key in seen_keys:
+                section_key = None
+            elif section_key is not None:
+                seen_keys.add(section_key)
         output.append(
             SnappedSection(
                 node_path=path,
                 parent_path=parent_path,
-                title=block.heading_title or "",
+                title=title,
                 role="body",
                 block_start=block.ordinal,
                 block_end=node.block_end,
@@ -390,11 +536,16 @@ def _materialize_heading_nodes(
                 summary="",
                 ordinal=len(output),
                 heading_level=_required_heading_level(block=block),
-                normalized_title=block.normalized_title or "",
+                normalized_title=normalized_title,
+                section_key=section_key,
             )
         )
         _materialize_heading_nodes(
-            nodes=node.children, parent_path=path, blocks=blocks, output=output
+            nodes=node.children,
+            parent_path=path,
+            blocks=blocks,
+            output=output,
+            seen_keys=seen_keys,
         )
 
 
@@ -576,6 +727,25 @@ def _materialize_anchor_nodes(
         _materialize_anchor_nodes(
             nodes=node.children, parent_path=path, blocks=blocks, output=output
         )
+
+
+def _own_ordinals(
+    *, section: SnappedSection, children: list[SnappedSection]
+) -> list[int]:
+    excluded: set[int] = set()
+    for child in children:
+        excluded.update(range(child.block_start, child.block_end + 1))
+    return [
+        ordinal
+        for ordinal in range(section.block_start, section.block_end + 1)
+        if ordinal not in excluded
+    ]
+
+
+def _block_run_hash(*, blocks: tuple[Block, ...], ordinals: Iterable[int]) -> str:
+    """sha256 over the ordered block hashes, one per line."""
+    joined = "\n".join(blocks[ordinal].block_hash for ordinal in ordinals)
+    return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 
 
 def _children_by_parent(

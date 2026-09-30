@@ -50,6 +50,7 @@ src/tests/core/test_knowledge_fact_sheet.py
 src/tests/core/test_knowledge_hashing.py
 src/tests/core/test_knowledge_planner.py
 src/tests/core/test_knowledge_writer.py
+src/tests/core/test_section_keys.py
 src/tests/core/test_section_snap.py
 src/tests/core/test_selection_references.py
 src/tests/core/test_source_passages.py
