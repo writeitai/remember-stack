@@ -88,6 +88,7 @@ from rememberstack.core.structure_skeleton import LONG_TITLE
 from rememberstack.core.structure_skeleton import MAX_FALLBACK_DEPTH
 from rememberstack.core.structure_skeleton import MIN_CHECK_SECTIONS
 from rememberstack.core.structure_skeleton import parse_heading_skeleton
+from rememberstack.core.structure_skeleton import reindexed_sections
 from rememberstack.core.structure_skeleton import resolve_fallback_skeleton
 from rememberstack.core.structure_skeleton import skeleton_hash
 from rememberstack.core.structure_skeleton import SKELETON_PARSER_VERSION
@@ -156,6 +157,7 @@ __all__ = (
     "MAX_FALLBACK_DEPTH",
     "MIN_CHECK_SECTIONS",
     "parse_heading_skeleton",
+    "reindexed_sections",
     "resolve_fallback_skeleton",
     "SKELETON_PARSER_VERSION",
     "SKELETON_STATS_VERSION",

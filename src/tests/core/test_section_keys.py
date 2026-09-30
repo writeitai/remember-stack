@@ -10,6 +10,7 @@ from rememberstack.core import deterministic_section_role
 from rememberstack.core import duplicate_section_key_warnings
 from rememberstack.core import heading_attributes
 from rememberstack.core import parse_heading_skeleton
+from rememberstack.core import reindexed_sections
 from rememberstack.core import resolve_fallback_skeleton
 from rememberstack.core import skeleton_hash
 from rememberstack.core import with_content_hashes
@@ -203,3 +204,52 @@ def test_empty_document_root_gets_hashes() -> None:
     root = hashed["Document"]
     assert root.own_content_hash is not None
     assert root.own_content_hash == root.subtree_content_hash
+
+
+def _stored_pre_d140(source: str):
+    """Sections as a pre-D140 parser stored them: raw titles, no key, no hashes."""
+    blocks = blockize(document_md=source)
+    parsed = parse_heading_skeleton(
+        blocks=blocks, title="Document", markdown_chars=len(source)
+    )
+    stored = tuple(
+        section.model_copy(
+            update={
+                "title": blocks[section.block_start].heading_title
+                if section.parent_path is not None
+                else section.title,
+                "section_key": None,
+            }
+        )
+        for section in parsed
+    )
+    return blocks, parsed, stored
+
+
+def test_backfill_recomputes_keys_and_hashes_and_keeps_titles() -> None:
+    source = "# One {#one}\n\nbody\n\n## Two {#one}\n\nbody\n\n# Three {#three}\n"
+    blocks, parsed, stored = _stored_pre_d140(source)
+    reindexed = reindexed_sections(sections=stored, blocks=blocks, heading_keys=True)
+    assert reindexed is not None
+    assert [s.title for s in reindexed] == [s.title for s in stored]
+    assert [s.section_key for s in reindexed] == [None, "one", None, "three"]
+    fresh = with_content_hashes(sections=parsed, blocks=blocks)
+    assert [(s.own_content_hash, s.subtree_content_hash) for s in reindexed] == [
+        (s.own_content_hash, s.subtree_content_hash) for s in fresh
+    ]
+    again = reindexed_sections(sections=reindexed, blocks=blocks, heading_keys=True)
+    assert again == reindexed
+
+
+def test_backfill_of_model_anchored_generation_gives_no_keys() -> None:
+    blocks, _, stored = _stored_pre_d140("# One {#one}\n\nbody\n")
+    reindexed = reindexed_sections(sections=stored, blocks=blocks, heading_keys=False)
+    assert reindexed is not None
+    assert all(section.section_key is None for section in reindexed)
+    assert all(section.own_content_hash is not None for section in reindexed)
+
+
+def test_backfill_refuses_ranges_outside_the_grid() -> None:
+    blocks, _, stored = _stored_pre_d140("# One\n\nbody\n")
+    broken = (*stored[:-1], stored[-1].model_copy(update={"block_end": len(blocks)}))
+    assert reindexed_sections(sections=broken, blocks=blocks, heading_keys=True) is None

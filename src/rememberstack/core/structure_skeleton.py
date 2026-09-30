@@ -178,6 +178,47 @@ def heading_attributes(*, title: str) -> tuple[str, str | None] | None:
     return title[: block.start()].rstrip(), (keys[0] if keys else None)
 
 
+def reindexed_sections(
+    *,
+    sections: tuple[SnappedSection, ...],
+    blocks: tuple[Block, ...],
+    heading_keys: bool,
+) -> tuple[SnappedSection, ...] | None:
+    """Recompute key and content hashes for stored pre-D140 sections (§4.2).
+
+    ``sections`` are one stored structure generation in ordinal (document)
+    order. With ``heading_keys`` — generations the heading parser produced —
+    each heading section's key is parsed again from its stored heading block,
+    first occurrence winning; model-anchored generations get no keys. Titles
+    and spans are returned unchanged. ``None`` when a section's block range
+    does not fit the stored grid, so the caller leaves it unindexed.
+    """
+    if any(section.block_end >= len(blocks) for section in sections):
+        return None
+    seen_keys: set[str] = set()
+    keyed: list[SnappedSection] = []
+    for section in sections:
+        section_key: str | None = None
+        block = (
+            blocks[section.block_start] if section.block_start < len(blocks) else None
+        )
+        if (
+            heading_keys
+            and section.parent_path is not None
+            and section.heading_level is not None
+            and block is not None
+            and block.type is BlockType.HEADING
+            and block.heading_title is not None
+        ):
+            attributes = heading_attributes(title=block.heading_title)
+            if attributes is not None and attributes[1] not in seen_keys:
+                section_key = attributes[1]
+                if section_key is not None:
+                    seen_keys.add(section_key)
+        keyed.append(section.model_copy(update={"section_key": section_key}))
+    return with_content_hashes(sections=tuple(keyed), blocks=blocks)
+
+
 def duplicate_section_key_warnings(
     *, sections: tuple[SnappedSection, ...], blocks: tuple[Block, ...]
 ) -> tuple[dict[str, str], ...]:
