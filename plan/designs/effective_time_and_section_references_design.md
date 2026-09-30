@@ -58,9 +58,10 @@ mechanisms.
 
   Example: edition 2 of the Travel Policy was *modified* on 2025-11-10, *ingested* on
   2025-11-15, and is *in force* from 2026-01-01.
-- **Periodised lineage** — a lineage whose `documents.effective_time` is `declared` (§2.4).
-  The state is set by the first declaration and does not revert when declarations are
-  retracted. Only `snapshot` lineages can be periodised.
+- **Periodised lineage** — a lineage whose latest effective-time event known at the belief
+  instant is `declared` (§2.1, §2.4). The state is set by the first declaration and does not
+  revert when declarations are retracted; only an explicit clear records `cleared`. Only
+  `snapshot` lineages can be periodised.
 - **Section key** — a source-chosen identifier for a section, stable across versions
   (`per-diem`, `approvals`, `par_5`).
 
@@ -69,9 +70,15 @@ mechanisms.
 ### 2.1 Data model
 
 ```sql
-ALTER TABLE documents
-  ADD COLUMN effective_time text NOT NULL DEFAULT 'undeclared'
-    CHECK (effective_time IN ('undeclared', 'declared'));   -- §2.4
+-- lineage mode transitions, a ledger like the declarations (§2.4)
+CREATE TABLE document_effective_time_events (
+  deployment_id   uuid NOT NULL,
+  doc_id          uuid NOT NULL,
+  event_at        timestamptz NOT NULL DEFAULT now(),
+  event           text NOT NULL CHECK (event IN ('declared', 'cleared')),
+  PRIMARY KEY (deployment_id, doc_id, event_at),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id)
+);
 
 ALTER TABLE document_versions
   ADD COLUMN version_key text;                              -- immutable once set; §1
@@ -107,7 +114,11 @@ is no `ON DELETE` action: versions and lineages are soft-deleted (D135, §9), an
 removed only by hard forget (D74), which deletes them explicitly.
 
 Rows are a ledger: a correction sets `retracted_at` on the old row and inserts the new one in
-the same transaction. Every declaration ever made for a live version remains readable, with
+the same transaction. The lineage's mode is a second, tiny ledger
+(`document_effective_time_events`): the first declaration of an undeclared lineage writes
+`declared`, `clear_effective_time` writes `cleared`. A lineage is periodised at belief instant
+`b` when its latest event at or before `b` is `declared`. Together the two ledgers reconstruct
+exactly what any past reader saw. Every declaration ever made for a live version remains readable, with
 the instant it was made and the instant it was retracted; this is what lets a paged read pin
 its view of declarations (§3.6). A version may hold **several** live periods (a text that was
 withdrawn and later put back into force by declaration rather than re-ingest).
@@ -128,11 +139,38 @@ The derivation deliberately **ignores processing status**: whether a version is 
 the publisher's statement, not a pipeline state. A version that is still converting still ends
 its predecessor's interval.
 
-This is the set-returning function `memory_v1.effective_intervals(deployment_id, believed_at
-DEFAULT now())` → `(doc_id, version_id, period_id, effective_from, effective_until,
-until_declared)`, one window function (`lead(effective_from) OVER (PARTITION BY doc_id ORDER
-BY effective_from)`) over the known declarations of live lineages and non-deleted versions.
-The public view `memory_v1.document_effective_periods_live` is that function at `now()`.
+Two access paths compute the same intervals:
+
+- **The current projection** `document_version_scope` holds, for every non-deleted version of
+  every live lineage, the intervals *as currently believed*, plus the version's readiness:
+
+  ```sql
+  CREATE TABLE document_version_scope (
+    deployment_id  uuid NOT NULL,
+    doc_id         uuid NOT NULL,
+    version_id     uuid NOT NULL,
+    in_force       tstzmultirange NOT NULL,  -- periodised: derived intervals; undeclared: served version '{(,)}', others '{}'
+    periodised     boolean NOT NULL,
+    selectable     boolean NOT NULL,         -- ready with a ready current representation, not deleted
+    PRIMARY KEY (deployment_id, version_id),
+    FOREIGN KEY (deployment_id, doc_id, version_id) REFERENCES document_versions (deployment_id, doc_id, version_id)
+  );
+  CREATE INDEX ix_version_scope_in_force ON document_version_scope USING gist (deployment_id, in_force) WHERE selectable;
+  ```
+
+  It is rewritten **for one lineage at a time**, in the same transaction as every write that
+  can change it: a declaration or retraction, a mode event, a version becoming ready or current,
+  a version or lineage deletion. A lineage has a handful of versions, so each rewrite is small.
+  It is a projection: dropping and rebuilding it from the ledgers and version rows yields the
+  same rows.
+- **The belief-pinned function** `memory_v1.effective_intervals(deployment_id, doc_ids uuid[],
+  believed_at)` evaluates the ledgers at an earlier belief instant, **for the given lineages
+  only** (one window function, `lead(effective_from) OVER (PARTITION BY doc_id ORDER BY
+  effective_from)`, over `ix_effective_periods_lineage`). It is used by paged reads whose
+  cursor pins a past belief instant (§3.6), always after candidates are known.
+
+The public view `memory_v1.document_effective_periods_live` exposes the projection's periodised
+rows.
 
 Consequences a reader should check against the example:
 
@@ -154,15 +192,25 @@ Consequences a reader should check against the example:
   `effective_from`, `effective_until` and `version_key` (timezone-aware instants stored in
   UTC). All three require `source_kind`/`source_ref`; periods also require
   `versioning_mode = snapshot`.
-  - `version_key` already used in the lineage: if it names a version with the same
-    `content_hash`, the call is an idempotent observation of that version (its cursor may
-    advance, D55); with other content it is rejected with `409 Conflict`. A key is set only
-    when the version is created and never changes.
-  - A new version: the declaration is inserted in the version's creating transaction and the
-    lineage becomes `declared`.
-  - A D55 no-op (bytes identical to the latest version): the declaration is recorded on that
-    existing version. A period is neither snapshot metadata nor extraction input, so this
-    never rewrites anything derived text depends on.
+  - **One identity rule: a version is its `version_id`; a `version_key` names exactly one
+    version and is assigned only when that version is created.** Concretely:
+    - A key that is **new** to the lineage always creates a new version, even when the bytes
+      equal the latest version's (two publisher editions with identical text are two versions
+      sharing one content object; D55's byte no-op applies only to ingests that carry no new
+      key).
+    - A key that **already names the latest version**, with the same bytes, is an idempotent
+      retry of that observation (the D55 no-op; the cursor may advance).
+    - Any other use of an existing key — different bytes, or a key naming an older version
+      (A→B→A) — is rejected with `409 Conflict` naming the version the key belongs to. To put
+      an older edition back into force, the caller uses the period API on that version; to
+      record a new observation of the same text, the caller sends a new key or none.
+    - Without a key, D55 is unchanged: bytes identical to the latest version are a no-op,
+      otherwise (including A→B→A) a new version.
+  - A new version: the declaration is inserted in the version's creating transaction and, if
+    the lineage was not periodised, a `declared` event is written.
+  - A D55 no-op (bytes identical to the latest version, no new key): the declaration is recorded
+    on that existing version. A period is neither snapshot metadata nor extraction input, so
+    this never rewrites anything derived text depends on.
   - A declaration identical to a known one (same version, same start, same end) is a no-op. A
     declaration whose start equals a live declaration of **another** version of the lineage is
     rejected with `409 Conflict` and nothing is written.
@@ -173,8 +221,9 @@ Consequences a reader should check against the example:
   and the lineage **stays `declared`** (§2.4). The version must belong to the lineage in the
   deployment (checked in the same statement that locks it); it requires `memory:write`.
 - **Leaving effective time.** `DELETE /documents/{doc_id}/effective-periods` (SDK
-  `clear_effective_time`) retracts every live declaration of the lineage and sets
-  `effective_time = 'undeclared'`, returning the lineage to served-version semantics. It is the
+  `clear_effective_time`) retracts every live declaration of the lineage and writes a `cleared`
+  event, returning the lineage to served-version semantics for readers believing after that
+  instant. It is the
   only way back, so reverting to "the newest version is current" is always an explicit act.
 - Periods never trigger reprocessing: they are not part of any extraction, embedding or
   structure input (§5 keeps them out of every key). They do enqueue fact re-adjudication
@@ -185,11 +234,12 @@ Consequences a reader should check against the example:
 - **Only `snapshot` lineages accept periods.** `living` means "the newest version is the
   standing statement" (D55); a declared period would be a second authority over the same
   question. A request declaring a period on a `living` lineage is rejected (`422`).
-- **`effective_time` is sticky.** A lineage becomes `declared` with its first declaration and
-  stays `declared` when declarations are retracted. A `declared` lineage with no interval
+- **Periodisation is sticky.** A lineage becomes periodised with its first declaration and
+  stays so when declarations are retracted. A `declared` lineage with no interval
   containing the instant contributes nothing to that scope — retracting the last period of a
   withdrawn edition therefore never resurrects it as "current". Only `clear_effective_time`
-  returns the lineage to `undeclared`.
+  returns the lineage to served-version semantics, and it is recorded as an event so a read
+  pinned to an earlier belief instant still sees the lineage as periodised.
 - **Testimony currency is unchanged.** In `snapshot` mode every version's claims stay current
   testimony (D54); effective periods do not flip currency. Currency answers "should this
   claim count as evidence"; the period answers "was this text in force at T". Evidence counts
@@ -248,9 +298,31 @@ Where two versions of one lineage are both in force (overlapping declarations), 
 selected and results identify each; readers are never given one silently.
 
 The rule exists once, as `memory_v1.versions_in_scope(deployment_id, mode, at, range_start,
-range_end, evaluated_at, believed_at)` → `(doc_id, version_id, representation_id,
-effective_from, effective_until)`, used by every read path and allowlisted in the open query
-space.
+range_end, evaluated_at, believed_at DEFAULT NULL)` → `(doc_id, version_id, representation_id,
+effective_from, effective_until)`, allowlisted in the open query space. With `believed_at`
+omitted (or equal to the evaluation instant) it reads the `document_version_scope` projection;
+with an earlier belief instant it evaluates the ledgers (§2.2) for the lineages it is given.
+
+**Query plan (the scale contract).** Scoping is a **predicate inside the existing ranked
+statement**, never a pre-computed list of versions and never a filter on finished top-k:
+
+- Chunk and claim search already join each candidate to its version inside the ANN/BM25
+  statement (the D94 rule used today by the `documents` filter). The scope adds one probe per
+  candidate: `EXISTS (SELECT 1 FROM document_version_scope s WHERE s.deployment_id = … AND
+  s.version_id = candidate.version_id AND s.selectable AND s.in_force && :window)` via the
+  primary key. Undeclared lineages have their served version in the projection with an
+  unbounded range, so one predicate covers every lineage and ranked results are never dropped
+  by a later filter.
+- Filter-only listings (paged `search_documents`) that scan by the scope rather than by
+  relevance use the GiST index on `(deployment_id, in_force) WHERE selectable`.
+- Belief-pinned pages (§3.6) first take the page's candidate lineages from the same indexed
+  order and then call `effective_intervals` for those lineages only.
+
+Verification target (a starting point, measured in the implementation commits): on a
+synthetic corpus of 1 million lineages, 5 million versions and 50 million chunks, scoped
+`search_chunks` and `claims_and_sources_context` stay within 1.2× the p95 latency of the same
+unscoped query, and a projection rewrite for a lineage with 1,000 versions commits in under
+100 ms.
 
 ### 3.3 Reading and addressing the selected version
 
@@ -290,13 +362,23 @@ periodised lineages; unscoped reads and undeclared lineages keep the origin rule
 
 ### 3.5 `search_documents`
 
-For periodised lineages the `time` scope decides which versions are judged:
+`search_documents` keeps D134's **lineage grain**: one result per lineage, judged and
+described by one *representative* version, paged by lineage exactly as today. For periodised
+lineages the `time` scope defines the candidate versions and `versions` says which of them
+may match:
 
-- `versions: current` (default) judges each selected version; `versions: all` judges **every
-  version the scope selects** (for periodised lineages) or every live version (undeclared
-  lineages, as today). There is no option that ignores the scope for periodised lineages: an
-  audit over all editions uses `time: history`, and future editions use `overlap` with a
-  future range.
+| `versions` | `current`, `at T` (usually one candidate; two when declarations overlap) | `overlap`, `history` (several candidates) |
+| --- | --- | --- |
+| `current` (default) | only the **latest-starting** candidate is judged; it is the representative | same: only the latest-starting candidate in the window is judged |
+| `all` | any candidate may match; the representative is the latest-starting **matching** candidate | same |
+
+"Latest-starting" orders by the start of the version's interval inside the window, then
+`version_no`. Every result lists `matching_editions`: each candidate version that matched,
+with its version id, `version_key`, intervals and `source_open` handle, so an agent can open
+any matching edition without a second call. Undeclared lineages keep D134's meaning of both
+settings. There is no option that ignores the scope for periodised lineages: an audit over
+all editions uses `time: history` with `versions: all`, and future editions use `overlap` with
+a future range.
 - Filter-only paging pins the first call's `as_of` instant (D134) **and** uses it as the belief
   instant `b` for declarations, so a period correction made between pages cannot move a row
   across pages.
@@ -314,7 +396,8 @@ later pages. Ranked single-page searches evaluate both at the request instant.
   includes `effective: [{from, until, until_declared}]` for its version.
 - Scoped responses report lineages whose in-force version for the scope is not ready in a new
   envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count}`. It is
-  computed in the same statement from `effective_intervals` joined to version status, so an
+  computed from `document_version_scope` rows that are in force for the window but not
+  `selectable`, restricted to the lineages the request touched, so an
   agent can tell "nothing is in force" from "the in-force text is still processing".
 
 ## 4. Section keys
@@ -350,10 +433,14 @@ Both hashes are deterministic from the D57 block grid. A key is unique within a 
 (`UNIQUE (version_id, section_key)` where not null). A duplicate key in one version keeps the
 first occurrence and records a structure warning; the later headings get no key.
 
-The hash columns are nullable at the schema level: sections created before D140 are backfilled
-by a maintenance job that recomputes them from each representation's stored `blocks.json` and
-section block ranges (no model, no reprocessing). Readers treat a missing hash as "unknown"
-(`changed = null`), never as "unchanged".
+The hash columns are nullable at the schema level. Sections created before D140 are backfilled
+by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
+section's block range (no model, no reprocessing): both hashes, **and the section key** — the
+key is a pure function of the stored heading block text, so parsing it again is deterministic.
+The backfill updates only `section_key` and the hashes; stored titles, spans and derived
+records are untouched. A section whose hashes are still `NULL` has not been indexed yet:
+readers treat it as unknown (`changed = null`, and `section_history` reports `not_indexed`, not
+`absent`, for such a version).
 
 ### 4.3 Using keys
 
@@ -365,8 +452,8 @@ section block ranges (no model, no reprocessing). Readers treat a missing hash a
 - Parsing attribute blocks is a new parser generation (`SKELETON_PARSER_VERSION`). Because
   `structurer_version` is part of the D56 extraction key, the first new version of each
   existing lineage after deployment misses reuse once (a one-time extraction-basis rollover,
-  D56/D65). Existing versions are not re-structured; their sections get keys only if they are
-  re-structured for another reason.
+  D56/D65). Existing versions are not re-structured; the backfill (§4.2) gives their sections
+  keys and hashes.
 
 ## 5. Reuse across versions: text origin time
 
@@ -391,11 +478,15 @@ reuse_identity_hash)`.
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
 
 1. compute `reuse_identity_hash`;
-2. among chunks of `L` with the same `reuse_identity_hash` that belong to **non-deleted**
-   versions at this moment, take the one with the smallest `(text_origin_at, version_no,
-   ordinal)`; the new chunk's `text_origin_at` is that chunk's `text_origin_at`;
-3. with no match, `text_origin_at = source_modified_at or published_at` of the new version
-   (the value E2 uses today); with neither, `NULL` (as today's header "date unknown").
+2. let `d` be the new version's own date, `source_modified_at or published_at` (the value E2
+   uses today). A chunk of `L` is an **eligible match** when it has the same
+   `reuse_identity_hash`, belongs to a version that is non-deleted at this moment, and has a
+   known `text_origin_at` that is **not later than `d`**. If `d` is unknown there is no
+   eligible match;
+3. with eligible matches, the new chunk's `text_origin_at` is the smallest of their
+   `text_origin_at` (ties broken by `version_no`, then `ordinal`), and the chunk reuses that
+   match's extraction; otherwise `text_origin_at = d` (possibly `NULL`, today's "date
+   unknown") and the chunk is extracted or reused under today's key rules.
 
 `text_origin_at` is **recorded once and immutable**, like the `asserted_at` it feeds. It is
 extraction input: replay (D7) uses the recorded value and never recomputes it. Deleting the
@@ -409,14 +500,20 @@ toolchain change is a reuse boundary exactly as D56/D65 define: a chunk under a 
 matches nothing and takes its own version's date.
 
 **Why this is correct.** An unchanged chunk has the same key as before, so Selection, Claimify,
-claims and embeddings are reused; relative expressions in it stay resolved against the time
-the words were written, which is also the `asserted_at` of the claims it carries. A changed
+claims and embeddings are reused, and its relative expressions stay resolved against a date no
+later than the version's own — the date of the earliest known version, among those not dated
+after it, that carried the text. That is a conservative estimate of when the words were
+written, not proof of it. The "not later than" condition makes back-filling safe: when a 2026
+edition is ingested first and an identical 2024 edition later, the 2024 chunks have no
+eligible match (2026 > 2024), take 2024, and are extracted afresh; the 2026 edition's claims
+keep the 2026 date they were stamped with (claims are immutable; nothing is re-dated after the
+fact). A changed
 chunk, or one whose neighbours changed, matches nothing and takes the new version's date —
 today's behaviour. Effective periods are never part of any key.
 
-This refines D55's rule that claims' `asserted_at` comes from the version's source time: it
-now comes from the source time of the version where the text first appeared in the lineage,
-which for new text is the same value.
+This refines D55's rule that claims' `asserted_at` comes from the version's source time: a
+freshly extracted claim's `asserted_at` is its chunk's `text_origin_at`, which is the version's
+own date for new text and never later than it.
 
 ## 6. Cross-references
 
@@ -431,35 +528,43 @@ CREATE TYPE crossref_kind    AS ENUM
 CREATE TYPE crossref_binding AS ENUM ('floating', 'pinned');
 CREATE TYPE crossref_origin  AS ENUM ('extracted', 'supplied');
 
-CREATE TABLE document_reference_sets (
-  reference_set_id uuid PRIMARY KEY,
+CREATE TABLE document_reference_generations (
+  generation_id    uuid PRIMARY KEY,
   deployment_id    uuid NOT NULL,
   doc_id           uuid NOT NULL,
   version_id       uuid NOT NULL,
-  set_hash         text NOT NULL,          -- sha256 of the canonical body — idempotency key
-  artifact_uri     text NOT NULL,          -- …/<doc_id>/<content_hash>/references/<set_hash>.ndjson
-  item_count       integer NOT NULL,
-  status           text NOT NULL CHECK (status IN ('pending', 'materialized', 'rejected', 'superseded')),
+  origin           crossref_origin NOT NULL,
+  representation_id uuid,                  -- extracted: the representation the rows' spans index
+  crossref_version text,                   -- extracted: the crossreferencer generation
+  input_hash       text NOT NULL,          -- supplied: sha256 of the canonical NDJSON body; extracted: hash(representation_id, crossref_version)
+  artifact_uri     text,                   -- supplied: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson (content-addressed, shared by generations with the same body)
+  item_count       integer,
+  status           text NOT NULL CHECK (status IN ('pending', 'active', 'rejected', 'superseded')),
   errors           jsonb,                  -- rejected: [{item, field, reason}], bounded
   created_at       timestamptz NOT NULL DEFAULT now(),
-  materialized_at  timestamptz,
-  UNIQUE (deployment_id, version_id, set_hash),
-  UNIQUE (deployment_id, version_id, reference_set_id),
+  activated_at     timestamptz,
+  CHECK ((origin = 'extracted') = (representation_id IS NOT NULL AND crossref_version IS NOT NULL)),
+  CHECK ((origin = 'supplied') = (artifact_uri IS NOT NULL)),
+  UNIQUE (deployment_id, version_id, generation_id),         -- composite-FK target
   FOREIGN KEY (deployment_id, doc_id, version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id)
 );
+-- at most one active generation per source version and origin
+CREATE UNIQUE INDEX ux_reference_generations_active
+  ON document_reference_generations (deployment_id, version_id, origin) WHERE status = 'active';
 
 CREATE TABLE document_crossrefs (
   crossref_id        uuid PRIMARY KEY,
   deployment_id      uuid NOT NULL,
   from_doc_id        uuid NOT NULL,
   from_version_id    uuid NOT NULL,
+  generation_id      uuid NOT NULL,        -- the generation that wrote the row; visible only while it is active
   from_section_key   text,                 -- source section, when known
-  from_char_start    integer,              -- extracted rows: span in the version's current representation
+  from_representation_id uuid,             -- extracted rows: the representation the span indexes
+  from_char_start    integer,              -- extracted rows: span in that representation
   from_char_end      integer,
   kind               crossref_kind NOT NULL,
   origin             crossref_origin NOT NULL,
-  reference_set_id   uuid,                 -- supplied rows
   source_label       text,                 -- caller's own type code, opaque, returned verbatim
   -- target as named by the source (source content; §6.5 governs exposure):
   to_source_kind     text,
@@ -467,34 +572,42 @@ CREATE TABLE document_crossrefs (
   to_version_key     text,                 -- pinned: the target's immutable version key (§1)
   to_section_key     text,                 -- NULL = whole document
   binding            crossref_binding NOT NULL DEFAULT 'floating',
-  change_effective_from timestamptz,       -- kind = amends: when the change takes effect
+  change_effective_from timestamptz,       -- kind = amends with a known date
   change_date_known  boolean,              -- kind = amends: false = the source states no date
   -- resolution:
   to_doc_id          uuid,                 -- resolved target lineage; NULL = not (yet) matched
   resolved           boolean NOT NULL DEFAULT false,
   raw_citation       text,                 -- extracted rows: the citation text as found
   context            text,                 -- bounded surrounding text
-  crossref_version   text,                 -- crossreferencer generation (D7)
   created_at         timestamptz NOT NULL DEFAULT now(),
   CHECK (binding = 'floating' OR to_version_key IS NOT NULL),
   CHECK ((kind = 'amends') = (change_date_known IS NOT NULL)),
+  CHECK (kind = 'amends' OR change_effective_from IS NULL),
   CHECK (change_date_known IS NOT TRUE OR change_effective_from IS NOT NULL),
   CHECK (change_date_known IS NOT FALSE OR change_effective_from IS NULL),
-  CHECK ((origin = 'supplied') = (reference_set_id IS NOT NULL)),
+  CHECK (from_char_start IS NULL OR from_representation_id IS NOT NULL),
   FOREIGN KEY (deployment_id, from_doc_id, from_version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id),
-  FOREIGN KEY (deployment_id, from_version_id, reference_set_id)
-    REFERENCES document_reference_sets (deployment_id, version_id, reference_set_id),
+  FOREIGN KEY (deployment_id, from_version_id, generation_id)
+    REFERENCES document_reference_generations (deployment_id, version_id, generation_id),
   FOREIGN KEY (deployment_id, to_doc_id) REFERENCES documents (deployment_id, doc_id)
 );
-CREATE INDEX ix_crossrefs_from     ON document_crossrefs (deployment_id, from_version_id, from_section_key, crossref_id);
+CREATE INDEX ix_crossrefs_from     ON document_crossrefs (deployment_id, from_version_id, generation_id, from_section_key, crossref_id);
 CREATE INDEX ix_crossrefs_incoming ON document_crossrefs (deployment_id, to_doc_id, to_section_key, from_doc_id, from_version_id, crossref_id)
   WHERE to_doc_id IS NOT NULL;
 CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_source_kind, to_source_ref) WHERE to_doc_id IS NULL;
 ```
 
 The composite foreign keys make it impossible for a row to name a version of another lineage
-or a reference set of another version. There are no cascading delete actions (§9).
+or a generation of another version. There are no cascading delete actions (§9).
+
+**One identity rule for reference rows.** Every row belongs to a *generation*: one production of
+references for one source `version_id` and one origin. A reader sees a row only while its
+generation is `active`, and each `(version, origin)` has at most one active generation, which a
+new generation replaces atomically. Supplied and extracted references use the same rule; they
+differ only in what starts a generation (§6.3, §6.4). Versions are never identified by content:
+an A→B→A version has its own `version_id` and therefore its own generations, even though its
+bytes and artifacts are shared with the first A.
 
 **Kinds** (each general; the analysis §4.4 gives the reasoning):
 
@@ -553,16 +666,23 @@ lineage it is the instant `now`.
 - **pinned:** one row for the version with the named `version_key`, `applies_during = W`, and
   the target version's own intervals shown beside it (a pinned target need not be in force).
 
+A target version is **readable** when it is non-deleted and ready with a ready current
+representation — the same `selectable` condition as §3.2. Resolution always picks target
+versions by force (or by pinned key) first and checks readability second, and never falls back
+to another version when the chosen one is not readable.
+
 Each result row returns: kind, `source_label`, `binding`, context, the source (doc, version,
 section key and title, source window), the target (doc, version, representation, section key,
 section title, first chunk ids, `applies_during`, `concurrent`) or a **status**:
 
 | Status | Meaning |
 | --- | --- |
-| `resolved` | target version and (if named) section found |
+| `resolved` | target version is readable and (if named) the section is in it |
+| `target_processing` | the target version in force (or pinned) exists but is not readable yet; `applies_during` and the version id are returned, section and chunk ids are not |
 | `target_unavailable` | no live lineage with the named identity — never ingested, deleted, or forgotten (one status for all three, so deletion is not revealed) |
 | `target_not_in_force` | floating: the target lineage is live but no version is in force anywhere in `W` |
-| `section_not_in_version` | the target version exists but lacks the named key |
+| `section_not_in_version` | the readable target version lacks the named key |
+| `section_not_indexed` | the readable target version's sections have not been backfilled yet (§4.2), so absence cannot be told |
 | `pinned_version_unavailable` | pinned: no live version with the named key |
 
 For every status the row includes the target **as named by the source** (`to_source_kind`,
@@ -584,9 +704,10 @@ scan on `ix_crossrefs_incoming`; the outgoing query on `ix_crossrefs_from`.
 `cursor`. Output, ordered by effective start (periodised) or `version_no` (undeclared): one row
 per selected version — version id and number, `version_key`, in-force intervals, and either the
 section (title, `own_content_hash`, `subtree_content_hash`, `changed` and `own_changed` relative
-to the previous row that contained the key, first chunk ids) or `status = absent` when the
-version lacks the key (a removed or repealed section). A version whose hashes are unknown
-(pre-D140, not yet backfilled) returns `changed = null`. Incoming `amends` references that
+to the previous row that contained the key, first chunk ids), or `status = absent` when an
+indexed version lacks the key (a removed or repealed section), or `status = not_indexed` when
+the version's sections have not been backfilled yet (§4.2) — never `absent` for an unindexed
+version. A version still processing is `status = processing`. Incoming `amends` references that
 target the section are listed with their `change_effective_from` and `change_date_known`.
 
 The existing directed `graph_citation_path` keeps lineage grain (§7).
@@ -595,26 +716,35 @@ The existing directed `graph_citation_path` keeps lineage grain (§7).
 
 `PUT /documents/{doc_id}/versions/{version_id}/references` (SDK `set_references`) with an
 NDJSON body, one reference per line, **replacing the version's complete supplied set**. The
-body is bounded by size (64 MiB as a starting point, to be measured), not by item count; a
-larger set is rejected with `413`. Each item: `kind`, `from_section_key?`, `target:
+body is bounded at 64 MiB; a larger set is rejected with `413`. This is a deliberate **scope
+boundary**, not a starting point to raise: a version's references are anchored in its text, so
+their number is bounded by the text's length. At a few hundred bytes per NDJSON line, 64 MiB
+holds roughly 200,000 references — one for every few words of a 1–2 million word document,
+beyond the reading limits of every text family (D133) — while the statute versions that
+motivated the design carry at most thousands (to be confirmed on the corpus). A multipart
+staging protocol would add state, expiry and resumption rules for a case no supported document
+can produce. Each item: `kind`, `from_section_key?`, `target:
 {source_kind, source_ref, version_key?, section_key?}`, `binding`, `change_effective_from?`,
 `change_date_known?` (required for `amends`), `source_label?`, `context?`.
 
-- The body is stored as a content-addressed artifact of the version and a
-  `document_reference_sets` row with `status = pending`. An identical set (same hash) is a
-  no-op.
+- **Generations.** A PUT whose body hash equals the hash of the version's `active` or
+  `pending` supplied generation is an idempotent retry and changes nothing. Any other PUT
+  creates a new `pending` generation — including a body identical to an older, superseded
+  generation (A→B→A of a reference set is a third generation that reuses the stored artifact).
+  A newer pending generation makes an older pending one `superseded` before it is worked on.
 - **Validation is all-or-nothing.** Items are validated as JSON on receipt (malformed → `422`
   naming the line). Section keys are validated against the version's structure: synchronously
   when the version is ready, otherwise by the crossref sub-worker once structure exists. An
   unknown `from_section_key` rejects the **whole set** with `{item, field, reason}` errors; the
-  set's status becomes `rejected` and the previously materialized set stays live. The source
+  generation's status becomes `rejected` and the previously active generation stays active. The source
   scope of a reference is never broadened.
-- The E0 `crossref` sub-worker (D36) materializes a valid set into `document_crossrefs` rows
-  with `origin = supplied` and, in the same transaction, marks the previous set `superseded`.
-  Readers see only rows of the version's `materialized` set. This is how supplied references
+- The E0 `crossref` sub-worker (D36) materializes a valid pending generation into
+  `document_crossrefs` rows with `origin = supplied` and, in the same transaction, marks it
+  `active` and the previously active supplied generation `superseded`. The worker is keyed on
+  `generation_id`, so a retried job finds the generation already active and does nothing. This is how supplied references
   **write through E0** (Rule 3): the HTTP call records input; the pipeline writes rows.
-- `GET /documents/{doc_id}/versions/{version_id}/references` returns the sets' statuses and
-  errors.
+- `GET /documents/{doc_id}/versions/{version_id}/references` returns the version's generations
+  with statuses and errors.
 - **Late binding**: `to_source_kind`/`to_source_ref` resolve to `to_doc_id` at materialization
   and, for rows still unresolved, when a lineage with that identity is first ingested (one
   indexed lookup on the ingest path, as D36 §4A specifies). Pinned version keys and section keys
@@ -625,9 +755,15 @@ larger set is rejected with `413`. Each item: `kind`, `from_section_key?`, `targ
 The D36 extraction rungs (URLs → `links_to`, containers → `attaches`, thread headers →
 `replies_to`, reference-list mining and per-deployment citation grammars → `cites`, cheap-first
 resolution with the small-model residue rung) write the same table with `origin = extracted`,
-`from_version_id` set, spans filled, and — where a matched link carries an anchor
-(`page#per-diem`) — `to_section_key` filled and kind `refers_to`. Extracted rows are keyed on
-(version content, crossreferencer version) as D36 requires. Extracted rows are always
+`from_version_id`, `from_representation_id` and spans filled, and — where a matched link
+carries an anchor (`page#per-diem`) — `to_section_key` filled and kind `refers_to`. An extracted
+generation is identified by `(version_id, representation_id, crossref_version)`: the worker runs
+per source version (so A→B→A versions each get their own rows) and is idempotent on that
+triple. It becomes `active` — superseding the previous extracted generation — in the same
+transaction that makes its representation the version's current representation (the D65 swap),
+or immediately when the representation is already current (a crossreferencer bump). Stale
+coordinates are therefore never visible, and a converter upgrade never leaves two extracted
+generations live. Extracted rows are always
 `floating` (extraction cannot know a version key). A deployment that supplies references for a
 source kind may disable extraction for it by configuration.
 
@@ -651,12 +787,13 @@ source kind may disable extraction for it by configuration.
   graph's purpose is entity relations. Adding millions of section vertices would cost memory and
   maintenance without a query that needs them.
 - **Public relations and functions.** `memory_v1.document_effective_periods_live` and the
-  function `memory_v1.effective_intervals(deployment_id, believed_at)` (§2.2);
+  function `memory_v1.effective_intervals(deployment_id, doc_ids, believed_at)` (§2.2);
   `memory_v1.versions_in_scope(…)` (§3.2); `sections_live` gains `section_key`,
   `own_content_hash`, `subtree_content_hash`; `chunks_live` gains `text_origin_at`;
   `chunks_all_versions_live` (§3.3); `document_crossrefs_live` gains `from_version_id`,
   `from_section_key`, `to_section_key`, `binding`, `origin`, `source_label`,
-  `change_effective_from`, `change_date_known`; `memory_v1.fact_in_scope_support(…)` (§8).
+  `change_effective_from`, `change_date_known` and shows only rows of active generations;
+  `memory_v1.fact_in_scope_support(…)` (§8).
   SQL functions name range bounds `range_start`/`range_end` (`from` is a SQL keyword); the
   wire time scope keeps its existing `from`/`to` fields.
 
@@ -675,9 +812,19 @@ excludes that edition. The gate closes this without touching fact windows:
   lookups, graph neighbourhood and path expansion — return a fact only if it passes its own
   D118 window predicate **and** has at least one in-scope supporting claim. The returned
   evidence is limited to in-scope claims, shown through their in-scope occurrences (§3.4).
+- **The gate is an eligibility predicate, applied before every relevance bound.** Like entity
+  and fact-time eligibility (`decisions.md` D87 context operations: "eligibility constrain[s]
+  the candidate set before bounded relevance ranking; a global top-k followed by scope
+  filtering is forbidden"), in-scope support is part of the `WHERE` clause of every nomination
+  channel (semantic, lexical, entity-anchored and graph expansion) and of confirmation, before
+  `ORDER BY … LIMIT`. Concretely each channel adds `EXISTS (evidence → chunk_claims → chunk →
+  document_version_scope)` probed through primary keys and `ix_chunkclaims_claim`, the same
+  shape as §3.2. The ranking, `FACTS_CONTEXT_CANDIDATE_K` and work budget are unchanged; a
+  fact supported only by out-of-force text is simply not a candidate, so it can never crowd an
+  in-force fact out of the top k. Evidence is hydrated after confirmation and only from in-scope
+  claims.
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
-  rule on evidence, computed in the same statement as the fact read, over the result's bounded
-  candidate set.
+  rule on evidence.
 - **Conflicting dates.** The gate and the fact window are independent conditions and both
   must hold. If a claim's own validity says "from 2025" but its only occurrences are in an
   edition in force from 2026, a `current` read on 2025-06-01 does not return the fact (no
@@ -685,8 +832,11 @@ excludes that edition. The gate closes this without touching fact windows:
   returns it. Reconciling the window with the edition dates is adjudication's job (§8.2); the
   gate only guarantees that no answer rests solely on text that is not in force at the scope.
 - The same predicate is published as `memory_v1.fact_in_scope_support(deployment_id, fact_kind,
-  fact_id, mode, at, range_start, range_end, evaluated_at)` for open-query callers; the raw
-  `facts_current` view is unchanged and its manifest comment says it does not apply the gate.
+  fact_id, mode, at, range_start, range_end, evaluated_at, believed_at DEFAULT NULL)` for
+  open-query callers. `believed_at` is the declaration belief instant (§2.2); omitted, it is the
+  evaluation instant. Graph helpers that take a `believed_at` forward it, so a query-space
+  caller reproduces exactly the evidence set an operation saw. The raw `facts_current` view is
+  unchanged and its manifest comment says it does not apply the gate.
 
 ### 8.2 Adjudication input
 
@@ -707,7 +857,7 @@ specifies visibility, not cascades:
 
 - **Version deleted.** Its declarations stop taking part in interval derivation (§2.2 joins
   non-deleted versions); neighbours' derived ends recompute. Its chunks, claim occurrences,
-  reference sets and outgoing references stop being readable (every read joins non-deleted
+  reference generations and outgoing references stop being readable (every read joins non-deleted
   versions). Incoming references whose pinned `version_key` named it return
   `pinned_version_unavailable`; floating references simply stop selecting it. The declaration
   ledger rows remain as history, as D135 retains all version rows.
@@ -715,7 +865,7 @@ specifies visibility, not cascades:
   `target_unavailable`. `to_doc_id` is kept: if the lineage is revived (D55/D135 resurrection of
   a tombstoned lineage), resolution works again without re-binding.
 - **Hard forget (D74).** The forget worker explicitly deletes the lineage's period rows,
-  reference-set rows and artifacts, and the references it made; for references *to* it made by
+  effective-time events, `document_version_scope` rows, reference generations and artifacts, and the references it made; for references *to* it made by
   other lineages it sets `to_doc_id = NULL, resolved = false` and keeps the source-named target
   (it is the source's content, like `raw_citation`), so a re-ingest can re-bind it. Deleting
   the chunk and section rows follows D74 unchanged; `text_origin_at` values on other lineages

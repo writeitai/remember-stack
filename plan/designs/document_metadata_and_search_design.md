@@ -130,9 +130,13 @@ search_documents(query?, filters?, k) → documents
   declared effective periods, the shared `time` scope (`current` by default,
   or `at`, `overlap`, `history`) chooses the judged version(s) instead of the
   current pointer: under `current`, the version in force now; a lineage with
-  no version in force at the instant does not match. For such lineages
-  `versions: all` means every version the scope selects (an audit of all
-  editions uses `time: history`); there is no option that ignores the scope.
+  no version in force at the instant does not match. Results stay one per
+  lineage: with `versions: current` only the latest-starting selected version
+  is judged; with `versions: all` any selected version may match and the
+  latest-starting matching one represents the lineage. Each result lists every
+  matching edition (`matching_editions`, with version-addressed handles). An
+  audit of all editions uses `time: history`; there is no option that ignores
+  the scope ([effective time design §3.5](effective_time_and_section_references_design.md#35-search_documents)).
   Results carry their in-force intervals, their version id, and a P3 path only
   when the judged version is the served one (`served_version`), with
   `source_open(version_id)` otherwise, so an agent never opens a different

@@ -1884,7 +1884,8 @@ identity rules per source kind are a named spike.
 
 > **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
 > chunk's **text origin time**, recorded once when the chunk is created: the text origin
-> time of the earliest chunk of a non-deleted version of the lineage with the same
+> time of the earliest chunk, dated no later than the new version, of a non-deleted version
+> of the lineage with the same
 > date-free reuse identity (own and neighbour block hashes, non-date header facts,
 > toolchain versions), else the new version's source time. It replaces both date header
 > facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
@@ -6748,19 +6749,25 @@ to it.
    declared start in the lineage known at the belief instant. Declarations are a ledger
    (retraction for corrections); a duplicate start across versions is a conflict. A
    lineage becomes periodised with its first declaration and stays so until the caller
-   explicitly clears effective time. Periods are never inferred, never extraction input,
-   and not accepted on `living` lineages. Versions may carry an immutable caller
-   `version_key`, unique per lineage.
+   explicitly clears effective time; both transitions are ledger events, so any past
+   belief instant is reconstructable. Periods are never inferred, never extraction input,
+   and not accepted on `living` lineages. A version may carry a caller `version_key`,
+   assigned only when the version is created: a new key always creates a version, and an
+   existing key on any later observation is rejected. Current-belief selection reads a
+   per-lineage projection maintained in the writing transaction.
 2. **One time language for text.** Chunk search, claim search,
    `claims_and_sources_context`, `search_documents` and the new reference operations
    take the existing `current` / `at` / `overlap` / `history` scope. For periodised
    lineages it selects the non-deleted ready versions in force; other lineages behave
-   exactly as today. Every scoped result addresses the selected version (version-level
+   exactly as today. Scoping is a predicate inside the ranked statement, never a filter
+   on finished top-k. Every scoped result addresses the selected version (version-level
    handles; a P3 path only when it opens that version), and scoped claims are returned
-   through their occurrence in the selected version.
+   through their occurrence in the selected version. `search_documents` keeps lineage
+   grain with a defined representative version and lists every matching edition.
 3. **Evidence gate for facts.** Fact reads under a time scope return a fact only if its
    D118 window matches and at least one supporting claim occurs in a version the scope
-   selects (or in a lineage without declared periods). D118 remains the only fact-window
+   selects (or in a lineage without declared periods). The gate is an eligibility
+   predicate applied before every relevance bound (D87). D118 remains the only fact-window
    authority; declaration changes also enqueue ordinary re-adjudication, with the
    in-force intervals as an adjudication input.
 4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
@@ -6768,7 +6775,7 @@ to it.
    `section_history` lists a key across versions, including absences.
 5. **Text origin time.** One per-chunk date — the text origin time of the earliest
    matching chunk (date-free reuse identity) in a non-deleted version of the lineage,
-   recorded once — replaces the version date in the reuse key, the E2 header and fresh
+   considering only matches dated no later than the new version, recorded once — replaces the version date in the reuse key, the E2 header and fresh
    claims' `asserted_at`, so D56's cost-follows-the-edit promise holds for dated
    versions.
 6. **References.** `document_crossrefs` rows belong to the source version, may name
@@ -6777,7 +6784,9 @@ to it.
    concurrency) or `pinned` (a target `version_key`), address targets by source
    identity with late binding, and come from the D36 extractor (`extracted`) or from a
    caller-supplied NDJSON reference set validated all-or-nothing and materialized by the
-   E0 crossref sub-worker (`supplied`). New general kinds: `refers_to`, `amends` (with a
+   E0 crossref sub-worker (`supplied`). Every row belongs to one *generation* per source
+   version and origin; only the active generation is visible, and a new one replaces it
+   atomically — one identity rule for supplied sets, extracted rows and A→B→A versions. New general kinds: `refers_to`, `amends` (with a
    known or explicitly unknown date), `implements`; callers keep their own type codes in
    an opaque `source_label`. `document_references` reads them in both directions,
    keyset-paged, with explicit resolution statuses that never reveal a deleted target.
@@ -6800,11 +6809,12 @@ or flags.
 
 **Consequences.** New table `document_effective_periods`, functions
 `effective_intervals`, `versions_in_scope` and `fact_in_scope_support`;
-`documents.effective_time`; `document_versions.version_key`;
+`document_effective_time_events` and the `document_version_scope` projection;
+`document_versions.version_key`;
 `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`;
 `chunks.text_origin_at`/`reuse_identity_hash`; extended `document_crossrefs` and new
-`document_reference_sets`; two new read operations, three new write endpoints (periods,
-clear effective time, reference sets) and new ingest parameters; `time` on
+`document_reference_generations`; two new read operations, three new write endpoints
+(periods, clear effective time, reference sets) and new ingest parameters; `time` on
 the text operations and the evidence gate on fact reads. The section-key parser is a new
 parser generation (one extraction-basis rollover per lineage). The D36 extraction rungs
 and the E3 adjudication input follow in separate pull requests (the delivery plan says

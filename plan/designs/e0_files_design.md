@@ -600,8 +600,8 @@ and kinds `cites | links_to | attaches | replies_to | refers_to | amends | imple
 
 The sub-worker has two inputs and writes one table:
 
-- **Supplied references** (`origin = supplied`): a caller-provided NDJSON reference set stored
-  as an artifact of the version (D140 §6.3) is validated against the version's structure
+- **Supplied references** (`origin = supplied`): each accepted PUT of a caller-provided NDJSON
+  reference set is a new *generation* stored as an artifact of the version (D140 §6.3) is validated against the version's structure
   all-or-nothing (an unknown source section key rejects the set, never broadens a reference to
   document grain) and materialized deterministically; no model is involved. Pinned targets
   name the target version's immutable `version_key`.
@@ -634,9 +634,12 @@ one indexed lookup on the ingest path — so earlier documents' references bind 
 retroactively. Pinned version keys and section keys need no binding step: they resolve at
 read time. No periodic sweep; resolution rides the write path in both directions.
 
-Extracted rows are idempotent on the version's `content_hash` + crossreferencer version
-(D12); versioned because the fuzzy rung is non-deterministic; the citation `context` snippet
-is stored for audit. Supplied rows are idempotent on the reference set's hash. Execution
+Extracted rows are idempotent on the source `version_id`, its representation and the
+crossreferencer version (not on `content_hash`: an A→B→A version needs its own rows); versioned because the fuzzy rung is non-deterministic; the citation `context` snippet
+is stored for audit. Every row belongs to a generation — one per source `version_id` and origin
+(supplied: per accepted PUT; extracted: per representation and crossreferencer version) — and
+only the active generation is visible; a new generation replaces it atomically, extracted ones
+together with the D65 representation swap. Workers are idempotent on the generation. Execution
 class (D52): deterministic first, one small-model rung for the extraction residue — LLM
 spend scales with ambiguity, not volume (D4). A deployment that supplies references for a
 source kind may disable extraction for that source kind by configuration.

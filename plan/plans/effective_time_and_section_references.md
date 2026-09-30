@@ -11,31 +11,35 @@ WP-ET.8 are separate, later pull requests.
 
 | WP | Scope | Design | Depends on | Delivery |
 | --- | --- | --- | --- | --- |
-| WP-ET.1 | Effective periods: `documents.effective_time`, `document_versions.version_key` (+ unique index), `document_effective_periods` with composite ownership FK; `effective_intervals`, `document_effective_periods_live`, `versions_in_scope`; ingest `effective_from`/`effective_until`/`version_key` (HTTP, SDK, MCP `ingest`, CLI if it exposes ingest flags) with snapshot-only, duplicate-start and version-key rules; `PUT …/effective-periods`, `DELETE …/effective-periods` + SDK `set_effective_periods`/`clear_effective_time` | §2, §3.2 | — | #500, after design approval |
-| WP-ET.2 | Time-scoped text retrieval: `time` on chunk/claim search, `claims_and_sources_context`, `search_documents` (scoped `versions: all`, as-of pinning); `chunks_all_versions_live`; `adjacent_chunks` and passage hydration on any non-deleted ready version; version-addressed handles and optional `p3_path` with `served_version`; occurrence-based claim evidence; `effective` on results; `Freshness.scope_pending` | §3 | WP-ET.1 | #500, after design approval |
-| WP-ET.3 | Evidence gate for fact reads: in-scope support predicate in `facts_context`, `combined_context`, relation/observation lookups and graph neighbourhood/path; `fact_in_scope_support` SQL function; `facts_current` manifest comment | §8.1 | WP-ET.1 | #500, after design approval — **must ship with WP-ET.2**: periodised text retrieval without the gate would let fact reads answer from an edition that text reads exclude |
-| WP-ET.4 | Section keys: trailing heading attribute parsing (new parser generation), `section_key`, `own_content_hash`, `subtree_content_hash` (nullable) with per-version key uniqueness and warnings; deterministic backfill job for existing sections; `section_history` (HTTP, SDK, MCP) with absence rows and paging | §4, §6.2 | WP-ET.1 | #500, after design approval |
-| WP-ET.5 | Text origin time: `reuse_identity_hash` (+ index) and `text_origin_at` on chunks; E1 lookup; E2 header, `extraction_input_hash` and fresh claim `asserted_at` use it | §5 | — | #500, after design approval |
-| WP-ET.6 | References: `document_crossrefs` extension and `document_reference_sets` with composite FKs; NDJSON `PUT …/references` + `GET …/references` + SDK `set_references`; E0 `crossref` sub-worker validating (all-or-nothing) and materializing supplied sets; late binding on ingest; `document_references` (HTTP, SDK, MCP) with temporal join, statuses and keyset paging; graph source view dedupe; public view columns; D135 visibility and D74 forget handling for the new rows | §6, §7, §9 | WP-ET.4 | #500, after design approval |
+| WP-ET.1 | Effective periods: `document_effective_time_events`, `document_versions.version_key` (+ unique index), `document_effective_periods` with composite ownership FK; the `document_version_scope` projection maintained in every writing transaction (declarations, mode events, readiness/current-pointer moves, deletions); `effective_intervals`, `document_effective_periods_live`, `versions_in_scope`; ingest `effective_from`/`effective_until`/`version_key` (HTTP, SDK, MCP `ingest`, CLI if it exposes ingest flags) with snapshot-only, duplicate-start and the one version-key rule (new key creates, reuse elsewhere rejected); `PUT …/effective-periods`, `DELETE …/effective-periods` + SDK `set_effective_periods`/`clear_effective_time` | §2, §3.2 | — | #500, after design approval |
+| WP-ET.2 | Time-scoped text retrieval: `time` on chunk/claim search, `claims_and_sources_context`, `search_documents` (lineage grain with representative and `matching_editions`, as-of pinning); scope as an in-statement predicate; `chunks_all_versions_live`; `adjacent_chunks` and passage hydration on any non-deleted ready version; version-addressed handles and optional `p3_path` with `served_version`; occurrence-based claim evidence; `effective` on results; `Freshness.scope_pending` | §3 | WP-ET.1 | #500, after design approval |
+| WP-ET.3 | Evidence gate for fact reads: in-scope support as an eligibility predicate in every nomination channel and in confirmation (before each relevance bound) of `facts_context`, `combined_context`, relation/observation lookups and graph neighbourhood/path; `fact_in_scope_support` SQL function with `believed_at`; `facts_current` manifest comment | §8.1 | WP-ET.1 | #500, after design approval — **must ship with WP-ET.2**: periodised text retrieval without the gate would let fact reads answer from an edition that text reads exclude |
+| WP-ET.4 | Section keys: trailing heading attribute parsing (new parser generation), `section_key`, `own_content_hash`, `subtree_content_hash` (nullable) with per-version key uniqueness and warnings; deterministic backfill job deriving keys and hashes for existing sections; `section_history` (HTTP, SDK, MCP) with `absent`/`not_indexed`/`processing` rows and paging | §4, §6.2 | WP-ET.1 | #500, after design approval |
+| WP-ET.5 | Text origin time: `reuse_identity_hash` (+ index) and `text_origin_at` on chunks; E1 lookup restricted to matches dated no later than the incoming version; E2 header, `extraction_input_hash` and fresh claim `asserted_at` use it | §5 | — | #500, after design approval |
+| WP-ET.6 | References: `document_crossrefs` extension and `document_reference_generations` (one active generation per version and origin) with composite FKs; NDJSON `PUT …/references` (64 MiB scope boundary) + `GET …/references` + SDK `set_references`; E0 `crossref` sub-worker validating (all-or-nothing) and activating supplied generations; late binding on ingest; `document_references` (HTTP, SDK, MCP) with temporal join over readable target versions, statuses and keyset paging; graph source view dedupe; public view columns; D135 visibility and D74 forget handling for the new rows | §6, §7, §9 | WP-ET.4 | #500, after design approval |
 | WP-ET.7 | E3 adjudication input: in-force interval sets shown to adjudication; re-adjudication enqueued on declaration changes | §8.2 | WP-ET.1, WP-ET.3, D118 runtime | separate PR — changes E3 prompts/inputs and needs its own review and benchmark check. Correctness of default answers does not depend on it, because WP-ET.3's gate already prevents answers resting on text not in force |
-| WP-ET.8 | D36 extraction rungs writing `origin = extracted` rows (links, attachments, replies, citation mining and grammars, fuzzy and small-model resolution) | §6.4, `e0_files_design.md` §4A | WP-ET.6 | separate PR — independent of supplied references; large and model-dependent |
+| WP-ET.8 | D36 extraction rungs writing `origin = extracted` generations per (version, representation, crossreferencer version), activated with the D65 representation swap (links, attachments, replies, citation mining and grammars, fuzzy and small-model resolution) | §6.4, `e0_files_design.md` §4A | WP-ET.6 | separate PR — independent of supplied references; large and model-dependent |
 
 ## Migration
 
 The schema change is additive except in three places, each handled explicitly:
 
-1. **New section hashes on a populated table.** `own_content_hash` and `subtree_content_hash`
-   are added **nullable**. An idempotent backfill job recomputes them for existing sections from
-   each representation's stored `blocks.json` and section block ranges (deterministic, no model,
-   no reprocessing). Readers treat `NULL` as unknown (`changed = null`). The columns stay
-   nullable in the schema; newly structured sections always write them.
-2. **Parser generation rollover.** Section-key parsing bumps `SKELETON_PARSER_VERSION`, which
+1. **New section columns on a populated table.** `section_key`, `own_content_hash` and
+   `subtree_content_hash` are added **nullable**. An idempotent backfill job derives all three
+   for existing sections from each representation's stored `blocks.json` and section block
+   ranges (deterministic, no model, no reprocessing; titles and spans untouched). Until a
+   version is backfilled, readers report `not_indexed` / `changed = null`. Newly structured
+   sections always write the columns.
+2. **The selection projection.** `document_version_scope` is created and filled for every
+   existing non-deleted version in the migration (every existing lineage is undeclared, so each
+   served version gets an unbounded range and every other version an empty one).
+3. **Parser generation rollover.** Section-key parsing bumps `SKELETON_PARSER_VERSION`, which
    is part of `structurer_version` and therefore of the D56 extraction key and the D65
    extraction basis. Existing versions are not re-structured. The first new version of each
    existing lineage after deployment misses reuse once and extracts in full; later versions
    reuse normally. Deployments that want to avoid this spike can schedule it like any other
    extractor or structurer bump.
-3. **`document_crossrefs` replacement.** On `main` no code writes the table (only tests insert
+4. **`document_crossrefs` replacement.** On `main` no code writes the table (only tests insert
    rows), so the migration refuses to run if it holds rows and otherwise recreates it with the
    new columns, enums and foreign keys, then recreates the dependent views and property graph in
    the same transaction (the live-graph migration rule).
@@ -50,12 +54,20 @@ deployment of each lineage takes its own date (today's behaviour) and later vers
   time, the new operations and the query space, and `/docs/project/not-built-yet` listing
   WP-ET.7/8 as not built.
 - Tests: period derivation and scope selection (out-of-order declarations, gaps, overlaps,
-  retraction of the last period, clear, deletion, belief-instant pinning), version-key rules,
-  the evidence gate (future-only, repealed-only, mixed and undeclared support; conflicting claim
-  dates), occurrence-based claim hydration after origin deletion, parser key extraction and
+  retraction of the last period, clear and re-declare with belief-pinned paging, deletion),
+  projection equals a rebuild from the ledgers after every write kind, version-key rules (new
+  key on identical bytes, old key after A→B→A rejected, idempotent retry), the evidence gate
+  (future-only, repealed-only, mixed and undeclared support; conflicting claim dates; an
+  out-of-force top candidate never displaces an in-force fact from top k),
+  `search_documents` representative and `matching_editions` per `versions` × mode, text-origin
+  back-fill (older edition after newer), reference generations (A→B→A reactivation, idempotent
+  retry, rejected set keeps the active one, extracted generation swap with the representation),
+  target resolution with a pending target version (`target_processing`), occurrence-based claim hydration after origin deletion, parser key extraction and
   hashes (own vs subtree), backfill, text-origin reuse (unchanged, changed, neighbour-changed,
   deleted origin, toolchain bump), reference validation and materialization, late binding,
   temporal-join resolution (overlap, concurrent targets, pinned, statuses) and paging;
   PostgreSQL integration tests for scoped statements, views and functions; composite-FK
   rejection of cross-lineage rows.
+- The scale verification target of design §3.2 is measured on the synthetic corpus and the
+  result recorded in the PR.
 - MCP catalogue changes bump the affected tools' `tool_version` (D136).

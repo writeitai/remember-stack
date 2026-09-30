@@ -321,9 +321,12 @@ Numbers are starting points to be measured, not commitments.
   statute book the reference file is 328 MB compressed across all versions; the row count
   must be measured on the real corpus before sizing indexes. Partitioning follows the
   existing E0 tables if needed (D23).
-- **Read cost.** Version selection is one indexed predicate over a small per-lineage period
-  set; the chunk search statement gains one join. Floating reference resolution is one
-  lookup per returned reference.
+- **Read cost.** Current-belief selection reads a per-lineage projection
+  (`document_version_scope`) maintained in the writing transaction; ranked search probes it by
+  primary key for each candidate inside the ranked statement, and filter-only listings use a
+  GiST index on the in-force ranges. Belief-pinned pages evaluate the ledgers only for the
+  page's candidate lineages. Floating reference resolution is one lookup per returned
+  reference. The verification target is in design §3.2.
 - **Processing cost.** Declaring or correcting a period never reprocesses anything: periods
   are not extraction input. With text-origin keys, a consolidated version whose only change
   is one paragraph re-extracts the chunks of that paragraph and their neighbours; everything
@@ -364,3 +367,21 @@ seven P2 problems. Where it offered alternatives, this section records the choic
 | Large supplied sets | multipart staged upload; **one NDJSON request bounded by bytes** | One request: complete-set replacement stays atomic and simple; per-version sets are expected to be far below the bound (to be measured on the statute corpus). |
 | Invalid source section in a supplied set | demote to document grain; keep with a status; **reject the whole set** | Reject: supplied data is deterministic and the caller can fix it; a partial or broadened set would misattribute references. |
 | Amendments without a date | nullable date; **explicit `change_date_known`** | Explicit, so a missing date is never read as "no timeline". |
+
+## 9. Review round 2 (GPT-6 Sol) — choices made
+
+[Review](../../design/reviews/REVIEW_gpt-6-sol_d140_design_r2_2026-09-30.md),
+[response](../../design/reviews/RESPONSE_d140_design_r2_2026-09-30.md). The guiding rule for
+this round was the simplest rule that stays correct at scale; several findings were closed by
+narrowing a contract rather than adding machinery.
+
+| Question | Options | Chosen and why |
+| --- | --- | --- |
+| Identity of versions, reference sets and extracted references | three separate rules; **one rule: rows are keyed by `version_id` and a generation, never by content** | One rule. A `version_key` is assigned only at creation (a new key always creates a version; an existing key on a later observation is rejected with a message pointing at the period API). Supplied and extracted references are *generations* per `(version_id, origin)` with one active generation replaced atomically. A→B→A then needs no special case anywhere. Key aliases were rejected: they would make a pinned address resolve to one of several versions. |
+| Back-filled older editions and text origin | keep "earliest ingested"; **only matches dated no later than the incoming version** | The reviewer's rule. It is one comparison, makes out-of-order ingestion safe, and never re-dates existing claims. Unknown incoming dates disable inheritance (conservative). |
+| Evidence gate placement | filter hydrated results and refill; **eligibility predicate before every relevance bound** | The predicate, as D87 already requires for entity and fact-time eligibility; no refill loop and no change to ranking or budgets. |
+| `search_documents` grain with several editions | version grain; **lineage grain with a representative and every matching edition listed** | Lineage grain keeps D134's contract and paging; listing matching editions gives version-level access without a second result model. |
+| Clear vs belief-pinned reads | snapshot selected versions in cursors; **mode transitions as ledger events** | Ledger events: one small append-only table, the same evaluation rule as declarations, and past belief instants become exactly reconstructable (cursors stay small). |
+| Scale of selection | evaluate the ledger per query; **a current-belief projection maintained per lineage in the writing transaction** | The projection turns scoping into a primary-key probe per ranked candidate and a GiST scan for listings; the ledgers remain the authority and rebuild it. |
+| Reference sets over 64 MiB | multipart staging; **a justified per-version bound as a scope boundary** | References are anchored in text, so their number is bounded by the text; 64 MiB of NDJSON exceeds what any supported document can anchor. Staging would add state and expiry for a case that cannot occur. |
+| Keys of pre-D140 sections | report them absent; **backfill keys with the hashes; report `not_indexed` until then** | The key is a pure function of the stored heading text, so the same backfill job derives it. |

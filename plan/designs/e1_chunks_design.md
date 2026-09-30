@@ -342,8 +342,10 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
   LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
   `published_at` header facts. It is recorded once when the chunk is created: the
-  `text_origin_at` of the earliest chunk (by text origin time, version number, ordinal) of a
-  non-deleted version of the lineage with the same `reuse_identity_hash` — own and neighbour
+  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
+  and **not later than this version's own date** (so a back-filled older edition never inherits
+  a later date) — own and neighbour
   block hashes, non-date header facts, blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
   and replayed, never recomputed; deleting the origin version later does not change it. The

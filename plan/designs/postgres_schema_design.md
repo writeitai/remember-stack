@@ -240,7 +240,7 @@ CREATE TYPE currency_reason        AS ENUM ('reextracted','version_superseded','
 CREATE TYPE section_role           AS ENUM ('body','abstract','introduction','results','methods','discussion','conclusion','references','appendix','table','figure_caption','nav','boilerplate','legal');
 CREATE TYPE crossref_kind          AS ENUM ('cites','links_to','attaches','replies_to','refers_to','amends','implements'); -- D140 adds the last three
 CREATE TYPE crossref_binding       AS ENUM ('floating','pinned');       -- D140: target version resolved at read time vs one named version
-CREATE TYPE crossref_origin        AS ENUM ('extracted','supplied');    -- D140: E0 extraction rungs vs a caller-supplied reference set
+CREATE TYPE crossref_origin        AS ENUM ('extracted','supplied');    -- D140: E0 extraction rungs vs a caller-supplied reference set (NDJSON)
 
 CREATE TYPE claim_temporal_class   AS ENUM ('static','dynamic','atemporal');
 -- D41 source-asserted validity on claims (immutable; never a relation-style revisable window):
@@ -1105,7 +1105,6 @@ CREATE TABLE documents (
   versioning_mode versioning_mode NOT NULL DEFAULT 'snapshot', -- D55: snapshot (fail-safe) | living (currency follows the current version, D54)
   origin          document_origin NOT NULL DEFAULT 'external', -- D42: external | system_generated — stamped at ingest, per lineage
   current_version_id uuid,                     -- → document_versions; the SERVED version: newest non-deleted version whose representation completed processing (real FK added after that table)
-  effective_time  text NOT NULL DEFAULT 'undeclared' CHECK (effective_time IN ('undeclared','declared')), -- D140: sticky; set by the first effective-period declaration, reset only by an explicit clear
   title           text,                        -- best-effort current title (the human name lives in P3, not the canonical path)
   first_seen_at   timestamptz NOT NULL DEFAULT now(),
   last_observed_at timestamptz,                -- last connector observation (watch loop heartbeat)
@@ -1147,8 +1146,9 @@ COMMENT ON TABLE document_entity_bindings IS
 -- (lineage, content) observation the connector chose to ingest (debounced — rapid edits
 -- coalesce; unchanged revision/etag or bytes never create a row). Carries everything that is
 -- true OF A SNAPSHOT: artifact URIs, conversion/structure provenance, processing status.
--- source_modified_at feeds derived claims' asserted_at (testimony is dated by when the source
--- said it — D41/D55).
+-- source_modified_at is the version's source date: it feeds the E2 header and claims' asserted_at
+-- through each chunk's text_origin_at (D140) — equal to it for text new in this version, an
+-- earlier version's date (never a later one) for text carried unchanged (D41/D55/D140).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_versions (
   version_id      uuid PRIMARY KEY,
@@ -1158,7 +1158,7 @@ CREATE TABLE document_versions (
   version_no      integer NOT NULL,            -- 1..n within the lineage
   source_version_ref text,                     -- connector revision/etag/generation; may advance on an identical-byte no-op so polling converges, but is not semantic snapshot metadata
   sync_cycle_id   uuid,                        -- LOGICAL FK → connector_sync_cycles (created below): which cycle observed this version (retract barrier)
-  source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → deterministic E2 header + derived claims' asserted_at
+  source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → the fallback for chunks' text_origin_at (D140), which is the E2 header date and fresh claims' asserted_at
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
   source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
@@ -1168,7 +1168,7 @@ CREATE TABLE document_versions (
   ingested_at     timestamptz NOT NULL DEFAULT now(),  -- system-time origin for everything derived from this version
   superseded_at   timestamptz,                 -- set when a newer version becomes current (lineage pointer moved)
   deleted_at      timestamptz,                 -- version tombstone (delete-a-version, §13)
-  version_key     text,                        -- D140: optional caller-chosen immutable version address (pinned references); unique per lineage (index below); NOT the mutable source_version_ref cursor
+  version_key     text,                        -- D140: optional caller-chosen version address, assigned only at creation (a new key always creates a version; an existing key on any other observation is rejected); unique per lineage; NOT the mutable source_version_ref cursor
   UNIQUE (deployment_id, doc_id, version_no),   -- no per-lineage content uniqueness: A→B→A is a third version sharing one content object (migration p3_01_0008)
   UNIQUE (deployment_id, version_id),           -- composite-FK target
   UNIQUE (deployment_id, doc_id, version_id),   -- composite-FK target for the CURRENT pointer (a lineage can only point at ITS OWN version)
@@ -1176,7 +1176,7 @@ CREATE TABLE document_versions (
   FOREIGN KEY (deployment_id, content_hash) REFERENCES content_objects (deployment_id, content_hash)
 );
 COMMENT ON TABLE document_versions IS
-  'Append-only snapshots of a lineage (D55). source_modified_at dates the testimony (→ claims.asserted_at). Artifacts + conversion provenance live on document_representations (D65) — a version can own several immutable readings; current_representation_id names the live one. The lineage''s current_version_id points here; superseding never deletes. Chunks/sections/claims derive from ONE (version, representation) and denormalize doc_id.';
+  'Append-only snapshots of a lineage (D55). source_modified_at is the source date of the snapshot; claims take their asserted_at from their chunk''s text_origin_at (D140), which falls back to it. Artifacts + conversion provenance live on document_representations (D65) — a version can own several immutable readings; current_representation_id names the live one. The lineage''s current_version_id points here; superseding never deletes. Chunks/sections/claims derive from ONE (version, representation) and denormalize doc_id.';
 CREATE INDEX ix_docversions_doc     ON document_versions (doc_id, version_no DESC);
 CREATE INDEX ix_docversions_status  ON document_versions (deployment_id, status) WHERE status <> 'ready';
 CREATE INDEX ix_docversions_hash    ON document_versions (deployment_id, content_hash);
@@ -1377,6 +1377,31 @@ CREATE INDEX ix_sections_parent ON document_sections (parent_section_id);
 CREATE UNIQUE INDEX ux_sections_key ON document_sections (version_id, section_key) WHERE section_key IS NOT NULL; -- D140: a key is unique within a version
 CREATE INDEX ix_sections_doc_key ON document_sections (deployment_id, doc_id, section_key) WHERE section_key IS NOT NULL; -- section history across versions
 
+-- D140: lineage effective-time mode transitions, a ledger evaluated at a belief instant.
+CREATE TABLE document_effective_time_events (
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  doc_id          uuid NOT NULL,
+  event_at        timestamptz NOT NULL DEFAULT now(),
+  event           text NOT NULL CHECK (event IN ('declared','cleared')),
+  PRIMARY KEY (deployment_id, doc_id, event_at),
+  FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id)
+);
+
+-- D140: current-belief selection projection, rewritten per lineage in the transaction of every
+-- write that changes it (declaration, retraction, mode event, readiness/current-pointer move,
+-- deletion). Rebuildable from the ledgers and version rows.
+CREATE TABLE document_version_scope (
+  deployment_id   uuid NOT NULL REFERENCES deployments,
+  doc_id          uuid NOT NULL,
+  version_id      uuid NOT NULL,
+  in_force        tstzmultirange NOT NULL,     -- periodised: derived intervals; undeclared: '{(,)}' for the served version, '{}' otherwise
+  periodised      boolean NOT NULL,
+  selectable      boolean NOT NULL,            -- non-deleted, ready, ready current representation
+  PRIMARY KEY (deployment_id, version_id),
+  FOREIGN KEY (deployment_id, doc_id, version_id) REFERENCES document_versions (deployment_id, doc_id, version_id)
+);
+CREATE INDEX ix_version_scope_in_force ON document_version_scope USING gist (deployment_id, in_force) WHERE selectable;
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- document_effective_periods — D140: declared periods during which a version's text is in force.
 -- A ledger: a correction retracts a row and inserts its replacement. An undeclared end is DERIVED
@@ -1407,30 +1432,39 @@ CREATE INDEX ix_effective_periods_lineage
 COMMENT ON TABLE document_effective_periods IS
   'D140 declared effective periods: when a snapshot-lineage version''s text is in force per its publisher. A ledger evaluated as known at a belief instant; not extraction input; never inferred. Time-scoped reads select versions through memory_v1.versions_in_scope.';
 
--- D140: one row per caller-supplied reference set (generation) of a version. The NDJSON body is a
--- content-addressed artifact; the crossref sub-worker validates and materializes it all-or-nothing.
-CREATE TABLE document_reference_sets (
-  reference_set_id uuid PRIMARY KEY,
+-- D140: one generation of references for one source version and origin. Rows in document_crossrefs
+-- are visible only while their generation is active; at most one active generation per
+-- (version, origin); a new generation replaces the active one atomically. Supplied: each PUT with a
+-- body different from the active/pending one; extracted: one per (version, representation,
+-- crossref_version), activated with the D65 representation swap.
+CREATE TABLE document_reference_generations (
+  generation_id   uuid PRIMARY KEY,
   deployment_id   uuid NOT NULL REFERENCES deployments,
   doc_id          uuid NOT NULL,
   version_id      uuid NOT NULL,
-  set_hash        text NOT NULL,               -- sha256 of the canonical body — idempotency key
-  artifact_uri    text NOT NULL,               -- …/<doc_id>/<content_hash>/references/<set_hash>.ndjson
-  item_count      integer NOT NULL,
-  status          text NOT NULL CHECK (status IN ('pending','materialized','rejected','superseded')),
+  origin          crossref_origin NOT NULL,
+  representation_id uuid,                      -- extracted only
+  crossref_version text,                       -- extracted only
+  input_hash      text NOT NULL,               -- supplied: sha256 of the NDJSON body; extracted: hash(representation_id, crossref_version)
+  artifact_uri    text,                        -- supplied only: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson
+  item_count      integer,
+  status          text NOT NULL CHECK (status IN ('pending','active','rejected','superseded')),
   errors          jsonb,                       -- rejected: bounded [{item, field, reason}]
   created_at      timestamptz NOT NULL DEFAULT now(),
-  materialized_at timestamptz,
-  UNIQUE (deployment_id, version_id, set_hash),
-  UNIQUE (deployment_id, version_id, reference_set_id),   -- composite-FK target
+  activated_at    timestamptz,
+  CHECK ((origin = 'extracted') = (representation_id IS NOT NULL AND crossref_version IS NOT NULL)),
+  CHECK ((origin = 'supplied') = (artifact_uri IS NOT NULL)),
+  UNIQUE (deployment_id, version_id, generation_id),   -- composite-FK target
   FOREIGN KEY (deployment_id, doc_id, version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id)
 );
+CREATE UNIQUE INDEX ux_reference_generations_active
+  ON document_reference_generations (deployment_id, version_id, origin) WHERE status = 'active';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- document_crossrefs — references made by ONE SOURCE VERSION (D36, extended by D140): extracted by the
--- E0 crossref sub-worker or materialized by it from a caller-supplied reference set. Section endpoints
--- are named by key and resolved at read time; floating targets resolve to the versions in force in the
+-- document_crossrefs — references made by ONE SOURCE VERSION (D36, extended by D140), written by one
+-- generation (extracted or supplied) of the E0 crossref sub-worker. Section endpoints are named by
+-- key and resolved at read time; floating targets resolve to the readable versions in force in the
 -- read window (a temporal join), pinned ones to the target's immutable version_key. to_doc_id is NULL
 -- until the target lineage is matched (late binding). No ON DELETE actions (soft deletion, §13; D74
 -- hard forget updates/deletes explicitly).
@@ -1440,40 +1474,41 @@ CREATE TABLE document_crossrefs (
   deployment_id   uuid NOT NULL REFERENCES deployments,
   from_doc_id     uuid NOT NULL,
   from_version_id uuid NOT NULL,               -- the version that makes the reference
+  generation_id   uuid NOT NULL,               -- → document_reference_generations; visible only while active
   from_section_key text,
-  from_char_start integer,                     -- extracted rows: span in the version's current representation
+  from_representation_id uuid,                 -- extracted rows: the representation the span indexes
+  from_char_start integer,
   from_char_end   integer,
   kind            crossref_kind NOT NULL,      -- cites | links_to | attaches | replies_to | refers_to | amends | implements
   origin          crossref_origin NOT NULL,    -- extracted | supplied
-  reference_set_id uuid,                       -- supplied rows
   source_label    text,                        -- caller's own type code, opaque, returned verbatim
   to_source_kind  text,                        -- target as named by the source (source content; exposed only by document_references for a live source)
   to_source_ref   text,
   to_version_key  text,                        -- pinned: the target version's immutable version_key
   to_section_key  text,                        -- NULL = the whole document
   binding         crossref_binding NOT NULL DEFAULT 'floating',
-  change_effective_from timestamptz,           -- kind = amends and change_date_known
+  change_effective_from timestamptz,           -- kind = amends with a known date
   change_date_known boolean,                   -- kind = amends: false = the source states no date
   to_doc_id       uuid,                        -- resolved target lineage; NULL if not matched
   resolved        boolean NOT NULL DEFAULT false,
   raw_citation    text,                        -- extracted rows: the citation text as found; RETAINED even when resolved (§13)
   context         text,
-  crossref_version text,                       -- LOGICAL FK → pipeline_component_versions (crossreferencer); a bump re-extracts (D36/D7)
   created_at      timestamptz NOT NULL DEFAULT now(),
   CHECK (binding = 'floating' OR to_version_key IS NOT NULL),
   CHECK ((kind = 'amends') = (change_date_known IS NOT NULL)),
+  CHECK (kind = 'amends' OR change_effective_from IS NULL),
   CHECK (change_date_known IS NOT TRUE OR change_effective_from IS NOT NULL),
   CHECK (change_date_known IS NOT FALSE OR change_effective_from IS NULL),
-  CHECK ((origin = 'supplied') = (reference_set_id IS NOT NULL)),
+  CHECK (from_char_start IS NULL OR from_representation_id IS NOT NULL),
   FOREIGN KEY (deployment_id, from_doc_id, from_version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id),
-  FOREIGN KEY (deployment_id, from_version_id, reference_set_id)
-    REFERENCES document_reference_sets (deployment_id, version_id, reference_set_id),
+  FOREIGN KEY (deployment_id, from_version_id, generation_id)
+    REFERENCES document_reference_generations (deployment_id, version_id, generation_id),
   FOREIGN KEY (deployment_id, to_doc_id) REFERENCES documents (deployment_id, doc_id)
 );
 COMMENT ON TABLE document_crossrefs IS
-  'References made by one source version (D36/D140): extracted or caller-supplied, document- or section-grain, floating or pinned. Projected (deduplicated per lineage pair and kind) to graph document_crossref edges; raw_citation and the source-named target are retained so a forgotten/re-ingested target can be re-resolved, and are never exposed through memory_v1.';
-CREATE INDEX ix_crossrefs_from     ON document_crossrefs (deployment_id, from_version_id, from_section_key, crossref_id);
+  'References made by one source version (D36/D140), written by one extracted or supplied generation; document- or section-grain, floating or pinned. Projected (deduplicated per lineage pair and kind, active generations only) to graph document_crossref edges; raw_citation and the source-named target are retained so a forgotten/re-ingested target can be re-resolved, and are never exposed through memory_v1.';
+CREATE INDEX ix_crossrefs_from     ON document_crossrefs (deployment_id, from_version_id, generation_id, from_section_key, crossref_id);
 CREATE INDEX ix_crossrefs_incoming ON document_crossrefs (deployment_id, to_doc_id, to_section_key, from_doc_id, from_version_id, crossref_id) WHERE to_doc_id IS NOT NULL;
 CREATE INDEX ix_crossrefs_pending  ON document_crossrefs (deployment_id, to_source_kind, to_source_ref) WHERE to_doc_id IS NULL;
 ```
@@ -2826,7 +2861,7 @@ Labs."*
 | D33 extraction decision ledger | `claim_extraction_decisions` |
 | D35 Selection recall envelope | `claims.kept_flagged`, `selection_drop_reason`, `protected_class`, `golden_claim_labels` |
 | D36/D37 E0 sub-workers (incl. crossref version), storage split | `documents` (URIs + all four sub-worker versions), `document_crossrefs.crossref_version` |
-| D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `documents.effective_time`; `document_versions.version_key`; `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`; `chunks.text_origin_at`/`reuse_identity_hash`; `document_crossrefs` (version-grain, binding, origin, section keys) + `document_reference_sets` |
+| D140 effective periods, section keys, version-aware references | `document_effective_periods` (+ view `memory_v1.document_effective_periods_live`, function `memory_v1.versions_in_scope`); `document_effective_time_events`; `document_version_scope` (projection); `document_versions.version_key`; `document_sections.section_key`/`own_content_hash`/`subtree_content_hash`; `chunks.text_origin_at`/`reuse_identity_hash`; `document_crossrefs` (version-grain, generation, binding, origin, section keys) + `document_reference_generations` |
 | D39 PageIndex sections + placement | `document_sections` (path/role/span/summary/placement) |
 | D40 P3 corpus filesystem | `projection_snapshots (plane='P3_corpusfs')` + `document(_sections).placement*` |
 | D41 claim-grain source-asserted validity | `claims.claim_valid_from/until/precision/kind` (immutable); `claims_as_of` recipe (evidence-only); same-statement normalized filter |
