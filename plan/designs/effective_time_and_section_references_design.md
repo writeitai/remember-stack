@@ -298,10 +298,12 @@ Where two versions of one lineage are both in force (overlapping declarations), 
 selected and results identify each; readers are never given one silently.
 
 The rule exists once, as `memory_v1.versions_in_scope(deployment_id, mode, at, range_start,
-range_end, evaluated_at, believed_at DEFAULT NULL)` → `(doc_id, version_id, representation_id,
+range_end, evaluated_at, believed_at DEFAULT NULL, doc_ids DEFAULT NULL)` → `(doc_id, version_id, representation_id,
 effective_from, effective_until)`, allowlisted in the open query space. With `believed_at`
-omitted (or equal to the evaluation instant) it reads the `document_version_scope` projection;
-with an earlier belief instant it evaluates the ledgers (§2.2) for the lineages it is given.
+omitted it reads the `document_version_scope` projection (current belief) and may be called for
+the whole deployment. With `believed_at` it evaluates the ledgers (§2.2) and **requires a
+`doc_ids` argument** naming the lineages to evaluate; it never enumerates the deployment at a
+past belief, because the projection only knows current belief.
 
 **Query plan (the scale contract).** Scoping is a **predicate inside the existing ranked
 statement**, never a pre-computed list of versions and never a filter on finished top-k:
@@ -313,10 +315,11 @@ statement**, never a pre-computed list of versions and never a filter on finishe
   primary key. Undeclared lineages have their served version in the projection with an
   unbounded range, so one predicate covers every lineage and ranked results are never dropped
   by a later filter.
-- Filter-only listings (paged `search_documents`) that scan by the scope rather than by
-  relevance use the GiST index on `(deployment_id, in_force) WHERE selectable`.
-- Belief-pinned pages (§3.6) first take the page's candidate lineages from the same indexed
-  order and then call `effective_intervals` for those lineages only.
+- Filter-only listings (paged `search_documents`) never enumerate candidates through the scope.
+  They walk D134's existing belief-independent lineage order (§3.6) and evaluate the scope for
+  each batch of candidate lineages at the pinned belief instant — through the projection when
+  the belief instant is still current (no declaration or mode event of those lineages since),
+  otherwise through `effective_intervals` for that batch.
 
 Verification target (a starting point, measured in the implementation commits): on a
 synthetic corpus of 1 million lineages, 5 million versions and 50 million chunks, scoped
@@ -386,9 +389,22 @@ a future range.
 
 ### 3.6 Paging and belief instant
 
-Every scoped operation that pages (filter-only `search_documents`, `document_references`,
-`section_history`) records `evaluated_at` and `believed_at` in its cursor and reuses them for
-later pages. Ranked single-page searches evaluate both at the request instant.
+Every scoped operation that pages records `evaluated_at` and `believed_at` in its cursor and
+reuses them for later pages. Ranked single-page searches evaluate both at the request instant.
+
+The rule that keeps pages consistent is simple: **the page order never depends on belief;
+scope is evaluated at the pinned belief instant for the candidates of each page.** Candidates
+come from an order built only on immutable values, so a correction or clear made between pages
+cannot remove a candidate from the walk:
+
+- filter-only `search_documents` walks lineages by D134's order — the ingest time of the
+  lineage's newest version ingested at or before the cursor's `as_of`, then `doc_id` (ingest
+  times are immutable) — takes candidates in batches, evaluates scope and filters at the pinned
+  belief instant, and fills the page. A page may scan several batches; the scan is capped (10 ×
+  `k` candidates as a starting point) and returns a cursor with a short page rather than
+  exceeding the cap;
+- `document_references` walks reference rows by the index order of §6.2 and `section_history`
+  walks one lineage's versions, both immutable orders.
 
 ### 3.7 Results carry their period and pending lineages
 
@@ -429,9 +445,14 @@ model-anchored fallback sections have no key.
   children included (the parser's section span already includes its children,
   `structure_skeleton.py:111-118`).
 
-Both hashes are deterministic from the D57 block grid. A key is unique within a version
-(`UNIQUE (version_id, section_key)` where not null). A duplicate key in one version keeps the
-first occurrence and records a structure warning; the later headings get no key.
+Both hashes are deterministic from the D57 block grid. A version can hold several structure
+generations (D65 representations, D79 structure generations; sections are unique per
+`(structure_generation_id, node_path)` on `main`, migration `p1_04_0019`), so a key is unique
+**within a structure generation**: `UNIQUE (structure_generation_id, section_key)` where not
+null. A duplicate key in one generation keeps the first occurrence and records a structure
+warning; the later headings get no key. Every read that resolves a key — section history,
+reference endpoints, first chunk ids — looks it up only in the version's current
+representation's current structure generation.
 
 The hash columns are nullable at the schema level. Sections created before D140 are backfilled
 by a maintenance job that recomputes, from each representation's stored `blocks.json` and the
@@ -537,6 +558,7 @@ CREATE TABLE document_reference_generations (
   representation_id uuid,                  -- extracted: the representation the rows' spans index
   crossref_version text,                   -- extracted: the crossreferencer generation
   input_hash       text NOT NULL,          -- supplied: sha256 of the canonical NDJSON body; extracted: hash(representation_id, crossref_version)
+  request_seq      bigint,                 -- supplied: per-version order of PUTs (latest intent wins, §6.3)
   artifact_uri     text,                   -- supplied: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson (content-addressed, shared by generations with the same body)
   item_count       integer,
   status           text NOT NULL CHECK (status IN ('pending', 'active', 'rejected', 'superseded')),
@@ -545,7 +567,9 @@ CREATE TABLE document_reference_generations (
   activated_at     timestamptz,
   CHECK ((origin = 'extracted') = (representation_id IS NOT NULL AND crossref_version IS NOT NULL)),
   CHECK ((origin = 'supplied') = (artifact_uri IS NOT NULL)),
+  CHECK ((origin = 'supplied') = (request_seq IS NOT NULL)),
   UNIQUE (deployment_id, version_id, generation_id),         -- composite-FK target
+  UNIQUE (deployment_id, version_id, origin, request_seq),
   FOREIGN KEY (deployment_id, doc_id, version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id)
 );
@@ -717,21 +741,29 @@ The existing directed `graph_citation_path` keeps lineage grain (§7).
 `PUT /documents/{doc_id}/versions/{version_id}/references` (SDK `set_references`) with an
 NDJSON body, one reference per line, **replacing the version's complete supplied set**. The
 body is bounded at 64 MiB; a larger set is rejected with `413`. This is a deliberate **scope
-boundary**, not a starting point to raise: a version's references are anchored in its text, so
-their number is bounded by the text's length. At a few hundred bytes per NDJSON line, 64 MiB
-holds roughly 200,000 references — one for every few words of a 1–2 million word document,
-beyond the reading limits of every text family (D133) — while the statute versions that
-motivated the design carry at most thousands (to be confirmed on the corpus). A multipart
-staging protocol would add state, expiry and resumption rules for a case no supported document
-can produce. Each item: `kind`, `from_section_key?`, `target:
+boundary** set on measured evidence. On the motivating corpus — every reference of every
+consolidated version of the Czech statute book, 12.2 million references over 113,446 source
+versions (analysis §10) — the largest single version carries 13,975 references, 4.16 MB in
+this NDJSON shape (mean 283 bytes per line); the 99th percentile version carries 1,406. 64 MiB
+is about 15 times the largest measured version. Because references are anchored in the text,
+their number grows with the text's length, and a version needing more than 64 MiB would need
+roughly 15 times the text of the largest statute. A multipart staging protocol would add state,
+expiry and resumption rules for inputs that no measured source produces; if a future corpus
+does, raising the bound is a configuration change and the staged route is the documented
+alternative (analysis §9). Each item: `kind`, `from_section_key?`, `target:
 {source_kind, source_ref, version_key?, section_key?}`, `binding`, `change_effective_from?`,
 `change_date_known?` (required for `amends`), `source_label?`, `context?`.
 
-- **Generations.** A PUT whose body hash equals the hash of the version's `active` or
-  `pending` supplied generation is an idempotent retry and changes nothing. Any other PUT
-  creates a new `pending` generation — including a body identical to an older, superseded
-  generation (A→B→A of a reference set is a third generation that reuses the stored artifact).
-  A newer pending generation makes an older pending one `superseded` before it is worked on.
+- **Generations: the latest PUT wins.** Each PUT locks the version's row and takes the next
+  `request_seq` for the version, so concurrent PUTs are totally ordered by commit. The
+  version's **intent** is the newest non-superseded, non-rejected supplied generation (pending
+  if one exists, else the active one). In the same transaction:
+  - a body equal to the intent's body is an idempotent retry and changes nothing;
+  - a body equal to the **active** generation's body while a newer generation is pending
+    cancels the pending one (marks it `superseded`); the active generation stays;
+  - any other body creates a new `pending` generation with the new `request_seq` and marks
+    every older pending generation `superseded` — including a body identical to an older,
+    superseded generation (A→B→A of a set is a new generation reusing the stored artifact).
 - **Validation is all-or-nothing.** Items are validated as JSON on receipt (malformed → `422`
   naming the line). Section keys are validated against the version's structure: synchronously
   when the version is ready, otherwise by the crossref sub-worker once structure exists. An
@@ -740,8 +772,11 @@ can produce. Each item: `kind`, `from_section_key?`, `target:
   scope of a reference is never broadened.
 - The E0 `crossref` sub-worker (D36) materializes a valid pending generation into
   `document_crossrefs` rows with `origin = supplied` and, in the same transaction, marks it
-  `active` and the previously active supplied generation `superseded`. The worker is keyed on
-  `generation_id`, so a retried job finds the generation already active and does nothing. This is how supplied references
+  `active` and the previously active supplied generation `superseded`. Before activating, the
+  worker locks the version's row and checks that its generation is still `pending` (not
+  superseded by a later PUT); otherwise it discards its rows and stops. The worker is keyed on
+  `generation_id`, so a retried job finds the generation already active or superseded and does
+  nothing. This is how supplied references
   **write through E0** (Rule 3): the HTTP call records input; the pipeline writes rows.
 - `GET /documents/{doc_id}/versions/{version_id}/references` returns the version's generations
   with statuses and errors.

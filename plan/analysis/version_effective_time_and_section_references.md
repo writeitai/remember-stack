@@ -364,7 +364,7 @@ seven P2 problems. Where it offered alternatives, this section records the choic
 | One date per chunk | header only; **header, reuse key and fresh claims' `asserted_at`** | All three, so a re-extraction after a toolchain bump reads and stamps the same date. |
 | "Did this section change" | own-block hash; **subtree hash, with the own-block hash also kept** | Subtree for `changed` (a changed sub-paragraph changes the provision); own-block for `own_changed`. |
 | `versions: all` with a scope | reject the combination; **all versions within the scope** | Within the scope; `history` is the audit of all editions. No mode silently ignores a requested time restriction. |
-| Large supplied sets | multipart staged upload; **one NDJSON request bounded by bytes** | One request: complete-set replacement stays atomic and simple; per-version sets are expected to be far below the bound (to be measured on the statute corpus). |
+| Large supplied sets | multipart staged upload; **one NDJSON request bounded by bytes** | One request: complete-set replacement stays atomic and simple; measured per-version sets are far below the bound (§10: largest 4.2 MB). |
 | Invalid source section in a supplied set | demote to document grain; keep with a status; **reject the whole set** | Reject: supplied data is deterministic and the caller can fix it; a partial or broadened set would misattribute references. |
 | Amendments without a date | nullable date; **explicit `change_date_known`** | Explicit, so a missing date is never read as "no timeline". |
 
@@ -385,3 +385,43 @@ narrowing a contract rather than adding machinery.
 | Scale of selection | evaluate the ledger per query; **a current-belief projection maintained per lineage in the writing transaction** | The projection turns scoping into a primary-key probe per ranked candidate and a GiST scan for listings; the ledgers remain the authority and rebuild it. |
 | Reference sets over 64 MiB | multipart staging; **a justified per-version bound as a scope boundary** | References are anchored in text, so their number is bounded by the text; 64 MiB of NDJSON exceeds what any supported document can anchor. Staging would add state and expiry for a case that cannot occur. |
 | Keys of pre-D140 sections | report them absent; **backfill keys with the hashes; report `not_indexed` until then** | The key is a pure function of the stored heading text, so the same backfill job derives it. |
+
+## 10. Measured: references per version in the statute book (2026-09-30)
+
+Round 3 of the design review asked for evidence behind the 64 MiB bound on a supplied reference
+set (design §6.3). Measured on the motivating corpus.
+
+**Input.** `gs://legalit-io-esel-opendata/esel-opendata/2026-09-29/datove-sady-esbirka/008PravniAktOdkaz.json.gz`
+from the LegalIt snapshot of 2026-09-29 (manifest
+`gs://legalit-io-esel-opendata/esel-opendata/2026-09-29/manifest.json`; file size 327,739,642
+bytes, SHA-256 `d9229c79168c6609bd50231484aad213d8ccc678310ced0a79a8626b2a2372d2`, matching the
+manifest; upstream Last-Modified 2026-09-28 23:07:14 GMT).
+
+**Method.** The file was streamed through `gunzip` into `ijson` (C backend) over the top-level
+`položky` array, in a disposable Cloud Shell session; no data was kept. For each reference item,
+the source version is `znění-fragment-zdroj.znění-dokument-id`. Each target fragment in
+`znění-fragment-cíl` became one NDJSON line in the design's item shape — `kind`,
+`from_section_key` (the source fragment anchor, e.g. `par_2/frag_201`), `target`
+(`source_kind`, `source_ref` = the act's ELI path, `section_key` = the target anchor, and
+`version_key` for static references), `binding` (`pinned` for static, else `floating`),
+`source_label` (the publisher's type code) and `context` (the citation text) — serialized with
+`json.dumps(ensure_ascii=False)` plus a newline, and its UTF-8 length was summed per source
+version. External references without a target fragment became one line with a URL target.
+
+**Results.**
+
+| Measure | Value |
+| --- | --- |
+| reference items | 12,182,855 |
+| NDJSON lines (one per target fragment) | 12,228,739 |
+| source versions with at least one reference | 113,446 |
+| references per version — median | 14 |
+| references per version — 99th percentile | 1,406 |
+| references per version — 99.9th percentile | 3,240 |
+| references per version — maximum | 13,975 (version 223999) |
+| NDJSON bytes, largest version | 4,158,303 (≈ 4.0 MiB) |
+| mean bytes per NDJSON line | 282.5 |
+
+The five largest versions carry 13,105–13,975 references each (≈ 4.0 MB each), consecutive
+consolidations of the same large acts. **Conclusion:** the 64 MiB bound is about 15 times the
+largest version in the whole statute book, so it is kept as a scope boundary (design §6.3).

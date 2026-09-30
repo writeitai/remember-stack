@@ -1143,12 +1143,16 @@ COMMENT ON TABLE document_entity_bindings IS
 -- document_versions — semantically append-only observed snapshots of a lineage (D55).
 -- source_version_ref is the sole mutable cursor: it may advance on identical-byte revision
 -- churn so polling converges; it never changes snapshot time or derived meaning. One row per
--- (lineage, content) observation the connector chose to ingest (debounced — rapid edits
--- coalesce; unchanged revision/etag or bytes never create a row). Carries everything that is
--- true OF A SNAPSHOT: artifact URIs, conversion/structure provenance, processing status.
--- source_modified_at is the version's source date: it feeds the E2 header and claims' asserted_at
--- through each chunk's text_origin_at (D140) — equal to it for text new in this version, an
--- earlier version's date (never a later one) for text carried unchanged (D41/D55/D140).
+-- observation the connector chose to ingest (debounced — rapid edits coalesce). An unchanged
+-- revision/etag, or bytes identical to the lineage's LATEST version, create no row — except that
+-- an ingest carrying a version_key new to the lineage always creates one (two editions with
+-- identical text, D140). Bytes identical to an OLDER version (A→B→A) are a new row sharing the
+-- content object. Carries everything that is true OF A SNAPSHOT: artifact URIs,
+-- conversion/structure provenance, processing status.
+-- The version's source date is source_modified_at, else published_at. It feeds the E2 header and
+-- claims' asserted_at through each chunk's text_origin_at (D140) — equal to it for text new in
+-- this version, an earlier version's date (never a later one) for text carried unchanged
+-- (D41/D55/D140).
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE document_versions (
   version_id      uuid PRIMARY KEY,
@@ -1158,7 +1162,7 @@ CREATE TABLE document_versions (
   version_no      integer NOT NULL,            -- 1..n within the lineage
   source_version_ref text,                     -- connector revision/etag/generation; may advance on an identical-byte no-op so polling converges, but is not semantic snapshot metadata
   sync_cycle_id   uuid,                        -- LOGICAL FK → connector_sync_cycles (created below): which cycle observed this version (retract barrier)
-  source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → the fallback for chunks' text_origin_at (D140), which is the E2 header date and fresh claims' asserted_at
+  source_modified_at timestamptz,              -- immutable after version creation: when the SOURCE says this snapshot was authored/modified → with published_at as its fallback, the version date that chunks' text_origin_at (D140) defaults to; text_origin_at is the E2 header date and fresh claims' asserted_at
   published_at    timestamptz,                 -- document's own date (resolves "last year"); world-time origin
   language        text,                        -- detected primary language (per version — it can change)
   source_shape    text,                        -- D80 typed filter grain: document | message_atom | thread | channel_export | connector-defined extension
@@ -1176,7 +1180,7 @@ CREATE TABLE document_versions (
   FOREIGN KEY (deployment_id, content_hash) REFERENCES content_objects (deployment_id, content_hash)
 );
 COMMENT ON TABLE document_versions IS
-  'Append-only snapshots of a lineage (D55). source_modified_at is the source date of the snapshot; claims take their asserted_at from their chunk''s text_origin_at (D140), which falls back to it. Artifacts + conversion provenance live on document_representations (D65) — a version can own several immutable readings; current_representation_id names the live one. The lineage''s current_version_id points here; superseding never deletes. Chunks/sections/claims derive from ONE (version, representation) and denormalize doc_id.';
+  'Append-only snapshots of a lineage (D55). source_modified_at is the source date of the snapshot; claims take their asserted_at from their chunk''s text_origin_at (D140), which falls back to source_modified_at, then published_at. Artifacts + conversion provenance live on document_representations (D65) — a version can own several immutable readings; current_representation_id names the live one. The lineage''s current_version_id points here; superseding never deletes. Chunks/sections/claims derive from ONE (version, representation) and denormalize doc_id.';
 CREATE INDEX ix_docversions_doc     ON document_versions (doc_id, version_no DESC);
 CREATE INDEX ix_docversions_status  ON document_versions (deployment_id, status) WHERE status <> 'ready';
 CREATE INDEX ix_docversions_hash    ON document_versions (deployment_id, content_hash);
@@ -1348,6 +1352,7 @@ CREATE TABLE document_sections (
   doc_id          uuid NOT NULL,               -- composite FK below, ON DELETE CASCADE (the lineage — denormalized for routing)
   version_id      uuid NOT NULL,               -- composite FK below → document_versions: structure derives from ONE snapshot (D55)
   representation_id uuid NOT NULL,             -- LOGICAL FK → document_representations (D65): the reading whose document.md these spans index — offsets are meaningless without it
+  structure_generation_id uuid NOT NULL,       -- → document_structure_generations (D79, migration p1_04_0019): one version/representation can hold several structure generations; the current one is document_representations.current_structure_generation_id
   parent_section_id uuid REFERENCES document_sections ON DELETE CASCADE, -- tree structure; NULL for root; cascades the subtree
   node_path       text NOT NULL,               -- materialized path, e.g. '0.2.1' — cheap ancestor/subtree queries
   block_start     integer NOT NULL,            -- first block ordinal of the section (D57: sections are BLOCK RANGES on the deterministic grid)
@@ -1365,7 +1370,7 @@ CREATE TABLE document_sections (
   section_key     text,                        -- D140: stable key from a trailing heading attribute {#key}; NULL when absent (never model-produced)
   own_content_hash text,                       -- D140: hash of the section's own ordered block hashes (children excluded); NULL = pre-D140, awaiting backfill
   subtree_content_hash text,                   -- D140: hash of all block hashes in the section span (children included) — "did this section change"; NULL = awaiting backfill
-  UNIQUE (version_id, node_path),
+  UNIQUE (structure_generation_id, node_path),  -- p1_04_0019 replaced the per-version path uniqueness
   FOREIGN KEY (deployment_id, doc_id) REFERENCES documents (deployment_id, doc_id) ON DELETE CASCADE,
   FOREIGN KEY (deployment_id, version_id) REFERENCES document_versions (deployment_id, version_id) ON DELETE CASCADE
 );
@@ -1374,7 +1379,7 @@ COMMENT ON TABLE document_sections IS
 CREATE INDEX ix_sections_doc    ON document_sections (doc_id);
 CREATE INDEX ix_sections_role   ON document_sections (deployment_id, role);
 CREATE INDEX ix_sections_parent ON document_sections (parent_section_id);
-CREATE UNIQUE INDEX ux_sections_key ON document_sections (version_id, section_key) WHERE section_key IS NOT NULL; -- D140: a key is unique within a version
+CREATE UNIQUE INDEX ux_sections_key ON document_sections (deployment_id, structure_generation_id, section_key) WHERE section_key IS NOT NULL; -- D140: a key is unique within a structure generation; reads resolve keys in the current representation's current structure generation
 CREATE INDEX ix_sections_doc_key ON document_sections (deployment_id, doc_id, section_key) WHERE section_key IS NOT NULL; -- section history across versions
 
 -- D140: lineage effective-time mode transitions, a ledger evaluated at a belief instant.
@@ -1446,6 +1451,7 @@ CREATE TABLE document_reference_generations (
   representation_id uuid,                      -- extracted only
   crossref_version text,                       -- extracted only
   input_hash      text NOT NULL,               -- supplied: sha256 of the NDJSON body; extracted: hash(representation_id, crossref_version)
+  request_seq     bigint,                      -- supplied: per-version PUT order; the newest non-superseded generation is the caller's intent
   artifact_uri    text,                        -- supplied only: …/<doc_id>/<content_hash>/references/<input_hash>.ndjson
   item_count      integer,
   status          text NOT NULL CHECK (status IN ('pending','active','rejected','superseded')),
@@ -1454,7 +1460,9 @@ CREATE TABLE document_reference_generations (
   activated_at    timestamptz,
   CHECK ((origin = 'extracted') = (representation_id IS NOT NULL AND crossref_version IS NOT NULL)),
   CHECK ((origin = 'supplied') = (artifact_uri IS NOT NULL)),
+  CHECK ((origin = 'supplied') = (request_seq IS NOT NULL)),
   UNIQUE (deployment_id, version_id, generation_id),   -- composite-FK target
+  UNIQUE (deployment_id, version_id, origin, request_seq),
   FOREIGN KEY (deployment_id, doc_id, version_id)
     REFERENCES document_versions (deployment_id, doc_id, version_id)
 );

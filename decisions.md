@@ -6734,7 +6734,7 @@ input.
 **Context.** Many sources publish successive versions of one document, each in force
 for a declared period (policies, price lists, standards editions, contract
 amendments, statutes), and point from one part of a document to a specific part of
-another. On `main` the engine reads only the most recently ingested version of a
+another. On `main` the engine reads only the newest served (ready) version of a
 lineage, has no notion of a version being in force, has no stable identity for a
 section across versions, and has designed but never built cross-references, at
 document grain only. Its D56 reuse key also contains the version's source date, so
@@ -6752,8 +6752,9 @@ to it.
    explicitly clears effective time; both transitions are ledger events, so any past
    belief instant is reconstructable. Periods are never inferred, never extraction input,
    and not accepted on `living` lineages. A version may carry a caller `version_key`,
-   assigned only when the version is created: a new key always creates a version, and an
-   existing key on any later observation is rejected. Current-belief selection reads a
+   assigned only when the version is created: a new key always creates a version; an
+   existing key is accepted only as an idempotent retry of the latest version with the same
+   bytes, and any other observation carrying it is rejected. Current-belief selection reads a
    per-lineage projection maintained in the writing transaction.
 2. **One time language for text.** Chunk search, claim search,
    `claims_and_sources_context`, `search_documents` and the new reference operations
@@ -6817,8 +6818,8 @@ or flags.
 (periods, clear effective time, reference sets) and new ingest parameters; `time` on
 the text operations and the evidence gate on fact reads. The section-key parser is a new
 parser generation (one extraction-basis rollover per lineage). The D36 extraction rungs
-and the E3 adjudication input follow in separate pull requests (the delivery plan says
-which). PR #486's belief-time rule applies unchanged because fact windows still change
+write the same reference table as extracted generations, and E3 adjudication receives the
+in-force intervals as input; build order is in the delivery plan. PR #486's belief-time rule applies unchanged because fact windows still change
 only through D118 adjudication.
 
 **Authority:** [design](plan/designs/effective_time_and_section_references_design.md),

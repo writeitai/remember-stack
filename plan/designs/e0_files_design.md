@@ -601,9 +601,10 @@ and kinds `cites | links_to | attaches | replies_to | refers_to | amends | imple
 The sub-worker has two inputs and writes one table:
 
 - **Supplied references** (`origin = supplied`): each accepted PUT of a caller-provided NDJSON
-  reference set is a new *generation* stored as an artifact of the version (D140 §6.3) is validated against the version's structure
-  all-or-nothing (an unknown source section key rejects the set, never broadens a reference to
-  document grain) and materialized deterministically; no model is involved. Pinned targets
+  reference set is a new *generation*, stored as an artifact of the version (D140 §6.3). The
+  generation is validated against the version's structure all-or-nothing (an unknown source
+  section key rejects the set, never broadens a reference to document grain) and materialized
+  deterministically; no model is involved. Pinned targets
   name the target version's immutable `version_key`.
 - **Extracted references** (`origin = extracted`), below.
 

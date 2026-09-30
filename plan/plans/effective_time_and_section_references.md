@@ -61,7 +61,11 @@ deployment of each lineage takes its own date (today's behaviour) and later vers
   out-of-force top candidate never displaces an in-force fact from top k),
   `search_documents` representative and `matching_editions` per `versions` × mode, text-origin
   back-fill (older edition after newer), reference generations (A→B→A reactivation, idempotent
-  retry, rejected set keeps the active one, extracted generation swap with the representation),
+  retry, active A + pending B + PUT A cancels B, concurrent PUTs ordered by `request_seq`, worker
+  finds its generation superseded and does not activate, rejected set keeps the active one,
+  extracted generation swap with the representation), paged `search_documents` across a
+  correction or clear between pages (no skipped or repeated lineage), section keys unique per
+  structure generation (re-structuring the same version keeps its keys),
   target resolution with a pending target version (`target_processing`), occurrence-based claim hydration after origin deletion, parser key extraction and
   hashes (own vs subtree), backfill, text-origin reuse (unchanged, changed, neighbour-changed,
   deleted origin, toolchain bump), reference validation and materialization, late binding,
