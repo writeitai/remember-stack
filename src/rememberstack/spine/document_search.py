@@ -125,7 +125,7 @@ class DocumentSearch:
             else:
                 # The first page pins a commit-visible belief instant (§3.6).
                 as_of = belief_watermark(
-                    engine=self._engine, deployment_id=deployment_id
+                    connection=connection, deployment_id=deployment_id
                 )
             # A ranked search reads current belief at its own instant; a paged
             # one pins the first call's instant as evaluation and belief (§3.6).

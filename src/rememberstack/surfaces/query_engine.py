@@ -408,6 +408,10 @@ class QueryEngine:
         real term matches count, it needs no second query embedding, and its
         hits only name pending lineages: they never enter the answer.
         """
+        if not callable(
+            getattr(self._search_index, "search_chunks_lexical_scored", None)
+        ):
+            return ()  # an index without scores cannot tell a real term match
         with self._engine.connect() as connection:
             candidates = tuple(
                 connection.execute(
@@ -427,10 +431,6 @@ class QueryEngine:
         restricted = (documents or DocumentSearchFilters()).model_copy(
             update={"doc_ids": candidates}
         )
-        if not callable(
-            getattr(self._search_index, "search_chunks_lexical_scored", None)
-        ):
-            return ()  # an index without scores cannot tell a real term match
         scored = cast(P1ScoredSearchPort, self._search_index)
         hits = scored.search_chunks_lexical_scored(
             deployment_id=str(deployment_id),

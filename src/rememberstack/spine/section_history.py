@@ -116,9 +116,10 @@ class SectionHistory:
             evaluated_at, believed_at = cursor.evaluated_at, cursor.believed_at
         else:
             # the first page pins a commit-visible belief instant (§3.6)
-            evaluated_at = believed_at = belief_watermark(
-                engine=self._engine, deployment_id=deployment_id
-            )
+            with self._engine.connect() as watermark:
+                evaluated_at = believed_at = belief_watermark(
+                    connection=watermark, deployment_id=deployment_id
+                )
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:

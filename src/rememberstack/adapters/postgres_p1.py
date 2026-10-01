@@ -27,6 +27,7 @@ from rememberstack.core.text_scope import claim_selected
 from rememberstack.core.text_scope import fact_in_scope
 from rememberstack.core.text_scope import TextScope
 from rememberstack.core.text_scope import version_selected
+from rememberstack.core.text_scope import WINDOW_SQL
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
@@ -774,7 +775,7 @@ class PostgresP1Index:
             )
             predicates.append(version_sql)
             parameters.update(document_parameters)
-        _add_chunk_scope(time=time, predicates=predicates, parameters=parameters)
+        scope_join = _chunk_scope_join(time=time, parameters=parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -799,6 +800,7 @@ class PostgresP1Index:
             JOIN memory_v1.chunks_all_versions_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
+            {scope_join}
             JOIN memory_v1.documents_live AS document
               ON document.deployment_id = published.deployment_id
              AND document.doc_id = published.doc_id
@@ -859,7 +861,7 @@ class PostgresP1Index:
             )
             predicates.append(version_sql)
             parameters.update(document_parameters)
-        _add_chunk_scope(time=time, predicates=predicates, parameters=parameters)
+        scope_join = _chunk_scope_join(time=time, parameters=parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -885,6 +887,7 @@ class PostgresP1Index:
             JOIN memory_v1.chunks_all_versions_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
+            {scope_join}
             JOIN memory_v1.documents_live AS document
               ON document.deployment_id = published.deployment_id
              AND document.doc_id = published.doc_id
@@ -1662,13 +1665,25 @@ def _add_claim_scope(
     parameters.update(scope.parameters())
 
 
-def _add_chunk_scope(
-    *, time: TextScope | None, predicates: list[str], parameters: dict[str, Any]
-) -> None:
-    """Select chunks of versions in force for the scope (default current)."""
+def _chunk_scope_join(*, time: TextScope | None, parameters: dict[str, Any]) -> str:
+    """JOIN selecting chunks of versions in force for the scope (default current).
+
+    The same rule as ``version_selected``, written as a join on the selection
+    projection rather than a per-chunk ``EXISTS`` probe, so a plan that starts
+    from the documents can start from the selected versions (one per lineage
+    for ``current``, as the served-version statement did) instead of every
+    version's chunks. ``(deployment_id, version_id)`` is the projection's
+    primary key, so the join never multiplies rows.
+    """
     scope = time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
-    predicates.append(version_selected(version="published.version_id"))
     parameters.update(scope.parameters())
+    return (
+        "JOIN public.document_version_scope AS scope_row"
+        " ON scope_row.deployment_id = published.deployment_id"
+        " AND scope_row.version_id = published.version_id"
+        " AND scope_row.selectable"
+        f" AND scope_row.in_force && {WINDOW_SQL}"
+    )
 
 
 def _claim_filters(

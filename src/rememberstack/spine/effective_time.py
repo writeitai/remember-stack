@@ -339,8 +339,9 @@ _BELIEF_KEY = "'d140-belief:' || CAST(:deployment_id AS text)"
 _STAMP_GUARD = text(
     f"SELECT pg_advisory_xact_lock_shared(hashtextextended({_BELIEF_KEY}, 0))"
 )
-_WATERMARK_GUARD = text(
-    f"SELECT pg_advisory_xact_lock(hashtextextended({_BELIEF_KEY}, 0))"
+_WATERMARK_LOCK = text(f"SELECT pg_advisory_lock(hashtextextended({_BELIEF_KEY}, 0))")
+_WATERMARK_UNLOCK = text(
+    f"SELECT pg_advisory_unlock(hashtextextended({_BELIEF_KEY}, 0))"
 )
 
 
@@ -355,7 +356,7 @@ def _instant(*, connection: Connection, deployment_id: UUID) -> datetime:
     return connection.execute(text("SELECT clock_timestamp()")).scalar_one()
 
 
-def belief_watermark(*, engine: Engine, deployment_id: UUID) -> datetime:
+def belief_watermark(*, connection: Connection, deployment_id: UUID) -> datetime:
     """A belief instant a paged read can pin across pages (§3.6).
 
     Every effective-time ledger row stamped at or before the returned instant
@@ -363,15 +364,21 @@ def belief_watermark(*, engine: Engine, deployment_id: UUID) -> datetime:
     pre-commit stamp alone does not give this: a writer that stamped before a
     reader's ``now()`` but committed after the reader's first page would
     appear on the second page only. Taking the deployment's belief guard
-    exclusively, in a transaction of its own, waits for such writers to
-    commit; the instant is read while the guard is held. Readers then open
-    their own snapshot, which sees every row stamped up to the instant. The
-    guard is the database's clock throughout, so application clock skew
-    cannot hide a committed declaration either.
+    exclusively waits for such writers to commit; the instant is read while
+    the guard is held. The guard is a session lock released before returning,
+    and the call ends its transaction, so the caller's next statement opens a
+    snapshot that sees every row stamped up to the instant. The database's
+    clock is used throughout, so application clock skew cannot hide a
+    committed declaration either.
     """
-    with engine.begin() as connection:
-        connection.execute(_WATERMARK_GUARD, {"deployment_id": deployment_id})
-        return connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+    parameters = {"deployment_id": deployment_id}
+    connection.execute(_WATERMARK_LOCK, parameters)
+    try:
+        instant = connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+    finally:
+        connection.execute(_WATERMARK_UNLOCK, parameters)
+        connection.commit()
+    return instant
 
 
 def _live_declarations(

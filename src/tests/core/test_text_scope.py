@@ -90,8 +90,10 @@ def test_fact_gate_reads_the_projection_or_the_ledgers() -> None:
     pinned = fact_in_scope(
         fact_kind="observation", fact_id="fact.fact_id", pinned_belief=True
     )
-    assert "public.observation_evidence" in pinned
+    # a past belief instant is answered by the ledger function alone, which
+    # reads the evidence itself; no vacuous "no live support" pass remains
     assert "memory_v1.fact_in_scope_support(" in pinned
+    assert "NOT EXISTS" not in pinned
     with pytest.raises(ValueError, match="unknown fact kind"):
         fact_in_scope(fact_kind="entity", fact_id="x")
 
