@@ -301,3 +301,31 @@ def claim_in_scope(*, claim: str, alias: str = "evidence_scope") -> str:
         f" AND (NOT {alias}_scope.periodised"
         f" OR ({alias}_scope.selectable AND {alias}_scope.in_force && {WINDOW_SQL}))))"
     )
+
+
+def fact_in_scope_public(*, fact_kind: str, fact_id: str) -> str:
+    """The §8.1 gate through the public query surface only.
+
+    Live-graph traversal runs as the query role, which reads ``memory_v1``
+    and not the private evidence tables. The same rule is expressed through
+    ``memory_v1.fact_claim_evidence_live`` (no live supporting claim: the
+    gate does not apply) and ``memory_v1.fact_in_scope_support``, which
+    evaluates the declarations as known at ``:scope_believed_at`` (or the
+    evaluation instant when it is null).
+    """
+    if fact_kind not in _EVIDENCE:
+        raise ValueError(f"unknown fact kind {fact_kind!r}")
+    return (
+        "(NOT EXISTS (SELECT 1 FROM memory_v1.fact_claim_evidence_live AS support"
+        " WHERE support.deployment_id = :deployment_id"
+        f" AND support.fact_kind = '{fact_kind}'"
+        f" AND support.fact_id = {fact_id}"
+        " AND support.stance = 'supports')"
+        " OR memory_v1.fact_in_scope_support("
+        f":deployment_id, '{fact_kind}', {fact_id},"
+        " CAST(:scope_mode AS text), CAST(:scope_at AS timestamptz),"
+        " CAST(:scope_range_start AS timestamptz),"
+        " CAST(:scope_range_end AS timestamptz),"
+        " CAST(:scope_evaluated_at AS timestamptz),"
+        " CAST(:scope_believed_at AS timestamptz)))"
+    )

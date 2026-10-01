@@ -29,7 +29,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
-from rememberstack.core.text_scope import fact_in_scope
+from rememberstack.core.text_scope import fact_in_scope_public
 from rememberstack.core.text_scope import TextScope
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
@@ -169,9 +169,7 @@ class GraphQueries:
             if hops == 1:
                 parameters.update({"anchor_id": entity_id, "result_offset": offset})
                 raw = _shallow_neighborhood_rows(
-                    connection=connection,
-                    parameters=parameters,
-                    pinned_belief=scope.believed_at is not None,
+                    connection=connection, parameters=parameters
                 )
                 data, status = _split_status(rows=raw)
             else:
@@ -659,13 +657,11 @@ def _gate_scope(
 ) -> TextScope:
     """The §8.1 evidence-gate scope of one traversal: ``at`` its valid instant.
 
-    A belief instant before the evaluation instant is evaluated from the
-    declaration ledgers; otherwise the current-belief projection answers.
+    The declarations are evaluated as known at the traversal's belief
+    instant, so a belief-pinned traversal sees the evidence it saw then.
     """
     return TextScope.of(
-        time=AtFactTime(at=valid_at),
-        evaluated_at=evaluated_at,
-        believed_at=believed_at if believed_at < evaluated_at else None,
+        time=AtFactTime(at=valid_at), evaluated_at=evaluated_at, believed_at=believed_at
     )
 
 
@@ -685,11 +681,7 @@ def _gated_paths(
     )
     if not relation_ids:
         return rows, False
-    gate = fact_in_scope(
-        fact_kind="relation",
-        fact_id="candidate.relation_id",
-        pinned_belief=scope.believed_at is not None,
-    )
+    gate = fact_in_scope_public(fact_kind="relation", fact_id="candidate.relation_id")
     eligible = {
         str(value)
         for value in connection.execute(
@@ -714,12 +706,10 @@ def _gated_paths(
 
 
 def _shallow_neighborhood_rows(
-    *, connection: Connection, parameters: dict[str, object], pinned_belief: bool
+    *, connection: Connection, parameters: dict[str, object]
 ) -> list[RowMapping]:
     """Run the relational guard, and execute PGQ only after explicit admission."""
-    guard_statement, pgq_statement = gated_neighborhood_statements(
-        pinned_belief=pinned_belief
-    )
+    guard_statement, pgq_statement = gated_neighborhood_statements()
     guard_rows = _rows(
         connection=connection, statement=guard_statement, parameters=parameters
     )

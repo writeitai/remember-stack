@@ -40,6 +40,7 @@ from rememberstack.adapters import PostgresP1Index
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.core.text_scope import TextScope
+from rememberstack.model import ClaimValidPrecision
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ClaimRow
@@ -967,6 +968,7 @@ def _gate_corpus(rig: _Rig) -> _Facts:
                 status="active",
                 valid_from=_REVISED if key == "dated" else _PAST,
                 valid_until=None,
+                valid_precision=ClaimValidPrecision.OPEN,
                 ingested_at=_PAST,
                 invalidated_at=None,
                 # the out-of-force facts rank first
