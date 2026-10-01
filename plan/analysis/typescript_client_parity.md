@@ -180,3 +180,16 @@ responses/parameters before rounding or sending. JSON Schema output uses the
 Lax Pydantic coercions are documented language differences, not silent behavior.
 Errors compare class/code, never repr text. Every original review finding is
 resolved in the binding contract/adaptation table or the build-order plan.
+
+## Generator experiment (2026-10-02)
+
+Executed openapi-typescript-codegen@0.30.0 against a projected 3.0.3 probe with
+a required constant discriminator, required nullable string, nullable
+string/integer union and binary property. Generated Probe.ts preserved
+`kind: 'exact'`, `nullable: string | null`, nullable union and Blob binary.
+This validates the projection approach, not full schema coverage: implementation
+must exercise the real engine null/const/union/binary schemas and declaration
+consumers, retain original 2020-12 runtime schemas, and fail unsupported projections.
+
+The post-0.17.2 differences also include filtered claims/chunks search, ingest
+source_path, and four DocumentSearch exports, not only two new methods.

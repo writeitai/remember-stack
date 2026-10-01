@@ -26,7 +26,8 @@ versa. The client package contains no `bin`, MCP host/transport, interactive
 login, token minting or credential-writing workflow. Its open-query dispatcher
 is a client method and can be called by an MCP library without requiring one.
 Building those executable packages is a separate deliverable; client completion
-does not require them. Connectors are also independent packages.
+does not require them. Connector implementations are also independent packages; the SDK retains
+the Python connector HTTP methods.
 
 ## 2. Full client parity contract
 
