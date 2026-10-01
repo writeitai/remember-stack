@@ -78,6 +78,27 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
         grants,
         _GRAPH_HELPER_INDEX_SETTINGS,
     )
+    if connection.exec_driver_sql(
+        "SELECT to_regclass('public.document_reference_generations') IS NOT NULL"
+    ).scalar_one():
+        # D140 replaced the crossref graph source (version grain, active
+        # generations, versions in force now) and added grants; a repair must
+        # restore that shape, not the p9_17 one.
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            GRAPH_CROSSREFS_SOURCE_DDL,
+        )
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            QUERY_ROLE_GRANTS,
+        )
+
+        position = statements.index(sources) + 1
+        statements = (
+            *statements[:position],
+            "DROP VIEW rememberstack_graph_internal.crossrefs_live",
+            GRAPH_CROSSREFS_SOURCE_DDL,
+            *statements[position:],
+            QUERY_ROLE_GRANTS,
+        )
     for ddl in statements:
         for statement in _split_sql(sql=ddl):
             connection.exec_driver_sql(statement.replace("%", "%%"))

@@ -343,7 +343,8 @@ and every handle it carries opens that version:
   version). A **P3 path** names the lineage and opens its *served* version, so it is returned
   only when the selected version is the served version; otherwise the result sets
   `p3_path = null` and `served_version = false`. `DocumentSearchResult.p3_path` becomes
-  optional accordingly. An agent can never open a different edition than the one it was shown.
+  optional accordingly. This applies to periodised lineages; a lineage without declared periods
+  keeps D134's lineage path on every result, as today. An agent can never open a different edition than the one it was shown.
 
 ### 3.4 Claims under a time scope
 

@@ -1120,7 +1120,7 @@ view owner's schema-wide SELECT was granted before they existed."""
 
 _NEW_PUBLIC_VIEWS = ("chunks_all_versions_live", "document_effective_periods_live")
 
-_QUERY_ROLE_GRANTS = r"""
+QUERY_ROLE_GRANTS = r"""
 DO $do$
 DECLARE
   query_role text := 'rememberstack_query_' || current_database();
@@ -1224,7 +1224,7 @@ def upgrade() -> None:
         op.execute(f"COMMENT ON FUNCTION {signature} IS '{comment}'")
         op.execute(f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC")
         op.execute(f"ALTER FUNCTION {signature} OWNER TO {_VIEW_OWNER}")
-    op.execute(_QUERY_ROLE_GRANTS)
+    op.execute(QUERY_ROLE_GRANTS)
 
 
 def downgrade() -> None:
