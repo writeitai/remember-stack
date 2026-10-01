@@ -1229,7 +1229,29 @@ _POSTGRES_SCRUB = (
             status = 'deleted',
             error = NULL,
             superseded_at = NULL,
+            version_key = NULL,
             deleted_at = COALESCE(deleted_at, now())
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    # D140: declarations, mode events and the selection projection are
+    # erased explicitly, after the lineage is tombstoned (so the projection
+    # triggers no longer re-insert rows for it).
+    text(
+        """
+        DELETE FROM document_effective_periods
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_effective_time_events
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
+        DELETE FROM document_version_scope
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         """
     ),
@@ -1633,6 +1655,14 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND to_doc_id = :doc_id
         """
     ),
+    # D140: the lineage's reference generations (their input hashes and
+    # artifact keys name its content) go with the references they wrote.
+    text(
+        """
+        DELETE FROM document_reference_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
     text(
         """
         UPDATE content_objects object
@@ -1753,7 +1783,20 @@ _VERIFY_POSTGRES_SCRUB = text(
                OR status <> 'deleted'
                OR error IS NOT NULL
                OR superseded_at IS NOT NULL
+               OR version_key IS NOT NULL
                OR deleted_at IS NULL)
+        UNION ALL
+        SELECT 1 FROM document_reference_generations
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_effective_periods
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_effective_time_events
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        UNION ALL
+        SELECT 1 FROM document_version_scope
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
         UNION ALL
         SELECT 1 FROM managed_ingest_measurements
         WHERE deployment_id = :deployment_id AND doc_id = :doc_id

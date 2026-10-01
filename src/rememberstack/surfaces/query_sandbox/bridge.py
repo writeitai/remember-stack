@@ -62,6 +62,8 @@ SQL_NATIVE_FUNCTIONS: Final = frozenset(
         "graph_neighborhood",
         "graph_path",
         "graph_citation_path",
+        "versions_in_scope",
+        "effective_intervals",
     }
 )
 

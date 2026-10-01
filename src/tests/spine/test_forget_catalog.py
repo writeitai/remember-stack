@@ -48,6 +48,8 @@ _TARGET_DOC_ID = UUID("75000000-0000-0000-0000-000000000002")
 _CONTROL_DOC_ID = UUID("75000000-0000-0000-0000-000000000003")
 _TARGET_VERSION_ID = UUID("75000000-0000-0000-0000-000000000004")
 _CONTROL_VERSION_ID = UUID("75000000-0000-0000-0000-000000000005")
+_TARGET_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000a1")
+_CONTROL_GENERATION_ID = UUID("75000000-0000-0000-0000-0000000000a2")
 _TARGET_REPRESENTATION_ID = UUID("75000000-0000-0000-0000-000000000006")
 _CONTROL_REPRESENTATION_ID = UUID("75000000-0000-0000-0000-000000000007")
 _TARGET_CHUNK_ID = UUID("75000000-0000-0000-0000-000000000008")
@@ -623,33 +625,88 @@ def _seed_documents(*, connection: Connection) -> None:
             "control_version": _CONTROL_VERSION_ID,
         },
     )
+    # D140: references are made by source versions through a generation
+    for generation_id, doc_id, version_id in (
+        (_CONTROL_GENERATION_ID, _CONTROL_DOC_ID, _CONTROL_VERSION_ID),
+        (_TARGET_GENERATION_ID, _TARGET_DOC_ID, _TARGET_VERSION_ID),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_reference_generations (generation_id,"
+                " deployment_id, doc_id, version_id, origin, input_hash,"
+                " request_seq, artifact_uri, status) VALUES (:g, :d, :doc, :v,"
+                " 'supplied', :token, 1, :uri, 'active')"
+            ),
+            {
+                "g": generation_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "v": version_id,
+                "token": _TOKEN,
+                "uri": f"mem://artifacts/{doc_id}/references/{_TOKEN}.ndjson",
+            },
+        )
+    for crossref_id, source_doc, source_version, generation_id, target, kind in (
+        (
+            UUID("75000000-0000-0000-0000-000000000024"),
+            _CONTROL_DOC_ID,
+            _CONTROL_VERSION_ID,
+            _CONTROL_GENERATION_ID,
+            _TARGET_DOC_ID,
+            "cites",
+        ),
+        (
+            UUID("75000000-0000-0000-0000-000000000043"),
+            _TARGET_DOC_ID,
+            _TARGET_VERSION_ID,
+            _TARGET_GENERATION_ID,
+            _CONTROL_DOC_ID,
+            "links_to",
+        ),
+    ):
+        connection.execute(
+            text(
+                "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
+                " from_doc_id, from_version_id, generation_id, to_doc_id, kind,"
+                " origin, raw_citation, context, resolved) VALUES (:id, :d,"
+                " :source, :version, :generation, :target,"
+                " CAST(:kind AS crossref_kind), 'supplied', :token, :token, true)"
+            ),
+            {
+                "id": crossref_id,
+                "d": _DEPLOYMENT_ID,
+                "source": source_doc,
+                "version": source_version,
+                "generation": generation_id,
+                "target": target,
+                "kind": kind,
+                "token": _TOKEN,
+            },
+        )
+    # D140: the target carries a version key, a declared period and its event
+    connection.execute(
+        text("UPDATE document_versions SET version_key = :token WHERE version_id = :v"),
+        {"token": f"edition-{_TOKEN}", "v": _TARGET_VERSION_ID},
+    )
     connection.execute(
         text(
-            "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-            " from_doc_id, to_doc_id, kind, raw_citation, context, resolved) VALUES"
-            " (:id, :d, :control, :target, 'cites', :token, :token, true)"
+            "INSERT INTO document_effective_periods (period_id, deployment_id,"
+            " doc_id, version_id, effective_from, declared_by)"
+            " VALUES (gen_random_uuid(), :d, :doc, :v, :at, 'ingest')"
         ),
         {
-            "id": UUID("75000000-0000-0000-0000-000000000024"),
             "d": _DEPLOYMENT_ID,
-            "control": _CONTROL_DOC_ID,
-            "target": _TARGET_DOC_ID,
-            "token": _TOKEN,
+            "doc": _TARGET_DOC_ID,
+            "v": _TARGET_VERSION_ID,
+            "at": _NOW,
         },
     )
     connection.execute(
         text(
-            "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-            " from_doc_id, to_doc_id, kind, raw_citation, context, resolved) VALUES"
-            " (:id, :d, :target, :control, 'links_to', :token, :token, true)"
+            "INSERT INTO document_effective_time_events (deployment_id, doc_id, event)"
+            " VALUES (:d, :doc, 'declared')"
         ),
-        {
-            "id": UUID("75000000-0000-0000-0000-000000000043"),
-            "d": _DEPLOYMENT_ID,
-            "target": _TARGET_DOC_ID,
-            "control": _CONTROL_DOC_ID,
-            "token": _TOKEN,
-        },
+        {"d": _DEPLOYMENT_ID, "doc": _TARGET_DOC_ID},
     )
 
 
@@ -1356,6 +1413,21 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         )
         assert (
             _count(connection, "document_crossrefs", "from_doc_id", _TARGET_DOC_ID) == 0
+        )
+        for table in (
+            "document_reference_generations",
+            "document_effective_periods",
+            "document_effective_time_events",
+            "document_version_scope",
+        ):
+            assert _count(connection, table, "doc_id", _TARGET_DOC_ID) == 0, table
+        assert _count(connection, "document_version_scope", "doc_id", _CONTROL_DOC_ID)
+        assert (
+            connection.execute(
+                text("SELECT version_key FROM document_versions WHERE version_id = :v"),
+                {"v": _TARGET_VERSION_ID},
+            ).scalar_one()
+            is None
         )
         processing = connection.execute(
             text(

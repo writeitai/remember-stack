@@ -167,6 +167,8 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     # contract without executing anything.
     assert {entry["name"] for entry in published} == {  # type: ignore[index]
         "canonical_bounds",
+        "effective_intervals",
+        "fact_in_scope_support",
         "facts_as_of",
         "fetch_chunk_bodies",
         "graph_citation_path",
@@ -178,6 +180,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "semantic_claims",
         "semantic_entities",
         "semantic_facts",
+        "versions_in_scope",
     }
     for entry in published:
         assert isinstance(entry, dict)
@@ -197,6 +200,19 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert all(entry["example"] for entry in graph_functions.values())
     assert all(entry["channel"] == "postgresql" for entry in graph_functions.values())
     assert all(validate_sql(entry["example"]) for entry in graph_functions.values())
+    # the D140 time-scope functions publish their contract and a valid example
+    time_scope = {
+        entry["name"]: entry
+        for entry in published
+        if entry.get("channel") == "time_scope"  # type: ignore[union-attr]
+    }
+    assert set(time_scope) == {
+        "effective_intervals",
+        "fact_in_scope_support",
+        "versions_in_scope",
+    }
+    assert all(entry["comment"] for entry in time_scope.values())
+    assert all(validate_sql(entry["example"]) for entry in time_scope.values())
     core = members["core_operation_descriptors"]
     assert isinstance(core, dict)
     assert core["contract"] == "memory_v1.core_operations/1"
@@ -242,6 +258,7 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
     assert isinstance(grammar, dict)
     assert grammar["public_functions"] == [
         "canonical_bounds",
+        "effective_intervals",
         "facts_as_of",
         "fetch_chunk_bodies",
         "graph_citation_path",
@@ -253,8 +270,11 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         "semantic_claims",
         "semantic_entities",
         "semantic_facts",
+        "versions_in_scope",
     ]
     assert grammar["srf_categories"]["graph_neighborhood"] == "graph"
+    assert grammar["srf_categories"]["versions_in_scope"] == "time_scope"
+    assert "fact_in_scope_support" in grammar["functions"]
 
 
 def test_manifest_definitions_are_parse_trees_and_never_sql_text() -> None:
