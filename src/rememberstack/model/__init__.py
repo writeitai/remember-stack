@@ -33,6 +33,7 @@ from rememberstack.model.chunks import P1ClaimRow
 from rememberstack.model.chunks import P1FactRow
 from rememberstack.model.chunks import PackedChunk
 from rememberstack.model.chunks import SectionSpan
+from rememberstack.model.chunks import TextOriginMatch
 from rememberstack.model.claims import AddedContext
 from rememberstack.model.claims import CandidateClaim
 from rememberstack.model.claims import ClaimForEmbedding
@@ -622,6 +623,7 @@ __all__ = (
     "ScanRow",
     "S58Answer",
     "SectionSpan",
+    "TextOriginMatch",
     "SelectionCandidate",
     "SelectionOutcome",
     "SelectionDropReason",

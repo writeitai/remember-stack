@@ -156,6 +156,8 @@ def test_summaries_do_not_enter_extraction_input_hash() -> None:
         packed=packed,
         index=0,
         chunker_version="test-chunker",
+        reuse_identity_hash="identity",
+        text_origin_at=None,
     )
     without_summaries = _chunk_record(
         source=_source(
@@ -167,6 +169,8 @@ def test_summaries_do_not_enter_extraction_input_hash() -> None:
         packed=packed,
         index=0,
         chunker_version="test-chunker",
+        reuse_identity_hash="identity",
+        text_origin_at=None,
     )
     assert (
         with_summaries.extraction_input_hash == without_summaries.extraction_input_hash

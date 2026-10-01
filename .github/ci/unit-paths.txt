@@ -133,6 +133,7 @@ src/tests/workers/test_self_reference_naming.py
 src/tests/adapters/test_text_and_card_converters.py
 src/tests/core/test_format_registry.py
 src/tests/workers/test_d138_extraction_eligibility.py
+src/tests/workers/test_d140_text_origin.py
 src/tests/adapters/test_data_profiles.py
 src/tests/adapters/test_document_family_converters.py
 src/tests/surfaces/test_effective_time_http.py
