@@ -22,7 +22,7 @@ WP-ET.8 are separate, later pull requests.
 
 ## Migration
 
-The schema change is additive except in three places, each handled explicitly:
+The schema change is additive except in the places below, each handled explicitly:
 
 1. **New section columns on a populated table.** `section_key`, `own_content_hash` and
    `subtree_content_hash` are added **nullable**. An idempotent backfill job derives all three
@@ -33,12 +33,13 @@ The schema change is additive except in three places, each handled explicitly:
 2. **The selection projection.** `document_version_scope` is created and filled for every
    existing non-deleted version in the migration (every existing lineage is undeclared, so each
    served version gets an unbounded range and every other version an empty one).
-3. **Parser generation rollover.** Section-key parsing bumps `SKELETON_PARSER_VERSION`, which
-   is part of `structurer_version` and therefore of the D56 extraction key and the D65
-   extraction basis. Existing versions are not re-structured. The first new version of each
-   existing lineage after deployment misses reuse once and extracts in full; later versions
-   reuse normally. Deployments that want to avoid this spike can schedule it like any other
-   extractor or structurer bump.
+3. **One full re-extraction after upgrade (accepted).** Two keys change: section-key parsing
+   bumps `SKELETON_PARSER_VERSION` (part of `structurer_version`, so of the D56 extraction key
+   and the D65 extraction basis), and the chunk reuse key now uses `text_origin_at` instead of
+   the version's own dates (§5). Existing versions are not re-structured, and there is no
+   re-keying backfill and no parser-version workaround: the first new version of each existing
+   lineage after deployment misses reuse and is extracted in full, once; later versions reuse
+   normally. The owner accepted this cost on 2026-10-02 because the project is in development.
 4. **`document_crossrefs` replacement.** On `main` no code writes the table (only tests insert
    rows), so the migration refuses to run if it holds rows and otherwise recreates it with the
    new columns, enums and foreign keys, then recreates the dependent views and property graph in

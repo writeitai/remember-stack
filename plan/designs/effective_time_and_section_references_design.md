@@ -394,6 +394,16 @@ a future range.
 Every scoped operation that pages records `evaluated_at` and `believed_at` in its cursor and
 reuses them for later pages. Ranked single-page searches evaluate both at the request instant.
 
+**The first page's belief instant must be commit-visible.** Ledger rows are stamped while
+their writer holds the lineage lock, before it commits. Pinning a plain `now()` would let a
+declaration stamped just before the instant, but committed after the first page ran, appear
+only from the second page on. So every effective-time write holds a deployment-level guard
+(a shared advisory lock) from its stamp to its commit, and the first page takes that guard
+exclusively on its own connection, reads the database clock, releases it and only then starts
+its snapshot. The returned instant is a watermark: every row stamped at or before it is
+committed and visible, and every later write stamps after it. Reads with no pinned belief use
+every committed declaration, exactly what the selection projection holds.
+
 The rule that keeps pages consistent is simple: **the page order never depends on belief;
 scope is evaluated at the pinned belief instant for the candidates of each page.** Candidates
 come from an order built only on immutable values, so a correction or clear made between pages
@@ -875,6 +885,17 @@ excludes that edition. The gate closes this without touching fact windows:
   claims.
 - The gate never changes stored counts (D54), windows (D118) or currency; it is a visibility
   rule on evidence.
+- **Inside graph traversal.** The graph role that runs traversal cannot read evidence, so it
+  is granted exactly one private, deployment-bound predicate,
+  `rememberstack_graph_internal.relation_evidence_in_scope(deployment, relation, valid_at,
+  believed_at, evaluated_at)` (`SECURITY DEFINER`). The traversal helpers apply it to each BFS
+  level's ordered candidate edges before the level's expansion limit, and the one-hop
+  statement applies it before its budget, all inside the traversal's own snapshot: an
+  ineligible edge never spends a budget or a result slot, and the gate and the traversal can
+  never see different data. The gate is evaluated lazily, only until a level's budget is
+  filled. A deployment that has never declared a period answers `true` immediately, keeping
+  the graph's surviving-provenance rule unchanged there.
+
 - **Conflicting dates.** The gate and the fact window are independent conditions and both
   must hold. If a claim's own validity says "from 2025" but its only occurrences are in an
   edition in force from 2026, a `current` read on 2025-06-01 does not return the fact (no
