@@ -70,3 +70,7 @@ For deleting a document through the API, SDK, CLI or MCP, see D135 in the
 [evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
 and the [analysis](analysis/public_document_deletion.md). Erasure remains
 [D74 hard-forget](designs/hard_forget_design.md).
+
+For the full TypeScript counterpart, see [D140 TypeScript client](designs/typescript_client_design.md),
+[analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
+and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.

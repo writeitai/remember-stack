@@ -6441,6 +6441,13 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
+> **Amended by D140 (2026-10-02):** SDKs never replay writes after host movement,
+> including 421/connect errors; re-resolution can update the next independent
+> call. Read retry eligibility comes from the source-owned route classification,
+> not the HTTP method. Structured query errors accept optional validated
+> retryable/request_id diagnostics without granting retry permission.
+
+
 **Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
 
 **Context.** On 2026-09-23 the owner approved one credential for every client
@@ -6685,3 +6692,15 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 **Authority:** [design](plan/designs/workspace_formats_design.md),
 [format framework](plan/designs/format_conversion_design.md),
 [analysis](plan/analysis/pdf_always_ocr.md).
+
+
+## D140. Full-parity TypeScript client, separate executable libraries, checked contracts
+
+- **Status:** owner-selected, binding on approved design merge; implementation/publishing are not implied.
+- **Date:** 2026-10-02.
+- **Context:** The owner requested the full Python client scope in TypeScript under rememberdev, separate CLI/MCP packages and Opus 5.5 approval before implementation and merge. Source version strings alone do not identify Python's evolving surface.
+- **Decision:** `@rememberdev/client` lives in `packages/typescript-client`, Node 22+, ESM/CommonJS, generated model/request contracts and a complete typed facade. The binding JSON inventory covers same-revision Python methods/signatures/exports and records all language adaptations. The SDK remains issuer-agnostic; private cloud schemas do not enter the public source. API export, deterministic generation, inventory/behavior fixtures, real released-engine compatibility and packed consumers gate it. CLI/MCP are separate libraries dependent only on declared public support exports.
+- **Safety amendment:** Both SDKs never replay mutating requests, even after 421 or connection errors; they may refresh the pinned-project host for the next call. Reads are explicitly classified by the engine. Error diagnostics are validated and surfaced, never retry authorization.
+- **Alternatives:** Generated-only clients omit routing/files/readiness; handwritten DTOs drift; a separate repository multiplies publisher coordination; browser core and newer generator are viable unselected alternatives with adoption triggers.
+- **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
+- **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md); issue #501; D136 amended only as stated above.

@@ -1,0 +1,299 @@
+{
+  "pythonSourceRevision": "1dc23f21f24ec5f22ec4e51c751363b3658df7a6",
+  "publishedBaseline": {
+    "version": "0.17.2",
+    "revision": "dd0c78015099cdd84ab5f3501744d6e225125989"
+  },
+  "exports": [
+    "AccountApi",
+    "AccountApiUnavailable",
+    "CapabilityReadiness",
+    "ClaimValidPrecision",
+    "Client",
+    "ConnectorCreate",
+    "ConnectorDescriptor",
+    "ConnectorNotFoundError",
+    "ContextBundleV2",
+    "DocumentDeletion",
+    "DocumentPage",
+    "DocumentSearchFilters",
+    "DocumentSearchPage",
+    "DocumentSearchRequest",
+    "DocumentSearchResult",
+    "DocumentSummary",
+    "DocumentVersionSummary",
+    "Envelope",
+    "IngestedVersion",
+    "MemoryApiError",
+    "MemoryClient",
+    "PipelineDeadLettered",
+    "PipelineReadinessReport",
+    "PipelineStageReadiness",
+    "ProjectResolutionError",
+    "QueryResultDict",
+    "RateLimited",
+    "ReadinessRequirements",
+    "RememberClient",
+    "StoredKeyRefused",
+    "TemporalMatch",
+    "ToolDescriptor",
+    "VersionPipelineReadiness",
+    "__version__",
+    "resolve_connection"
+  ],
+  "classes": {
+    "MemoryClient": {
+      "__init__": {
+        "arguments": "self, *, api_key: str | None=None, base_url: str | None=None, project: str | None=None, timeout: float=30.0, client: httpx.Client | None=None, transport: httpx.BaseTransport | None=None",
+        "returns": "None",
+        "property": false
+      },
+      "close": {
+        "arguments": "self",
+        "returns": "None",
+        "property": false
+      },
+      "list_operations": {
+        "arguments": "self",
+        "returns": "tuple[ToolDescriptor, ...]",
+        "property": false
+      },
+      "run_operation": {
+        "arguments": "self, *, name: str, arguments: Mapping[str, object] | None=None",
+        "returns": "Envelope | ContextBundleV2",
+        "property": false
+      },
+      "query_sql": {
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), max_rows: int | None=None",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "open_query": {
+        "arguments": "self, sql: str, *, parameters: Sequence[object]=(), max_rows: int | None=None",
+        "returns": "QueryResultDict",
+        "property": false
+      },
+      "explain_query": {
+        "arguments": "self, sql: str, *, parameters: Sequence[object]=()",
+        "returns": "QueryResultDict",
+        "property": false
+      },
+      "facts_context": {
+        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
+        "returns": "Envelope",
+        "property": false
+      },
+      "combined_context": {
+        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
+        "returns": "ContextBundleV2",
+        "property": false
+      },
+      "claims_and_sources_context": {
+        "arguments": "self, query: str",
+        "returns": "Envelope",
+        "property": false
+      },
+      "resolve_entity": {
+        "arguments": "self, name: str",
+        "returns": "Envelope",
+        "property": false
+      },
+      "explain_sql": {
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=()",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "describe_query_space": {
+        "arguments": "self, *, pattern: str | None=None, include_examples: bool=False",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "search_query_space": {
+        "arguments": "self, *, query: str, k: int=10",
+        "returns": "list[dict[str, object]]",
+        "property": false
+      },
+      "list_saved_queries": {
+        "arguments": "self, *, namespace: str | None=None, status: str | None=None",
+        "returns": "list[dict[str, object]]",
+        "property": false
+      },
+      "describe_saved_query": {
+        "arguments": "self, *, namespace: str, name: str, version: int | None=None",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "run_saved_query": {
+        "arguments": "self, *, namespace: str, name: str, parameters: list[object] | tuple[object, ...]=(), version: int | None=None, max_rows: int | None=None",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "call_open_query": {
+        "arguments": "self, *, name: str, arguments: Mapping[str, object]",
+        "returns": "object",
+        "property": false
+      },
+      "resolve": {
+        "arguments": "self, *, name: str, context_entity_ids: tuple[UUID, ...]=()",
+        "returns": "Envelope",
+        "property": false
+      },
+      "lookup_relations": {
+        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, k: int=50",
+        "returns": "Envelope",
+        "property": false
+      },
+      "transcript_relation": {
+        "arguments": "self, *, relation_id: UUID",
+        "returns": "Envelope",
+        "property": false
+      },
+      "lookup_observations": {
+        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
+        "returns": "Envelope",
+        "property": false
+      },
+      "search_claims": {
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "returns": "Envelope",
+        "property": false
+      },
+      "search_chunks": {
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "returns": "Envelope",
+        "property": false
+      },
+      "adjacent_chunks": {
+        "arguments": "self, *, chunk_id: UUID | str, window: int=1",
+        "returns": "Envelope",
+        "property": false
+      },
+      "hydrate_relation": {
+        "arguments": "self, *, relation_id: UUID",
+        "returns": "Envelope",
+        "property": false
+      },
+      "graph_neighborhood": {
+        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=500, continuation: str | None=None, include_paths: bool=False",
+        "returns": "Envelope",
+        "property": false
+      },
+      "graph_path": {
+        "arguments": "self, *, from_entity_id: UUID, to_entity_id: UUID, max_hops: int=4, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None",
+        "returns": "Envelope",
+        "property": false
+      },
+      "graph_citation_path": {
+        "arguments": "self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int=6",
+        "returns": "Envelope",
+        "property": false
+      },
+      "deployment_build_info": {
+        "arguments": "self",
+        "returns": "DeploymentBuildInfo",
+        "property": false
+      },
+      "pipeline_readiness": {
+        "arguments": "self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements",
+        "returns": "PipelineReadinessReport",
+        "property": false
+      },
+      "wait_for_readiness": {
+        "arguments": "self, version_ids: Sequence[str | UUID], *, timeout: float=1800.0, poll_interval: float=15.0, require_p3: bool=False",
+        "returns": "PipelineReadinessReport",
+        "property": false
+      },
+      "ingest": {
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "returns": "IngestedVersion",
+        "property": false
+      },
+      "list_documents": {
+        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None",
+        "returns": "DocumentPage",
+        "property": false
+      },
+      "search_documents": {
+        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None",
+        "returns": "DocumentSearchPage",
+        "property": false
+      },
+      "search_documents_request": {
+        "arguments": "self, *, request: DocumentSearchRequest",
+        "returns": "DocumentSearchPage",
+        "property": false
+      },
+      "delete_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "returns": "DocumentDeletion",
+        "property": false
+      },
+      "connectors": {
+        "arguments": "self",
+        "returns": "tuple[ConnectorDescriptor, ...]",
+        "property": false
+      },
+      "add_connector": {
+        "arguments": "self, *, connector: ConnectorCreate",
+        "returns": "ConnectorDescriptor",
+        "property": false
+      },
+      "pause_connector": {
+        "arguments": "self, *, connector_id: UUID",
+        "returns": "ConnectorDescriptor",
+        "property": false
+      },
+      "connector_status": {
+        "arguments": "self, *, connector_id: UUID",
+        "returns": "ConnectorDescriptor",
+        "property": false
+      }
+    },
+    "Client": {
+      "from_env": {
+        "arguments": "cls, **overrides: object",
+        "returns": "Self",
+        "property": false
+      },
+      "account": {
+        "arguments": "self",
+        "returns": "AccountApi",
+        "property": true
+      },
+      "ingest": {
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "returns": "IngestedVersion",
+        "property": false
+      },
+      "ingest_file": {
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "returns": "IngestedVersion",
+        "property": false
+      }
+    },
+    "AccountApi": {
+      "__init__": {
+        "arguments": "self, *, connection: Connection | None, http: httpx.Client",
+        "returns": "None",
+        "property": false
+      },
+      "whoami": {
+        "arguments": "self",
+        "returns": "dict[str, object]",
+        "property": false
+      },
+      "get": {
+        "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
+        "returns": "object",
+        "property": false
+      }
+    }
+  },
+  "resolve_connection": "*, api_key: str | None=None, api_url: str | None=None, project: str | None=None, issuer: str | None=None, mcp_url: str | None=None",
+  "QueryResultDict": [
+    "rows",
+    "columns",
+    "truncated"
+  ],
+  "adaptations": "typescript_client_design.md#7-language-and-safety-adaptations"
+}
