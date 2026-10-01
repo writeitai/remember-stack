@@ -1012,3 +1012,62 @@ def test_chunks_of_every_ready_version_are_readable_for_scoped_reads(
     assert every == {one.version_id, two.version_id}
     assert served == {two.version_id}
     assert text_origin is None
+
+
+def test_the_query_role_reads_the_time_scope_surface(engine: Engine) -> None:
+    """The public functions and views run for the deployment's query login.
+
+    The functions read private ledgers, so they are definer-rights functions
+    owned by the view owner; the query role holds only EXECUTE and SELECT.
+    """
+    one = _ingest(engine, content=b"edition 1", effective_from=_Y2024)
+    _ready(engine, version=one)
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            connection.execute(
+                text(
+                    "SELECT set_config('role', 'rememberstack_query_' ||"
+                    " current_database(), true)"
+                )
+            )
+            in_scope = connection.execute(
+                text(
+                    "SELECT version_id FROM memory_v1.versions_in_scope("
+                    " CAST(:d AS uuid), 'current')"
+                ),
+                {"d": _DEPLOYMENT_ID},
+            ).scalars()
+            assert list(in_scope) == [one.version_id]
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT count(*) FROM memory_v1.effective_intervals("
+                        " CAST(:d AS uuid), ARRAY[CAST(:doc AS uuid)])"
+                    ),
+                    {"d": _DEPLOYMENT_ID, "doc": one.doc_id},
+                ).scalar_one()
+                == 1
+            )
+            assert (
+                connection.execute(
+                    text(
+                        "SELECT memory_v1.fact_in_scope_support(CAST(:d AS uuid),"
+                        " 'relation', CAST(:r AS uuid), 'current')"
+                    ),
+                    {"d": _DEPLOYMENT_ID, "r": uuid4()},
+                ).scalar_one()
+                is False
+            )
+            for view in (
+                "document_effective_periods_live",
+                "chunks_all_versions_live",
+                "document_crossrefs_live",
+            ):
+                connection.execute(text(f"SELECT count(*) FROM memory_v1.{view}"))
+            with pytest.raises(DBAPIError, match="permission denied"):
+                connection.execute(
+                    text("SELECT count(*) FROM public.document_version_scope")
+                )
+        finally:
+            transaction.rollback()
