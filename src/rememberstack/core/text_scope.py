@@ -143,7 +143,7 @@ WINDOW_SQL = (
 def version_selected(*, version: str, alias: str = "scope_row") -> str:
     """One predicate: version ``version`` is selected by the scope (§3.2)."""
     return (
-        f"EXISTS (SELECT 1 FROM document_version_scope {alias}"
+        f"EXISTS (SELECT 1 FROM public.document_version_scope {alias}"
         f" WHERE {alias}.deployment_id = :deployment_id"
         f" AND {alias}.version_id = {version}"
         f" AND {alias}.selectable"
@@ -154,7 +154,7 @@ def version_selected(*, version: str, alias: str = "scope_row") -> str:
 def lineage_periodised(*, doc: str, alias: str = "mode_row") -> str:
     """One predicate: lineage ``doc`` has declared effective time (current belief)."""
     return (
-        f"EXISTS (SELECT 1 FROM document_version_scope {alias}"
+        f"EXISTS (SELECT 1 FROM public.document_version_scope {alias}"
         f" WHERE {alias}.deployment_id = :deployment_id"
         f" AND {alias}.doc_id = {doc}"
         f" AND {alias}.periodised)"
@@ -169,16 +169,16 @@ def occurrence_selected(*, claim: str, alias: str = "occurrence") -> str:
     readable.
     """
     return (
-        f"EXISTS (SELECT 1 FROM chunk_claims {alias}"
-        f" JOIN chunks {alias}_chunk"
+        f"EXISTS (SELECT 1 FROM public.chunk_claims {alias}"
+        f" JOIN public.chunks {alias}_chunk"
         f"   ON {alias}_chunk.deployment_id = {alias}.deployment_id"
         f"  AND {alias}_chunk.chunk_id = {alias}.chunk_id"
-        f" JOIN document_versions {alias}_version"
+        f" JOIN public.document_versions {alias}_version"
         f"   ON {alias}_version.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_version.version_id = {alias}_chunk.version_id"
         f"  AND {alias}_version.current_representation_id"
         f"      = {alias}_chunk.representation_id"
-        f" JOIN document_version_scope {alias}_scope"
+        f" JOIN public.document_version_scope {alias}_scope"
         f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
         f" WHERE {alias}.deployment_id = :deployment_id"
@@ -204,8 +204,8 @@ def claim_selected(*, claim: str, doc: str, current_testimony: str) -> str:
 
 
 _EVIDENCE: dict[str, tuple[str, str]] = {
-    "relation": ("relation_evidence", "relation_id"),
-    "observation": ("observation_evidence", "observation_id"),
+    "relation": ("public.relation_evidence", "relation_id"),
+    "observation": ("public.observation_evidence", "observation_id"),
 }
 
 
@@ -214,13 +214,13 @@ def _support_occurrences(*, fact_kind: str, fact_id: str, alias: str) -> str:
     table, column = _EVIDENCE[fact_kind]
     return (
         f"FROM {table} {alias}_evidence"
-        f" JOIN chunk_claims {alias}_occurrence"
+        f" JOIN public.chunk_claims {alias}_occurrence"
         f"   ON {alias}_occurrence.deployment_id = {alias}_evidence.deployment_id"
         f"  AND {alias}_occurrence.claim_id = {alias}_evidence.claim_id"
-        f" JOIN chunks {alias}_chunk"
+        f" JOIN public.chunks {alias}_chunk"
         f"   ON {alias}_chunk.deployment_id = {alias}_occurrence.deployment_id"
         f"  AND {alias}_chunk.chunk_id = {alias}_occurrence.chunk_id"
-        f" JOIN document_version_scope {alias}_scope"
+        f" JOIN public.document_version_scope {alias}_scope"
         f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
         f" WHERE {alias}_evidence.deployment_id = :deployment_id"
@@ -285,11 +285,11 @@ def claim_in_scope(*, claim: str, alias: str = "evidence_scope") -> str:
     visibility. The same rule as the fact gate, at claim grain (current belief).
     """
     occurrences = (
-        f"FROM chunk_claims {alias}"
-        f" JOIN chunks {alias}_chunk"
+        f"FROM public.chunk_claims {alias}"
+        f" JOIN public.chunks {alias}_chunk"
         f"   ON {alias}_chunk.deployment_id = {alias}.deployment_id"
         f"  AND {alias}_chunk.chunk_id = {alias}.chunk_id"
-        f" JOIN document_version_scope {alias}_scope"
+        f" JOIN public.document_version_scope {alias}_scope"
         f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
         f" WHERE {alias}.deployment_id = :deployment_id"
