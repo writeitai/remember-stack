@@ -242,11 +242,12 @@ def test_checked_in_manifest_binds_the_later_members_structurally() -> None:
         if isinstance(operation, dict)
         and operation["name"] == "claims_and_sources_context"
     )
-    assert question["version"] == 2
+    assert question["version"] == 3
     schema = question["input_schema"]
     assert isinstance(schema, dict)
     properties = schema["properties"]
     assert isinstance(properties, dict)
+    assert "time" in properties  # D140 §3.1
     assert "include_facts" not in properties
     assert "include_entities" not in properties
     assert properties["entity_ids"]["minItems"] == 1  # type: ignore[index]
