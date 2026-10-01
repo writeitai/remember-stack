@@ -24,7 +24,7 @@ The following paths are relative to that repository, not this cloud repo:
 - `src/remember/issuer.py`: JWS recognition, unverified routing claims, HTTPS/loopback, metadata and redirects.
 - `src/remember/models.py`, `src/remember/query_sandbox/result.py`: exact typed response contracts and validation.
 - `src/remember/mime.py`: deterministic converter MIME mappings.
-- `src/remember/mcp_tools/`: seven open-query argument contracts used by the SDK dispatcher; no server requirement.
+- `src/remember/mcp_tools/`: complete 16-tool catalogue, permissions, annotations, validators and error mappings; seven query tools are the SDK dispatch subset.
 - `scripts/export_openapi.py`, `openapi.json`, `src/tests/surfaces/test_openapi_export.py`: offline served-profile specification and absent connector routes.
 - `src/tests/surfaces/test_client_sdk.py`, `test_client_connection.py`: wire and routing behavior.
 
@@ -138,6 +138,10 @@ Re-resolve a moved key-routed host and retry reads once only when its URL
 changed; the pinned project identity must not follow a changed default. A
 421 refusal can safely retry once after a changed resolved URL.
 
+**Superseded exploration:** that last 421 conclusion is replaced by D140: only
+classified reads may retry; writes never replay, including a 421 refusal.
+
+**Superseded exploration (D140 keeps Python's GET/POST split):**
 Public search uses POST bodies, including unfiltered search: Python's unfiltered
 GET behavior is not a reason to put customer terms into URLs. This explicit
 wire difference preserves search semantics and the current privacy authority.
@@ -193,3 +197,14 @@ consumers, retain original 2020-12 runtime schemas, and fail unsupported project
 
 The post-0.17.2 differences also include filtered claims/chunks search, ingest
 source_path, and four DocumentSearch exports, not only two new methods.
+
+## Opus round 2 disposition
+
+The remaining material finding was the incomplete catalogue/support inventory.
+The binding design now requires all 16 tools and their permissions/annotations;
+the normative JSON inventories all 28 mcp_tools exports with client versus
+MCP-host dispositions, exact pure helper signatures, Connection return/fields
+and credential/issuer helpers. Minor findings explicitly name route_scope.py,
+pin the MIME fallback, distinguish cancellation/request/readiness timeout
+classes and limit structured diagnostics to query errors. Superseded retry
+and POST-only exploration above is labelled rather than treated as current.

@@ -289,11 +289,542 @@
       }
     }
   },
-  "resolve_connection": "*, api_key: str | None=None, api_url: str | None=None, project: str | None=None, issuer: str | None=None, mcp_url: str | None=None",
+  "resolve_connection": {
+    "arguments": "*, api_key: str | None=None, api_url: str | None=None, project: str | None=None, issuer: str | None=None, mcp_url: str | None=None",
+    "returns": "Connection",
+    "typescript": "resolveConnection"
+  },
   "QueryResultDict": [
     "rows",
     "columns",
     "truncated"
   ],
-  "adaptations": "typescript_client_design.md#7-language-and-safety-adaptations"
+  "adaptations": "typescript_client_design.md#7-language-and-safety-adaptations",
+  "supportExports": {
+    "functions": {
+      "remember.credentials.config_dir": {
+        "typescript": "configDir",
+        "arguments": "",
+        "returns": "Path"
+      },
+      "remember.credentials.credentials_path": {
+        "typescript": "credentialsPath",
+        "arguments": "",
+        "returns": "Path"
+      },
+      "remember.credentials.load_credentials": {
+        "typescript": "loadCredentials",
+        "arguments": "",
+        "returns": "StoredCredentials | None"
+      },
+      "remember.issuer.signed_key_claims": {
+        "typescript": "signedKeyClaims",
+        "arguments": "key: str",
+        "returns": "KeyClaims | None"
+      },
+      "remember.issuer.is_loopback": {
+        "typescript": "isLoopback",
+        "arguments": "host: str",
+        "returns": "bool"
+      },
+      "remember.issuer.require_secure_url": {
+        "typescript": "requireSecureUrl",
+        "arguments": "url: str, *, what: str",
+        "returns": "httpx.URL"
+      },
+      "remember.issuer.origin": {
+        "typescript": "origin",
+        "arguments": "url: str | httpx.URL",
+        "returns": "tuple[str, str, int | None]"
+      },
+      "remember.issuer.same_origin": {
+        "typescript": "sameOrigin",
+        "arguments": "left: str | httpx.URL, right: str | httpx.URL",
+        "returns": "bool"
+      },
+      "remember.issuer.send_same_origin": {
+        "typescript": "sendSameOrigin",
+        "arguments": "http: httpx.Client, request: httpx.Request, *, max_redirects: int=_MAX_REDIRECTS, stream: bool=False",
+        "returns": "httpx.Response"
+      },
+      "remember.issuer.normalize_issuer": {
+        "typescript": "normalizeIssuer",
+        "arguments": "issuer: str",
+        "returns": "str"
+      },
+      "remember.issuer.metadata_url": {
+        "typescript": "metadataUrl",
+        "arguments": "issuer: str",
+        "returns": "str"
+      },
+      "remember.issuer.fetch_issuer_metadata": {
+        "typescript": "fetchIssuerMetadata",
+        "arguments": "issuer: str, *, http: httpx.Client",
+        "returns": "IssuerMetadata"
+      },
+      "remember.issuer.clear_metadata_cache": {
+        "typescript": "clearMetadataCache",
+        "arguments": "",
+        "returns": "None"
+      },
+      "remember.connection.normalize_key": {
+        "typescript": "normalizeKey",
+        "arguments": "value: str",
+        "returns": "str"
+      },
+      "remember.connection.clear_host_cache": {
+        "typescript": "clearHostCache",
+        "arguments": "",
+        "returns": "None"
+      },
+      "remember.connection.resolve_project": {
+        "typescript": "resolveProject",
+        "arguments": "*, key: str, claims: KeyClaims, project: str | None, http: httpx.Client, clock: Callable[[], float]=time.monotonic, refresh: bool=False",
+        "returns": "ResolvedProject"
+      },
+      "remember.mcp_tools._definitions.memory_tools": {
+        "typescript": "memoryTools",
+        "arguments": "",
+        "returns": "tuple[ToolDefinition, ...]"
+      },
+      "remember.mcp_tools._definitions.tool": {
+        "typescript": "tool",
+        "arguments": "name: str",
+        "returns": "ToolDefinition"
+      },
+      "remember.mcp_tools._definitions.render_tools_list": {
+        "typescript": "renderToolsList",
+        "arguments": "tools: Iterable[ToolDefinition], *, project: bool, path_ingest: bool, read_only: bool",
+        "returns": "list[dict[str, object]]"
+      },
+      "remember.mcp_tools._validate.validate_arguments": {
+        "typescript": "validateArguments",
+        "arguments": "name: str, arguments: Mapping[str, object], *, path_ingest: bool=False, settings: McpMemorySettings | None=None, max_body_bytes: int | None=None",
+        "returns": "dict[str, object]"
+      },
+      "remember.mcp_tools._query.validate_saved_query_identifier": {
+        "typescript": "validateSavedQueryIdentifier",
+        "arguments": "*, value: object, field: str",
+        "returns": "str"
+      },
+      "remember.mcp_tools._errors.error_result": {
+        "typescript": "errorResult",
+        "arguments": "error: ToolError",
+        "returns": "dict[str, object]"
+      },
+      "remember.mcp_tools._errors.invalid_arguments": {
+        "typescript": "invalidArguments",
+        "arguments": "*, detail: str",
+        "returns": "ToolError"
+      },
+      "remember.mcp_tools._errors.map_error": {
+        "typescript": "mapError",
+        "arguments": "error: BaseException",
+        "returns": "ToolError"
+      }
+    },
+    "types": {
+      "remember.connection.Connection": {
+        "typescript": "Connection",
+        "fields": {
+          "key": {
+            "annotation": "SecretStr | None",
+            "default": null
+          },
+          "key_source": {
+            "annotation": "Source | None",
+            "default": null
+          },
+          "api_url": {
+            "annotation": "str | None",
+            "default": null
+          },
+          "api_url_source": {
+            "annotation": "Source | None",
+            "default": null
+          },
+          "project": {
+            "annotation": "str | None",
+            "default": null
+          },
+          "issuer": {
+            "annotation": "str | None",
+            "default": null
+          },
+          "mcp_url": {
+            "annotation": "str | None",
+            "default": null
+          },
+          "stored": {
+            "annotation": "StoredCredentials | None",
+            "default": null
+          },
+          "claims": {
+            "annotation": "KeyClaims | None",
+            "default": null
+          }
+        },
+        "methods": {
+          "authorization": {
+            "typescript": "authorization",
+            "arguments": "self",
+            "returns": "str | None"
+          }
+        }
+      },
+      "remember.connection.ResolvedProject": {
+        "typescript": "ResolvedProject",
+        "fields": {
+          "project": {
+            "annotation": "str",
+            "default": "Field(min_length=1)"
+          },
+          "name": {
+            "annotation": "str",
+            "default": null
+          },
+          "api_url": {
+            "annotation": "str",
+            "default": "Field(min_length=1)"
+          }
+        },
+        "methods": {}
+      },
+      "remember.credentials.StoredCredentials": {
+        "typescript": "StoredCredentials",
+        "fields": {
+          "version": {
+            "annotation": "Literal[2]",
+            "default": null
+          },
+          "issuer": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "key": {
+            "annotation": "SecretStr | None",
+            "default": "None"
+          },
+          "key_id": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "expires_at": {
+            "annotation": "datetime | None",
+            "default": "None"
+          },
+          "default_project": {
+            "annotation": "str | None",
+            "default": "Field(default=None, min_length=1, max_length=200)"
+          },
+          "api_url": {
+            "annotation": "str | None",
+            "default": "None"
+          }
+        },
+        "methods": {}
+      },
+      "remember.issuer.KeyClaims": {
+        "typescript": "KeyClaims",
+        "fields": {
+          "iss": {
+            "annotation": "str",
+            "default": "Field(min_length=1)"
+          },
+          "jti": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "sub": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "org": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "exp": {
+            "annotation": "int | None",
+            "default": "None"
+          },
+          "projects": {
+            "annotation": "list[str] | Literal['org:*'] | None",
+            "default": "None"
+          },
+          "permissions": {
+            "annotation": "list[str]",
+            "default": "Field(default_factory=list)"
+          }
+        },
+        "methods": {
+          "covers": {
+            "typescript": "covers",
+            "arguments": "self, project_id: str",
+            "returns": "bool"
+          },
+          "expires_at": {
+            "typescript": "expiresAt",
+            "arguments": "self",
+            "returns": "datetime | None"
+          }
+        }
+      },
+      "remember.issuer.IssuerMetadata": {
+        "typescript": "IssuerMetadata",
+        "fields": {
+          "issuer": {
+            "annotation": "str",
+            "default": null
+          },
+          "device_authorization_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "token_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "revocation_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "jwks_uri": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "remember_mcp_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "remember_project_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "remember_account_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          }
+        },
+        "methods": {
+          "endpoint": {
+            "typescript": "endpoint",
+            "arguments": "self, name: Literal['device_authorization_endpoint', 'token_endpoint', 'revocation_endpoint', 'remember_project_endpoint', 'remember_account_endpoint', 'remember_mcp_endpoint']",
+            "returns": "str"
+          }
+        }
+      },
+      "remember.mcp_tools._definitions.ToolDefinition": {
+        "typescript": "ToolDefinition",
+        "fields": {
+          "name": {
+            "annotation": "str",
+            "default": null
+          },
+          "description": {
+            "annotation": "str",
+            "default": null
+          },
+          "input_schema": {
+            "annotation": "dict[str, object]",
+            "default": null
+          },
+          "permission": {
+            "annotation": "Permission",
+            "default": null
+          },
+          "tool_version": {
+            "annotation": "int",
+            "default": null
+          },
+          "http_route": {
+            "annotation": "str",
+            "default": null
+          },
+          "destructive": {
+            "annotation": "bool",
+            "default": "False"
+          }
+        },
+        "methods": {
+          "mutates": {
+            "typescript": "mutates",
+            "arguments": "self",
+            "returns": "bool"
+          },
+          "annotations": {
+            "typescript": "annotations",
+            "arguments": "self",
+            "returns": "dict[str, bool]"
+          }
+        }
+      },
+      "remember.mcp_tools._errors.ToolError": {
+        "typescript": "ToolError",
+        "fields": {
+          "code": {
+            "annotation": "str",
+            "default": null
+          },
+          "detail": {
+            "annotation": "str",
+            "default": null
+          },
+          "status_code": {
+            "annotation": "int | None",
+            "default": null
+          },
+          "retryable": {
+            "annotation": "bool",
+            "default": null
+          },
+          "agent_action": {
+            "annotation": "str",
+            "default": null
+          },
+          "reason_code": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "request_id": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "retry_after": {
+            "annotation": "float | None",
+            "default": "None"
+          }
+        },
+        "methods": {
+          "as_dict": {
+            "typescript": "asDict",
+            "arguments": "self",
+            "returns": "dict[str, object]"
+          }
+        }
+      },
+      "remember.mcp_tools._errors.ToolArgumentError": {
+        "typescript": "ToolArgumentError",
+        "fields": {},
+        "methods": {
+          "__init__": {
+            "typescript": "Init",
+            "arguments": "self, *, error: ToolError",
+            "returns": "None"
+          }
+        }
+      }
+    },
+    "memoryToolCatalogue": {
+      "source": "remember.mcp_tools",
+      "exports": {
+        "ADJACENT_CHUNKS_TOOL_NAME": {
+          "typescript": "ADJACENT_CHUNKS_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "DELETE_DOCUMENT_TOOL_NAME": {
+          "typescript": "DELETE_DOCUMENT_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "INGEST_TOOL_NAME": {
+          "typescript": "INGEST_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "MEMORY_WRITE_TOOL_NAMES": {
+          "typescript": "MEMORY_WRITE_TOOL_NAMES",
+          "disposition": "public client support export"
+        },
+        "OPEN_QUERY_TOOL_NAMES": {
+          "typescript": "OPEN_QUERY_TOOL_NAMES",
+          "disposition": "public client support export"
+        },
+        "OPERATION_TOOL_NAMES": {
+          "typescript": "OPERATION_TOOL_NAMES",
+          "disposition": "public client support export"
+        },
+        "PIPELINE_READINESS_TOOL_NAME": {
+          "typescript": "PIPELINE_READINESS_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "PROJECT_ARGUMENT": {
+          "typescript": "PROJECT_ARGUMENT",
+          "disposition": "public client support export"
+        },
+        "SEARCH_DOCUMENTS_TOOL_NAME": {
+          "typescript": "SEARCH_DOCUMENTS_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "DocumentDeleteBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "DocumentSearchBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "McpMemorySettings": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "MemoryWriteBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "Permission": {
+          "typescript": "Permission",
+          "disposition": "public client support export"
+        },
+        "ToolArgumentError": {
+          "typescript": "ToolArgumentError",
+          "disposition": "public client support export"
+        },
+        "ToolDefinition": {
+          "typescript": "ToolDefinition",
+          "disposition": "public client support export"
+        },
+        "ToolError": {
+          "typescript": "ToolError",
+          "disposition": "public client support export"
+        },
+        "error_result": {
+          "typescript": "errorResult",
+          "disposition": "public client support export"
+        },
+        "handle_delete_document_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "invalid_arguments": {
+          "typescript": "invalidArguments",
+          "disposition": "public client support export"
+        },
+        "handle_memory_write_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_search_documents_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "map_error": {
+          "typescript": "mapError",
+          "disposition": "public client support export"
+        },
+        "memory_tools": {
+          "typescript": "memoryTools",
+          "disposition": "public client support export"
+        },
+        "render_tools_list": {
+          "typescript": "renderToolsList",
+          "disposition": "public client support export"
+        },
+        "tool": {
+          "typescript": "tool",
+          "disposition": "public client support export"
+        },
+        "validate_arguments": {
+          "typescript": "validateArguments",
+          "disposition": "public client support export"
+        },
+        "validate_saved_query_identifier": {
+          "typescript": "validateSavedQueryIdentifier",
+          "disposition": "public client support export"
+        }
+      },
+      "definitionFields": "remember.mcp_tools._definitions.ToolDefinition",
+      "contract": "all definitions, permissions, versions, routes, annotations, schemas and pure validators/error mapping; no host I/O"
+    }
+  }
 }

@@ -166,7 +166,8 @@ network failure, 421 or a non-engine 404, and retry once only if the URL changed
 Never replay ingest, connector creation, mutating operations or DELETE,
 including on 421. Refresh the host mapping after a write network failure/421
 without replay; surface the original error. For reads, use the source-owned
-_READ_ROUTES table, not HTTP method alone: POST readiness, graph and queries
+_READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
+separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
 remain eligible. Timeout and caller abort never trigger retry or re-resolution.
 Node fetch can expose some connection-phase failure codes, but arbitrary
 injected fetch cannot promise unsent writes; the universal no-write-replay
@@ -183,6 +184,14 @@ these are overridable starting values. The deadline bounds network and sleep,
 and timeout preserves the last report. `requireP3` matches Python's requirement
 set. Input version IDs are required and validated before HTTP.
 
+Caller cancellation produces an exported `AbortError` class, preserving the
+signal's reason as its cause. SDK request deadlines produce `RequestTimeoutError`;
+readiness deadlines produce the SDK's `TimeoutError` with the last report.
+These are distinct classes, even when a caller's signal reason is a DOMException
+named TimeoutError. None permits moved-host retry. Optional retryable/requestId
+diagnostics are populated only by valid structured query errors; other routes
+keep Python's ordinary HTTP status/detail behavior.
+
 ## 5. Uploads, queries and input contracts
 
 Binary ingestion sends `application/octet-stream` to the ordinary ingest
@@ -190,7 +199,8 @@ endpoint with the filename, converter MIME and lineage query fields. File
 ingestion infers converter MIME from the actual path before any display-name
 override; bytes infer it from their required filename. Reuse the Python known
 MIME mapping as generated data; unknown types use a deterministic portable
-mapping or `application/octet-stream`, not a host-specific conversion promise.
+mapping from the fixed mime-db version, then `application/octet-stream` when
+unknown, not a host-specific conversion promise.
 Validate paired source kind/ref, UTC modified time and lineage requirements
 for revision/living mode before sending. Never replay an upload to hide a
 failed acknowledgement or progress uncertainty.
@@ -300,6 +310,8 @@ redact them; deliberate authorization access is explicit.
 | ValueError, Pydantic ValidationError, SandboxRejection invalid_parameter | InputValidationError, code=invalid_parameter | TypeError |
 | CredentialError | CredentialError | InputValidationError |
 | TimeoutError from wait | TimeoutError: report (last report or undefined) | Error |
+| Caller cancellation | AbortError: cause is signal reason | Error |
+| HTTP request deadline | RequestTimeoutError: statusCode=0 | MemoryApiError |
 | Unsafe JSON integer | NumericPrecisionError on response; InputValidationError code=numeric.precision on input | Respectively MemoryApiError and TypeError |
 
 Compare failure class/code/status/fields, not Python dictionary repr messages.
@@ -312,8 +324,18 @@ are carried, never interpreted as automatic-retry permission.
 
 Public client exports include redacting Connection/resolveConnection,
 StoredCredentials type and credential path/read helpers, issuer metadata/secure
-URL helpers, and source-generated tool definitions/input schemas/error shapes
-with tool lookup/argument validation for the seven open-query dispatch names.
+URL helpers, and the complete D136 memory-tool catalogue generated from
+`remember.mcp_tools`: all 16 current definitions, permissions, versions, routes,
+annotations and input schemas, plus render/lookup, pure argument validators and
+error shapes/mapping. A future catalogue addition fails drift checks until
+covered. The seven open-query names are only the SDK dispatch subset; an MCP
+host can filter every catalogue tool by its memory:read/memory:write permission.
+The normative inventory's supportExports records exact source signatures,
+Connection return/fields, credential/issuer read helpers, and all 28 current
+`remember.mcp_tools.__all__` names with explicit TypeScript names or a separate
+MCP-library disposition. Backend protocols, host settings and the three
+host-execution handlers live in that separate MCP library; the base client
+supplies their complete catalogue/validation/error dependencies, not host I/O.
 No MCP host or interactive login is pulled into the base library.
 The CLI library owns device login/logout, credential writing/locking and the
 pending-revocation journal. It consumes exported schemas/security read helpers
