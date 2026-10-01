@@ -26,8 +26,10 @@ from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
@@ -43,6 +45,8 @@ from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentDeletion
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import IngestedVersion
@@ -57,7 +61,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness, delete, document-search and section-history backend.
+    """The write, readiness, delete, document-search, section and references backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -118,6 +122,12 @@ class _ClientBackend:
     def section_history(self, *, request: SectionHistoryRequest) -> SectionHistoryPage:
         """Read one section's history through the HTTP SDK (D140)."""
         return self._client.section_history_request(request=request)
+
+    def document_references(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read one page of references through the HTTP SDK (D140)."""
+        return self._client.document_references_request(request=request)
 
 
 class EngineMcpServer:
@@ -194,6 +204,10 @@ class EngineMcpServer:
             )
         if name == SECTION_HISTORY_TOOL_NAME:
             return handle_section_history_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == DOCUMENT_REFERENCES_TOOL_NAME:
+            return handle_document_references_tool(
                 arguments=arguments, backend=self._backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:

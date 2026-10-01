@@ -66,6 +66,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
     assert _SUPPORTED_WORKER_STAGES == (
         PipelineStage.CONVERT,
         PipelineStage.STRUCTURE,
+        PipelineStage.CROSSREF,
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
@@ -77,7 +78,12 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.RECONCILE,
         PipelineStage.LABEL_RELATION,
     )
-    assert tuple(_expected_components()) == _SUPPORTED_WORKER_STAGES
+    # crossref work is per reference generation, so readiness never waits on it
+    assert tuple(_expected_components()) == tuple(
+        stage
+        for stage in _SUPPORTED_WORKER_STAGES
+        if stage is not PipelineStage.CROSSREF
+    )
 
 
 def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
@@ -87,7 +93,6 @@ def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
         PipelineStage.EMBED_RELATION,
         PipelineStage.EMBED_OBSERVATION,
         PipelineStage.LABEL_OBSERVATION,
-        PipelineStage.CROSSREF,
         PipelineStage.REFRESH_PROFILE,
     }.isdisjoint(_SUPPORTED_WORKER_STAGES)
 
@@ -168,7 +173,7 @@ def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
     workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
     api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
     ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
-    assert ceiling == 215
+    assert ceiling == 231
     assert int(limits[0]) >= ceiling + 50
 
 

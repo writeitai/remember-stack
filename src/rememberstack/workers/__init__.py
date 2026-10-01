@@ -17,6 +17,7 @@ from rememberstack.workers.e0 import StructureHandler
 from rememberstack.workers.e0 import StructurerSettings
 from rememberstack.workers.e0 import UPLOAD_SOURCE_KIND
 from rememberstack.workers.e0 import UploadIngestor
+from rememberstack.workers.e0_crossref import CrossrefHandler
 from rememberstack.workers.e0_summary import E0_PLACEMENT_VERSION
 from rememberstack.workers.e0_summary import E0_SUMMARY_VERSION
 from rememberstack.workers.e0_summary import SummarySettings
@@ -86,6 +87,7 @@ __all__ = (
     "AdjudicateSupersessionHandler",
     "ChunkHandler",
     "ConvertHandler",
+    "CrossrefHandler",
     "E1Settings",
     "E1_CHUNK_VERSION",
     "E1_EMBED_VERSION",

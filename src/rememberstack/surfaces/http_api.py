@@ -60,6 +60,7 @@ from starlette.types import Send
 
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
@@ -67,16 +68,22 @@ from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
 from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
+from remember.models import ReferenceGenerations
+from remember.models import REFERENCES_BODY_MAX_BYTES
+from remember.models import ReferencesSet
 from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack import __version__
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
 from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AdjacentChunksRequest
 from rememberstack.model import AuthenticatedContext
+from rememberstack.model import ChunkNotFoundError
 from rememberstack.model import ConnectorCreate
 from rememberstack.model import ConnectorDescriptor
 from rememberstack.model import ConnectorNotFoundError
@@ -103,6 +110,7 @@ from rememberstack.model import PipelineReadinessReport
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ReadEmbeddingCost
 from rememberstack.model import ReadinessRequirements
+from rememberstack.model import ReferenceBodyError
 from rememberstack.model import SearchRequest
 from rememberstack.model import SpendLeaseRefused
 from rememberstack.model import SpendLeaseUnavailable
@@ -275,6 +283,32 @@ class SectionHistoryPort(Protocol):
         self, *, deployment_id: UUID, request: SectionHistoryRequest
     ) -> SectionHistoryPage:
         """Read one page, or raise ``DocumentNotFoundError`` / ``ValueError``."""
+        ...
+
+
+class ReferencesPort(Protocol):
+    """Record and inspect one version's supplied references (D140 §6.3)."""
+
+    def set_references(
+        self, *, deployment_id: UUID, doc_id: UUID, version_id: UUID, body: bytes
+    ) -> ReferencesSet:
+        """Record an NDJSON set; ``ReferenceBodyError`` for an invalid line."""
+        ...
+
+    def reference_generations(
+        self, *, deployment_id: UUID, doc_id: UUID, version_id: UUID
+    ) -> ReferenceGenerations:
+        """The version's generations with statuses and errors."""
+        ...
+
+
+class DocumentReferencesPort(Protocol):
+    """Read references across versions and time (D140 §6.2)."""
+
+    def document_references(
+        self, *, deployment_id: UUID, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read one page, or raise a not-found error or ``ValueError``."""
         ...
 
 
@@ -472,6 +506,8 @@ def build_api(
     documents: DocumentInventoryPort | None = None,
     document_search: DocumentSearchPort | None = None,
     section_history: SectionHistoryPort | None = None,
+    references: ReferencesPort | None = None,
+    document_references: DocumentReferencesPort | None = None,
     deletion: DocumentDeletionPort | None = None,
     effective_time: EffectiveTimePort | None = None,
     graph: GraphQueryPort | None = None,
@@ -490,6 +526,8 @@ def build_api(
     `DELETE /documents/{doc_id}/effective-periods` (D140); `document_search` adds
     `POST /documents/search` (D134); `section_history` adds
     `GET /documents/{doc_id}/sections/{section_key}/history` (D140);
+    `references` adds `PUT|GET /documents/{doc_id}/versions/{version_id}/references`
+    and `document_references` adds `POST /documents/references` (D140);
     `auth` gates every request
     on one perimeter credential; `direct_admission` enforces the per-credential
     and per-deployment rate and in-flight limits after authentication and
@@ -730,6 +768,12 @@ def build_api(
         _mount_section_history(
             app=app, history=section_history, deployment_id=deployment_id
         )
+    if references is not None:
+        _mount_references(app=app, references=references, deployment_id=deployment_id)
+    if document_references is not None:
+        _mount_document_references(
+            app=app, references=document_references, deployment_id=deployment_id
+        )
     if deletion is not None:
         _mount_document_deletion(
             app=app, deletion=deletion, deployment_id=deployment_id
@@ -753,6 +797,7 @@ def build_api(
                 deletion=deletion is not None,
                 document_search=document_search is not None,
                 section_history=section_history is not None,
+                document_references=document_references is not None,
             ),
         )
 
@@ -917,6 +962,7 @@ def _served_tools(
     deletion: bool,
     document_search: bool,
     section_history: bool,
+    document_references: bool = False,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -935,6 +981,8 @@ def _served_tools(
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
     if section_history:
         names.append(SECTION_HISTORY_TOOL_NAME)
+    if document_references:
+        names.append(DOCUMENT_REFERENCES_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
@@ -1409,6 +1457,154 @@ def _mount_section_history(
             return history.section_history(deployment_id=deployment_id, request=request)
         except DocumentNotFoundError as error:
             raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _reference_errors(error: Exception) -> HTTPException:
+    """Map one references refusal to its status and detail."""
+    if isinstance(error, DocumentNotFoundError):
+        return HTTPException(status_code=404, detail="document_not_found")
+    if isinstance(error, DocumentVersionNotFoundError):
+        return HTTPException(status_code=404, detail="version_not_found")
+    if isinstance(error, ReferenceBodyError):
+        return HTTPException(
+            status_code=422,
+            detail={"code": error.code, "line": error.line, "message": error.reason},
+        )
+    raise error
+
+
+_REFERENCE_ERRORS: Final = (
+    DocumentNotFoundError,
+    DocumentVersionNotFoundError,
+    ReferenceBodyError,
+)
+
+
+def _mount_references(
+    *, app: FastAPI, references: ReferencesPort, deployment_id: UUID
+) -> None:
+    """Expose the supplied-reference write (write scope) and its read (D140 §6.3)."""
+
+    @app.put(
+        "/documents/{doc_id}/versions/{version_id}/references",
+        response_model=ReferencesSet,
+        responses={
+            404: {"description": "document_not_found | version_not_found"},
+            413: {"description": "reference_set_too_large (over 64 MiB)"},
+            422: {"description": "invalid_reference_set: the failing line"},
+        },
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/x-ndjson": {
+                        "schema": {"type": "string", "format": "binary"}
+                    }
+                },
+            }
+        },
+    )
+    async def set_references(
+        doc_id: UUID, version_id: UUID, request: Request
+    ) -> ReferencesSet:
+        """Replace one version's supplied references with an NDJSON set.
+
+        One reference per line: ``kind``, ``from_section_key``, ``target``
+        (``source_kind``, ``source_ref``, ``version_key``, ``section_key``),
+        ``binding`` (``floating`` or ``pinned``), ``change_effective_from``
+        and ``change_date_known`` (for ``amends``), ``source_label``,
+        ``context``. The latest PUT wins: an equal set is a retry, a set
+        equal to the active one cancels a newer pending one, and any other
+        set becomes a pending generation the pipeline validates
+        (all-or-nothing against the version's section keys) and activates.
+        A malformed line is 422 naming it; more than 64 MiB is 413.
+        """
+        declared = request.headers.get("content-length")
+        if (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > REFERENCES_BODY_MAX_BYTES
+        ):
+            raise _references_too_large()
+        received = bytearray()
+        async for chunk in request.stream():
+            received.extend(chunk)
+            if len(received) > REFERENCES_BODY_MAX_BYTES:
+                raise _references_too_large()
+        try:
+            return await run_in_threadpool(
+                references.set_references,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                version_id=version_id,
+                body=bytes(received),
+            )
+        except _REFERENCE_ERRORS as error:
+            raise _reference_errors(error) from error
+
+    @app.get(
+        "/documents/{doc_id}/versions/{version_id}/references",
+        response_model=ReferenceGenerations,
+        responses={404: {"description": "document_not_found | version_not_found"}},
+    )
+    def reference_generations(doc_id: UUID, version_id: UUID) -> ReferenceGenerations:
+        """The version's reference generations, newest first.
+
+        Each generation is ``pending``, ``active``, ``rejected`` (with
+        ``{item, field, reason}`` errors) or ``superseded``.
+        """
+        try:
+            return references.reference_generations(
+                deployment_id=deployment_id, doc_id=doc_id, version_id=version_id
+            )
+        except _REFERENCE_ERRORS as error:
+            raise _reference_errors(error) from error
+
+
+def _references_too_large() -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail={
+            "code": "reference_set_too_large",
+            "limit_bytes": REFERENCES_BODY_MAX_BYTES,
+        },
+    )
+
+
+def _mount_document_references(
+    *, app: FastAPI, references: DocumentReferencesPort, deployment_id: UUID
+) -> None:
+    """Expose ``document_references`` (D140 §6.2). A read."""
+
+    @app.post(
+        "/documents/references",
+        response_model=DocumentReferencesPage,
+        responses={
+            400: {"description": "cursor is malformed or belongs to another call"},
+            404: {"description": "document_not_found | chunk_not_found"},
+        },
+    )
+    def document_references(body: DocumentReferencesRequest) -> DocumentReferencesPage:
+        """What a passage, section or document references, and what references it.
+
+        Give ``chunk_id`` or ``doc_id`` (optionally ``section_key``). Each row
+        is one reference in one source window, resolved against the target
+        versions in force then: ``applies_during``, ``concurrent`` and a
+        status (``resolved``, ``target_processing``, ``target_unavailable``,
+        ``target_not_in_force``, ``section_not_in_version``,
+        ``section_not_indexed``, ``pinned_version_unavailable``). ``cursor``
+        pages and pins the evaluation and belief instants.
+        """
+        try:
+            return references.document_references(
+                deployment_id=deployment_id, request=body
+            )
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
+        except ChunkNotFoundError as error:
+            raise HTTPException(status_code=404, detail="chunk_not_found") from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 

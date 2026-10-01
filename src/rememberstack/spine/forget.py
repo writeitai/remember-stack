@@ -1093,6 +1093,11 @@ _OBJECT_KEYS = text(
         ) uri(object_key)
         WHERE version.deployment_id = :deployment_id AND version.doc_id = :doc_id
         UNION ALL
+        SELECT reference_generation.artifact_uri
+        FROM document_reference_generations reference_generation
+        WHERE reference_generation.deployment_id = :deployment_id
+          AND reference_generation.doc_id = :doc_id
+        UNION ALL
         SELECT generation.pageindex_uri
         FROM document_structure_generations generation
         WHERE generation.deployment_id = :deployment_id
@@ -1649,9 +1654,13 @@ _POSTGRES_SCRUB = (
         WHERE deployment_id = :deployment_id AND from_doc_id = :doc_id
         """
     ),
+    # D140 §9: references other lineages made TO the forgotten one are their
+    # sources' content; they are unbound (and keep the target as the source
+    # names it), so a re-ingest of that identity can bind them again.
     text(
         """
-        DELETE FROM document_crossrefs
+        UPDATE document_crossrefs
+        SET to_doc_id = NULL, resolved = false
         WHERE deployment_id = :deployment_id AND to_doc_id = :doc_id
         """
     ),

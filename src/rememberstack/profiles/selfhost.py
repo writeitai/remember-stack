@@ -85,6 +85,7 @@ if TYPE_CHECKING:
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
     PipelineStage.STRUCTURE,
+    PipelineStage.CROSSREF,
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
@@ -1018,10 +1019,12 @@ class SelfHostProfile:
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
+        from rememberstack.spine import DocumentReferences
         from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import SectionHistory
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
@@ -1160,6 +1163,10 @@ class SelfHostProfile:
             documents=DocumentInventory(engine=self._engine),
             document_search=DocumentSearch(engine=self._engine),
             section_history=SectionHistory(engine=self._engine),
+            references=ReferenceCatalog(
+                engine=self._engine, artifact_store=self._artifact_store
+            ),
+            document_references=DocumentReferences(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,
@@ -1364,6 +1371,7 @@ class SelfHostProfile:
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
         from rememberstack.spine import ObservationSettings
+        from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
@@ -1371,6 +1379,7 @@ class SelfHostProfile:
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
         from rememberstack.workers import ConvertHandler
+        from rememberstack.workers import CrossrefHandler
         from rememberstack.workers import E1Settings
         from rememberstack.workers import E2Settings
         from rememberstack.workers import E3Settings
@@ -1432,6 +1441,12 @@ class SelfHostProfile:
                 check_settings=SkeletonCheckSettings.model_validate({}),
                 role_settings=RoleSettings.model_validate({}),
                 summary_settings=SummarySettings.model_validate({}),
+            )
+        if stage is PipelineStage.CROSSREF:
+            return CrossrefHandler(
+                references=ReferenceCatalog(
+                    engine=self._engine, artifact_store=self._artifact_store
+                )
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -1655,7 +1670,13 @@ def _psycopg_url() -> str:
 
 
 def _expected_components() -> dict[PipelineStage, str]:
-    """The exact eleven continuous generations composed by this profile."""
+    """The per-version continuous generations composed by this profile.
+
+    The ``crossref`` worker is composed but not listed: its work is one job per
+    supplied reference generation (D140 §6.3), not one per version, so a
+    version without references has none and pipeline readiness never waits
+    for it.
+    """
     from rememberstack.spine import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION
     from rememberstack.workers import E0_STRUCTURE_VERSION

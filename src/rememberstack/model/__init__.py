@@ -121,6 +121,7 @@ from rememberstack.model.deployment import DeploymentBootstrapConflictError
 from rememberstack.model.deployment import DeploymentBootstrapInput
 from rememberstack.model.deployment import DeploymentBootstrapResult
 from rememberstack.model.deployment import DeploymentConflictError
+from rememberstack.model.documents import ChunkNotFoundError
 from rememberstack.model.documents import ConvertSource
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
@@ -130,6 +131,7 @@ from rememberstack.model.documents import EffectiveTimeNotSupportedError
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
+from rememberstack.model.documents import ReferenceBodyError
 from rememberstack.model.documents import RepresentationNotFoundError
 from rememberstack.model.documents import RepresentationRecord
 from rememberstack.model.documents import SourceItem
@@ -475,6 +477,8 @@ __all__ = (
     "EffectiveTimeNotSupportedError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
+    "ChunkNotFoundError",
+    "ReferenceBodyError",
     "DeploymentBuildInfo",
     "EmbeddingRequest",
     "EmbeddingResponse",

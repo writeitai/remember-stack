@@ -49,8 +49,11 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
+from remember.models import DOCUMENT_REFERENCES_DEFAULT_K
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
@@ -66,6 +69,10 @@ from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
+from remember.models import ReferenceGenerations
+from remember.models import ReferenceInput
+from remember.models import ReferenceKind
+from remember.models import ReferencesSet
 from remember.models import SearchRequest
 from remember.models import SECTION_HISTORY_DEFAULT_K
 from remember.models import SectionHistoryPage
@@ -1016,6 +1023,102 @@ class MemoryClient:
                 params=params,
             ),
             endpoint="GET /documents/{doc_id}/sections/{section_key}/history",
+        )
+
+    def set_references(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        references: Sequence[ReferenceInput],
+    ) -> ReferencesSet:
+        """Replace one version's supplied references (D140 §6.3).
+
+        ``references`` is the version's complete set, sent as NDJSON (one
+        reference per line, at most 64 MiB). The latest call wins: an equal
+        set is a no-op retry, a set equal to the active one cancels a newer
+        pending one, and any other set becomes a new pending generation that
+        the pipeline validates and activates — see
+        :meth:`reference_generations`. An unknown ``from_section_key``
+        rejects the whole set and the active set stays. Raises
+        ``MemoryApiError`` 404 for an unknown document or version, 413 for
+        an oversized set and 422 for an invalid line.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = "".join(
+            reference.model_dump_json(exclude_none=True) + "\n"
+            for reference in references
+        ).encode("utf-8")
+        return _validated(
+            ReferencesSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/references",
+                content=body,
+                headers={"Content-Type": "application/x-ndjson"},
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def reference_generations(
+        self, *, doc_id: UUID | str, version_id: UUID | str
+    ) -> ReferenceGenerations:
+        """One version's reference generations with statuses and errors (D140)."""
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        return _validated(
+            ReferenceGenerations,
+            self._json("GET", f"/documents/{document}/versions/{version}/references"),
+            endpoint="GET /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def document_references(
+        self,
+        *,
+        chunk_id: UUID | str | None = None,
+        doc_id: UUID | str | None = None,
+        section_key: str | None = None,
+        direction: Literal["outgoing", "incoming", "both"] = "both",
+        kinds: Sequence[ReferenceKind] | None = None,
+        time: ReadTime | None = None,
+        k: int = DOCUMENT_REFERENCES_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> DocumentReferencesPage:
+        """What a passage, section or document references, and what references it.
+
+        Give ``chunk_id`` or ``doc_id`` (with an optional ``section_key``).
+        Rows resolve each reference against the target versions in force
+        during each source window (D140 §6.2). An unknown or deleted document
+        or chunk raises ``MemoryApiError`` 404.
+        """
+        return self.document_references_request(
+            request=DocumentReferencesRequest(
+                chunk_id=None if chunk_id is None else UUID(str(chunk_id)),
+                doc_id=None if doc_id is None else UUID(str(doc_id)),
+                section_key=section_key,
+                direction=direction,
+                kinds=None if kinds is None else tuple(kinds),
+                time=time,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def document_references_request(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Send one prepared :class:`DocumentReferencesRequest`."""
+        return _validated(
+            DocumentReferencesPage,
+            self._json(
+                "POST",
+                "/documents/references",
+                json_body=request.model_dump(
+                    mode="json", by_alias=True, exclude_none=True
+                ),
+            ),
+            endpoint="POST /documents/references",
         )
 
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:

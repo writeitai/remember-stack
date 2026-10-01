@@ -51,6 +51,9 @@ from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import resolve_version_key_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
+from rememberstack.spine.references import activate_extracted_on
+from rememberstack.spine.references import bind_pending_references_on
+from rememberstack.spine.references import enqueue_pending_supplied_on
 from rememberstack.spine.work_ledger import enqueue_on
 
 
@@ -707,6 +710,20 @@ class DocumentCatalog:
                     _SUPERSEDE_PRIOR_VERSIONS,  # are superseded as of now (D55)
                     {"doc_id": record.doc_id, "version_id": record.version_id},
                 )
+                # D140: the D65 swap activates the representation's extracted
+                # references, and supplied sets PUT while the version was
+                # processing are validated now that its structure exists
+                activate_extracted_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=record.version_id,
+                    representation_id=record.representation_id,
+                )
+                enqueue_pending_supplied_on(
+                    connection=connection,
+                    deployment_id=record.deployment_id,
+                    version_id=record.version_id,
+                )
         return _persisted_tree(generation=generation, sections=persisted)
 
 
@@ -739,6 +756,15 @@ def _lineage_locked(*, connection: Connection, record: UploadRecord) -> RowMappi
         .one_or_none()
     )
     if inserted is not None:
+        # D140 late binding: references that named this identity before it
+        # existed now point at it (one indexed update, first creation only)
+        bind_pending_references_on(
+            connection=connection,
+            deployment_id=record.deployment_id,
+            doc_id=inserted["doc_id"],
+            source_kind=record.source_kind,
+            source_ref=record.source_ref,
+        )
         return inserted
     lineage = (
         connection.execute(

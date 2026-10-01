@@ -283,6 +283,28 @@ class DocumentNotFoundError(LookupError):
     """
 
 
+class ChunkNotFoundError(LookupError):
+    """No chunk of a live, non-deleted version has this id (D140 §6.2)."""
+
+
+class ReferenceBodyError(ValueError):
+    """A supplied NDJSON reference set is malformed (D140 §6.3).
+
+    ``line`` is the 1-based physical line that failed; the whole body is
+    refused and nothing is recorded.
+    """
+
+    status_code = 422
+    code = "invalid_reference_set"
+
+    def __init__(self, *, line: int, reason: str) -> None:
+        """Record the failing line and why it failed."""
+        super().__init__(f"line {line}: {reason}")
+        self.line = line
+        self.reason = reason
+        self.detail = str(self)
+
+
 class RepresentationNotFoundError(Exception):
     """A stage referenced a document representation the spine does not know."""
 

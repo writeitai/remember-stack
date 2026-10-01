@@ -24,6 +24,7 @@ DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
 SECTION_HISTORY_TOOL_NAME: Final = "section_history"
+DOCUMENT_REFERENCES_TOOL_NAME: Final = "document_references"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -317,6 +318,93 @@ _SECTION_HISTORY_INPUT_SCHEMA: Final[dict[str, object]] = {
             "description": "The section key, without the leading #.",
         },
         "time": _SECTION_HISTORY_TIME_SCHEMA,
+        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The previous page's cursor.",
+        },
+    },
+}
+
+_DOCUMENT_REFERENCES_DESCRIPTION: Final = (
+    "List what a passage, section or document references and what references"
+    " it, across versions and time. Give chunk_id (a passage: its version and"
+    " section are the source) or doc_id with an optional section_key (the"
+    " section and its subsections). direction: outgoing, incoming or both"
+    " (default). time selects the source versions in force (default: current;"
+    " with chunk_id, the chunk version's own in-force time up to now). Each row"
+    " is one reference in one source window: kind (refers_to, amends,"
+    " implements, cites, links_to, attaches, replies_to), binding (floating:"
+    " whichever target versions are in force; pinned: one named version),"
+    " source (doc, version, section, window), named_target (the target exactly"
+    " as the source names it), status and target. A floating reference to a"
+    " document with effective periods yields one row per target version in"
+    " force during the source window, with applies_during and concurrent"
+    " (true when two target versions apply at once). status: resolved (target"
+    " section readable: first_chunk_ids to read it), target_processing (the"
+    " version in force is not readable yet), target_unavailable (not ingested,"
+    " deleted or forgotten), target_not_in_force, section_not_in_version,"
+    " section_not_indexed, pinned_version_unavailable. too_broad means the"
+    " section has too many subsections: ask about a narrower one. Page with"
+    " cursor; a short page with a cursor means keep paging."
+)
+
+_DOCUMENT_REFERENCES_TIME_SCHEMA: Final[dict[str, object]] = {
+    **_SECTION_HISTORY_TIME_SCHEMA,
+    "default": {"mode": "current"},
+    "description": (
+        "Which source versions: current (default; with chunk_id, the chunk"
+        " version's in-force time up to now), at an instant, overlap a window,"
+        " or history (every version in force up to now)."
+    ),
+}
+
+_DOCUMENT_REFERENCES_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A passage's chunk id; or give doc_id instead.",
+        },
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id); or give chunk_id.",
+        },
+        "section_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "description": "With doc_id: the section key, without the leading #.",
+        },
+        "direction": {
+            "type": "string",
+            "enum": ["outgoing", "incoming", "both"],
+            "default": "both",
+        },
+        "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "cites",
+                    "links_to",
+                    "attaches",
+                    "replies_to",
+                    "refers_to",
+                    "amends",
+                    "implements",
+                ],
+            },
+            "description": "Only these reference kinds.",
+        },
+        "time": _DOCUMENT_REFERENCES_TIME_SCHEMA,
         "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         "cursor": {
             "type": "string",
@@ -653,6 +741,14 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=1,
         http_route="GET /documents/{doc_id}/sections/{section_key}/history",
+    ),
+    ToolDefinition(
+        name=DOCUMENT_REFERENCES_TOOL_NAME,
+        description=_DOCUMENT_REFERENCES_DESCRIPTION,
+        input_schema=_DOCUMENT_REFERENCES_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /documents/references",
     ),
     ToolDefinition(
         name="resolve_entity",

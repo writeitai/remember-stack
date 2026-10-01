@@ -153,6 +153,28 @@
         "title": "AsOfTemporalScope",
         "type": "object"
       },
+      "AtReadTime": {
+        "additionalProperties": false,
+        "description": "Text in force at one instant.",
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "mode": {
+            "const": "at",
+            "default": "at",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "title": "AtReadTime",
+        "type": "object"
+      },
       "AtTemporalScope": {
         "additionalProperties": false,
         "description": "A current-belief read of the world-valid state at one instant.",
@@ -527,6 +549,20 @@
         "title": "Contradiction",
         "type": "object"
       },
+      "CurrentReadTime": {
+        "additionalProperties": false,
+        "description": "Text in force now.",
+        "properties": {
+          "mode": {
+            "const": "current",
+            "default": "current",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "CurrentReadTime",
+        "type": "object"
+      },
       "CurrentTemporalScope": {
         "additionalProperties": false,
         "description": "A read evaluated against the world and identity state at one instant.",
@@ -750,6 +786,519 @@
           "documents"
         ],
         "title": "DocumentPeopleMatch",
+        "type": "object"
+      },
+      "DocumentReference": {
+        "additionalProperties": false,
+        "description": "One reference, resolved against one source window and target version.",
+        "properties": {
+          "binding": {
+            "enum": [
+              "floating",
+              "pinned"
+            ],
+            "title": "Binding",
+            "type": "string"
+          },
+          "change_date_known": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Date Known"
+          },
+          "change_effective_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Effective From"
+          },
+          "context": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context"
+          },
+          "crossref_id": {
+            "format": "uuid",
+            "title": "Crossref Id",
+            "type": "string"
+          },
+          "direction": {
+            "enum": [
+              "outgoing",
+              "incoming"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "cites",
+              "links_to",
+              "attaches",
+              "replies_to",
+              "refers_to",
+              "amends",
+              "implements"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "named_target": {
+            "$ref": "#/components/schemas/NamedReferenceTarget"
+          },
+          "origin": {
+            "enum": [
+              "supplied",
+              "extracted"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/DocumentReferenceSource"
+          },
+          "source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Label"
+          },
+          "status": {
+            "enum": [
+              "resolved",
+              "target_processing",
+              "target_unavailable",
+              "target_not_in_force",
+              "section_not_in_version",
+              "section_not_indexed",
+              "pinned_version_unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentReferenceTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "direction",
+          "crossref_id",
+          "kind",
+          "origin",
+          "binding",
+          "source",
+          "named_target",
+          "status"
+        ],
+        "title": "DocumentReference",
+        "type": "object"
+      },
+      "DocumentReferenceSource": {
+        "additionalProperties": false,
+        "description": "The source side of one reference row.",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "section_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Key"
+          },
+          "section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Title"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ReferenceWindow"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "window"
+        ],
+        "title": "DocumentReferenceSource",
+        "type": "object"
+      },
+      "DocumentReferenceTarget": {
+        "additionalProperties": false,
+        "description": "The resolved target side of one reference row.\n\nOnly what the row's status allows is set: the lineage for\n``target_not_in_force`` and ``pinned_version_unavailable``; the version\nand ``applies_during`` for ``target_processing``; the section and its\nfirst chunks for ``resolved``.",
+        "properties": {
+          "applies_during": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReferenceWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "concurrent": {
+            "default": false,
+            "title": "Concurrent",
+            "type": "boolean"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
+          "first_chunk_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "First Chunk Ids",
+            "type": "array"
+          },
+          "representation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representation Id"
+          },
+          "section_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Key"
+          },
+          "section_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Title"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          }
+        },
+        "required": [
+          "doc_id"
+        ],
+        "title": "DocumentReferenceTarget",
+        "type": "object"
+      },
+      "DocumentReferencesPage": {
+        "additionalProperties": false,
+        "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+        "properties": {
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentReference"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "too_broad": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentReferencesTooBroad"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "rows",
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "DocumentReferencesPage",
+        "type": "object"
+      },
+      "DocumentReferencesRequest": {
+        "additionalProperties": false,
+        "description": "One ``document_references`` call (D140 \u00a76.2).\n\nExactly one of ``chunk_id`` (the chunk's version and section are the\nsource) or ``doc_id`` (with an optional ``section_key``). ``time``\nselects source versions; omitted, it is ``current`` \u2014 except with a\n``chunk_id``, where it is the chunk version's in-force time up to now.",
+        "properties": {
+          "chunk_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "direction": {
+            "default": "both",
+            "enum": [
+              "outgoing",
+              "incoming",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "doc_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doc Id"
+          },
+          "k": {
+            "default": 50,
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "K",
+            "type": "integer"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "enum": [
+                    "cites",
+                    "links_to",
+                    "attaches",
+                    "replies_to",
+                    "refers_to",
+                    "amends",
+                    "implements"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 7,
+                "minItems": 1,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
+          },
+          "section_key": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "pattern": "^[A-Za-z0-9_.:/-]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Key"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CurrentReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AtReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OverlapReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HistoryReadTime"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time"
+          }
+        },
+        "title": "DocumentReferencesRequest",
+        "type": "object"
+      },
+      "DocumentReferencesTooBroad": {
+        "additionalProperties": false,
+        "description": "The section resolves to more descendant keys than one call follows.",
+        "properties": {
+          "descendant_keys": {
+            "title": "Descendant Keys",
+            "type": "integer"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "limit": {
+            "default": 1000,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "reason": {
+            "const": "too_broad",
+            "default": "too_broad",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "descendant_keys",
+          "explanation"
+        ],
+        "title": "DocumentReferencesTooBroad",
         "type": "object"
       },
       "DocumentSearchFilters": {
@@ -2592,6 +3141,20 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "HistoryReadTime": {
+        "additionalProperties": false,
+        "description": "Every text in force at any instant up to now.",
+        "properties": {
+          "mode": {
+            "const": "history",
+            "default": "history",
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "HistoryReadTime",
+        "type": "object"
+      },
       "HistoryTemporalScope": {
         "additionalProperties": false,
         "description": "All currently believed fact intervals that began by evaluation time.",
@@ -2762,6 +3325,58 @@
         "title": "KFreshness",
         "type": "object"
       },
+      "NamedReferenceTarget": {
+        "additionalProperties": false,
+        "description": "The target exactly as the source names it (source content).",
+        "properties": {
+          "section_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Section Key"
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Kind"
+          },
+          "source_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ref"
+          },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          }
+        },
+        "title": "NamedReferenceTarget",
+        "type": "object"
+      },
       "Negative": {
         "additionalProperties": false,
         "description": "One typed 'no': each kind demands a different agent reaction.",
@@ -2802,6 +3417,34 @@
         ],
         "title": "NegativeKind",
         "type": "string"
+      },
+      "OverlapReadTime": {
+        "additionalProperties": false,
+        "description": "Text in force at any instant of an inclusive window.",
+        "properties": {
+          "from": {
+            "format": "date-time",
+            "title": "From",
+            "type": "string"
+          },
+          "mode": {
+            "const": "overlap",
+            "default": "overlap",
+            "title": "Mode",
+            "type": "string"
+          },
+          "to": {
+            "format": "date-time",
+            "title": "To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "OverlapReadTime",
+        "type": "object"
       },
       "OverlapTemporalScope": {
         "additionalProperties": false,
@@ -3427,6 +4070,262 @@
           "p3"
         ],
         "title": "ReadinessRequirements",
+        "type": "object"
+      },
+      "ReferenceGeneration": {
+        "additionalProperties": false,
+        "description": "One production of a version's references (D140 \u00a76.1).\n\nRows of a generation are visible only while it is ``active``; a version\nhas at most one active generation per origin. A supplied generation is\n``pending`` until the E0 crossref worker validates and activates it,\n``rejected`` (with ``errors``) when it names an unknown source section,\nand ``superseded`` once a later PUT or generation replaced it.",
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "crossref_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crossref Version"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "errors": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ReferenceItemError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "generation_id": {
+            "format": "uuid",
+            "title": "Generation Id",
+            "type": "string"
+          },
+          "input_hash": {
+            "title": "Input Hash",
+            "type": "string"
+          },
+          "item_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Count"
+          },
+          "origin": {
+            "enum": [
+              "supplied",
+              "extracted"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "representation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representation Id"
+          },
+          "request_seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Seq"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "rejected",
+              "superseded"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation_id",
+          "doc_id",
+          "version_id",
+          "origin",
+          "status",
+          "input_hash",
+          "created_at"
+        ],
+        "title": "ReferenceGeneration",
+        "type": "object"
+      },
+      "ReferenceGenerations": {
+        "additionalProperties": false,
+        "description": "A version's reference generations, newest first.",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "generations": {
+            "items": {
+              "$ref": "#/components/schemas/ReferenceGeneration"
+            },
+            "title": "Generations",
+            "type": "array"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "generations"
+        ],
+        "title": "ReferenceGenerations",
+        "type": "object"
+      },
+      "ReferenceItemError": {
+        "additionalProperties": false,
+        "description": "Why one item of a reference set was rejected.",
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "item": {
+            "minimum": 1.0,
+            "title": "Item",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "field",
+          "reason"
+        ],
+        "title": "ReferenceItemError",
+        "type": "object"
+      },
+      "ReferenceWindow": {
+        "additionalProperties": false,
+        "description": "A time window: from ``from`` (inclusive; null = unbounded) to ``until``.\n\n``until`` is exclusive unless ``until_inclusive`` (an instant window has\n``from == until`` and ``until_inclusive = true``); null is unbounded.",
+        "properties": {
+          "from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          },
+          "until_inclusive": {
+            "default": false,
+            "title": "Until Inclusive",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "from"
+        ],
+        "title": "ReferenceWindow",
+        "type": "object"
+      },
+      "ReferencesSet": {
+        "additionalProperties": false,
+        "description": "What one ``PUT \u2026/references`` did.\n\n``outcome``: ``created`` \u2014 a new generation was recorded (``pending``,\nor ``rejected`` when the version's structure already showed an unknown\nsource section); ``unchanged`` \u2014 the body equals the version's current\nintent (a retry); ``pending_cancelled`` \u2014 the body equals the active\nset, so the newer pending generation was cancelled. ``generation`` is\nthe generation the caller's intent now names.",
+        "properties": {
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "generation": {
+            "$ref": "#/components/schemas/ReferenceGeneration"
+          },
+          "outcome": {
+            "enum": [
+              "created",
+              "unchanged",
+              "pending_cancelled"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "outcome",
+          "generation"
+        ],
+        "title": "ReferencesSet",
         "type": "object"
       },
       "ResultColumn": {
@@ -4684,6 +5583,56 @@
         "summary": "List Documents"
       }
     },
+    "/documents/references": {
+      "post": {
+        "description": "What a passage, section or document references, and what references it.\n\nGive ``chunk_id`` or ``doc_id`` (optionally ``section_key``). Each row\nis one reference in one source window, resolved against the target\nversions in force then: ``applies_during``, ``concurrent`` and a\nstatus (``resolved``, ``target_processing``, ``target_unavailable``,\n``target_not_in_force``, ``section_not_in_version``,\n``section_not_indexed``, ``pinned_version_unavailable``). ``cursor``\npages and pins the evaluation and belief instants.",
+        "operationId": "document_references_documents_references_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentReferencesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentReferencesPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "cursor is malformed or belongs to another call"
+          },
+          "404": {
+            "description": "document_not_found | chunk_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Document References"
+      }
+    },
     "/documents/search": {
       "post": {
         "description": "Find documents by observed name, general metadata and content.\n\nEach result is a document judged by one version: its current version\nby default, or with ``versions: all`` the newest live version that\nmatches. With a ``query`` results are ranked and not paged; with\nfilters only they are ordered by declared creation date and paged by\n``cursor``, which pins the first call's as-of instant.",
@@ -5042,6 +5991,129 @@
           }
         ],
         "summary": "Set Effective Periods"
+      }
+    },
+    "/documents/{doc_id}/versions/{version_id}/references": {
+      "get": {
+        "description": "The version's reference generations, newest first.\n\nEach generation is ``pending``, ``active``, ``rejected`` (with\n``{item, field, reason}`` errors) or ``superseded``.",
+        "operationId": "reference_generations_documents__doc_id__versions__version_id__references_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferenceGenerations"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found | version_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reference Generations"
+      },
+      "put": {
+        "description": "Replace one version's supplied references with an NDJSON set.\n\nOne reference per line: ``kind``, ``from_section_key``, ``target``\n(``source_kind``, ``source_ref``, ``version_key``, ``section_key``),\n``binding`` (``floating`` or ``pinned``), ``change_effective_from``\nand ``change_date_known`` (for ``amends``), ``source_label``,\n``context``. The latest PUT wins: an equal set is a retry, a set\nequal to the active one cancels a newer pending one, and any other\nset becomes a pending generation the pipeline validates\n(all-or-nothing against the version's section keys) and activates.\nA malformed line is 422 naming it; more than 64 MiB is 413.",
+        "operationId": "set_references_documents__doc_id__versions__version_id__references_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "format": "binary",
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferencesSet"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found | version_not_found"
+          },
+          "413": {
+            "description": "reference_set_too_large (over 64 MiB)"
+          },
+          "422": {
+            "description": "invalid_reference_set: the failing line"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set References"
       }
     },
     "/graph/citation-path": {

@@ -75,6 +75,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "delete_document",
         "search_documents",
         "section_history",
+        "document_references",
         *OPERATION_TOOL_NAMES,
         ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
@@ -290,6 +291,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         deletion=MagicMock(),
         document_search=MagicMock(),
         section_history=MagicMock(),
+        document_references=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
