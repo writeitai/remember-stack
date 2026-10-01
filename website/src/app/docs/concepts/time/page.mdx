@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Time",
-  description: "How RememberStack records when something was true, when a source said it, and when the memory learned it, and how you ask about any of the three.",
+  description: "How RememberStack records when something was true, when a source said it, when the memory learned it, and when a document version is in force, and how you ask about each.",
 };
 
 # Time
@@ -22,8 +22,10 @@ which time it is asking about.
 
 ## Three clocks
 
-RememberStack keeps three separate clocks. Mixing them up is the most common
-source of wrong answers about time, so they never share a field.
+RememberStack keeps three separate clocks for what sources say. Mixing them
+up is the most common source of wrong answers about time, so they never share
+a field. A fourth, declared clock says which version of a document is in
+force; see [When a version is in force](#when-a-version-is-in-force).
 
 | Clock | Question it answers | Fields |
 |---|---|---|
@@ -85,7 +87,9 @@ phrase still present in `claim_text` is itself the signal: read it against
 `asserted_at`.
 
 The document date comes from `source_modified_at` when you ingest. Set it,
-especially for transcripts and chat logs, where "yesterday" is common. See
+especially for transcripts and chat logs, where "yesterday" is common. A
+passage that a newer version repeats unchanged keeps the date it was first
+written, not the new version's; see
 [Documents, versions and sources](/docs/concepts/documents-and-sources#source_modified_at-becomes-the-said-on-time).
 
 Claim times never change. Two sources may state different, even conflicting,
@@ -249,6 +253,58 @@ in its decision transcript, not replayed by the read.
 
 </Callout>
 
+## When a version is in force
+
+Some documents come in editions that apply for a period: a travel policy, a
+price list, a contract and its amendments, a standard. The text in force on a
+date is not always the newest version. Edition 2 of a travel policy may be
+published in November and apply only from 1 January; until then edition 1
+is the one employees follow.
+
+For such a document you declare an **effective period** for each version:
+when, according to its publisher, its text is in force. You declare it when
+you ingest (`effective_from`, optionally `effective_until`) or later through
+the period routes; RememberStack never guesses it. Periods are half-open:
+the start is included, the end is not. A period with no end lasts until the
+next declared start of the same document, so declaring edition 2 from
+1 January ends edition 1 on that date without touching it. An explicit end
+withdraws a version, and a gap with nothing in force is allowed.
+
+It is a fourth clock, kept apart from the other three:
+
+| Clock | Question it answers | Travel policy, edition 2 |
+|---|---|---|
+| Said-on time | When was the text written? | `source_modified_at` 2025-11-10 |
+| Belief time | When did the memory receive it? | ingested 2025-11-15 |
+| World time on a claim | What period does a sentence talk about? | "in 2026 the daily allowance is …" |
+| **Effective period** | When is this version's text the one that applies? | from 2026-01-01 |
+
+Do not confuse it with the claim window kind `effective_period` above: that
+is what one sentence says about the world; an effective period of a version
+is what you declare about a whole edition.
+
+Once a document has a declared period, every read with a `time` scope
+selects its versions by period, using the same four modes as facts:
+`current` reads the edition in force now, `at` the one in force at an
+instant, `overlap` every edition in force during a window, and `history`
+every edition that has been in force up to now. A version still being
+processed is never replaced by the one before it: its document contributes
+nothing to that scope until it is ready, and the result says so in
+`freshness.scope_pending`. Documents without declared periods are read
+through their newest processed version under every mode, exactly as before.
+
+Facts are held to the same rule. A fact read under a `time` scope is
+returned only when at least one claim that supports it occurs in a version
+in force for that scope (or in a document without declared periods). So
+before 1 January, `facts_context` answers from edition 1's allowance, even
+though edition 2 is already stored and processed; with
+`time={"mode": "at", "at": "2026-02-01T00:00:00Z"}` it answers from edition 2.
+The fact's own validity window is not changed by this; both conditions must
+hold.
+
+[Read a document as of a date](/docs/guides/versions-in-force) walks through
+the whole travel policy example.
+
 ## Time on claims and passages
 
 The claims-and-sources side of memory answers "what did the sources say?",
@@ -268,6 +324,8 @@ and [Ask about the past](/docs/guides/ask-about-the-past).
 
 - [Ask about the past](/docs/guides/ask-about-the-past): recipes for
   point-in-time and period questions.
+- [Read a document as of a date](/docs/guides/versions-in-force): documents
+  whose editions are in force for a period.
 - [Facts](/docs/concepts/facts): how windows are chosen and corrected.
 - [Reading a result](/docs/concepts/reading-results): `validity`, `temporal_match` and
   `temporal_scope` field by field.

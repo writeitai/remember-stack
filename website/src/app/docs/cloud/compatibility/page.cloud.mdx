@@ -62,6 +62,7 @@ describes, except where this page says otherwise.
 | `POST /documents/search` | Added after v0.17.2. Not present on remember.dev yet (`404`); `remember documents search` gets the same answer, and hosted MCP has no `search_documents` tool |
 | Document filters on search (`documents` in `POST /search/claims` and `POST /search/chunks`) and `source_path` on `POST /ingest` | Added after v0.17.2. Not available on remember.dev yet |
 | The `adjacent_chunks` MCP tool | Added after v0.17.2. Hosted MCP does not list it; the routes under *Passages* above are served |
+| Effective periods, version keys, section history and references (`version_key`, `effective_from` and `effective_until` on `POST /ingest`; the `…/effective-periods` and `…/references` routes; `GET /documents/{doc_id}/sections/{section_key}/history`; `POST /documents/references`; `time` on search and on `claims_and_sources_context`) | Added after v0.17.2. Not available on remember.dev yet, and hosted MCP has no `section_history` or `document_references` tool. See [Read a document as of a date](/docs/guides/versions-in-force) |
 | Connectors (`/connectors…`) | The routes exist, but remember.dev does not run connectors for you and gives them no credentials. Push documents with ingest instead |
 | Files other than UTF-8 Markdown and plain text | Refused before storage; see [Ingest limits](/docs/cloud/limits#ingest). A self-hosted engine can convert PDFs and other formats |
 | Filesystem views of the corpus | Not offered on remember.dev |

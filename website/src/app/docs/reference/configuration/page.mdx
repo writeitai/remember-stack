@@ -69,7 +69,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
 | `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
-| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 215 connections; see [Database connections](/docs/self-hosting/scaling#database-connections). |
+| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 231 connections; see [Database connections](/docs/self-hosting/scaling#database-connections). |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
 ## Deployment and API
