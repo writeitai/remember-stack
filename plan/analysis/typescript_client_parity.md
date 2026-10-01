@@ -221,3 +221,11 @@ catalogue. The normative manifest preserves Python signatures as drift inputs
 and specifies this TypeScript signature/behavior adaptation explicitly.
 Additional nits add environmentIssuer, correct constructor naming, and state
 structured mappings for cancellation/request timeout/numeric precision errors.
+
+## Opus round 4 disposition
+
+The injected resolver contract is approved in substance. Correct the timeout
+error mapping to the existing transport_error/status 0 pair, matching Python.
+Reuse local_backend_error for unsafe response precision; explicitly match
+Python's invalid_arguments for a path with no resolver, and require the future
+MCP package to keep resolver injection consistent with stdio tool rendering.
