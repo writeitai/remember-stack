@@ -7,10 +7,11 @@ so every answer is one MVCC cut and one temporal instant without snapshots.
 
 Entity traversal applies the D140 §8.1 evidence gate at ``valid_at``: an edge
 whose only support is document text not in force then is not part of the
-graph. One-hop neighborhoods apply it as an eligibility predicate before the
-expansion, frontier and result budgets. The deeper helpers are SQL functions
-that do not take it, so their paths are filtered after traversal: a path
-through an ineligible edge is dropped and the answer is marked truncated.
+answer. Traversal runs as the graph role, which cannot read the evidence the
+gate needs, so the gate is evaluated by the engine over the traversal's
+candidate paths before the page is cut: a path through an ineligible edge is
+dropped and the answer is marked truncated, since the traversal's own budgets
+were spent before the gate applied.
 """
 
 from collections.abc import Iterator
@@ -29,7 +30,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
-from rememberstack.core.text_scope import fact_in_scope_public
+from rememberstack.core.text_scope import fact_in_scope
 from rememberstack.core.text_scope import TextScope
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
@@ -44,7 +45,8 @@ from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import Truncation
 from rememberstack.model.assured_operations import AtFactTime
-from rememberstack.spine.postgres_graph_sql import gated_neighborhood_statements
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 
 DEFAULT_NEIGHBORHOOD_CAP = 500
 MAX_NEIGHBORHOOD_DEPTH = 4
@@ -163,15 +165,12 @@ class GraphQueries:
                 "expansion_budget": DEFAULT_EXPANSION_BUDGET,
                 "frontier_budget": DEFAULT_FRONTIER_BUDGET,
                 "time_budget_ms": DEFAULT_TIME_BUDGET_MS,
-                **scope.parameters(),
             }
-            gate_dropped = False
             if hops == 1:
                 parameters.update({"anchor_id": entity_id, "result_offset": offset})
                 raw = _shallow_neighborhood_rows(
                     connection=connection, parameters=parameters
                 )
-                data, status = _split_status(rows=raw)
             else:
                 parameters.update({"entity_id": entity_id})
                 raw = _rows(
@@ -179,13 +178,13 @@ class GraphQueries:
                     statement=_NEIGHBORHOOD_HELPER,
                     parameters=parameters,
                 )
-                data, status = _split_status(rows=raw)
-                data, gate_dropped = _gated_paths(
-                    connection=connection,
-                    deployment_id=self._deployment_id,
-                    rows=data,
-                    scope=scope,
-                )
+            data, status = _split_status(rows=raw)
+            data, gate_dropped = _gated_paths(
+                engine=self._engine,
+                deployment_id=self._deployment_id,
+                rows=data,
+                scope=scope,
+            )
             selected = data[:limit] if hops == 1 else data[offset : offset + limit]
             more = len(data) > limit if hops == 1 else len(data) > offset + limit
             if include_paths:
@@ -296,7 +295,7 @@ class GraphQueries:
             )
             data, status = _split_status(rows=raw)
             data, gate_dropped = _gated_paths(
-                connection=connection,
+                engine=self._engine,
                 deployment_id=self._deployment_id,
                 rows=data,
                 scope=scope,
@@ -657,46 +656,53 @@ def _gate_scope(
 ) -> TextScope:
     """The §8.1 evidence-gate scope of one traversal: ``at`` its valid instant.
 
-    The declarations are evaluated as known at the traversal's belief
-    instant, so a belief-pinned traversal sees the evidence it saw then.
+    A belief instant before the evaluation instant is evaluated from the
+    declaration ledgers, so a belief-pinned traversal sees the evidence it saw
+    then; otherwise the current-belief projection answers.
     """
     return TextScope.of(
-        time=AtFactTime(at=valid_at), evaluated_at=evaluated_at, believed_at=believed_at
+        time=AtFactTime(at=valid_at),
+        evaluated_at=evaluated_at,
+        believed_at=believed_at if believed_at < evaluated_at else None,
     )
 
 
 def _gated_paths(
-    *,
-    connection: Connection,
-    deployment_id: UUID,
-    rows: list[RowMapping],
-    scope: TextScope,
+    *, engine: Engine, deployment_id: UUID, rows: list[RowMapping], scope: TextScope
 ) -> tuple[list[RowMapping], bool]:
-    """Drop helper paths through an edge the §8.1 gate excludes.
+    """Drop traversal paths through an edge the §8.1 gate excludes.
 
-    Returns the kept rows and whether any path was dropped.
+    The gate reads private evidence, so it runs on an engine connection of
+    its own rather than inside the graph role's transaction. Returns the kept
+    rows and whether any path was dropped.
     """
     relation_ids = list(
         dict.fromkeys(str(value) for row in rows for value in row["relation_ids"])
     )
     if not relation_ids:
         return rows, False
-    gate = fact_in_scope_public(fact_kind="relation", fact_id="candidate.relation_id")
-    eligible = {
-        str(value)
-        for value in connection.execute(
-            text(
-                "SELECT candidate.relation_id"
-                " FROM unnest(CAST(:relation_ids AS uuid[])) AS candidate(relation_id)"
-                f" WHERE {gate}"
-            ),
-            {
-                "deployment_id": deployment_id,
-                "relation_ids": relation_ids,
-                **scope.parameters(),
-            },
-        ).scalars()
-    }
+    gate = fact_in_scope(
+        fact_kind="relation",
+        fact_id="candidate.relation_id",
+        pinned_belief=scope.believed_at is not None,
+    )
+    with engine.connect() as connection:
+        eligible = {
+            str(value)
+            for value in connection.execute(
+                text(
+                    "SELECT candidate.relation_id"
+                    " FROM unnest(CAST(:relation_ids AS uuid[]))"
+                    " AS candidate(relation_id)"
+                    f" WHERE {gate}"
+                ),
+                {
+                    "deployment_id": deployment_id,
+                    "relation_ids": relation_ids,
+                    **scope.parameters(),
+                },
+            ).scalars()
+        }
     kept = [
         row
         for row in rows
@@ -709,9 +715,10 @@ def _shallow_neighborhood_rows(
     *, connection: Connection, parameters: dict[str, object]
 ) -> list[RowMapping]:
     """Run the relational guard, and execute PGQ only after explicit admission."""
-    guard_statement, pgq_statement = gated_neighborhood_statements()
     guard_rows = _rows(
-        connection=connection, statement=guard_statement, parameters=parameters
+        connection=connection,
+        statement=HISTORY_NEIGHBORHOOD_GUARD,
+        parameters=parameters,
     )
     if len(guard_rows) != 1:
         raise RuntimeError("shallow graph guard did not return exactly one row")
@@ -739,7 +746,9 @@ def _shallow_neighborhood_rows(
                 },
             )
         ]
-    paths = _rows(connection=connection, statement=pgq_statement, parameters=parameters)
+    paths = _rows(
+        connection=connection, statement=HISTORY_NEIGHBORHOOD_PGQ, parameters=parameters
+    )
     representatives: dict[UUID, RowMapping] = {}
     for row in paths:
         node_ids = tuple(cast(list[UUID], row["node_ids"]))

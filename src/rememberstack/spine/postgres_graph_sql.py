@@ -9,8 +9,6 @@ request; refusal therefore cannot rely on planner short-circuit behavior.
 
 from typing import Final
 
-from rememberstack.core.text_scope import fact_in_scope_public
-
 
 def _replace_exact(*, statement: str, old: str, new: str, count: int = 1) -> str:
     """Replace a fixed SQL marker or fail import before semantic drift ships."""
@@ -168,31 +166,3 @@ HISTORY_NEIGHBORHOOD_PGQ: Final = _replace_exact(
         "              OR r.predicate"
     ),
 )
-
-
-_PREDICATE_FILTER: Final = (
-    "AND (CAST(:predicates AS text[]) IS NULL\n"
-    "             OR c.predicate = ANY(CAST(:predicates AS text[])))"
-)
-
-
-def gated_neighborhood_statements() -> tuple[str, str]:
-    """The as-of one-hop guard and PGQ statements with the D140 §8.1 gate.
-
-    An edge whose only support is text not in force at ``valid_at`` is not
-    eligible: the guard counts only eligible edges against its expansion and
-    frontier budgets, and the PGQ result keeps only eligible edges before the
-    result budget is applied. The gate reads only the public query surface,
-    because traversal runs as the query role; both statements read the scope
-    parameters of ``TextScope.parameters``.
-    """
-    guard_gate = fact_in_scope_public(fact_kind="relation", fact_id="c.relation_id")
-    guard = _replace_exact(
-        statement=HISTORY_NEIGHBORHOOD_GUARD,
-        old=_PREDICATE_FILTER,
-        new=f"{_PREDICATE_FILTER}\n        AND {guard_gate}",
-        count=2,
-    )
-    pgq_gate = fact_in_scope_public(fact_kind="relation", fact_id="g.relation_id")
-    pgq = HISTORY_NEIGHBORHOOD_PGQ.rstrip() + f"\nWHERE {pgq_gate}\n"
-    return guard, pgq

@@ -15,7 +15,6 @@ from remember.models import OverlapReadTime
 from remember.models import SearchRequest
 from rememberstack.core.text_scope import claim_selected
 from rememberstack.core.text_scope import fact_in_scope
-from rememberstack.core.text_scope import fact_in_scope_public
 from rememberstack.core.text_scope import TextScope
 from rememberstack.core.text_scope import version_selected
 from rememberstack.core.text_scope import WINDOW_SQL
@@ -93,12 +92,8 @@ def test_fact_gate_reads_the_projection_or_the_ledgers() -> None:
     )
     assert "public.observation_evidence" in pinned
     assert "memory_v1.fact_in_scope_support(" in pinned
-    public = fact_in_scope_public(fact_kind="relation", fact_id="c.relation_id")
-    assert "public." not in public
     with pytest.raises(ValueError, match="unknown fact kind"):
         fact_in_scope(fact_kind="entity", fact_id="x")
-    with pytest.raises(ValueError, match="unknown fact kind"):
-        fact_in_scope_public(fact_kind="entity", fact_id="x")
 
 
 def test_time_is_on_the_wire_contracts() -> None:
