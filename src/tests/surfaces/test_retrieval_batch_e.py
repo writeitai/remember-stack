@@ -65,6 +65,7 @@ class _CountingClaimIndex:
         k: int,
         current_only: bool,
         documents: object = None,
+        time: object = None,
     ) -> tuple[str, ...]:
         self.semantic_calls += 1
         return self.claim_ids[:k]
@@ -77,6 +78,7 @@ class _CountingClaimIndex:
         k: int,
         current_only: bool,
         documents: object = None,
+        time: object = None,
     ) -> tuple[str, ...]:
         self.lexical_calls += 1
         return self.claim_ids[:k]
