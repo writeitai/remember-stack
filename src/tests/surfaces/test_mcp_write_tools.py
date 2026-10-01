@@ -87,10 +87,16 @@ class _RecordingWriteBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         if self.fail is not None:
             raise self.fail
         self.last_ingest = {
+            "version_key": version_key,
+            "effective_from": effective_from,
+            "effective_until": effective_until,
             "content": content,
             "filename": filename,
             "mime": mime,

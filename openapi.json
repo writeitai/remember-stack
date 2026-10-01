@@ -559,6 +559,47 @@
         "title": "CurrentTemporalScope",
         "type": "object"
       },
+      "DeclaredEffectivePeriod": {
+        "additionalProperties": false,
+        "description": "One live declaration of a version, exactly as it was declared.",
+        "properties": {
+          "declared_at": {
+            "format": "date-time",
+            "title": "Declared At",
+            "type": "string"
+          },
+          "effective_from": {
+            "format": "date-time",
+            "title": "Effective From",
+            "type": "string"
+          },
+          "effective_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Until"
+          },
+          "period_id": {
+            "format": "uuid",
+            "title": "Period Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "period_id",
+          "effective_from",
+          "effective_until",
+          "declared_at"
+        ],
+        "title": "DeclaredEffectivePeriod",
+        "type": "object"
+      },
       "DeploymentBuildInfo": {
         "additionalProperties": false,
         "properties": {
@@ -1264,6 +1305,170 @@
           "ingested_at"
         ],
         "title": "DocumentVersionSummary",
+        "type": "object"
+      },
+      "EffectiveInterval": {
+        "additionalProperties": false,
+        "description": "One in-force interval ``[from, until)``; null bounds are open.",
+        "properties": {
+          "from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Until"
+          },
+          "until_declared": {
+            "default": false,
+            "title": "Until Declared",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "from"
+        ],
+        "title": "EffectiveInterval",
+        "type": "object"
+      },
+      "EffectivePeriodInput": {
+        "additionalProperties": false,
+        "description": "One declared period during which a version's text is in force (D140).\n\nThe period is half-open: ``effective_from`` is included and\n``effective_until`` is not. Without ``effective_until`` the period lasts\nuntil the next declared start in the document's lineage, so declaring a\nnew edition ends its predecessor without touching it.",
+        "properties": {
+          "effective_from": {
+            "format": "date-time",
+            "title": "Effective From",
+            "type": "string"
+          },
+          "effective_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Effective Until"
+          }
+        },
+        "required": [
+          "effective_from"
+        ],
+        "title": "EffectivePeriodInput",
+        "type": "object"
+      },
+      "EffectivePeriodsRequest": {
+        "additionalProperties": false,
+        "description": "The complete set of periods one version is in force for (D140).\n\nIt replaces the version's current declarations: periods not listed are\nretracted and new ones are declared, atomically. An empty set is allowed\nand leaves the version with no in-force period; the document keeps its\ndeclared effective time.",
+        "properties": {
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/EffectivePeriodInput"
+            },
+            "maxItems": 1000,
+            "title": "Periods",
+            "type": "array"
+          }
+        },
+        "required": [
+          "periods"
+        ],
+        "title": "EffectivePeriodsRequest",
+        "type": "object"
+      },
+      "EffectivePeriodsSet": {
+        "additionalProperties": false,
+        "description": "What replacing one version's declared periods left in force.",
+        "properties": {
+          "declared": {
+            "minimum": 0.0,
+            "title": "Declared",
+            "type": "integer"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "periods": {
+            "items": {
+              "$ref": "#/components/schemas/DeclaredEffectivePeriod"
+            },
+            "title": "Periods",
+            "type": "array"
+          },
+          "retracted": {
+            "minimum": 0.0,
+            "title": "Retracted",
+            "type": "integer"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "version_id",
+          "periods",
+          "declared",
+          "retracted"
+        ],
+        "title": "EffectivePeriodsSet",
+        "type": "object"
+      },
+      "EffectiveTimeCleared": {
+        "additionalProperties": false,
+        "description": "What leaving effective time did to one document (D140).\n\nEvery live declaration of the document is retracted and, when it had\ndeclared effective time, the document returns to \"the newest processed\nversion is current\" for every reader believing after ``cleared_at``.",
+        "properties": {
+          "cleared_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cleared At"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "retracted": {
+            "minimum": 0.0,
+            "title": "Retracted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "doc_id",
+          "retracted",
+          "cleared_at"
+        ],
+        "title": "EffectiveTimeCleared",
         "type": "object"
       },
       "EntityCandidate": {
@@ -2488,6 +2693,17 @@
             "title": "Version Id",
             "type": "string"
           },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          },
           "versioning_mode": {
             "anyOf": [
               {
@@ -3345,6 +3561,292 @@
           "query"
         ],
         "title": "SearchRequest",
+        "type": "object"
+      },
+      "SectionAmendment": {
+        "additionalProperties": false,
+        "description": "One live ``amends`` reference that targets the keyed section.",
+        "properties": {
+          "binding": {
+            "enum": [
+              "floating",
+              "pinned"
+            ],
+            "title": "Binding",
+            "type": "string"
+          },
+          "change_date_known": {
+            "title": "Change Date Known",
+            "type": "boolean"
+          },
+          "change_effective_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Effective From"
+          },
+          "crossref_id": {
+            "format": "uuid",
+            "title": "Crossref Id",
+            "type": "string"
+          },
+          "from_doc_id": {
+            "format": "uuid",
+            "title": "From Doc Id",
+            "type": "string"
+          },
+          "from_section_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Section Key"
+          },
+          "from_version_id": {
+            "format": "uuid",
+            "title": "From Version Id",
+            "type": "string"
+          },
+          "source_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Label"
+          },
+          "to_version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To Version Key"
+          }
+        },
+        "required": [
+          "crossref_id",
+          "from_doc_id",
+          "from_version_id",
+          "binding",
+          "change_date_known"
+        ],
+        "title": "SectionAmendment",
+        "type": "object"
+      },
+      "SectionHistoryPage": {
+        "additionalProperties": false,
+        "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+        "properties": {
+          "amendments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/SectionAmendment"
+            },
+            "title": "Amendments",
+            "type": "array"
+          },
+          "believed_at": {
+            "format": "date-time",
+            "title": "Believed At",
+            "type": "string"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cursor"
+          },
+          "doc_id": {
+            "format": "uuid",
+            "title": "Doc Id",
+            "type": "string"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "periodised": {
+            "title": "Periodised",
+            "type": "boolean"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/SectionHistoryRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "section_key": {
+            "title": "Section Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "doc_id",
+          "section_key",
+          "periodised",
+          "rows",
+          "evaluated_at",
+          "believed_at"
+        ],
+        "title": "SectionHistoryPage",
+        "type": "object"
+      },
+      "SectionHistoryRow": {
+        "additionalProperties": false,
+        "description": "One selected version of the lineage and what it holds under the key.\n\n``status``: ``present`` (``section`` is set), ``absent`` (the version is\nindexed and lacks the key \u2014 a removed section), ``not_indexed`` (its\nsections predate section keys and are not backfilled yet, so absence\ncannot be told) or ``processing`` (the version is not readable yet).",
+        "properties": {
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
+          "section": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SectionHistorySection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "present",
+              "absent",
+              "not_indexed",
+              "processing"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_id",
+          "version_no",
+          "status"
+        ],
+        "title": "SectionHistoryRow",
+        "type": "object"
+      },
+      "SectionHistorySection": {
+        "additionalProperties": false,
+        "description": "The keyed section as one version holds it.",
+        "properties": {
+          "changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Changed"
+          },
+          "first_chunk_ids": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "First Chunk Ids",
+            "type": "array"
+          },
+          "node_path": {
+            "title": "Node Path",
+            "type": "string"
+          },
+          "own_changed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Own Changed"
+          },
+          "own_content_hash": {
+            "title": "Own Content Hash",
+            "type": "string"
+          },
+          "section_id": {
+            "format": "uuid",
+            "title": "Section Id",
+            "type": "string"
+          },
+          "subtree_content_hash": {
+            "title": "Subtree Content Hash",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "section_id",
+          "node_path",
+          "own_content_hash",
+          "subtree_content_hash"
+        ],
+        "title": "SectionHistorySection",
         "type": "object"
       },
       "SemanticInvocation": {
@@ -4278,6 +4780,270 @@
         "summary": "Delete Document"
       }
     },
+    "/documents/{doc_id}/effective-periods": {
+      "delete": {
+        "description": "Return a document to \"the newest processed version is current\".\n\nEvery declared period of the document is retracted and the change is\nrecorded, so reads pinned to an earlier instant still see the periods\nthey saw. It is the only way back from declared effective time.",
+        "operationId": "clear_effective_time_documents__doc_id__effective_periods_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectiveTimeCleared"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Clear Effective Time"
+      }
+    },
+    "/documents/{doc_id}/sections/{section_key}/history": {
+      "get": {
+        "description": "One section key across the document's versions.\n\nOne row per version the time scope selects (``mode``, default\n``history``; ``at`` for ``mode=at``, ``from``/``to`` for\n``mode=overlap``): the version, its in-force intervals, and the\nsection it holds under the key with ``changed``/``own_changed``\nagainst the previous row that held it \u2014 or ``absent``,\n``not_indexed`` or ``processing``. Ordered by effective start for a\nperiodised document, else by version number; ``cursor`` pages and\npins the evaluation and belief instants.",
+        "operationId": "section_history_documents__doc_id__sections__section_key__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "section_key",
+            "required": true,
+            "schema": {
+              "title": "Section Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mode",
+            "required": false,
+            "schema": {
+              "default": "history",
+              "enum": [
+                "current",
+                "at",
+                "overlap",
+                "history"
+              ],
+              "title": "Mode",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "at",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "At"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "k",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "K",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionHistoryPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "cursor is malformed or belongs to another call"
+          },
+          "404": {
+            "description": "document_not_found"
+          },
+          "422": {
+            "description": "invalid section key or time scope"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Section History"
+      }
+    },
+    "/documents/{doc_id}/versions/{version_id}/effective-periods": {
+      "put": {
+        "description": "Replace the periods during which one version's text is in force.\n\nThe body is the version's complete set: declarations not listed are\nretracted and new ones declared, atomically. A period without\n``effective_until`` lasts until the next declared start in the\ndocument. An empty set leaves the version with no in-force period and\nthe document keeps its declared effective time (use ``DELETE\n/documents/{doc_id}/effective-periods`` to leave it). A start already\ndeclared for another version of the document is refused with 409, and\na ``living`` document with 422. Periods never trigger reprocessing.",
+        "operationId": "set_effective_periods_documents__doc_id__versions__version_id__effective_periods_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Version Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EffectivePeriodsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EffectivePeriodsSet"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "document_not_found | version_not_found"
+          },
+          "409": {
+            "description": "effective_period_conflict"
+          },
+          "422": {
+            "description": "effective_time_requires_snapshot"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Effective Periods"
+      }
+    },
     "/graph/citation-path": {
       "post": {
         "description": "Return bounded directed citation paths between two documents.",
@@ -4595,6 +5361,64 @@
               ],
               "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
               "title": "Source Path"
+            }
+          },
+          {
+            "description": "Your immutable key for this version, unique within the document (for example a publisher's edition id). A new key always creates a version; an existing key is accepted only when re-sending the latest version's bytes. Requires source_kind/source_ref.",
+            "in": "query",
+            "name": "version_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Your immutable key for this version, unique within the document (for example a publisher's edition id). A new key always creates a version; an existing key is accepted only when re-sending the latest version's bytes. Requires source_kind/source_ref.",
+              "title": "Version Key"
+            }
+          },
+          {
+            "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+            "in": "query",
+            "name": "effective_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+              "title": "Effective From"
+            }
+          },
+          {
+            "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+            "in": "query",
+            "name": "effective_until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+              "title": "Effective Until"
             }
           },
           {
