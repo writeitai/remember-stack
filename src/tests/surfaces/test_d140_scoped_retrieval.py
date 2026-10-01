@@ -1,0 +1,1127 @@
+"""D140 §3 time-scoped text retrieval and §8.1 fact evidence gate, on PostgreSQL.
+
+Lineages are seeded as complete live chains (``lineage_seed``) with one or
+more versions; effective periods are declared through the real period API, so
+the ``document_version_scope`` projection the reads probe is the one the
+database triggers maintain. Chunks and claims are published into the real P1
+channels and searched through the real adapter and query engine.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import datetime
+from datetime import timedelta
+from datetime import UTC
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+from uuid import UUID
+from uuid import uuid4
+
+from alembic import command
+from alembic.config import Config
+from pydantic import ValidationError
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy import text
+from sqlalchemy.engine import Engine
+
+from remember.models import AtReadTime
+from remember.models import DocumentSearchFilters
+from remember.models import DocumentSearchRequest
+from remember.models import EffectivePeriodInput
+from remember.models import HistoryReadTime
+from remember.models import OverlapReadTime
+from rememberstack.adapters import BoundedPostgresReadPool
+from rememberstack.adapters import PostgresP1Index
+from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
+from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.text_scope import TextScope
+from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import P1ChunkRow
+from rememberstack.model import P1ClaimRow
+from rememberstack.model import P1FactRow
+from rememberstack.model.assured_operations import AtFactTime
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine.document_search import DocumentSearch
+from rememberstack.spine.effective_time import EffectiveTimeCatalog
+from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import QueryEngine
+from rememberstack.surfaces.graph_queries import GraphQueries
+from tests.database_reset import reset_database
+from tests.surfaces.lineage_seed import LiveDocumentLineage
+from tests.surfaces.lineage_seed import seed_entity_mention
+from tests.surfaces.lineage_seed import seed_live_document_lineage
+
+_ROOT = Path(__file__).resolve().parents[3]
+_DEPLOYMENT_ID = UUID("62000000-0000-0000-0000-00000d140032")
+_MODEL = "qwen/qwen3-embedding-8b"
+_NOW = datetime.now(UTC)
+_PAST = datetime(2024, 1, 1, tzinfo=UTC)
+_REVISED = datetime(2025, 1, 1, tzinfo=UTC)
+_FUTURE = _NOW + timedelta(days=30)
+_LATER = _NOW + timedelta(days=60)
+
+
+def _vector(*, axis: int) -> tuple[float, ...]:
+    values = [0.0] * P1_VECTOR_DIMENSIONS
+    values[axis] = 1.0
+    return tuple(values)
+
+
+_NEAR = _vector(axis=0)
+_FAR = _vector(axis=1)
+
+
+@pytest.fixture(scope="module")
+def database_engine() -> Iterator[Engine]:
+    """Apply structural head over the integration database."""
+    try:
+        database_url = load_database_settings().sqlalchemy_url()
+    except ValidationError:
+        pytest.skip("REMEMBERSTACK_DATABASE_URL is required for D140 retrieval proofs")
+    config = Config(str(_ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", database_url)
+    reset_database(config=config)
+    command.upgrade(config=config, revision="head")
+    engine = create_engine(database_url)
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+
+@dataclass(frozen=True, slots=True)
+class _Rig:
+    engine: Engine
+    index: PostgresP1Index
+    query: QueryEngine
+    periods: EffectiveTimeCatalog
+    documents: DocumentSearch
+
+
+@pytest.fixture()
+def rig(database_engine: Engine) -> _Rig:
+    """A fresh deployment with every P1 channel configured."""
+    with database_engine.begin() as connection:
+        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+    DeploymentBootstrapper(engine=database_engine).bootstrap_deployment(
+        deployment_input=DeploymentBootstrapInput(
+            deployment_id=_DEPLOYMENT_ID,
+            slug="d140-retrieval",
+            name="D140 retrieval",
+            default_language="en",
+            raw_bucket="mem://raw",
+            artifacts_bucket="mem://artifacts",
+            corpusfs_bucket="mem://corpusfs",
+        )
+    )
+    index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
+    index.configure_channels(deployment_id=_DEPLOYMENT_ID)
+    provider = MagicMock()
+    provider.embed.return_value = SimpleNamespace(vectors=(_NEAR,), usage=None)
+    return _Rig(
+        engine=database_engine,
+        index=index,
+        query=QueryEngine(
+            engine=database_engine,
+            search_index=index,
+            model_provider=provider,
+            embedding_model=_MODEL,
+            fact_read_pool=BoundedPostgresReadPool(
+                engine=database_engine, max_concurrency=4, pool_wait_seconds=5.0
+            ),
+        ),
+        periods=EffectiveTimeCatalog(engine=database_engine),
+        documents=DocumentSearch(engine=database_engine),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _Lineage:
+    doc_id: UUID
+    editions: tuple[LiveDocumentLineage, ...]
+
+    def chunk(self, edition: int, ordinal: int = 0) -> UUID:
+        return self.editions[edition].chunk_ids[ordinal]
+
+    def version(self, edition: int) -> UUID:
+        return self.editions[edition].version_id
+
+
+def _lineage(
+    rig: _Rig,
+    *,
+    label: str,
+    bodies: tuple[tuple[str, ...], ...],
+    vectors: tuple[tuple[tuple[float, ...], ...], ...] | None = None,
+    family: str = "markdown",
+) -> _Lineage:
+    """One live lineage whose versions hold the given chunk bodies, published.
+
+    The last version is the served one, as the seeder points
+    ``current_version_id`` at each new version.
+    """
+    doc_id = uuid4()
+    editions: list[LiveDocumentLineage] = []
+    with rig.engine.begin() as connection:
+        for number, chunks in enumerate(bodies, start=1):
+            edition = seed_live_document_lineage(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=doc_id,
+                chunk_ids=tuple(uuid4() for _ in chunks),
+                label=f"{label}-{number}",
+                title=f"{label} policy",
+                source_ref=label,
+                create_document=number == 1,
+            )
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
+                ),
+                {"n": 1000 + number, "v": edition.version_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                    " family, metadata_mapping_version) VALUES (:d, :v, :doc,"
+                    " :family, 'test')"
+                ),
+                {
+                    "d": _DEPLOYMENT_ID,
+                    "v": edition.version_id,
+                    "doc": doc_id,
+                    "family": family,
+                },
+            )
+            editions.append(edition)
+        for number, edition in enumerate(editions, start=1):
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
+                ),
+                {"n": number, "v": edition.version_id},
+            )
+    rows: list[P1ChunkRow] = []
+    for number, (edition, chunks) in enumerate(zip(editions, bodies, strict=True)):
+        for ordinal, (chunk_id, body) in enumerate(
+            zip(edition.chunk_ids, chunks, strict=True)
+        ):
+            vector = vectors[number][ordinal] if vectors is not None else _FAR
+            rows.append(
+                P1ChunkRow(
+                    chunk_id=chunk_id,
+                    deployment_id=_DEPLOYMENT_ID,
+                    doc_id=doc_id,
+                    version_id=edition.version_id,
+                    section_role="body",
+                    text=body,
+                    vector=vector,
+                    policy_generation=EMBEDDING_INPUT_POLICY_VERSION,
+                    embedder_generation=_MODEL,
+                    embedding_text_hash=embedding_text_hash(body),
+                    source_kind="upload",
+                    source_shape="document",
+                )
+            )
+    rig.index.upsert_chunks(rows=tuple(rows))
+    return _Lineage(doc_id=doc_id, editions=tuple(editions))
+
+
+def _declare(
+    rig: _Rig,
+    lineage: _Lineage,
+    edition: int,
+    *periods: tuple[datetime, datetime | None],
+) -> None:
+    rig.periods.set_effective_periods(
+        deployment_id=_DEPLOYMENT_ID,
+        doc_id=lineage.doc_id,
+        version_id=lineage.version(edition),
+        periods=tuple(
+            EffectivePeriodInput(effective_from=start, effective_until=end)
+            for start, end in periods
+        ),
+    )
+
+
+def _claim(
+    rig: _Rig,
+    *,
+    lineage: _Lineage,
+    origin: UUID,
+    body: str,
+    occurrences: dict[UUID, tuple[int, int]],
+    vector: tuple[float, ...] = _FAR,
+) -> UUID:
+    """One current claim with an occurrence (and its own span) per chunk."""
+    claim_id = uuid4()
+    start, end = occurrences.get(origin, (0, len(body)))
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, is_current_testimony, extractor_version,"
+                " ingested_at, asserted_at) VALUES (:claim, :d, :doc, :chunk, :body,"
+                " :body, :start, :end, true, true, true, 'd140-test', :at, :at)"
+            ),
+            {
+                "claim": claim_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": lineage.doc_id,
+                "chunk": origin,
+                "body": body,
+                "start": start,
+                "end": end,
+                "at": _PAST,
+            },
+        )
+        for chunk_id, (span_start, span_end) in occurrences.items():
+            connection.execute(
+                text(
+                    "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                    " evidence_spans, source_locators, created_at) VALUES (:d,"
+                    " :chunk, :claim, CAST(:spans AS jsonb), CAST(:locators AS"
+                    " jsonb), :at)"
+                ),
+                {
+                    "d": _DEPLOYMENT_ID,
+                    "chunk": chunk_id,
+                    "claim": claim_id,
+                    "spans": json.dumps(
+                        [{"char_start": span_start, "char_end": span_end}]
+                    ),
+                    "locators": json.dumps({"chunk": str(chunk_id)}),
+                    "at": _NOW,
+                },
+            )
+    rig.index.upsert_claims(
+        rows=(
+            P1ClaimRow(
+                claim_id=claim_id,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=lineage.doc_id,
+                chunk_id=origin,
+                text=body,
+                is_current_testimony=True,
+                is_attributed=False,
+                vector=vector,
+            ),
+        )
+    )
+    return claim_id
+
+
+def _ids(nominations: tuple[P1Nomination, ...]) -> list[str]:
+    return [item.item_id for item in nominations]
+
+
+def _scope(time: AtReadTime | None) -> TextScope:
+    return TextScope.of(time=time, evaluated_at=datetime.now(UTC))
+
+
+# --- chunk search -----------------------------------------------------------
+
+
+def test_undeclared_lineage_reads_its_served_version_under_every_mode(
+    rig: _Rig,
+) -> None:
+    """Without declarations every mode selects the served version, as before."""
+    lineage = _lineage(
+        rig,
+        label="undeclared",
+        bodies=(("old harbour tariff",), ("new harbour tariff",)),
+    )
+    for time in (
+        None,
+        AtReadTime(at=_PAST),
+        OverlapReadTime.model_validate({"from": _PAST, "to": _LATER}),
+        HistoryReadTime(),
+    ):
+        answer = rig.query.search_chunks(
+            deployment_id=_DEPLOYMENT_ID,
+            query="harbour tariff",
+            k=5,
+            channel="bm25",
+            time=time,
+        )
+        assert [chunk.chunk_id for chunk in answer.chunks] == [lineage.chunk(1)]
+        chunk = answer.chunks[0]
+        assert chunk.version_id == lineage.version(1)
+        assert chunk.served_version is True
+        assert chunk.effective == ()
+        assert answer.freshness.scope_pending is None
+
+
+def test_current_scope_returns_the_edition_in_force_not_the_served_one(
+    rig: _Rig,
+) -> None:
+    """Worked example step 3: edition 2 is served but not yet in force."""
+    lineage = _lineage(
+        rig,
+        label="travel",
+        bodies=(("daily allowance forty",), ("daily allowance fifty",)),
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_FUTURE, None))
+
+    current = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="daily allowance", k=5, channel="bm25"
+    )
+    assert [chunk.chunk_id for chunk in current.chunks] == [lineage.chunk(0)]
+    chunk = current.chunks[0]
+    assert chunk.version_id == lineage.version(0)
+    assert chunk.served_version is False
+    assert [
+        (item.from_, item.until, item.until_declared) for item in chunk.effective
+    ] == [(_PAST, _FUTURE, False)]
+    assert current.temporal_scope.mode == "current"
+
+    later = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="daily allowance",
+        k=5,
+        channel="bm25",
+        time=AtReadTime(at=_LATER),
+    )
+    assert [chunk.chunk_id for chunk in later.chunks] == [lineage.chunk(1)]
+    assert later.chunks[0].served_version is True
+    assert later.temporal_scope.mode == "at"
+
+    history = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="daily allowance",
+        k=5,
+        channel="bm25",
+        time=HistoryReadTime(),
+    )
+    assert [chunk.chunk_id for chunk in history.chunks] == [lineage.chunk(0)]
+
+    window = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="daily allowance",
+        k=5,
+        channel="bm25",
+        time=OverlapReadTime.model_validate({"from": _NOW, "to": _LATER}),
+    )
+    assert {chunk.chunk_id for chunk in window.chunks} == {
+        lineage.chunk(0),
+        lineage.chunk(1),
+    }
+
+
+def test_out_of_force_candidate_never_displaces_an_in_force_chunk_from_top_k(
+    rig: _Rig,
+) -> None:
+    """The scope is a predicate inside the ranked statement, before LIMIT."""
+    lineage = _lineage(
+        rig,
+        label="ranked",
+        bodies=(("allowance rules",), ("allowance rules allowance rules",)),
+        vectors=((_FAR,), (_NEAR,)),
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_FUTURE, None))
+    deployment = str(_DEPLOYMENT_ID)
+
+    assert _ids(
+        rig.index.search_chunks_scored(deployment_id=deployment, vector=_NEAR, k=1)
+    ) == [str(lineage.chunk(0))]
+    assert _ids(
+        rig.index.search_chunks_lexical_scored(
+            deployment_id=deployment, query="allowance rules", k=1
+        )
+    ) == [str(lineage.chunk(0))]
+    assert _ids(
+        rig.index.search_chunks_scored(
+            deployment_id=deployment,
+            vector=_NEAR,
+            k=1,
+            time=_scope(AtReadTime(at=_LATER)),
+        )
+    ) == [str(lineage.chunk(1))]
+
+
+def test_adjacent_chunks_reads_a_non_served_version_without_mixing_versions(
+    rig: _Rig,
+) -> None:
+    lineage = _lineage(
+        rig,
+        label="adjacent",
+        bodies=(("one a", "one b", "one c"), ("two a", "two b", "two c")),
+    )
+    answer = rig.query.adjacent_chunks(
+        deployment_id=_DEPLOYMENT_ID, chunk_id=lineage.chunk(0, 1), window=1
+    )
+    assert [chunk.chunk_id for chunk in answer.chunks] == list(
+        lineage.editions[0].chunk_ids
+    )
+    assert {chunk.version_id for chunk in answer.chunks} == {lineage.version(0)}
+    assert all(chunk.served_version is False for chunk in answer.chunks)
+
+
+def test_scope_pending_names_a_touched_lineage_whose_in_force_edition_is_not_ready(
+    rig: _Rig,
+) -> None:
+    lineage = _lineage(
+        rig,
+        label="pending",
+        bodies=(("pending clause text",), ("pending clause text revised",)),
+    )
+    _declare(rig, lineage, 0, (_PAST, _REVISED))
+    _declare(rig, lineage, 1, (_REVISED, None))
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET status = 'converting' WHERE version_id = :v"
+            ),
+            {"v": lineage.version(1)},
+        )
+    answer = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="pending clause",
+        k=5,
+        channel="bm25",
+        documents=DocumentSearchFilters(doc_ids=(lineage.doc_id,)),
+    )
+    assert answer.chunks == ()
+    assert answer.freshness.scope_pending is not None
+    assert answer.freshness.scope_pending.doc_ids == (lineage.doc_id,)
+    assert answer.freshness.scope_pending.count == 1
+    # the edition in force earlier is readable and nothing is pending then
+    earlier = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID,
+        query="pending clause",
+        k=5,
+        channel="bm25",
+        documents=DocumentSearchFilters(doc_ids=(lineage.doc_id,)),
+        time=AtReadTime(at=_PAST),
+    )
+    assert [chunk.chunk_id for chunk in earlier.chunks] == [lineage.chunk(0)]
+    assert earlier.freshness.scope_pending is None
+
+
+# --- claims ------------------------------------------------------------------
+
+
+def test_scoped_claim_search_returns_the_selected_editions_occurrence(
+    rig: _Rig,
+) -> None:
+    """§3.4: the evidence is the occurrence in the selected version, not the origin."""
+    lineage = _lineage(
+        rig,
+        label="claims",
+        bodies=(
+            ("Edition one. the rate is ten",),
+            ("Edition two longer. the rate is ten",),
+        ),
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_FUTURE, None))
+    claim_id = _claim(
+        rig,
+        lineage=lineage,
+        origin=lineage.chunk(1),
+        body="the rate is ten",
+        occurrences={lineage.chunk(0): (13, 28), lineage.chunk(1): (20, 35)},
+    )
+
+    current = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID, query="rate is ten", k=5, channel="bm25"
+    )
+    assert [item.claim_id for item in current.evidence] == [claim_id]
+    evidence = current.evidence[0]
+    assert evidence.chunk_id == lineage.chunk(0)
+    assert evidence.version_id == lineage.version(0)
+    assert (evidence.char_start, evidence.char_end) == (13, 28)
+    assert [(span.char_start, span.char_end) for span in evidence.evidence_spans] == [
+        (13, 28)
+    ]
+    assert [item.version_id for item in evidence.occurrences] == [lineage.version(0)]
+    assert evidence.occurrences[0].source_locators == {"chunk": str(lineage.chunk(0))}
+    assert evidence.occurrences[0].served_version is False
+    assert evidence.effective[0].from_ == _PAST
+
+    later = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        query="rate is ten",
+        k=5,
+        channel="bm25",
+        time=AtReadTime(at=_LATER),
+    )
+    assert later.evidence[0].chunk_id == lineage.chunk(1)
+    assert (later.evidence[0].char_start, later.evidence[0].char_end) == (20, 35)
+
+    both = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        query="rate is ten",
+        k=5,
+        channel="bm25",
+        time=OverlapReadTime.model_validate({"from": _NOW, "to": _LATER}),
+    )
+    assert len(both.evidence) == 1
+    assert [item.version_id for item in both.evidence[0].occurrences] == [
+        lineage.version(0),
+        lineage.version(1),
+    ]
+
+
+def test_claim_occurrence_survives_deletion_of_the_claims_origin_version(
+    rig: _Rig,
+) -> None:
+    lineage = _lineage(
+        rig,
+        label="origin-deleted",
+        bodies=(
+            ("first edition: notice period is thirty days",),
+            ("notice period is thirty days",),
+        ),
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_FUTURE, None))
+    claim_id = _claim(
+        rig,
+        lineage=lineage,
+        origin=lineage.chunk(1),
+        body="notice period is thirty days",
+        occurrences={lineage.chunk(0): (15, 43), lineage.chunk(1): (0, 28)},
+    )
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
+            {"v": lineage.version(0), "doc": lineage.doc_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = now() WHERE version_id = :v"
+            ),
+            {"v": lineage.version(1)},
+        )
+    answer = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID, query="notice period", k=5, channel="bm25"
+    )
+    assert [item.claim_id for item in answer.evidence] == [claim_id]
+    evidence = answer.evidence[0]
+    assert evidence.chunk_id == lineage.chunk(0)
+    assert (evidence.char_start, evidence.char_end) == (15, 43)
+    assert evidence.occurrences[0].served_version is True
+
+
+def test_undeclared_claims_keep_their_origin_and_currency(rig: _Rig) -> None:
+    lineage = _lineage(rig, label="plain-claims", bodies=(("the cap is five",),))
+    claim_id = _claim(
+        rig,
+        lineage=lineage,
+        origin=lineage.chunk(0),
+        body="the cap is five",
+        occurrences={lineage.chunk(0): (0, 15)},
+    )
+    for time in (None, AtReadTime(at=_PAST), HistoryReadTime()):
+        answer = rig.query.search_claims(
+            deployment_id=_DEPLOYMENT_ID,
+            query="cap is five",
+            k=5,
+            channel="bm25",
+            time=time,
+        )
+        assert [item.claim_id for item in answer.evidence] == [claim_id]
+        assert answer.evidence[0].version_id is None
+        assert answer.evidence[0].occurrences == ()
+        assert answer.evidence[0].chunk_id == lineage.chunk(0)
+
+
+def test_claims_and_sources_context_reads_the_scope(rig: _Rig) -> None:
+    lineage = _lineage(
+        rig,
+        label="context",
+        bodies=(("mileage rate twenty cents",), ("mileage rate thirty cents",)),
+        vectors=((_NEAR,), (_NEAR,)),
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_FUTURE, None))
+    answer = rig.query.claims_and_sources_context(
+        deployment_id=_DEPLOYMENT_ID, query="mileage rate"
+    )
+    assert [chunk.chunk_id for chunk in answer.chunks] == [lineage.chunk(0)]
+    later = rig.query.claims_and_sources_context(
+        deployment_id=_DEPLOYMENT_ID, query="mileage rate", time=AtFactTime(at=_LATER)
+    )
+    assert [chunk.chunk_id for chunk in later.chunks] == [lineage.chunk(1)]
+    assert later.temporal_scope.mode == "at"
+
+
+# --- search_documents ------------------------------------------------------
+
+
+def _three_editions(rig: _Rig, *, label: str, family: str = "markdown") -> _Lineage:
+    lineage = _lineage(
+        rig,
+        label=label,
+        bodies=(
+            ("zircon clause one",),
+            ("zircon clause two",),
+            ("zircon clause three",),
+        ),
+        family=family,
+    )
+    _declare(rig, lineage, 0, (_PAST, None))
+    _declare(rig, lineage, 1, (_REVISED, None))
+    _declare(rig, lineage, 2, (_FUTURE, None))
+    return lineage
+
+
+def _search(rig: _Rig, **arguments: object):
+    return rig.documents.search_documents(
+        deployment_id=_DEPLOYMENT_ID,
+        request=DocumentSearchRequest.model_validate(arguments),
+    )
+
+
+def test_search_documents_representative_and_editions_per_versions_and_mode(
+    rig: _Rig,
+) -> None:
+    lineage = _three_editions(rig, label="zircon")
+    plain = _lineage(rig, label="plain", bodies=(("zircon one",), ("zircon two",)))
+    for query in (None, "zircon"):
+        arguments: dict[str, object] = {} if query is None else {"query": query}
+        page = _search(rig, **arguments)
+        by_doc = {result.doc_id: result for result in page.documents}
+        result = by_doc[lineage.doc_id]
+        assert result.version_id == lineage.version(1)
+        assert result.served_version is False
+        assert result.p3_path is None
+        assert [item.version_id for item in result.matching_editions] == [
+            lineage.version(1)
+        ]
+        assert result.effective[0].from_ == _REVISED
+        # an undeclared lineage keeps D134's judging and its P3 path
+        assert by_doc[plain.doc_id].version_id == plain.version(1)
+        assert by_doc[plain.doc_id].p3_path == f"documents/{plain.doc_id}"
+        assert by_doc[plain.doc_id].matching_editions == ()
+
+        history_all = _search(
+            rig, **arguments, versions="all", time={"mode": "history"}
+        )
+        result = {item.doc_id: item for item in history_all.documents}[lineage.doc_id]
+        assert result.version_id == lineage.version(1)
+        assert [item.version_id for item in result.matching_editions] == [
+            lineage.version(0),
+            lineage.version(1),
+        ]
+        assert result.other_matching_version_ids == (lineage.version(0),)
+
+        history_current = _search(rig, **arguments, time={"mode": "history"})
+        result = {item.doc_id: item for item in history_current.documents}[
+            lineage.doc_id
+        ]
+        assert [item.version_id for item in result.matching_editions] == [
+            lineage.version(1)
+        ]
+
+        future = _search(
+            rig,
+            **arguments,
+            versions="all",
+            time={
+                "mode": "overlap",
+                "from": _NOW.isoformat(),
+                "to": _LATER.isoformat(),
+            },
+        )
+        result = {item.doc_id: item for item in future.documents}[lineage.doc_id]
+        assert result.version_id == lineage.version(2)
+        assert result.served_version is True
+        assert result.p3_path == f"documents/{lineage.doc_id}"
+
+
+def test_search_documents_all_versions_judges_only_matching_candidates(
+    rig: _Rig,
+) -> None:
+    lineage = _three_editions(rig, label="filtered")
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE document_metadata SET family = 'pdf' WHERE version_id = :v"),
+            {"v": lineage.version(0)},
+        )
+    pdf = DocumentSearchFilters(family=("pdf",))
+    current = _search(rig, filters=pdf.model_dump(), versions="current")
+    assert current.documents == ()
+    every = _search(
+        rig, filters=pdf.model_dump(), versions="all", time={"mode": "history"}
+    )
+    assert [item.version_id for item in every.documents] == [lineage.version(0)]
+
+
+def _walk_all(rig: _Rig, *, between=None, **arguments: object) -> list[UUID]:  # noqa: ANN001
+    seen: list[UUID] = []
+    cursor: str | None = None
+    first = True
+    while True:
+        page = _search(rig, k=1, **arguments, **({"cursor": cursor} if cursor else {}))
+        seen.extend(result.doc_id for result in page.documents)
+        if first and between is not None:
+            between()
+        first = False
+        cursor = page.cursor
+        if cursor is None:
+            return seen
+
+
+def test_paging_pins_belief_across_a_retroactive_correction(rig: _Rig) -> None:
+    lineages = [_three_editions(rig, label=f"paged-{index}") for index in range(4)]
+    plain = _lineage(rig, label="paged-plain", bodies=(("zircon",),))
+    baseline = _walk_all(rig)
+    assert sorted(baseline) == sorted(
+        [lineage.doc_id for lineage in lineages] + [plain.doc_id]
+    )
+
+    def correct() -> None:
+        # withdraw the in-force edition of every remaining lineage, and clear
+        # and redeclare another
+        for lineage in lineages:
+            _declare(rig, lineage, 1, (_REVISED, _REVISED + timedelta(days=1)))
+        rig.periods.clear_effective_time(
+            deployment_id=_DEPLOYMENT_ID, doc_id=lineages[0].doc_id
+        )
+        _declare(rig, lineages[0], 2, (_FUTURE, None))
+
+    paged = _walk_all(rig, between=correct)
+    assert paged == baseline
+    assert len(set(paged)) == len(paged)
+    # a fresh first page sees the correction
+    fresh = {item.doc_id for item in _search(rig, k=50).documents}
+    assert fresh == {plain.doc_id}
+
+
+def test_paging_returns_a_short_page_with_a_cursor_at_the_scan_cap(rig: _Rig) -> None:
+    for index in range(12):
+        lineage = _lineage(rig, label=f"withdrawn-{index}", bodies=(("x",),))
+        _declare(rig, lineage, 0, (_PAST, _REVISED))
+    kept = _lineage(rig, label="kept-first", bodies=(("x",),))
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET ingested_at = now() - interval '1 day'"
+                " WHERE doc_id = :doc"
+            ),
+            {"doc": kept.doc_id},
+        )
+    page = _search(rig, k=1)
+    assert page.documents == ()
+    assert page.cursor is not None
+    assert _walk_all(rig) == [kept.doc_id]
+
+
+# --- fact evidence gate ----------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _Facts:
+    subject: UUID
+    facts: dict[str, UUID]
+    claims: dict[str, UUID]
+    lineages: dict[str, _Lineage]
+
+
+def _gate_corpus(rig: _Rig) -> _Facts:
+    """Facts whose support is in force, future-only, repealed-only, mixed, undeclared."""
+    statute = _lineage(
+        rig, label="statute", bodies=(("old rule text",), ("new rule text",))
+    )
+    _declare(rig, statute, 0, (_PAST, None))
+    _declare(rig, statute, 1, (_FUTURE, None))
+    repealed = _lineage(rig, label="repealed", bodies=(("repealed rule text",),))
+    _declare(rig, repealed, 0, (_PAST, _REVISED))
+    memo = _lineage(rig, label="memo", bodies=(("memo rule text",),))
+    claims = {
+        "in_force": _claim(
+            rig,
+            lineage=statute,
+            origin=statute.chunk(0),
+            body="old rule",
+            occurrences={statute.chunk(0): (0, 8)},
+        ),
+        "future": _claim(
+            rig,
+            lineage=statute,
+            origin=statute.chunk(1),
+            body="new rule",
+            occurrences={statute.chunk(1): (0, 8)},
+        ),
+        "repealed": _claim(
+            rig,
+            lineage=repealed,
+            origin=repealed.chunk(0),
+            body="repealed rule",
+            occurrences={repealed.chunk(0): (0, 13)},
+        ),
+        "memo": _claim(
+            rig,
+            lineage=memo,
+            origin=memo.chunk(0),
+            body="memo rule",
+            occurrences={memo.chunk(0): (0, 9)},
+        ),
+    }
+    subject = uuid4()
+    objects = {
+        key: uuid4()
+        for key in ("in_force", "future", "repealed", "mixed", "memo", "dated")
+    }
+    facts = {key: uuid4() for key in objects}
+    support = {
+        "in_force": ("in_force",),
+        "future": ("future",),
+        "repealed": ("repealed",),
+        "mixed": ("in_force", "future"),
+        "memo": ("memo",),
+        "dated": ("future",),
+    }
+    with rig.engine.begin() as connection:
+        for entity_id, name in (
+            (subject, "Subject"),
+            *((value, f"Object {key}") for key, value in objects.items()),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name) VALUES (:e, :d, :name, lower(:name))"
+                ),
+                {"e": entity_id, "d": _DEPLOYMENT_ID, "name": name},
+            )
+        for key, fact_id in facts.items():
+            connection.execute(
+                text(
+                    "INSERT INTO relations (relation_id, deployment_id,"
+                    " subject_entity_id, predicate, object_entity_id,"
+                    " normalizer_version, fact_label, ingested_at, valid_from,"
+                    " valid_precision) VALUES (:fact, :d, :subject, 'works_for',"
+                    " :object, 'd140-test', :label, :at, :valid_from, 'open')"
+                ),
+                {
+                    "fact": fact_id,
+                    "d": _DEPLOYMENT_ID,
+                    "subject": subject,
+                    "object": objects[key],
+                    "label": f"Subject rule {key}",
+                    "at": _PAST,
+                    # "dated": its own window says it holds since 2025, but its
+                    # only text is in force from the future
+                    "valid_from": _REVISED if key == "dated" else _PAST,
+                },
+            )
+            for claim_key in support[key]:
+                lineage = {
+                    "in_force": statute,
+                    "future": statute,
+                    "repealed": repealed,
+                    "memo": memo,
+                }[claim_key]
+                chunk = {
+                    "in_force": statute.chunk(0),
+                    "future": statute.chunk(1),
+                    "repealed": repealed.chunk(0),
+                    "memo": memo.chunk(0),
+                }[claim_key]
+                connection.execute(
+                    text(
+                        "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                        " claim_id, doc_id, stance, normalizer_version) VALUES"
+                        " (:d, :fact, :claim, :doc, 'supports', 'd140-test')"
+                    ),
+                    {
+                        "d": _DEPLOYMENT_ID,
+                        "fact": fact_id,
+                        "claim": claims[claim_key],
+                        "doc": lineage.doc_id,
+                    },
+                )
+                for entity_id in (subject, objects[key]):
+                    seed_entity_mention(
+                        connection=connection,
+                        deployment_id=_DEPLOYMENT_ID,
+                        entity_id=entity_id,
+                        doc_id=lineage.doc_id,
+                        chunk_id=chunk,
+                        claim_id=claims[claim_key],
+                        surface_form=f"anchor-{entity_id}",
+                        at=_PAST,
+                        resolver_version="d140-test",
+                    )
+    rig.index.upsert_facts(
+        rows=tuple(
+            P1FactRow(
+                fact_id=fact_id,
+                deployment_id=_DEPLOYMENT_ID,
+                kind="relation",
+                label=f"Subject rule {key}",
+                status="active",
+                valid_from=_REVISED if key == "dated" else _PAST,
+                valid_until=None,
+                ingested_at=_PAST,
+                invalidated_at=None,
+                # the out-of-force facts rank first
+                vector=_NEAR if key in {"future", "repealed", "dated"} else _FAR,
+            )
+            for key, fact_id in facts.items()
+        )
+    )
+    return _Facts(
+        subject=subject,
+        facts=facts,
+        claims=claims,
+        lineages={"statute": statute, "repealed": repealed, "memo": memo},
+    )
+
+
+def test_out_of_force_facts_never_displace_in_force_facts_from_top_k(rig: _Rig) -> None:
+    corpus = _gate_corpus(rig)
+    deployment = str(_DEPLOYMENT_ID)
+    in_scope = {str(corpus.facts[key]) for key in ("in_force", "mixed", "memo")}
+    for method in (rig.index.search_facts_scored, rig.index.nominate_facts_scored):
+        top = _ids(method(deployment_id=deployment, vector=_NEAR, k=3, kind="relation"))
+        assert set(top) == in_scope
+    future = set(
+        _ids(
+            rig.index.search_facts_scored(
+                deployment_id=deployment,
+                vector=_NEAR,
+                k=10,
+                kind="relation",
+                time=AtFactTime(at=_LATER),
+            )
+        )
+    )
+    assert str(corpus.facts["future"]) in future
+    assert str(corpus.facts["dated"]) in future
+    assert str(corpus.facts["repealed"]) not in future
+    assert str(corpus.facts["in_force"]) not in future
+    assert str(corpus.facts["memo"]) in future
+    past = set(
+        _ids(
+            rig.index.search_facts_scored(
+                deployment_id=deployment,
+                vector=_NEAR,
+                k=10,
+                kind="relation",
+                time=AtFactTime(at=_PAST + timedelta(days=10)),
+            )
+        )
+    )
+    assert str(corpus.facts["repealed"]) in past
+    # conflicting dates: the fact's own window holds from 2025, but the only
+    # text supporting it is in force from the future
+    revised = set(
+        _ids(
+            rig.index.search_facts_scored(
+                deployment_id=deployment,
+                vector=_NEAR,
+                k=10,
+                kind="relation",
+                time=AtFactTime(at=_REVISED + timedelta(days=10)),
+            )
+        )
+    )
+    assert str(corpus.facts["dated"]) not in revised
+    assert str(corpus.facts["repealed"]) not in revised
+    assert str(corpus.facts["in_force"]) in revised
+
+
+def test_facts_context_gates_confirmation_and_shows_in_scope_evidence(
+    rig: _Rig,
+) -> None:
+    corpus = _gate_corpus(rig)
+    answer = rig.query.facts_context(
+        deployment_id=_DEPLOYMENT_ID, query="subject rule", k=10, evidence_per_fact=3
+    )
+    returned = {fact.fact_id for fact in answer.facts}
+    assert returned == {corpus.facts[key] for key in ("in_force", "mixed", "memo")}
+    shown = {item.claim_id for item in answer.evidence}
+    assert corpus.claims["future"] not in shown
+    assert corpus.claims["in_force"] in shown
+    statute = corpus.lineages["statute"]
+    in_force = next(
+        item for item in answer.evidence if item.claim_id == corpus.claims["in_force"]
+    )
+    assert in_force.version_id == statute.version(0)
+    mixed_total = next(
+        total
+        for total in answer.evidence_totals
+        if total.fact_id == corpus.facts["mixed"] and total.stance == "supports"
+    )
+    assert mixed_total.total == 1
+
+    later = rig.query.facts_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="subject rule",
+        k=10,
+        time=AtFactTime(at=_LATER),
+    )
+    assert corpus.facts["future"] in {fact.fact_id for fact in later.facts}
+    assert corpus.facts["in_force"] not in {fact.fact_id for fact in later.facts}
+
+
+def test_relation_lookup_and_one_hop_graph_apply_the_gate(rig: _Rig) -> None:
+    corpus = _gate_corpus(rig)
+    lookup = rig.query.lookup_relations(
+        deployment_id=_DEPLOYMENT_ID, subject_entity_id=corpus.subject, k=20
+    )
+    assert {fact.fact_id for fact in lookup.facts} == {
+        corpus.facts[key] for key in ("in_force", "mixed", "memo")
+    }
+    as_of = rig.query.lookup_relations(
+        deployment_id=_DEPLOYMENT_ID,
+        subject_entity_id=corpus.subject,
+        valid_at=_LATER,
+        k=20,
+    )
+    assert corpus.facts["future"] in {fact.fact_id for fact in as_of.facts}
+
+    graph = GraphQueries(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
+    neighbourhood = graph.neighborhood(entity_id=corpus.subject, hops=1)
+    assert neighbourhood.negative is None, neighbourhood.negative
+    reached = {node.entity_id for node in neighbourhood.nodes}
+    with rig.engine.connect() as connection:
+        objects: dict[UUID, UUID] = {
+            row.relation_id: row.object_entity_id
+            for row in connection.execute(
+                text(
+                    "SELECT relation_id, object_entity_id FROM relations"
+                    " WHERE deployment_id = :d"
+                ),
+                {"d": _DEPLOYMENT_ID},
+            )
+        }
+    assert objects[corpus.facts["in_force"]] in reached
+    assert objects[corpus.facts["future"]] not in reached
+    assert objects[corpus.facts["repealed"]] not in reached
+
+
+def test_undeclared_corpus_facts_are_unaffected(rig: _Rig) -> None:
+    corpus = _gate_corpus(rig)
+    with rig.engine.connect() as connection:
+        count = connection.execute(
+            text(
+                "SELECT count(*) FROM document_version_scope"
+                " WHERE deployment_id = :d AND doc_id = :doc AND periodised"
+            ),
+            {"d": _DEPLOYMENT_ID, "doc": corpus.lineages["memo"].doc_id},
+        ).scalar_one()
+    assert count == 0
+    for time in (None, AtFactTime(at=_PAST), AtFactTime(at=_LATER)):
+        assert str(corpus.facts["memo"]) in _ids(
+            rig.index.search_facts_scored(
+                deployment_id=str(_DEPLOYMENT_ID),
+                vector=_FAR,
+                k=10,
+                kind="relation",
+                time=time,
+            )
+        )
