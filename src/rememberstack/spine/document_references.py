@@ -84,6 +84,7 @@ from remember.models import ReadTime
 from remember.models import ReferenceWindow
 from rememberstack.model import ChunkNotFoundError
 from rememberstack.model import DocumentNotFoundError
+from rememberstack.spine.effective_time import belief_watermark
 
 Direction = Literal["outgoing", "incoming"]
 
@@ -309,9 +310,13 @@ class DocumentReferences:
         """
         scope_hash = _scope_hash(request=request)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
-        now = datetime.now(UTC)
-        evaluated_at = cursor[0] if cursor is not None else now
-        believed_at = cursor[1] if cursor is not None else now
+        if cursor is not None:
+            evaluated_at, believed_at = cursor[0], cursor[1]
+        else:
+            # the first page pins a commit-visible belief instant (§3.6)
+            evaluated_at = believed_at = belief_watermark(
+                engine=self._engine, deployment_id=deployment_id
+            )
         position = cursor[2] if cursor is not None else None
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
@@ -1186,6 +1191,10 @@ _SELECT_INTERVALS = text(
     """
 )
 
+# §3.3: a chunk handle names a chunk of a ready version's current ready
+# reading; an obsolete chunk (replaced reading) or one of a processing version
+# is not a handle, so its block is never mapped through another reading's
+# structure.
 _SELECT_CHUNK = text(
     """
     SELECT c.chunk_id, c.doc_id, c.version_id, c.block_start
@@ -1194,6 +1203,12 @@ _SELECT_CHUNK = text(
       ON v.deployment_id = c.deployment_id
      AND v.version_id = c.version_id
      AND v.deleted_at IS NULL
+     AND v.status = 'ready'
+     AND v.current_representation_id = c.representation_id
+    JOIN document_representations r
+      ON r.deployment_id = c.deployment_id
+     AND r.representation_id = c.representation_id
+     AND r.status = 'ready'
     JOIN documents d
       ON d.deployment_id = c.deployment_id
      AND d.doc_id = c.doc_id

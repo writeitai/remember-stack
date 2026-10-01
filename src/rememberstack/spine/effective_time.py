@@ -84,7 +84,7 @@ class EffectiveTimeCatalog:
                     "effective periods require a snapshot lineage;"
                     f" {doc_id} is {lineage['versioning_mode']}"
                 )
-            instant = _instant(connection=connection)
+            instant = _instant(connection=connection, deployment_id=deployment_id)
             live = _live_declarations(
                 connection=connection, deployment_id=deployment_id, doc_id=doc_id
             )
@@ -170,7 +170,7 @@ class EffectiveTimeCatalog:
             ).one_or_none()
             if locked is None:
                 raise DocumentNotFoundError(f"document {doc_id} does not exist")
-            instant = _instant(connection=connection)
+            instant = _instant(connection=connection, deployment_id=deployment_id)
             retracted = connection.execute(
                 _RETRACT_LINEAGE,
                 {
@@ -267,7 +267,7 @@ def declare_at_ingest_on(
         )
     if holder is not None and holder["effective_until"] == effective_until:
         return
-    instant = _instant(connection=connection)
+    instant = _instant(connection=connection, deployment_id=deployment_id)
     period_id = uuid4()
     if holder is not None:
         connection.execute(
@@ -334,9 +334,44 @@ def _lock_version(
     )
 
 
-def _instant(*, connection: Connection) -> datetime:
-    """The one instant a locked write stamps on every row it writes."""
+_BELIEF_KEY = "'d140-belief:' || CAST(:deployment_id AS text)"
+
+_STAMP_GUARD = text(
+    f"SELECT pg_advisory_xact_lock_shared(hashtextextended({_BELIEF_KEY}, 0))"
+)
+_WATERMARK_GUARD = text(
+    f"SELECT pg_advisory_xact_lock(hashtextextended({_BELIEF_KEY}, 0))"
+)
+
+
+def _instant(*, connection: Connection, deployment_id: UUID) -> datetime:
+    """The one instant a locked write stamps on every row it writes.
+
+    The write holds the deployment's belief guard (shared) from this stamp
+    until it commits, so :func:`belief_watermark` can never return an instant
+    later than the stamp of a declaration that is still uncommitted.
+    """
+    connection.execute(_STAMP_GUARD, {"deployment_id": deployment_id})
     return connection.execute(text("SELECT clock_timestamp()")).scalar_one()
+
+
+def belief_watermark(*, engine: Engine, deployment_id: UUID) -> datetime:
+    """A belief instant a paged read can pin across pages (§3.6).
+
+    Every effective-time ledger row stamped at or before the returned instant
+    is committed when this returns, and every later write stamps after it. A
+    pre-commit stamp alone does not give this: a writer that stamped before a
+    reader's ``now()`` but committed after the reader's first page would
+    appear on the second page only. Taking the deployment's belief guard
+    exclusively, in a transaction of its own, waits for such writers to
+    commit; the instant is read while the guard is held. Readers then open
+    their own snapshot, which sees every row stamped up to the instant. The
+    guard is the database's clock throughout, so application clock skew
+    cannot hide a committed declaration either.
+    """
+    with engine.begin() as connection:
+        connection.execute(_WATERMARK_GUARD, {"deployment_id": deployment_id})
+        return connection.execute(text("SELECT clock_timestamp()")).scalar_one()
 
 
 def _live_declarations(

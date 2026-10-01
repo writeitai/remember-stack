@@ -16,6 +16,7 @@ from datetime import timedelta
 from datetime import UTC
 import json
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -50,6 +51,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.document_search import DocumentSearch
+from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
@@ -1132,3 +1134,539 @@ def test_undeclared_corpus_facts_are_unaffected(rig: _Rig) -> None:
                 time=time,
             )
         )
+
+
+# --- implementation review round 1 (P1-1, P1-2, P1-5) -----------------------
+
+
+def _relation(
+    rig: _Rig,
+    *,
+    label: str,
+    support: tuple[tuple[UUID, _Lineage, UUID], ...],
+    vector: tuple[float, ...] = _NEAR,
+    stance: str = "supports",
+    subject: UUID | None = None,
+    fact_id: UUID | None = None,
+) -> UUID:
+    """One open relation linked to the given (claim, lineage, chunk) triples."""
+    new_subject = subject is None
+    subject = subject or uuid4()
+    obj, fact_id = uuid4(), fact_id or uuid4()
+    with rig.engine.begin() as connection:
+        entities: tuple[tuple[UUID, str], ...] = ((obj, f"{label} object"),)
+        if new_subject:
+            entities = ((subject, f"{label} subject"), *entities)
+        for entity_id, name in entities:
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name) VALUES (:e, :d, :name, lower(:name))"
+                ),
+                {"e": entity_id, "d": _DEPLOYMENT_ID, "name": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO relations (relation_id, deployment_id,"
+                " subject_entity_id, predicate, object_entity_id,"
+                " normalizer_version, fact_label, ingested_at, valid_from,"
+                " valid_precision, window_claim_ids) VALUES (:fact, :d,"
+                " :subject, 'works_for', :object, 'd140-test', :label, :at, :at,"
+                " 'open', :witnesses)"
+            ),
+            {
+                "fact": fact_id,
+                "d": _DEPLOYMENT_ID,
+                "subject": subject,
+                "object": obj,
+                "label": label,
+                "at": _PAST,
+                "witnesses": [claim for claim, _, _ in support],
+            },
+        )
+        for claim_id, lineage, chunk in support:
+            connection.execute(
+                text(
+                    "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                    " claim_id, doc_id, stance, normalizer_version) VALUES"
+                    " (:d, :fact, :claim, :doc, CAST(:stance AS evidence_stance),"
+                    " 'd140-test')"
+                ),
+                {
+                    "d": _DEPLOYMENT_ID,
+                    "fact": fact_id,
+                    "claim": claim_id,
+                    "doc": lineage.doc_id,
+                    "stance": stance,
+                },
+            )
+            for entity_id in (subject, obj):
+                seed_entity_mention(
+                    connection=connection,
+                    deployment_id=_DEPLOYMENT_ID,
+                    entity_id=entity_id,
+                    doc_id=lineage.doc_id,
+                    chunk_id=chunk,
+                    claim_id=claim_id,
+                    surface_form=f"anchor-{entity_id}",
+                    at=_PAST,
+                    resolver_version="d140-test",
+                )
+    rig.index.upsert_facts(
+        rows=(
+            P1FactRow(
+                fact_id=fact_id,
+                deployment_id=_DEPLOYMENT_ID,
+                kind="relation",
+                label=label,
+                status="active",
+                valid_from=_PAST,
+                valid_until=None,
+                valid_precision=ClaimValidPrecision.OPEN,
+                ingested_at=_PAST,
+                invalidated_at=None,
+                vector=vector,
+            ),
+        )
+    )
+    return fact_id
+
+
+def _swap_reading(rig: _Rig, version_id: UUID) -> UUID:
+    """Point a version at a fresh representation (D65); its old chunks go stale."""
+    representation_id = uuid4()
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, markdown_uri, status) VALUES"
+                " (:r, :d, :v, 'digital', :uri, 'ready')"
+            ),
+            {
+                "r": representation_id,
+                "d": _DEPLOYMENT_ID,
+                "v": version_id,
+                "uri": f"mem://artifacts/{representation_id}.md",
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id = :r"
+                " WHERE version_id = :v"
+            ),
+            {"r": representation_id, "v": version_id},
+        )
+    return representation_id
+
+
+def _fact_ids_everywhere(rig: _Rig, *, subject_query: str) -> dict[str, set[UUID]]:
+    """The fact ids each read path returns at the default (current) scope."""
+    deployment = str(_DEPLOYMENT_ID)
+    scored = {
+        UUID(item)
+        for item in _ids(
+            rig.index.search_facts_scored(
+                deployment_id=deployment, vector=_NEAR, k=20, kind="relation"
+            )
+        )
+    }
+    nominated = {
+        UUID(item)
+        for item in _ids(
+            rig.index.nominate_facts_scored(
+                deployment_id=deployment, vector=_NEAR, k=20, kind="relation"
+            )
+        )
+    }
+    context = {
+        fact.fact_id
+        for fact in rig.query.facts_context(
+            deployment_id=_DEPLOYMENT_ID, query=subject_query, k=20
+        ).facts
+    }
+    return {"scored": scored, "nominated": nominated, "context": context}
+
+
+def _support_function(rig: _Rig, fact_id: UUID) -> bool:
+    with rig.engine.connect() as connection:
+        return bool(
+            connection.execute(
+                text(
+                    "SELECT memory_v1.fact_in_scope_support(:d, 'relation', :f,"
+                    " 'current')"
+                ),
+                {"d": _DEPLOYMENT_ID, "f": fact_id},
+            ).scalar_one()
+        )
+
+
+def test_a_fact_without_live_supporting_text_is_not_eligible(rig: _Rig) -> None:
+    """§8.1: at least one in-scope supporting occurrence; no vacuous pass."""
+    memo = _lineage(rig, label="memo-live", bodies=(("memo live text",),))
+    gone = _lineage(rig, label="memo-gone", bodies=(("memo gone text",),))
+    live_claim = _claim(
+        rig,
+        lineage=memo,
+        origin=memo.chunk(0),
+        body="memo live",
+        occurrences={memo.chunk(0): (0, 9)},
+    )
+    gone_claim = _claim(
+        rig,
+        lineage=gone,
+        origin=gone.chunk(0),
+        body="memo gone",
+        occurrences={gone.chunk(0): (0, 9)},
+    )
+    supported = _relation(
+        rig, label="Memo governs live", support=((live_claim, memo, memo.chunk(0)),)
+    )
+    deleted_only = _relation(
+        rig, label="Memo governs gone", support=((gone_claim, gone, gone.chunk(0)),)
+    )
+    against_gone = _claim(
+        rig,
+        lineage=gone,
+        origin=gone.chunk(0),
+        body="memo gone against",
+        occurrences={gone.chunk(0): (0, 4)},
+    )
+    unsupported = _relation(
+        rig,
+        label="Memo governs nothing",
+        support=((against_gone, gone, gone.chunk(0)),),
+        stance="contradicts",
+    )
+    # D54 parity: a contradiction-only fact with live (undated) evidence is
+    # flagged, not hidden, exactly as before D140
+    against_live = _claim(
+        rig,
+        lineage=memo,
+        origin=memo.chunk(0),
+        body="memo against",
+        occurrences={memo.chunk(0): (0, 4)},
+    )
+    contradicted_only = _relation(
+        rig,
+        label="Memo governs disputed",
+        support=((against_live, memo, memo.chunk(0)),),
+        stance="contradicts",
+    )
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = now() WHERE version_id = :v"
+            ),
+            {"v": gone.version(0)},
+        )
+    seen = _fact_ids_everywhere(rig, subject_query="memo governs")
+    for path, ids in seen.items():
+        assert supported in ids, path
+        assert deleted_only not in ids, path
+        assert unsupported not in ids, path
+    assert _support_function(rig, supported) is True
+    assert _support_function(rig, deleted_only) is False
+    assert _support_function(rig, unsupported) is False
+    lookup = rig.query.lookup_relations(deployment_id=_DEPLOYMENT_ID, k=50)
+    assert contradicted_only in {fact.fact_id for fact in lookup.facts}
+    assert _support_function(rig, contradicted_only) is True
+
+
+def test_an_occurrence_left_in_a_replaced_reading_does_not_support_a_fact(
+    rig: _Rig,
+) -> None:
+    """§3.3/§8.1 with D65: only the version's current reading is evidence."""
+    statute = _lineage(rig, label="reread", bodies=(("reread rule text",),))
+    _declare(rig, statute, 0, (_PAST, None))
+    claim_id = _claim(
+        rig,
+        lineage=statute,
+        origin=statute.chunk(0),
+        body="reread rule",
+        occurrences={statute.chunk(0): (0, 11)},
+    )
+    fact_id = _relation(
+        rig, label="Reread governs", support=((claim_id, statute, statute.chunk(0)),)
+    )
+    assert (
+        fact_id in _fact_ids_everywhere(rig, subject_query="reread governs")["scored"]
+    )
+    assert _support_function(rig, fact_id) is True
+    _swap_reading(rig, statute.version(0))
+    seen = _fact_ids_everywhere(rig, subject_query="reread governs")
+    for path, ids in seen.items():
+        assert fact_id not in ids, path
+    assert _support_function(rig, fact_id) is False
+
+
+def test_facts_context_shows_a_reused_claim_after_its_origin_version_is_deleted(
+    rig: _Rig,
+) -> None:
+    """§3.4/§8.1: evidence comes from the selected occurrence, not the origin."""
+    statute = _lineage(
+        rig,
+        label="reused",
+        bodies=(("first: notice is thirty days",), ("notice is thirty days",)),
+    )
+    _declare(rig, statute, 0, (_PAST, None))
+    _declare(rig, statute, 1, (_FUTURE, None))
+    claim_id = _claim(
+        rig,
+        lineage=statute,
+        origin=statute.chunk(1),
+        body="notice is thirty days",
+        occurrences={statute.chunk(0): (7, 28), statute.chunk(1): (0, 21)},
+    )
+    fact_id = _relation(
+        rig, label="Notice governs", support=((claim_id, statute, statute.chunk(0)),)
+    )
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
+            {"v": statute.version(0), "doc": statute.doc_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET deleted_at = now() WHERE version_id = :v"
+            ),
+            {"v": statute.version(1)},
+        )
+    answer = rig.query.facts_context(
+        deployment_id=_DEPLOYMENT_ID, query="notice governs", k=10, evidence_per_fact=3
+    )
+    assert fact_id in {fact.fact_id for fact in answer.facts}
+    evidence = [item for item in answer.evidence if item.claim_id == claim_id]
+    assert len(evidence) == 1
+    assert evidence[0].chunk_id == statute.chunk(0)
+    assert evidence[0].version_id == statute.version(0)
+    assert (evidence[0].char_start, evidence[0].char_end) == (7, 28)
+
+
+# --- implementation review round 1 (P1-3): commit-visible belief pin --------
+
+
+def test_a_first_page_never_misses_a_correction_stamped_before_its_belief(
+    rig: _Rig,
+) -> None:
+    """A writer stamps a correction, then commits after page one starts.
+
+    Page one's pinned belief instant must reflect exactly the declarations a
+    later reconstruction at that instant sees; a pre-commit stamp earlier than
+    the instant may not surface only on a later page.
+    """
+    older = _lineage(rig, label="pin-older", bodies=(("x",),))
+    _declare(rig, older, 0, (_PAST, None))
+    corrected = _lineage(rig, label="pin-corrected", bodies=(("x",),))
+    _declare(rig, corrected, 0, (_FUTURE, None))
+
+    stamped = threading.Event()
+    release = threading.Event()
+
+    def write() -> None:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "SELECT doc_id FROM documents WHERE deployment_id = :d"
+                    " AND doc_id = :doc FOR UPDATE"
+                ),
+                {"d": _DEPLOYMENT_ID, "doc": corrected.doc_id},
+            )
+            declare_at_ingest_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=corrected.doc_id,
+                version_id=corrected.version(0),
+                versioning_mode="snapshot",
+                effective_from=_PAST,
+                effective_until=None,
+            )
+            stamped.set()
+            release.wait(timeout=30)
+
+    pages: list[object] = []
+
+    def read() -> None:
+        pages.append(_search(rig, k=1))
+
+    writer = threading.Thread(target=write)
+    writer.start()
+    assert stamped.wait(timeout=30)
+    reader = threading.Thread(target=read)
+    reader.start()
+    reader.join(timeout=1.0)
+    release.set()
+    writer.join(timeout=30)
+    reader.join(timeout=30)
+    page = pages[0]
+    shown = {item.doc_id for item in page.documents}  # type: ignore[attr-defined]
+    with rig.engine.connect() as connection:
+        selected_at_pin = connection.execute(
+            text(
+                "SELECT count(*) FROM memory_v1.versions_in_scope(:d, 'current',"
+                " NULL, NULL, NULL, :pin, :pin, CAST(:docs AS uuid[]))"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "pin": page.as_of,  # type: ignore[attr-defined]
+                "docs": [str(corrected.doc_id)],
+            },
+        ).scalar_one()
+    assert (corrected.doc_id in shown) == (selected_at_pin > 0)
+    assert corrected.doc_id in shown
+
+
+# --- implementation review round 1 (P1-6): pending on an empty answer -------
+
+
+def test_an_empty_answer_names_the_pending_lineage_the_query_reaches(rig: _Rig) -> None:
+    """§3.7 without a document filter: unfiltered chunk, claim, compound and
+    ranked document searches all say the in-force text is still processing."""
+    lineage = _lineage(
+        rig,
+        label="quartz",
+        bodies=(("quartz allowance clause",), ("quartz allowance clause revised",)),
+    )
+    _declare(rig, lineage, 0, (_PAST, _REVISED))
+    _declare(rig, lineage, 1, (_REVISED, None))
+    unrelated = _lineage(
+        rig, label="basalt", bodies=(("basalt rule",), ("basalt rule revised",))
+    )
+    _declare(rig, unrelated, 0, (_PAST, _REVISED))
+    _declare(rig, unrelated, 1, (_REVISED, None))
+    _claim(
+        rig,
+        lineage=lineage,
+        origin=lineage.chunk(0),
+        body="quartz allowance",
+        occurrences={lineage.chunk(0): (0, 16)},
+    )
+    with rig.engine.begin() as connection:
+        for item in (lineage, unrelated):
+            # the new edition is still converting; the old one stays served
+            connection.execute(
+                text(
+                    "UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"
+                ),
+                {"v": item.version(0), "doc": item.doc_id},
+            )
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET status = 'converting'"
+                    " WHERE version_id = :v"
+                ),
+                {"v": item.version(1)},
+            )
+
+    chunks = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="quartz allowance", k=5, channel="bm25"
+    )
+    claims = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID, query="quartz allowance", k=5, channel="bm25"
+    )
+    context = rig.query.claims_and_sources_context(
+        deployment_id=_DEPLOYMENT_ID, query="quartz allowance", k=5
+    )
+    for name, answer in (("chunks", chunks), ("claims", claims), ("context", context)):
+        assert answer.chunks == () and answer.evidence == (), name
+        assert answer.freshness.scope_pending is not None, name
+        assert answer.freshness.scope_pending.doc_ids == (lineage.doc_id,), name
+    documents = _search(rig, query="quartz allowance", k=5)
+    assert documents.documents == ()
+    assert documents.scope_pending is not None
+    assert documents.scope_pending.doc_ids == (lineage.doc_id,)
+
+
+# --- implementation review round 1 (deviation a): gate inside traversal -----
+
+
+def _endpoint(rig: _Rig, relation_id: UUID, column: str) -> UUID:
+    with rig.engine.connect() as connection:
+        return connection.execute(
+            text(f"SELECT {column} FROM relations WHERE relation_id = :r"),  # noqa: S608
+            {"r": relation_id},
+        ).scalar_one()
+
+
+def _hub(rig: _Rig) -> tuple[UUID, UUID, UUID, _Lineage]:
+    """A subject with a future-only edge that sorts first and an in-force one."""
+    statute = _lineage(rig, label="hub", bodies=(("old hub rule",), ("new hub rule",)))
+    _declare(rig, statute, 0, (_PAST, None))
+    _declare(rig, statute, 1, (_FUTURE, None))
+    in_force = _claim(
+        rig,
+        lineage=statute,
+        origin=statute.chunk(0),
+        body="old hub rule",
+        occurrences={statute.chunk(0): (0, 12)},
+    )
+    future = _claim(
+        rig,
+        lineage=statute,
+        origin=statute.chunk(1),
+        body="new hub rule",
+        occurrences={statute.chunk(1): (0, 12)},
+    )
+    excluded = _relation(
+        rig,
+        label="Hub future",
+        support=((future, statute, statute.chunk(1)),),
+        fact_id=UUID("00000000-0000-4000-8000-000000000001"),
+    )
+    subject = _endpoint(rig, excluded, "subject_entity_id")
+    eligible = _relation(
+        rig,
+        label="Hub in force",
+        support=((in_force, statute, statute.chunk(0)),),
+        subject=subject,
+        fact_id=UUID("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+    )
+    return subject, excluded, eligible, statute
+
+
+@pytest.mark.parametrize("hops", [1, 2])
+def test_an_ineligible_first_edge_never_takes_the_only_result_slot(
+    rig: _Rig, hops: int
+) -> None:
+    subject, excluded, eligible, _ = _hub(rig)
+    graph = GraphQueries(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
+    page = graph.neighborhood(entity_id=subject, hops=hops, limit=1)
+    assert page.negative is None, page.negative
+    assert [node.entity_id for node in page.nodes] == [
+        _endpoint(rig, eligible, "object_entity_id")
+    ]
+    assert page.truncation is None or page.truncation.truncated is False
+    blocked = graph.path(
+        from_entity_id=subject,
+        to_entity_id=_endpoint(rig, excluded, "object_entity_id"),
+    )
+    assert blocked.paths == ()
+    reached = graph.path(
+        from_entity_id=subject,
+        to_entity_id=_endpoint(rig, eligible, "object_entity_id"),
+    )
+    assert reached.paths != ()
+
+
+def test_traversal_and_gate_read_one_snapshot(rig: _Rig) -> None:
+    """A deletion committed after the caller's snapshot does not split them."""
+    subject, _, eligible, statute = _hub(rig)
+    graph = GraphQueries(engine=rig.engine, deployment_id=_DEPLOYMENT_ID)
+    with rig.engine.connect().execution_options(
+        isolation_level="REPEATABLE READ"
+    ) as snapshot:
+        snapshot.exec_driver_sql("SET TRANSACTION READ ONLY")
+        snapshot.execute(text("SELECT 1"))  # the snapshot starts here
+        with rig.engine.begin() as writer:
+            writer.execute(
+                text(
+                    "UPDATE document_versions SET deleted_at = now()"
+                    " WHERE version_id = :v"
+                ),
+                {"v": statute.version(0)},
+            )
+        page = graph.neighborhood(entity_id=subject, hops=1, _connection=snapshot)
+        snapshot.rollback()
+    assert [node.entity_id for node in page.nodes] == [
+        _endpoint(rig, eligible, "object_entity_id")
+    ]
+    assert graph.neighborhood(entity_id=subject, hops=1).nodes == ()

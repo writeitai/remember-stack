@@ -122,6 +122,10 @@ COMMENT ON TABLE document_version_scope IS
   'D140 current-belief selection projection: one row per non-deleted version of every live lineage, rewritten per lineage by refresh_document_version_scope in the transaction of every write that changes it (declaration, retraction, mode event, readiness or current-pointer move, deletion). Rebuildable from the ledgers and version rows, so a hard-deleted version row takes its projection row with it (ON DELETE CASCADE); the ledgers keep no-cascade foreign keys.';
 CREATE INDEX ix_version_scope_in_force ON document_version_scope USING gist (deployment_id, in_force) WHERE selectable;
 CREATE INDEX ix_version_scope_lineage ON document_version_scope (deployment_id, doc_id);
+CREATE INDEX ix_effective_periods_declared_at ON document_effective_periods (deployment_id, declared_at);
+CREATE INDEX ix_effective_periods_retracted_at ON document_effective_periods (deployment_id, retracted_at) WHERE retracted_at IS NOT NULL;
+CREATE INDEX ix_effective_time_events_at ON document_effective_time_events (deployment_id, event_at);
+CREATE INDEX ix_version_scope_pending ON document_version_scope USING gist (deployment_id, in_force) WHERE NOT selectable;
 """
 
 _SCOPE_FUNCTIONS_DDL = r"""
@@ -993,27 +997,46 @@ DECLARE
   p_believed timestamptz := coalesce(fact_in_scope_support.believed_at, p_evaluated);
   occurrence_docs uuid[];
   occurrence_versions uuid[];
+  has_support boolean;
 BEGIN
   IF fact_in_scope_support.fact_kind NOT IN ('relation', 'observation') THEN
     RAISE EXCEPTION 'fact_in_scope_support fact_kind must be relation or observation'
       USING ERRCODE = 'invalid_parameter_value';
   END IF;
 
-  -- the non-deleted versions of live lineages in which a supporting claim occurs
-  SELECT array_agg(DISTINCT c.doc_id), array_agg(DISTINCT c.version_id)
-  INTO occurrence_docs, occurrence_versions
-  FROM (
-    SELECT e.claim_id FROM public.relation_evidence AS e
+  has_support := EXISTS (
+    SELECT 1 FROM public.relation_evidence AS e
     WHERE fact_in_scope_support.fact_kind = 'relation'
       AND e.deployment_id = p_deployment
       AND e.relation_id = fact_in_scope_support.fact_id
       AND e.stance = 'supports'
+    UNION ALL
+    SELECT 1 FROM public.observation_evidence AS e
+    WHERE fact_in_scope_support.fact_kind = 'observation'
+      AND e.deployment_id = p_deployment
+      AND e.observation_id = fact_in_scope_support.fact_id
+      AND e.stance = 'supports'
+  );
+
+  -- the non-deleted versions of live lineages whose current reading (D65)
+  -- carries a supporting claim; an occurrence left in a replaced
+  -- representation does not count
+  SELECT array_agg(DISTINCT c.doc_id), array_agg(DISTINCT c.version_id)
+  INTO occurrence_docs, occurrence_versions
+  FROM (
+    -- supporting evidence; a fact with none at all (D54 zero-support,
+    -- contradiction-only) is judged by its evidence of either stance
+    SELECT e.claim_id FROM public.relation_evidence AS e
+    WHERE fact_in_scope_support.fact_kind = 'relation'
+      AND e.deployment_id = p_deployment
+      AND e.relation_id = fact_in_scope_support.fact_id
+      AND (e.stance = 'supports' OR NOT has_support)
     UNION
     SELECT e.claim_id FROM public.observation_evidence AS e
     WHERE fact_in_scope_support.fact_kind = 'observation'
       AND e.deployment_id = p_deployment
       AND e.observation_id = fact_in_scope_support.fact_id
-      AND e.stance = 'supports'
+      AND (e.stance = 'supports' OR NOT has_support)
   ) AS support
   JOIN public.chunk_claims AS cc
     ON cc.deployment_id = p_deployment
@@ -1026,6 +1049,7 @@ BEGIN
    AND v.version_id = c.version_id
    AND v.doc_id = c.doc_id
    AND v.deleted_at IS NULL
+   AND v.current_representation_id = c.representation_id
   JOIN public.documents AS d
     ON d.deployment_id = p_deployment
    AND d.doc_id = c.doc_id
@@ -1063,6 +1087,291 @@ $$;
 """The three D140 public time-scope functions. They are ``SECURITY DEFINER``
 owned by the view owner because the ledgers and the projection they read are
 private tables the query role cannot see."""
+
+_CARRIED_CLAIMS_DDL = r"""
+CREATE VIEW v_memory_claim_carried_periodised (
+  deployment_id,
+  claim_id,
+  doc_id,
+  source_kind,
+  source_handle,
+  asserted_at,
+  claim_valid_from,
+  claim_valid_until,
+  claim_valid_precision,
+  claim_valid_kind
+) AS
+SELECT
+  c.deployment_id,
+  c.claim_id,
+  c.doc_id,
+  dl.source_kind,
+  dl.source_kind || ':' || coalesce(dl.source_ref, dl.doc_id::text),
+  c.asserted_at,
+  c.claim_valid_from,
+  c.claim_valid_until,
+  c.claim_valid_precision::text,
+  c.claim_valid_kind::text
+FROM claims AS c
+JOIN memory_v1.documents_live AS dl
+  ON dl.deployment_id = c.deployment_id
+ AND dl.doc_id = c.doc_id
+WHERE c.is_current_testimony
+  AND EXISTS (
+    SELECT 1 FROM document_version_scope AS mode_row
+    WHERE mode_row.deployment_id = c.deployment_id
+      AND mode_row.doc_id = c.doc_id
+      AND mode_row.periodised
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM memory_v1.claims_visible_history AS origin
+    WHERE origin.deployment_id = c.deployment_id
+      AND origin.claim_id = c.claim_id
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM chunk_claims AS occurrence
+    JOIN chunks AS ch
+      ON ch.deployment_id = occurrence.deployment_id
+     AND ch.chunk_id = occurrence.chunk_id
+     AND ch.doc_id = c.doc_id
+    JOIN document_versions AS v
+      ON v.deployment_id = ch.deployment_id
+     AND v.version_id = ch.version_id
+     AND v.current_representation_id = ch.representation_id
+     AND v.deleted_at IS NULL
+    JOIN document_representations AS representation
+      ON representation.deployment_id = ch.deployment_id
+     AND representation.representation_id = ch.representation_id
+     AND representation.status = 'ready'
+    WHERE occurrence.deployment_id = c.deployment_id
+      AND occurrence.claim_id = c.claim_id
+  );
+COMMENT ON VIEW v_memory_claim_carried_periodised IS
+  'D140 §3.4: current-testimony claims of periodised lineages whose origin version is no longer visible but which a non-deleted version still carries in its current reading (a D56 reuse occurrence). D135 keeps such a claim current; this view lets the fact authority views count and show it through that occurrence. Claims whose origin is visible are absent (claims_visible_history already has them). Not part of memory_v1 and never granted to a query role.';
+"""
+"""D140 §3.4/§8.1: evidence of a periodised lineage survives deletion of the
+claim's origin version while another version carries the claim. The two
+private fact-authority views union this view beside the origin-based claim
+relation; every public fact relation and D54 count inherits it."""
+
+_LIVE_CLAIM_SOURCE = (
+    "(SELECT deployment_id, claim_id, doc_id, source_kind, source_handle,"
+    " asserted_at, claim_valid_from, claim_valid_until, claim_valid_precision,"
+    " claim_valid_kind FROM memory_v1.claims_live"
+    " UNION ALL"
+    " SELECT deployment_id, claim_id, doc_id, source_kind, source_handle,"
+    " asserted_at, claim_valid_from, claim_valid_until, claim_valid_precision,"
+    " claim_valid_kind FROM v_memory_claim_carried_periodised)"
+)
+_VISIBLE_CLAIM_SOURCE = (
+    "(SELECT deployment_id, claim_id, doc_id FROM memory_v1.claims_visible_history"
+    " UNION ALL"
+    " SELECT deployment_id, claim_id, doc_id FROM v_memory_claim_carried_periodised)"
+)
+
+
+def _authored_view(*, ddl: str, name: str) -> str:
+    """The authored ``CREATE VIEW name`` statement, as CREATE OR REPLACE."""
+    from rememberstack.spine.migrations._helpers import _split_sql
+
+    for statement in _split_sql(sql=ddl):
+        if statement.startswith(f"CREATE VIEW {name} ("):
+            return statement.replace("CREATE VIEW ", "CREATE OR REPLACE VIEW ", 1)
+    raise RuntimeError(f"authored definition of {name} not found")
+
+
+def _fact_authority_views() -> tuple[tuple[str, str], ...]:
+    """(prior, D140) definitions of the two views whose claim source widens."""
+    from rememberstack.spine.migrations.versions.p9_04_0025_coordinate_binding import (
+        MEMORY_V1_CORRECTION_DDL,
+    )
+    from rememberstack.spine.migrations.versions.p9_09_0030_fact_authority_performance import (
+        FACT_AUTHORITY_DDL,
+    )
+
+    claim_live = _authored_view(ddl=FACT_AUTHORITY_DDL, name="v_memory_fact_claim_live")
+    fact_visible = _authored_view(
+        ddl=MEMORY_V1_CORRECTION_DDL, name="v_memory_fact_visible"
+    )
+    pairs = []
+    for prior, old, new in (
+        (
+            claim_live,
+            "JOIN memory_v1.claims_live AS claim",
+            f"JOIN {_LIVE_CLAIM_SOURCE} AS claim",
+        ),
+        (
+            fact_visible,
+            "JOIN memory_v1.claims_visible_history AS claim",
+            f"JOIN {_VISIBLE_CLAIM_SOURCE} AS claim",
+        ),
+    ):
+        if prior.count(old) != 2:
+            raise RuntimeError(f"unexpected authored view shape: {old!r}")
+        pairs.append((prior, prior.replace(old, new)))
+    return tuple(pairs)
+
+
+_GRAPH_GATE_DDL = r"""
+CREATE FUNCTION rememberstack_graph_internal.relation_evidence_in_scope(
+  deployment_id uuid,
+  relation_id uuid,
+  valid_at timestamptz,
+  believed_at timestamptz,
+  evaluated_at timestamptz
+)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+PARALLEL SAFE
+SECURITY DEFINER
+SET search_path = pg_catalog, public, pg_temp
+AS $$
+  SELECT CASE
+    -- a deployment that never declared a period has nothing to time-restrict:
+    -- its traversal keeps the graph view's surviving-provenance rule
+    WHEN NOT EXISTS (
+      SELECT 1 FROM public.document_effective_periods AS p WHERE p.deployment_id = $1
+    ) THEN true
+    WHEN $4 IS NOT NULL AND $4 < $5 AND (
+      EXISTS (
+        SELECT 1 FROM public.document_effective_periods AS p
+        WHERE p.deployment_id = $1 AND p.declared_at > $4
+      )
+      OR EXISTS (
+        SELECT 1 FROM public.document_effective_periods AS p
+        WHERE p.deployment_id = $1 AND p.retracted_at > $4
+      )
+      OR EXISTS (
+        SELECT 1 FROM public.document_effective_time_events AS m
+        WHERE m.deployment_id = $1 AND m.event_at > $4
+      )
+    ) THEN
+      -- a past belief instant the ledgers have moved on from: read them, as
+      -- the query space does; otherwise the current projection is exactly
+      -- the belief at that instant and answers by primary keys
+      memory_v1.fact_in_scope_support(
+        $1, 'relation', $2, 'at', coalesce($3, $5), NULL, NULL, $5, $4
+      )
+    ELSE (
+      EXISTS (
+        SELECT 1
+        FROM public.relation_evidence AS e
+        JOIN public.chunk_claims AS cc
+          ON cc.deployment_id = e.deployment_id AND cc.claim_id = e.claim_id
+        JOIN public.chunks AS ch
+          ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+        JOIN public.document_versions AS v
+          ON v.deployment_id = ch.deployment_id
+         AND v.version_id = ch.version_id
+         AND v.current_representation_id = ch.representation_id
+        JOIN public.document_version_scope AS s
+          ON s.deployment_id = ch.deployment_id AND s.version_id = ch.version_id
+        WHERE e.deployment_id = $1
+          AND e.relation_id = $2
+          AND e.stance = 'supports'
+          AND (NOT s.periodised
+               OR (s.selectable
+                   AND s.in_force && tstzrange(coalesce($3, $5), coalesce($3, $5), '[]')))
+      )
+      OR (
+        NOT EXISTS (
+          SELECT 1 FROM public.relation_evidence AS e
+          WHERE e.deployment_id = $1 AND e.relation_id = $2 AND e.stance = 'supports'
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM public.relation_evidence AS e
+          JOIN public.chunk_claims AS cc
+            ON cc.deployment_id = e.deployment_id AND cc.claim_id = e.claim_id
+          JOIN public.chunks AS ch
+            ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+          JOIN public.document_versions AS v
+            ON v.deployment_id = ch.deployment_id
+           AND v.version_id = ch.version_id
+           AND v.current_representation_id = ch.representation_id
+          JOIN public.document_version_scope AS s
+            ON s.deployment_id = ch.deployment_id AND s.version_id = ch.version_id
+          WHERE e.deployment_id = $1
+            AND e.relation_id = $2
+            AND (NOT s.periodised
+                 OR (s.selectable
+                     AND s.in_force && tstzrange(coalesce($3, $5), coalesce($3, $5), '[]')))
+        )
+      )
+    )
+  END
+$$;
+COMMENT ON FUNCTION rememberstack_graph_internal.relation_evidence_in_scope(
+  uuid, uuid, timestamptz, timestamptz, timestamptz
+) IS
+  'D140 §8.1 evidence gate for one relation edge, at the valid instant: true when a supporting occurrence (or, for a relation with no supporting evidence at all, an occurrence of either stance) lies in a selected version or a live undeclared version, in that version''s current reading. A belief instant that some later declaration, retraction or mode event has moved past reads the declaration ledgers (memory_v1.fact_in_scope_support); otherwise the current projection answers. SECURITY DEFINER over private evidence; EXECUTE only for the graph role, which calls it inside every traversal before expansion, ordering and limits.';
+"""
+"""The graph traversal's evidence gate (§7/§8.1). The graph role cannot read
+evidence, so this one narrow, deployment-bound predicate is the only private
+read it is granted; the traversal functions and the one-hop PGQ statement
+call it on every candidate edge, inside the traversal's own snapshot."""
+
+_GRAPH_LEVEL_SELECT = (
+    "    FOR edge_record IN\n"
+    "      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*\n"
+)
+_GRAPH_LEVEL_LIMIT = (
+    "      ORDER BY path.path_ordinal, edge.relation_id\n"
+    "      LIMIT greatest(expansion_cap - examined + 1, 1)\n"
+)
+
+
+def _gated_graph_helpers() -> tuple[tuple[str, str], ...]:
+    """(prior, D140) definitions of the two traversal helpers.
+
+    Each BFS level's adjacency statement keeps its order and becomes a
+    subquery (``OFFSET 0`` keeps the planner from pushing the gate below the
+    sort); the gate filters the ordered candidates and the level's expansion
+    limit counts only the edges that pass. The gate is therefore applied
+    before expansion and the limit, but evaluated lazily: only until the
+    level's budget is filled, never across a whole dense hub up front.
+    """
+    from rememberstack.spine.migrations.versions.p9_17_0038_postgres19_live_graph import (
+        _NEIGHBORHOOD_HELPER,
+    )
+    from rememberstack.spine.migrations.versions.p9_17_0038_postgres19_live_graph import (
+        _PATH_HELPER,
+    )
+
+    pairs = []
+    for prior, function in (
+        (_NEIGHBORHOOD_HELPER, "graph_neighborhood"),
+        (_PATH_HELPER, "graph_path"),
+    ):
+        if (
+            prior.count(_GRAPH_LEVEL_SELECT) != 1
+            or prior.count(_GRAPH_LEVEL_LIMIT) != 1
+        ):
+            raise RuntimeError(f"unexpected {function} shape")
+        replaced = prior.replace(
+            "CREATE FUNCTION memory_v1.", "CREATE OR REPLACE FUNCTION memory_v1.", 1
+        )
+        gated = replaced.replace(
+            _GRAPH_LEVEL_SELECT,
+            "    FOR edge_record IN\n"
+            "      SELECT ordered.* FROM (\n"
+            "      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*\n",
+        ).replace(
+            _GRAPH_LEVEL_LIMIT,
+            "      ORDER BY path.path_ordinal, edge.relation_id\n"
+            "      OFFSET 0\n"
+            "      ) AS ordered\n"
+            "      WHERE rememberstack_graph_internal.relation_evidence_in_scope(\n"
+            f"        {function}.deployment_id, ordered.relation_id, clock_valid,\n"
+            "        clock_believed, statement_timestamp())\n"
+            "      ORDER BY ordered.path_ordinal, ordered.relation_id\n"
+            "      LIMIT greatest(expansion_cap - examined + 1, 1)\n",
+        )
+        pairs.append((replaced, gated))
+    return tuple(pairs)
+
 
 _FUNCTION_SIGNATURES = (
     "memory_v1.effective_intervals(uuid, uuid[], timestamptz)",
@@ -1168,10 +1477,23 @@ SELECT EXISTS (SELECT 1 FROM document_effective_periods)
     OR EXISTS (SELECT 1 FROM document_effective_time_events)
     OR EXISTS (SELECT 1 FROM document_versions WHERE version_key IS NOT NULL)
     OR EXISTS (SELECT 1 FROM document_reference_generations)
+    OR EXISTS (
+        SELECT 1 FROM document_sections
+        WHERE section_key IS NOT NULL
+           OR own_content_hash IS NOT NULL
+           OR subtree_content_hash IS NOT NULL
+    )
+    OR EXISTS (
+        SELECT 1 FROM chunks
+        WHERE text_origin_at IS NOT NULL OR reuse_identity_hash IS NOT NULL
+    )
 """
-"""Rows only D140 can have produced and nothing can re-derive: a declaration
-or mode event (live or retracted), a version key, or a reference generation
-(every version-grain reference belongs to one)."""
+"""Rows only D140 can have produced: a declaration or mode event (live or
+retracted), a version key, a reference generation (every version-grain
+reference belongs to one), a section key or section hash, or a chunk's text
+origin time or reuse identity. Text origin time is recorded once and never
+recomputed, so dropping it would silently lose it; the section values are
+refused too so that no downgrade discards D140 data without a reviewed plan."""
 
 
 def upgrade() -> None:
@@ -1226,6 +1548,46 @@ def upgrade() -> None:
         op.execute(f"ALTER FUNCTION {signature} OWNER TO {_VIEW_OWNER}")
     op.execute(QUERY_ROLE_GRANTS)
 
+    apply_ddl(sql=_CARRIED_CLAIMS_DDL)
+    op.execute("REVOKE ALL ON v_memory_claim_carried_periodised FROM PUBLIC")
+    op.execute(
+        """
+        DO $do$
+        BEGIN
+          EXECUTE format(
+            'REVOKE ALL ON v_memory_claim_carried_periodised FROM %I',
+            'rememberstack_query_' || current_database()
+          );
+        END
+        $do$;
+        """
+    )
+    op.execute(f"ALTER VIEW v_memory_claim_carried_periodised OWNER TO {_VIEW_OWNER}")
+    for _, widened in _fact_authority_views():
+        op.execute(widened)
+
+    apply_ddl(sql=_GRAPH_GATE_DDL)
+    gate = (
+        "rememberstack_graph_internal.relation_evidence_in_scope("
+        "uuid, uuid, timestamptz, timestamptz, timestamptz)"
+    )
+    op.execute(f"REVOKE ALL ON FUNCTION {gate} FROM PUBLIC")
+    op.execute(f"ALTER FUNCTION {gate} OWNER TO {_VIEW_OWNER}")
+    op.execute(
+        f"""
+        DO $do$
+        BEGIN
+          EXECUTE format(
+            'GRANT EXECUTE ON FUNCTION {gate} TO %I',
+            'rememberstack_graph_' || current_database()
+          );
+        END
+        $do$;
+        """
+    )
+    for _, gated in _gated_graph_helpers():
+        op.execute(gated)
+
 
 def downgrade() -> None:
     """Restore the prior schema; refuse when any D140 data exists."""
@@ -1247,8 +1609,19 @@ def downgrade() -> None:
         raise RuntimeError(
             "D140 downgrade requires an explicitly reviewed restore/conversion"
             " plan: declared effective periods, effective-time events, version"
-            " keys or reference generations exist and cannot be re-derived"
+            " keys, reference generations, section keys or hashes, or chunk"
+            " text-origin data exist and would be lost"
         )
+
+    for prior, _ in _gated_graph_helpers():
+        op.execute(prior)
+    op.execute(
+        "DROP FUNCTION rememberstack_graph_internal.relation_evidence_in_scope("
+        "uuid, uuid, timestamptz, timestamptz, timestamptz)"
+    )
+    for prior, _ in _fact_authority_views():
+        op.execute(prior)
+    op.execute("DROP VIEW v_memory_claim_carried_periodised")
 
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[2])
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[1])

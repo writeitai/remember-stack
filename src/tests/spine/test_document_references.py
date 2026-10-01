@@ -1035,3 +1035,56 @@ def test_hard_forget_drops_own_rows_and_unbinds_incoming_ones(rig: _Rig) -> None
     )
     [row] = rig.read(doc_id=travel.doc_id).rows
     assert row.status == "target_unavailable"
+
+
+def test_a_chunk_handle_must_lie_in_a_ready_versions_current_reading(rig: _Rig) -> None:
+    """§3.3: obsolete readings and processing versions are not chunk handles."""
+    rig.ingest(ref="policy/expense", body=_EXPENSE_1)
+    travel = rig.ingest(ref="policy/travel", body=_TRAVEL)
+    rig.put(version=travel, body=_ndjson(_ref()))
+    rig.drain()
+    with rig.engine.connect() as connection:
+        chunk_id = connection.execute(
+            text(
+                "SELECT chunk_id FROM chunks WHERE version_id = :v"
+                " ORDER BY block_start LIMIT 1"
+            ),
+            {"v": travel.version_id},
+        ).scalar_one()
+        old_representation = connection.execute(
+            text(
+                "SELECT current_representation_id FROM document_versions"
+                " WHERE version_id = :v"
+            ),
+            {"v": travel.version_id},
+        ).scalar_one()
+    assert rig.read(chunk_id=chunk_id, direction="outgoing").rows
+
+    rig.execute(
+        "UPDATE document_versions SET status = 'converting' WHERE version_id = :v",
+        v=travel.version_id,
+    )
+    with pytest.raises(ChunkNotFoundError):
+        rig.read(chunk_id=chunk_id, direction="outgoing")
+    rig.execute(
+        "UPDATE document_versions SET status = 'ready' WHERE version_id = :v",
+        v=travel.version_id,
+    )
+
+    replacement = uuid4()
+    rig.execute(
+        "INSERT INTO document_representations (representation_id, deployment_id,"
+        " version_id, route, markdown_uri, status)"
+        " SELECT :r, deployment_id, version_id, route, markdown_uri || '.next',"
+        " 'ready' FROM document_representations WHERE representation_id = :old",
+        r=replacement,
+        old=old_representation,
+    )
+    rig.execute(
+        "UPDATE document_versions SET current_representation_id = :r"
+        " WHERE version_id = :v",
+        r=replacement,
+        v=travel.version_id,
+    )
+    with pytest.raises(ChunkNotFoundError):
+        rig.read(chunk_id=chunk_id, direction="outgoing")

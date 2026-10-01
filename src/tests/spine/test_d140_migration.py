@@ -259,6 +259,32 @@ def test_an_empty_store_downgrades_and_upgrades_again(
         verify_schema(connection=connection)
 
 
+_SECTION_ROWS = (
+    "INSERT INTO document_structure_generations (structure_generation_id,"
+    " deployment_id, doc_id, version_id, representation_id, skeleton_version,"
+    " skeleton_hash, skeleton_producer_family, roles_version, route_tag,"
+    " candidate_skeleton_hash, stats_version, stats)"
+    " SELECT gen_random_uuid(), :d, :doc, :version, r.representation_id, 'v',"
+    " 'skeleton', 'deterministic', 'v', 'parser', 'candidate', 'v', '{}'::jsonb"
+    " FROM document_representations r WHERE r.version_id = :version LIMIT 1",
+    "INSERT INTO document_sections (section_id, deployment_id, doc_id, version_id,"
+    " representation_id, node_path, block_start, block_end, role, char_start,"
+    " char_end, ordinal, structure_generation_id)"
+    " SELECT gen_random_uuid(), :d, :doc, :version, g.representation_id, '0', 0,"
+    " 0, 'body', 0, 10, 0, g.structure_generation_id"
+    " FROM document_structure_generations g WHERE g.version_id = :version",
+)
+_CHUNK_ROW = (
+    "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
+    " representation_id, section_id, ordinal, block_start, block_end,"
+    " chunk_content_hash, extraction_input_hash, char_start, char_end,"
+    " context_prefix, created_at)"
+    " SELECT gen_random_uuid(), :d, :doc, :version, s.representation_id,"
+    " s.section_id, 0, 0, 0, 'c', 'e', 0, 10, '', now()"
+    " FROM document_sections s WHERE s.version_id = :version"
+)
+
+
 @pytest.mark.parametrize(
     "d140_row",
     [
@@ -273,20 +299,28 @@ def test_an_empty_store_downgrades_and_upgrades_again(
         " doc_id, version_id, origin, input_hash, request_seq, artifact_uri, status)"
         " VALUES (gen_random_uuid(), :d, :doc, :version, 'supplied', 'h', 1,"
         " 'refs.ndjson', 'pending')",
+        # a section key/hash; text origin time is recorded once, never recomputed
+        (*_SECTION_ROWS, "UPDATE document_sections SET section_key = 'par_5'"),
+        (*_SECTION_ROWS, "UPDATE document_sections SET own_content_hash = 'o'"),
+        (*_SECTION_ROWS, _CHUNK_ROW, "UPDATE chunks SET text_origin_at = now()"),
+        (*_SECTION_ROWS, _CHUNK_ROW, "UPDATE chunks SET reuse_identity_hash = 'r'"),
     ],
 )
 def test_the_downgrade_refuses_when_d140_data_exists(
-    migrated: tuple[Config, Engine], d140_row: str
+    migrated: tuple[Config, Engine], d140_row: str | tuple[str, ...]
 ) -> None:
     """A version key, a declaration (even retracted), an event or a generation."""
     config, engine = migrated
     lineages = _seed(engine)
     command.upgrade(config=config, revision=_HEAD)
     doc_id, (version_id, *_) = lineages["served"]
+    statements = (d140_row,) if isinstance(d140_row, str) else d140_row
     with engine.begin() as connection:
-        connection.execute(
-            text(d140_row), {"d": _DEPLOYMENT_ID, "doc": doc_id, "version": version_id}
-        )
+        for statement in statements:
+            connection.execute(
+                text(statement),
+                {"d": _DEPLOYMENT_ID, "doc": doc_id, "version": version_id},
+            )
 
     with pytest.raises(RuntimeError, match="D140 downgrade requires"):
         command.downgrade(config=config, revision=_BEFORE)

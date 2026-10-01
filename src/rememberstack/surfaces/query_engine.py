@@ -40,6 +40,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.models import HistoryReadTime
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -111,6 +112,7 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1ScoredSearchPort
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
@@ -385,6 +387,69 @@ class QueryEngine:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             connection.exec_driver_sql("SELECT 1")
             yield connection
+
+    def _touched_pending(
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        query: str,
+        documents: DocumentSearchFilters | None,
+    ) -> tuple[UUID, ...]:
+        """Pending lineages the query reaches although their text is excluded (§3.7).
+
+        The scope drops a version that is in force but not ready before the
+        ranked cut, so an empty answer alone cannot tell "nothing is in force"
+        from "the in-force text is still processing". When (and only when)
+        some lineage has such a version for the window — a small set, read
+        through a partial index — one bounded lexical probe over just those
+        lineages' readable editions (every edition in force up to the
+        evaluation instant) says which of them the query's terms reach. Only
+        real term matches count, it needs no second query embedding, and its
+        hits only name pending lineages: they never enter the answer.
+        """
+        with self._engine.connect() as connection:
+            candidates = tuple(
+                connection.execute(
+                    _PENDING_IN_FORCE,
+                    {
+                        "deployment_id": deployment_id,
+                        "limit": SCOPE_PENDING_PROBE_LINEAGES,
+                        **scope.parameters(),
+                    },
+                ).scalars()
+            )
+        if documents is not None and documents.doc_ids:
+            allowed = set(documents.doc_ids)
+            candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+        if not candidates:
+            return ()
+        restricted = (documents or DocumentSearchFilters()).model_copy(
+            update={"doc_ids": candidates}
+        )
+        if not callable(
+            getattr(self._search_index, "search_chunks_lexical_scored", None)
+        ):
+            return ()  # an index without scores cannot tell a real term match
+        scored = cast(P1ScoredSearchPort, self._search_index)
+        hits = scored.search_chunks_lexical_scored(
+            deployment_id=str(deployment_id),
+            query=query,
+            k=SCOPE_PENDING_PROBE_LINEAGES,
+            policy_generation=self._policy_generation,
+            embedder_generation=self._embedder_generation,
+            documents=restricted,
+            time=TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at),
+        )
+        matched = [item.item_id for item in hits if item.score > 0]
+        if not matched:
+            return ()
+        with self._engine.connect() as connection:
+            return tuple(
+                connection.execute(
+                    _PENDING_ITEM_DOCS, {"deployment_id": deployment_id, "ids": matched}
+                ).scalars()
+            )
 
     def _scoped_freshness(
         self, *, deployment_id: UUID, scope: TextScope, doc_ids: Sequence[UUID]
@@ -1308,12 +1373,16 @@ class QueryEngine:
             scope=scope,
             nominate_in_scope=time is not None,
         )
+        touched = self._touched_pending(
+            deployment_id=deployment_id, scope=scope, query=query, documents=None
+        )
         scoped = self._scoped_freshness(
             deployment_id=deployment_id,
             scope=scope,
             doc_ids=(
                 *(record.doc_id for record in answer.evidence),
                 *(record.doc_id for record in answer.chunks),
+                *touched,
             ),
         )
         return answer.model_copy(
@@ -1532,6 +1601,9 @@ class QueryEngine:
             documents=documents,
             scope=scope,
         )
+        touched = self._touched_pending(
+            deployment_id=deployment_id, scope=scope, query=query, documents=documents
+        )
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -1542,6 +1614,7 @@ class QueryEngine:
                 doc_ids=(
                     *(record.doc_id for record in evidence),
                     *(documents.doc_ids if documents is not None else ()),
+                    *touched,
                 ),
             ),
             dropped_by_hydration=dropped,
@@ -1618,6 +1691,9 @@ class QueryEngine:
             documents=documents,
             scope=scope,
         )
+        touched = self._touched_pending(
+            deployment_id=deployment_id, scope=scope, query=query, documents=documents
+        )
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
@@ -1628,6 +1704,7 @@ class QueryEngine:
                 doc_ids=(
                     *(record.doc_id for record in chunks),
                     *(documents.doc_ids if documents is not None else ()),
+                    *touched,
                 ),
             ),
             dropped_by_hydration=dropped,
@@ -4630,7 +4707,10 @@ _CURRENT_FACT_EVIDENCE = text(
                document.title AS document_title, document.source_kind,
                {lineage_periodised(doc="claim.doc_id")} AS periodised
         FROM lineage
-        JOIN memory_v1.claims_live AS claim
+        -- v_memory_fact_claim_live proved the claim live (by its origin, or for
+        -- a periodised lineage by a carrying version, D140 §3.4); only its
+        -- immutable fields are read here, so a deleted origin cannot hide it
+        JOIN claims AS claim
           ON claim.deployment_id = :deployment_id
          AND claim.claim_id = lineage.representative_claim_id
          AND claim.doc_id = lineage.doc_id
@@ -4929,7 +5009,7 @@ _EFFECTIVE_INTERVALS = text(
     SELECT i.version_id, i.effective_from, i.effective_until, i.until_declared
     FROM memory_v1.effective_intervals(
         CAST(:deployment_id AS uuid), CAST(:doc_ids AS uuid[]),
-        CAST(:believed_at AS timestamptz)
+        coalesce(CAST(:believed_at AS timestamptz), 'infinity'::timestamptz)
     ) AS i
     ORDER BY i.version_id, i.effective_from
     """
@@ -5024,7 +5104,7 @@ def _effective_by_version(
         {
             "deployment_id": deployment_id,
             "doc_ids": [str(doc_id) for doc_id in doc_ids],
-            "believed_at": believed_at or datetime.now(UTC),
+            "believed_at": believed_at,
         },
     ).mappings():
         by_version.setdefault(row["version_id"], []).append(
@@ -5037,6 +5117,30 @@ def _effective_by_version(
             )
         )
     return {version_id: tuple(items) for version_id, items in by_version.items()}
+
+
+SCOPE_PENDING_PROBE_LINEAGES: Final = 200
+"""Most pending lineages one §3.7 probe considers (a starting point to measure)."""
+
+_PENDING_IN_FORCE = text(
+    f"""
+    SELECT DISTINCT s.doc_id
+    FROM document_version_scope s
+    WHERE s.deployment_id = :deployment_id
+      AND NOT s.selectable
+      AND s.in_force && {WINDOW_SQL}
+    ORDER BY s.doc_id
+    LIMIT :limit
+    """  # noqa: S608 -- interpolated fragment is a module constant
+)
+
+_PENDING_ITEM_DOCS = text(
+    """
+    SELECT DISTINCT doc_id FROM chunks
+    WHERE deployment_id = :deployment_id
+      AND chunk_id = ANY(CAST(:ids AS uuid[]))
+    """
+)
 
 
 def _scope_pending(

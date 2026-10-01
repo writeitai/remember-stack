@@ -923,7 +923,8 @@ def test_the_evidence_gate_follows_the_editions_in_force(engine: Engine) -> None
                 claim_id=claim_id,
                 doc_id=version.doc_id,
             )
-        # contradicting evidence is not support
+        # a fact with no supporting evidence at all (D54 zero-support,
+        # contradiction-only) is judged by its evidence of either stance
         contradiction = _chunk_with_claim(
             connection, version=one, representation_id=readings[one.version_id]
         )
@@ -941,7 +942,8 @@ def test_the_evidence_gate_follows_the_editions_in_force(engine: Engine) -> None
     assert _gate(engine, relation_id=old_fact, mode="at", at=_FUTURE) is False
     assert _gate(engine, relation_id=future_fact, mode="history") is False
     assert _gate(engine, relation_id=plain_fact, mode="at", at=_Y2024) is True
-    assert _gate(engine, relation_id=contradicted, mode="history") is False
+    assert _gate(engine, relation_id=contradicted, mode="history") is True
+    assert _gate(engine, relation_id=contradicted, mode="at", at=_FUTURE) is False
     # before any declaration the lineage was undeclared: evidence is unrestricted
     assert (
         _gate(

@@ -209,9 +209,32 @@ _EVIDENCE: dict[str, tuple[str, str]] = {
 }
 
 
-def _support_occurrences(*, fact_kind: str, fact_id: str, alias: str) -> str:
-    """FROM/JOIN/WHERE of a fact's supporting claim occurrences in live versions."""
+def _current_reading(*, chunk: str, alias: str) -> str:
+    """JOIN that keeps a chunk only when it lies in its version's current reading.
+
+    After a D65 representation swap the old reading's chunks (and their claim
+    occurrences) stay stored; they must not count as evidence or handles.
+    """
+    return (
+        f" JOIN public.document_versions {alias}"
+        f"   ON {alias}.deployment_id = {chunk}.deployment_id"
+        f"  AND {alias}.version_id = {chunk}.version_id"
+        f"  AND {alias}.current_representation_id = {chunk}.representation_id"
+    )
+
+
+def _support_occurrences(
+    *, fact_kind: str, fact_id: str, alias: str, stance: str | None = "supports"
+) -> str:
+    """FROM/JOIN/WHERE of a fact's evidence claim occurrences in live versions.
+
+    Only occurrences in a version's current reading count (D65). ``stance``
+    ``None`` takes evidence of either stance.
+    """
     table, column = _EVIDENCE[fact_kind]
+    stance_filter = (
+        "" if stance is None else f"   AND {alias}_evidence.stance = '{stance}'"
+    )
     return (
         f"FROM {table} {alias}_evidence"
         f" JOIN public.chunk_claims {alias}_occurrence"
@@ -220,12 +243,13 @@ def _support_occurrences(*, fact_kind: str, fact_id: str, alias: str) -> str:
         f" JOIN public.chunks {alias}_chunk"
         f"   ON {alias}_chunk.deployment_id = {alias}_occurrence.deployment_id"
         f"  AND {alias}_chunk.chunk_id = {alias}_occurrence.chunk_id"
+        f"{_current_reading(chunk=f'{alias}_chunk', alias=f'{alias}_version')}"
         f" JOIN public.document_version_scope {alias}_scope"
         f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
         f" WHERE {alias}_evidence.deployment_id = :deployment_id"
         f"   AND {alias}_evidence.{column} = {fact_id}"
-        f"   AND {alias}_evidence.stance = 'supports'"
+        f"{stance_filter}"
     )
 
 
@@ -233,24 +257,49 @@ def fact_in_scope(*, fact_kind: str, fact_id: str, pinned_belief: bool = False) 
     """One predicate: the §8.1 evidence gate for one fact of a fixed kind.
 
     ``document_version_scope`` holds exactly the non-deleted versions of live
-    lineages, so joining it is the "live occurrence" test. For current belief
-    the selection is the projection probe; for a past belief instant the fact's
-    bounded supporting lineages are evaluated from the ledgers through
-    ``memory_v1.fact_in_scope_support``.
+    lineages, so joining it is the "live occurrence" test. An occurrence is in
+    scope when it lies in a version the scope selects, or in any live version
+    of a lineage without declared periods (whose evidence D140 does not
+    time-restrict), and in that version's current reading.
+
+    A fact with supporting evidence needs an in-scope *supporting* occurrence;
+    support left only in deleted versions or replaced readings does not
+    count. A fact with no supporting evidence at all — a D54 zero-support,
+    contradiction-only fact, which D54 flags rather than hides — needs an
+    in-scope occurrence of any stance, so such facts read exactly as before in
+    a corpus without declared periods and are still time-restricted in one
+    with them. For current belief the selection is the projection probe; for
+    a past belief instant the fact's bounded evidence lineages are evaluated
+    from the ledgers through ``memory_v1.fact_in_scope_support``.
     """
     if fact_kind not in _EVIDENCE:
         raise ValueError(f"unknown fact kind {fact_kind!r}")
     alias = f"gate_{fact_kind}"
-    occurrences = _support_occurrences(
-        fact_kind=fact_kind, fact_id=fact_id, alias=alias
-    )
-    supported = f"NOT EXISTS (SELECT 1 {occurrences})"
-    if not pinned_belief:
-        in_scope = (
+    table, column = _EVIDENCE[fact_kind]
+
+    def in_scope_occurrence(*, stance: str | None, suffix: str) -> str:
+        scoped = f"{alias}{suffix}"
+        occurrences = _support_occurrences(
+            fact_kind=fact_kind, fact_id=fact_id, alias=scoped, stance=stance
+        )
+        return (
             f"EXISTS (SELECT 1 {occurrences}"
-            f" AND (NOT {alias}_scope.periodised"
-            f" OR ({alias}_scope.selectable"
-            f" AND {alias}_scope.in_force && {WINDOW_SQL})))"
+            f" AND (NOT {scoped}_scope.periodised"
+            f" OR ({scoped}_scope.selectable"
+            f" AND {scoped}_scope.in_force && {WINDOW_SQL})))"
+        )
+
+    if not pinned_belief:
+        unsupported = (
+            f"NOT EXISTS (SELECT 1 FROM {table} {alias}_any"
+            f" WHERE {alias}_any.deployment_id = :deployment_id"
+            f" AND {alias}_any.{column} = {fact_id}"
+            f" AND {alias}_any.stance = 'supports')"
+        )
+        in_scope = (
+            f"{in_scope_occurrence(stance='supports', suffix='')}"
+            f" OR ({unsupported}"
+            f" AND {in_scope_occurrence(stance=None, suffix='_all')})"
         )
     else:
         in_scope = (
@@ -262,7 +311,7 @@ def fact_in_scope(*, fact_kind: str, fact_id: str, pinned_belief: bool = False) 
             " CAST(:scope_evaluated_at AS timestamptz),"
             " CAST(:scope_believed_at AS timestamptz))"
         )
-    return f"({supported} OR {in_scope})"
+    return f"({in_scope})"
 
 
 def fact_in_scope_by_kind(*, kind: str, fact_id: str) -> str:
@@ -280,15 +329,17 @@ def fact_in_scope_by_kind(*, kind: str, fact_id: str) -> str:
 def claim_in_scope(*, claim: str, alias: str = "evidence_scope") -> str:
     """One predicate: claim ``claim`` may be shown as fact evidence (§8.1).
 
-    The claim occurs in a selected version or in a live version of an
-    undeclared lineage; a claim with no live occurrence keeps today's
-    visibility. The same rule as the fact gate, at claim grain (current belief).
+    The claim occurs, in a version's current reading, in a selected version or
+    in a live version of an undeclared lineage. The same rule as the fact
+    gate, at claim grain (current belief): an occurrence left only in a
+    replaced reading or a deleted version is not evidence.
     """
     occurrences = (
         f"FROM public.chunk_claims {alias}"
         f" JOIN public.chunks {alias}_chunk"
         f"   ON {alias}_chunk.deployment_id = {alias}.deployment_id"
         f"  AND {alias}_chunk.chunk_id = {alias}.chunk_id"
+        f"{_current_reading(chunk=f'{alias}_chunk', alias=f'{alias}_version')}"
         f" JOIN public.document_version_scope {alias}_scope"
         f"   ON {alias}_scope.deployment_id = {alias}_chunk.deployment_id"
         f"  AND {alias}_scope.version_id = {alias}_chunk.version_id"
@@ -296,8 +347,7 @@ def claim_in_scope(*, claim: str, alias: str = "evidence_scope") -> str:
         f"   AND {alias}.claim_id = {claim}"
     )
     return (
-        f"(NOT EXISTS (SELECT 1 {occurrences})"
-        f" OR EXISTS (SELECT 1 {occurrences}"
+        f"EXISTS (SELECT 1 {occurrences}"
         f" AND (NOT {alias}_scope.periodised"
-        f" OR ({alias}_scope.selectable AND {alias}_scope.in_force && {WINDOW_SQL}))))"
+        f" OR ({alias}_scope.selectable AND {alias}_scope.in_force && {WINDOW_SQL})))"
     )

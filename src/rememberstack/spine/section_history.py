@@ -56,6 +56,7 @@ from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.client import SectionHistoryRow
 from rememberstack.model.client import SectionHistorySection
 from rememberstack.model.documents import DocumentNotFoundError
+from rememberstack.spine.effective_time import belief_watermark
 
 AMENDMENTS_LIMIT: Final = 200
 """Most incoming ``amends`` references one response lists (a starting point)."""
@@ -111,9 +112,13 @@ class SectionHistory:
         """
         scope_hash = _scope_hash(request=request)
         cursor = _decode_cursor(cursor=request.cursor, scope_hash=scope_hash)
-        now = datetime.now(UTC)
-        evaluated_at = cursor.evaluated_at if cursor is not None else now
-        believed_at = cursor.believed_at if cursor is not None else now
+        if cursor is not None:
+            evaluated_at, believed_at = cursor.evaluated_at, cursor.believed_at
+        else:
+            # the first page pins a commit-visible belief instant (§3.6)
+            evaluated_at = believed_at = belief_watermark(
+                engine=self._engine, deployment_id=deployment_id
+            )
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:

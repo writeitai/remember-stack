@@ -82,6 +82,7 @@ from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import DocumentSearchResult
 from rememberstack.model.client import EffectiveInterval
 from rememberstack.model.client import MatchingEdition
+from rememberstack.spine.effective_time import belief_watermark
 
 TRIGRAM_MIN_SIMILARITY: Final = 0.3
 """Starting word-similarity floor for the trigram name channel; to be measured."""
@@ -117,11 +118,15 @@ class DocumentSearch:
         ranked = request.query is not None
         # One transaction: the trigram threshold below is transaction-local.
         with self._engine.connect() as connection:
-            as_of = (
-                cursor.as_of
-                if cursor is not None
-                else connection.execute(text("SELECT now()")).scalar_one()
-            )
+            if cursor is not None:
+                as_of = cursor.as_of
+            elif ranked:
+                as_of = connection.execute(text("SELECT now()")).scalar_one()
+            else:
+                # The first page pins a commit-visible belief instant (§3.6).
+                as_of = belief_watermark(
+                    engine=self._engine, deployment_id=deployment_id
+                )
             # A ranked search reads current belief at its own instant; a paged
             # one pins the first call's instant as evaluation and belief (§3.6).
             time_scope = TextScope.of(
@@ -153,7 +158,13 @@ class DocumentSearch:
                     connection=connection, scope=scope, query=request.query, k=request.k
                 )
                 next_cursor = None
-                examined = tuple(pick.doc_id for pick in picks)
+                examined = tuple(pick.doc_id for pick in picks) + _touched_pending(
+                    connection=connection,
+                    scope=scope,
+                    deployment_id=deployment_id,
+                    request=request,
+                    as_of=as_of,
+                )
             documents = _describe(connection=connection, scope=scope, picks=picks)
             people = _people_matched(connection=connection, scope=scope)
             pending = _scope_pending(
@@ -213,6 +224,7 @@ class _Scope:
         judging: Judging,
         as_of: datetime,
         time_scope: TextScope,
+        probe_doc_ids: tuple[UUID, ...] | None = None,
     ) -> None:
         self.time_scope = time_scope
         self.judging = judging
@@ -251,6 +263,32 @@ class _Scope:
         ORDER BY c.doc_id, c.edition_start DESC NULLS LAST, cv.version_no DESC
       )"""
         )
+        if probe_doc_ids is not None:
+            # §3.7 probe: only the given lineages, each judged by its served
+            # reading regardless of declared periods.
+            self.parameters["probe_doc_ids"] = [str(doc_id) for doc_id in probe_doc_ids]
+            self.ctes = f"""
+    WITH judged AS (
+      SELECT d.doc_id, v.version_id, v.version_no, v.ingested_at,
+             NULL::timestamptz AS edition_start
+      FROM documents d
+      JOIN document_versions v
+        ON v.deployment_id = d.deployment_id AND v.doc_id = d.doc_id
+      WHERE d.deployment_id = :deployment_id
+        AND d.doc_id = ANY(CAST(:probe_doc_ids AS uuid[]))
+        AND d.deleted_at IS NULL
+        AND v.deleted_at IS NULL
+        AND v.ingested_at <= :as_of{_CURRENT_VERSION}
+    ),
+    matching AS (
+      SELECT j.doc_id, j.version_id, j.version_no, j.ingested_at, j.edition_start
+      FROM judged j
+      JOIN document_metadata m
+        ON m.deployment_id = :deployment_id AND m.version_id = j.version_id
+      WHERE TRUE{where}
+    )
+"""
+            return
         self.ctes = f"""
     WITH candidates AS (
       SELECT s.doc_id, s.version_id, max(lower(interval_range)) AS edition_start
@@ -417,11 +455,13 @@ def _walk(
         text(
             f"""
     WITH walk AS (
+      -- the walk key ignores later tombstones: liveness is applied only when
+      -- a candidate is judged, so deleting a version between pages cannot
+      -- move its lineage in the walk
       SELECT d.doc_id,
              (SELECT nv.ingested_at FROM document_versions nv
               WHERE nv.deployment_id = d.deployment_id
                 AND nv.doc_id = d.doc_id
-                AND nv.deleted_at IS NULL
                 AND nv.ingested_at <= :as_of
               ORDER BY nv.version_no DESC
               LIMIT 1) AS walk_at
@@ -578,6 +618,67 @@ _VERSIONS_IN_SCOPE: Final = text(
       CAST(:periodised_ids AS uuid[])
     ) AS s
     """
+)
+
+
+def _touched_pending(
+    *,
+    connection: Connection,
+    scope: _Scope,
+    deployment_id: UUID,
+    request: DocumentSearchRequest,
+    as_of: datetime,
+) -> tuple[UUID, ...]:
+    """Pending lineages a ranked query reaches through their served reading (§3.7).
+
+    Runs only when some lineage has a version in force for the window that is
+    not ready; such a lineage is excluded before ranking, so this bounded
+    second pass over just those lineages is what lets an empty answer say the
+    in-force text is still processing. Its picks never enter the results.
+    """
+    candidates = tuple(
+        connection.execute(
+            _PENDING_IN_FORCE,
+            {**scope.parameters, "limit": SCOPE_PENDING_PROBE_LINEAGES},
+        ).scalars()
+    )
+    if request.filters.doc_ids:
+        allowed = set(request.filters.doc_ids)
+        candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+    if not candidates or request.query is None:
+        return ()
+    probe = _Scope(
+        deployment_id=deployment_id,
+        filters=request.filters,
+        judging="current",
+        as_of=as_of,
+        time_scope=scope.time_scope,
+        probe_doc_ids=candidates,
+    )
+    return tuple(
+        pick.doc_id
+        for pick in _ranked(
+            connection=connection,
+            scope=probe,
+            query=request.query,
+            k=SCOPE_PENDING_MAX_DOC_IDS,
+        )
+    )
+
+
+SCOPE_PENDING_PROBE_LINEAGES: Final = 200
+"""Most pending lineages one §3.7 probe considers (a starting point to measure)."""
+
+_PENDING_IN_FORCE: Final = text(
+    f"""
+    SELECT DISTINCT s.doc_id
+    FROM document_version_scope s
+    WHERE s.deployment_id = :deployment_id
+      AND NOT s.selectable
+      AND s.in_force && {WINDOW_SQL}
+    ORDER BY s.doc_id
+    LIMIT :limit
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 
@@ -780,7 +881,7 @@ def _describe(
             connection=connection,
             deployment_id=scope.parameters["deployment_id"],
             doc_ids=tuple(pick.doc_id for pick in periodised),
-            believed_at=(scope.time_scope.believed_at or scope.time_scope.evaluated_at),
+            believed_at=scope.time_scope.believed_at,
         )
     results: list[DocumentSearchResult] = []
     for pick in picks:
@@ -864,9 +965,13 @@ def _effective(
     connection: Connection,
     deployment_id: UUID,
     doc_ids: tuple[UUID, ...],
-    believed_at: datetime,
+    believed_at: datetime | None,
 ) -> dict[UUID, tuple[EffectiveInterval, ...]]:
-    """Each version's declared in-force intervals as known at ``believed_at``."""
+    """Each version's declared in-force intervals as known at ``believed_at``.
+
+    ``None`` is current belief: every committed declaration, exactly what the
+    selection projection holds.
+    """
     by_version: dict[UUID, list[EffectiveInterval]] = {}
     for row in connection.execute(
         _EFFECTIVE_INTERVALS,
@@ -896,7 +1001,9 @@ def _scope_pending(
         return None
     pending = tuple(
         connection.execute(
-            _SCOPE_PENDING,
+            _SCOPE_PENDING
+            if scope.time_scope.believed_at is None
+            else _SCOPE_PENDING_AT,
             {**scope.parameters, "doc_ids": [str(doc_id) for doc_id in doc_ids]},
         ).scalars()
     )
@@ -919,11 +1026,30 @@ _EFFECTIVE_INTERVALS: Final = text(
     SELECT i.version_id, i.effective_from, i.effective_until, i.until_declared
     FROM memory_v1.effective_intervals(
       CAST(:deployment_id AS uuid), CAST(:doc_ids AS uuid[]),
-      CAST(:believed_at AS timestamptz)
+      coalesce(CAST(:believed_at AS timestamptz), 'infinity'::timestamptz)
     ) AS i
     ORDER BY i.version_id, i.effective_from
     """
 )
+
+_SCOPE_PENDING_AT: Final = text(
+    f"""
+    SELECT DISTINCT i.doc_id
+    FROM memory_v1.effective_intervals(
+      CAST(:deployment_id AS uuid), CAST(:doc_ids AS uuid[]),
+      CAST(:scope_believed_at AS timestamptz)
+    ) AS i
+    JOIN document_version_scope s
+      ON s.deployment_id = :deployment_id
+     AND s.version_id = i.version_id
+    WHERE NOT s.selectable
+      AND tstzrange(i.effective_from, i.effective_until, '[)') && {WINDOW_SQL}
+    ORDER BY i.doc_id
+    """  # noqa: S608 -- interpolated fragment is a module constant
+)
+"""Pending lineages of a belief-pinned page: the in-force intervals as known
+at the pinned instant (so a correction between pages cannot change them) and
+the versions' readiness now."""
 
 _SCOPE_PENDING: Final = text(
     f"""

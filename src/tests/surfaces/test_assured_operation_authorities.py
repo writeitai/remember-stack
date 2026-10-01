@@ -106,7 +106,10 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     assert "v_memory_fact_claim_live" in evidence_sql
     assert claim_in_scope(claim="evidence.claim_id") in evidence_sql
     assert "memory_v1.evidence_lineage" not in evidence_sql
-    assert "memory_v1.claims_live" in evidence_sql
+    # D140 §3.4: the live association (origin-live, or carried by a version of
+    # a periodised lineage) is proved by v_memory_fact_claim_live; the shown
+    # claim's immutable fields come from the base table
+    assert "JOIN claims AS claim" in evidence_sql
     assert "memory_v1.documents_live" in evidence_sql
     assert "relation_evidence" not in evidence_sql
     assert "observation_evidence" not in evidence_sql

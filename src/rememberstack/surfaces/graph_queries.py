@@ -7,11 +7,12 @@ so every answer is one MVCC cut and one temporal instant without snapshots.
 
 Entity traversal applies the D140 §8.1 evidence gate at ``valid_at``: an edge
 whose only support is document text not in force then is not part of the
-answer. Traversal runs as the graph role, which cannot read the evidence the
-gate needs, so the gate is evaluated by the engine over the traversal's
-candidate paths before the page is cut: a path through an ineligible edge is
-dropped and the answer is marked truncated, since the traversal's own budgets
-were spent before the gate applied.
+answer. The graph role cannot read evidence, so it is granted exactly one
+private predicate, ``rememberstack_graph_internal.relation_evidence_in_scope``,
+which the traversal helpers and the one-hop PGQ statement apply to every
+candidate edge before expansion, ordering, offset and limit, in the
+traversal's own snapshot. An ineligible edge therefore never spends a budget
+or a result slot.
 """
 
 from collections.abc import Iterator
@@ -30,8 +31,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
-from rememberstack.core.text_scope import fact_in_scope
-from rememberstack.core.text_scope import TextScope
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -44,7 +43,6 @@ from rememberstack.model import GraphPath
 from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import Truncation
-from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 
@@ -149,11 +147,6 @@ class GraphQueries:
                 return self._unknown(identifier=entity_id, kind="entity", at=evaluation)
             applied_valid = valid_at or evaluation
             applied_believed = believed_at or evaluation
-            scope = _gate_scope(
-                valid_at=applied_valid,
-                believed_at=applied_believed,
-                evaluated_at=evaluation,
-            )
             fetch = min(offset + limit + 1, DEFAULT_NEIGHBORHOOD_CAP)
             parameters: dict[str, object] = {
                 "deployment_id": self._deployment_id,
@@ -179,12 +172,6 @@ class GraphQueries:
                     parameters=parameters,
                 )
             data, status = _split_status(rows=raw)
-            data, gate_dropped = _gated_paths(
-                engine=self._engine,
-                deployment_id=self._deployment_id,
-                rows=data,
-                scope=scope,
-            )
             selected = data[:limit] if hops == 1 else data[offset : offset + limit]
             more = len(data) > limit if hops == 1 else len(data) > offset + limit
             if include_paths:
@@ -203,7 +190,7 @@ class GraphQueries:
                     deployment_id=self._deployment_id,
                     rows=selected,
                 )
-        truncated = bool(status["truncated"]) or more or gate_dropped
+        truncated = bool(status["truncated"]) or more
         if not nodes and offset == 0 and not truncated:
             return self._empty(
                 explanation=(
@@ -271,11 +258,6 @@ class GraphQueries:
                     )
             applied_valid = valid_at or evaluation
             applied_believed = believed_at or evaluation
-            scope = _gate_scope(
-                valid_at=applied_valid,
-                believed_at=applied_believed,
-                evaluated_at=evaluation,
-            )
             raw = _rows(
                 connection=connection,
                 statement=_PATH_HELPER,
@@ -294,12 +276,6 @@ class GraphQueries:
                 },
             )
             data, status = _split_status(rows=raw)
-            data, gate_dropped = _gated_paths(
-                engine=self._engine,
-                deployment_id=self._deployment_id,
-                rows=data,
-                scope=scope,
-            )
             paths = _hydrate_entity_paths(
                 connection=connection,
                 deployment_id=self._deployment_id,
@@ -307,7 +283,7 @@ class GraphQueries:
                 valid_at=applied_valid,
                 believed_at=applied_believed,
             )
-        if not paths and not bool(status["truncated"]) and not gate_dropped:
+        if not paths and not bool(status["truncated"]):
             return self._empty(
                 explanation=(
                     f"no path from {from_entity_id} to {to_entity_id} exists within "
@@ -328,9 +304,7 @@ class GraphQueries:
             paths=paths,
             edges=_unique_edges(paths=paths),
             freshness=Freshness(pg_live_ts=evaluation),
-            truncation=_status_truncation(
-                status=status, returned=len(paths), gate_dropped=gate_dropped
-            ),
+            truncation=_status_truncation(status=status, returned=len(paths)),
         )
 
     def citation_path(
@@ -649,66 +623,6 @@ def _rows(
 ) -> list[RowMapping]:
     """Execute one static graph statement and materialize mappings."""
     return list(connection.execute(text(statement), parameters).mappings())
-
-
-def _gate_scope(
-    *, valid_at: datetime, believed_at: datetime, evaluated_at: datetime
-) -> TextScope:
-    """The §8.1 evidence-gate scope of one traversal: ``at`` its valid instant.
-
-    A belief instant before the evaluation instant is evaluated from the
-    declaration ledgers, so a belief-pinned traversal sees the evidence it saw
-    then; otherwise the current-belief projection answers.
-    """
-    return TextScope.of(
-        time=AtFactTime(at=valid_at),
-        evaluated_at=evaluated_at,
-        believed_at=believed_at if believed_at < evaluated_at else None,
-    )
-
-
-def _gated_paths(
-    *, engine: Engine, deployment_id: UUID, rows: list[RowMapping], scope: TextScope
-) -> tuple[list[RowMapping], bool]:
-    """Drop traversal paths through an edge the §8.1 gate excludes.
-
-    The gate reads private evidence, so it runs on an engine connection of
-    its own rather than inside the graph role's transaction. Returns the kept
-    rows and whether any path was dropped.
-    """
-    relation_ids = list(
-        dict.fromkeys(str(value) for row in rows for value in row["relation_ids"])
-    )
-    if not relation_ids:
-        return rows, False
-    gate = fact_in_scope(
-        fact_kind="relation",
-        fact_id="candidate.relation_id",
-        pinned_belief=scope.believed_at is not None,
-    )
-    with engine.connect() as connection:
-        eligible = {
-            str(value)
-            for value in connection.execute(
-                text(
-                    "SELECT candidate.relation_id"
-                    " FROM unnest(CAST(:relation_ids AS uuid[]))"
-                    " AS candidate(relation_id)"
-                    f" WHERE {gate}"
-                ),
-                {
-                    "deployment_id": deployment_id,
-                    "relation_ids": relation_ids,
-                    **scope.parameters(),
-                },
-            ).scalars()
-        }
-    kept = [
-        row
-        for row in rows
-        if all(str(value) in eligible for value in row["relation_ids"])
-    ]
-    return kept, len(kept) < len(rows)
 
 
 def _shallow_neighborhood_rows(
@@ -1063,14 +977,9 @@ def _unique_nodes(*, paths: tuple[GraphPath, ...]) -> tuple[GraphNode, ...]:
     return tuple(unique.values())
 
 
-def _status_truncation(
-    *, status: RowMapping, returned: int, gate_dropped: bool = False
-) -> Truncation:
-    """Map the helper terminal row to the envelope disclosure.
-
-    ``gate_dropped`` marks paths removed by the evidence gate after traversal.
-    """
-    truncated = bool(status["truncated"]) or gate_dropped
+def _status_truncation(*, status: RowMapping, returned: int) -> Truncation:
+    """Map the helper terminal row to the envelope disclosure."""
+    truncated = bool(status["truncated"])
     return Truncation(
         truncated=truncated,
         returned=returned,

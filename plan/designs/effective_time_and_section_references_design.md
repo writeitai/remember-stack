@@ -843,8 +843,18 @@ withdrawn) would be returned by `facts_context` as current, while chunk search c
 excludes that edition. The gate closes this without touching fact windows:
 
 - A supporting claim is **in scope** for a time scope when it has an occurrence in a version
-  that the scope selects (§3.2) **or** an occurrence in a version of an undeclared lineage
-  (whose evidence is not time-restricted by D140).
+  that the scope selects (§3.2) **or** an occurrence in a live version of an undeclared lineage
+  (whose evidence is not time-restricted by D140). The occurrence must lie in its version's
+  **current reading** (the D65 current representation): an occurrence left behind in a
+  replaced reading, or only in a deleted version, is not evidence.
+- **A fact with no supporting evidence at all** — D54's zero-support case, typically a fact
+  that only contradicting claims still mention, which D54 *flags* rather than hides — passes
+  the gate when it has an in-scope occurrence of **either** stance. Requiring support would
+  hide such facts even in a corpus with no declared periods, contrary to "undeclared lineages
+  read as before"; judging them by their evidence of either stance keeps that parity and still
+  restricts them in time where periods exist. A fact that *has* supporting evidence needs an
+  in-scope supporting occurrence; support that survives only in deleted versions or replaced
+  readings does not count, so there is no "no live support, therefore eligible" path.
 - Fact reads under a time scope — `facts_context`, `combined_context`, relation/observation
   lookups, graph neighbourhood and path expansion — return a fact only if it passes its own
   D118 window predicate **and** has at least one in-scope supporting claim. The returned
