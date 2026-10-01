@@ -48,6 +48,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic import model_validator
 from pydantic import SecretBytes
+from pydantic import ValidationError
 from sqlalchemy.exc import InternalError
 from sqlalchemy.exc import OperationalError
 from starlette.concurrency import run_in_threadpool
@@ -64,6 +65,7 @@ from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsRequest
@@ -111,6 +113,10 @@ from rememberstack.model.auth import PerimeterScope
 from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
+from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
+from rememberstack.model.client import SECTION_HISTORY_MAX_K
+from rememberstack.model.client import SectionHistoryPage
+from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -260,6 +266,16 @@ class DocumentSearchPort(Protocol):
     def search_documents(
         self, *, deployment_id: UUID, request: DocumentSearchRequest
     ) -> DocumentSearchPage: ...
+
+
+class SectionHistoryPort(Protocol):
+    """Follow one keyed section across a lineage's versions (D140 §6.2)."""
+
+    def section_history(
+        self, *, deployment_id: UUID, request: SectionHistoryRequest
+    ) -> SectionHistoryPage:
+        """Read one page, or raise ``DocumentNotFoundError`` / ``ValueError``."""
+        ...
 
 
 class DocumentInventoryPort(Protocol):
@@ -455,6 +471,7 @@ def build_api(
     pipeline_readiness: PipelineReadinessPort | None = None,
     documents: DocumentInventoryPort | None = None,
     document_search: DocumentSearchPort | None = None,
+    section_history: SectionHistoryPort | None = None,
     deletion: DocumentDeletionPort | None = None,
     effective_time: EffectiveTimePort | None = None,
     graph: GraphQueryPort | None = None,
@@ -471,7 +488,9 @@ def build_api(
     `DELETE /documents/{doc_id}` (D135); `effective_time` adds
     `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` and
     `DELETE /documents/{doc_id}/effective-periods` (D140); `document_search` adds
-    `POST /documents/search` (D134); `auth` gates every request
+    `POST /documents/search` (D134); `section_history` adds
+    `GET /documents/{doc_id}/sections/{section_key}/history` (D140);
+    `auth` gates every request
     on one perimeter credential; `direct_admission` enforces the per-credential
     and per-deployment rate and in-flight limits after authentication and
     before the spend lease and routing (D136 §7.6); and `spend_lease` holds
@@ -707,6 +726,10 @@ def build_api(
         _mount_document_search(
             app=app, search=document_search, deployment_id=deployment_id
         )
+    if section_history is not None:
+        _mount_section_history(
+            app=app, history=section_history, deployment_id=deployment_id
+        )
     if deletion is not None:
         _mount_document_deletion(
             app=app, deletion=deletion, deployment_id=deployment_id
@@ -729,6 +752,7 @@ def build_api(
                 pipeline_readiness=pipeline_readiness is not None,
                 deletion=deletion is not None,
                 document_search=document_search is not None,
+                section_history=section_history is not None,
             ),
         )
 
@@ -892,6 +916,7 @@ def _served_tools(
     pipeline_readiness: bool,
     deletion: bool,
     document_search: bool,
+    section_history: bool,
 ) -> dict[str, int]:
     """Catalogue tool name → ``tool_version`` for every tool this API serves.
 
@@ -908,6 +933,8 @@ def _served_tools(
         names.append(DELETE_DOCUMENT_TOOL_NAME)
     if document_search:
         names.append(SEARCH_DOCUMENTS_TOOL_NAME)
+    if section_history:
+        names.append(SECTION_HISTORY_TOOL_NAME)
     if operations:
         names.extend(OPERATION_TOOL_NAMES)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
@@ -1316,6 +1343,72 @@ def _mount_document_search(
         """
         try:
             return search.search_documents(deployment_id=deployment_id, request=body)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _mount_section_history(
+    *, app: FastAPI, history: SectionHistoryPort, deployment_id: UUID
+) -> None:
+    """Expose ``section_history`` (D140 §6.2). A read."""
+
+    @app.get(
+        "/documents/{doc_id}/sections/{section_key:path}/history",
+        response_model=SectionHistoryPage,
+        responses={
+            400: {"description": "cursor is malformed or belongs to another call"},
+            404: {"description": "document_not_found"},
+            422: {"description": "invalid section key or time scope"},
+        },
+    )
+    def section_history(
+        doc_id: UUID,
+        section_key: str,
+        mode: Literal["current", "at", "overlap", "history"] = "history",
+        at: datetime | None = None,
+        from_: Annotated[datetime | None, Query(alias="from")] = None,
+        to: datetime | None = None,
+        k: Annotated[
+            int, Query(ge=1, le=SECTION_HISTORY_MAX_K)
+        ] = SECTION_HISTORY_DEFAULT_K,
+        cursor: Annotated[str | None, Query(min_length=1)] = None,
+    ) -> SectionHistoryPage:
+        """One section key across the document's versions.
+
+        One row per version the time scope selects (``mode``, default
+        ``history``; ``at`` for ``mode=at``, ``from``/``to`` for
+        ``mode=overlap``): the version, its in-force intervals, and the
+        section it holds under the key with ``changed``/``own_changed``
+        against the previous row that held it — or ``absent``,
+        ``not_indexed`` or ``processing``. Ordered by effective start for a
+        periodised document, else by version number; ``cursor`` pages and
+        pins the evaluation and belief instants.
+        """
+        time: dict[str, object] = {"mode": mode}
+        if mode == "at":
+            time["at"] = at
+        elif mode == "overlap":
+            time["from"] = from_
+            time["to"] = to
+        try:
+            request = SectionHistoryRequest.model_validate(
+                {
+                    "doc_id": doc_id,
+                    "section_key": section_key,
+                    "time": time,
+                    "k": k,
+                    "cursor": cursor,
+                }
+            )
+        except ValidationError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=error.errors(include_url=False, include_context=False),
+            ) from error
+        try:
+            return history.section_history(deployment_id=deployment_id, request=request)
+        except DocumentNotFoundError as error:
+            raise HTTPException(status_code=404, detail="document_not_found") from error
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -2151,6 +2244,15 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         return ("recipe", parts[1])
     if not all(parts):
         return None
+    if (
+        method == "GET"
+        and len(parts) >= 5
+        and parts[0] == "documents"
+        and parts[2] == "sections"
+        and parts[-1] == "history"
+    ):
+        # /documents/{doc_id}/sections/{section_key}/history (keys may hold '/')
+        return ("search", None)
     if method == "GET" and len(parts) == 3:
         # /chunks/{id}/adjacent, /hydrate/relation/{id}, /transcript/relation/{id}
         if parts[0] == "chunks" and parts[2] == "adjacent":

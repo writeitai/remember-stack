@@ -48,6 +48,8 @@ from rememberstack.spine.resolver import ResolutionContendedError
 from rememberstack.spine.resolver import RESOLVER_VERSION
 from rememberstack.spine.resolver import seed_resolver_version
 from rememberstack.spine.review import ReviewQueue
+from rememberstack.spine.section_history import SectionHistory
+from rememberstack.spine.section_index_backfill import SectionIndexBackfill
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.spine.sync import SyncCatalog
@@ -66,6 +68,8 @@ __all__ = (
     "ADJUDICATOR_VERSION",
     "CascadeResolver",
     "EntityProfileRefresher",
+    "SectionHistory",
+    "SectionIndexBackfill",
     "SupersessionAdjudicator",
     "SyncCatalog",
     "FactCatalog",

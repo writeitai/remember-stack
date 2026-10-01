@@ -35,6 +35,7 @@ from remember.models import DocumentSearchRequest
 from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
+from remember.models import EffectiveInterval
 from remember.models import EffectivePeriodInput
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
@@ -44,6 +45,12 @@ from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import ReadTime
+from remember.models import SectionAmendment
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
+from remember.models import SectionHistoryRow
+from remember.models import SectionHistorySection
 from remember.models import TemporalMatch
 from remember.models import ToolDescriptor
 from remember.models import VersionPipelineReadiness
@@ -73,6 +80,13 @@ __all__ = (
     "DocumentSearchPage",
     "DocumentSearchRequest",
     "DocumentSearchResult",
+    "ReadTime",
+    "SectionHistoryPage",
+    "SectionHistoryRequest",
+    "SectionHistoryRow",
+    "SectionHistorySection",
+    "SectionAmendment",
+    "EffectiveInterval",
     "DocumentSummary",
     "DocumentVersionSummary",
     "EffectivePeriodInput",

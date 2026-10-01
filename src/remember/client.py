@@ -60,11 +60,16 @@ from remember.models import EffectivePeriodsRequest
 from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
+from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import ReadTime
 from remember.models import SearchRequest
+from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
@@ -960,6 +965,57 @@ class MemoryClient:
                 json_body=request.model_dump(mode="json", exclude_defaults=True),
             ),
             endpoint="POST /documents/search",
+        )
+
+    def section_history(
+        self,
+        *,
+        doc_id: UUID | str,
+        section_key: str,
+        time: ReadTime | None = None,
+        k: int = SECTION_HISTORY_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> SectionHistoryPage:
+        """Follow one keyed section across a document's versions (D140 §6.2).
+
+        ``time`` selects the versions (default: history). Each row is a
+        version with its in-force intervals and the section it holds under
+        ``section_key`` — or ``absent``, ``not_indexed`` or ``processing``.
+        An unknown or deleted ``doc_id`` raises ``MemoryApiError`` with
+        ``status_code`` 404.
+        """
+        return self.section_history_request(
+            request=SectionHistoryRequest(
+                doc_id=UUID(str(doc_id)),
+                section_key=section_key,
+                time=time if time is not None else HistoryReadTime(),
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def section_history_request(
+        self, *, request: SectionHistoryRequest
+    ) -> SectionHistoryPage:
+        """Send one prepared :class:`SectionHistoryRequest`."""
+        time = request.time
+        params: dict[str, str | int] = {"mode": time.mode, "k": request.k}
+        if time.mode == "at":
+            params["at"] = time.at.isoformat()
+        elif time.mode == "overlap":
+            params["from"] = time.from_.isoformat()
+            params["to"] = time.to.isoformat()
+        if request.cursor is not None:
+            params["cursor"] = request.cursor
+        key = quote(request.section_key, safe="")
+        return _validated(
+            SectionHistoryPage,
+            self._json(
+                "GET",
+                f"/documents/{request.doc_id}/sections/{key}/history",
+                params=params,
+            ),
+            endpoint="GET /documents/{doc_id}/sections/{section_key}/history",
         )
 
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:

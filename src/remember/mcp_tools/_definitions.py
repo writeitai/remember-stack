@@ -23,6 +23,7 @@ PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
+SECTION_HISTORY_TOOL_NAME: Final = "section_history"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -192,6 +193,25 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     " guessing. Without query, results are newest first and cursor pages them."
 )
 
+_SECTION_HISTORY_DESCRIPTION: Final = (
+    "Follow one section of a document across its versions. A section key is"
+    " the stable id a heading carries in the source ({#per-diem} in"
+    ' "## Per-diem allowance {#per-diem}"). Returns one row per version the'
+    " time scope selects (default time: history): version_id, version_no,"
+    " version_key, the version's in-force intervals (effective), and status."
+    " status=present carries the section: title, own_content_hash (its own"
+    " text), subtree_content_hash (including subsections), changed and"
+    " own_changed against the previous row that held the key (null for the"
+    " first), and first_chunk_ids to read it. status=absent means that"
+    " version has no such section (removed); not_indexed means the version"
+    " has not been indexed for keys yet, so absence is unknown; processing"
+    " means the version is not readable yet. Rows are ordered by effective"
+    " start when the document declares effective periods (periodised=true),"
+    " otherwise by version number. The first page also lists amendments:"
+    " live references of kind amends that target this section, with"
+    " change_effective_from and change_date_known. Page with cursor."
+)
+
 _DATE_TIME: Final[dict[str, object]] = {
     "type": "string",
     "format": "date-time",
@@ -237,6 +257,71 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "type": "string",
             "minLength": 1,
             "description": "The previous page's cursor; only without query.",
+        },
+    },
+}
+
+_SECTION_HISTORY_TIME_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "default": {"mode": "history"},
+    "description": (
+        "Which versions: history (default, every version in force up to"
+        " now), current, at an instant, or overlap a window."
+    ),
+    "oneOf": [
+        {
+            "properties": {"mode": {"const": "current"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "at"},
+                "at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "at"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "overlap"},
+                "from": {"type": "string", "format": "date-time"},
+                "to": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "from", "to"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {"mode": {"const": "history"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    ],
+}
+
+_SECTION_HISTORY_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id", "section_key"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id).",
+        },
+        "section_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "description": "The section key, without the leading #.",
+        },
+        "time": _SECTION_HISTORY_TIME_SCHEMA,
+        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The previous page's cursor.",
         },
     },
 }
@@ -560,6 +645,14 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         permission="memory:read",
         tool_version=1,
         http_route="POST /documents/search",
+    ),
+    ToolDefinition(
+        name=SECTION_HISTORY_TOOL_NAME,
+        description=_SECTION_HISTORY_DESCRIPTION,
+        input_schema=_SECTION_HISTORY_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /documents/{doc_id}/sections/{section_key}/history",
     ),
     ToolDefinition(
         name="resolve_entity",

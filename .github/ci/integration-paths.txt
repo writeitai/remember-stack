@@ -70,3 +70,4 @@ src/tests/spine/test_d122_e2.py
 src/tests/spine/test_perimeter_state.py
 src/tests/spine/test_d140_effective_time.py
 src/tests/spine/test_d140_migration.py
+src/tests/spine/test_section_history.py

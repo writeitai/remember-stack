@@ -28,8 +28,11 @@ from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 from rememberstack.model import DeploymentBuildInfo
 from rememberstack.model.auth import PerimeterScope
+from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.spine.assured_operations import CANONICAL_OPERATIONS
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.mcp import OperationMcpServer
@@ -71,6 +74,7 @@ def test_catalogue_lists_exactly_the_memory_tools() -> None:
         "pipeline_readiness",
         "delete_document",
         "search_documents",
+        "section_history",
         *OPERATION_TOOL_NAMES,
         ADJACENT_CHUNKS_TOOL_NAME,
         *OPEN_QUERY_TOOL_NAMES,
@@ -285,6 +289,7 @@ def test_deployment_reports_exactly_the_composed_tools() -> None:
         pipeline_readiness=MagicMock(),
         deletion=MagicMock(),
         document_search=MagicMock(),
+        section_history=MagicMock(),
     )
     assert everything == {
         definition.name: definition.tool_version for definition in memory_tools()
@@ -376,3 +381,46 @@ def test_engine_mcp_offers_search_documents_only_when_composed() -> None:
     bad = server.call_tool(name="search_documents", arguments={"cursor": "zz"})
     assert bad["isError"] is True
     assert "cursor is malformed" in str(bad["content"])
+
+
+def test_engine_mcp_offers_section_history_only_when_composed() -> None:
+    """The engine lists and answers section_history through its port (D140)."""
+    surface = MagicMock()
+    surface.deployment_id = _DEPLOYMENT
+    without = OperationMcpServer(surface=surface)
+    names = [entry["name"] for entry in without.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert "section_history" not in names
+    refused = without.call_tool(name="section_history", arguments={})
+    assert "tool_not_composed" in str(refused["content"])
+
+    doc_id = UUID("75000000-0000-0000-0000-000000000001")
+    history = MagicMock()
+    history.section_history.return_value = SectionHistoryPage(
+        doc_id=doc_id,
+        section_key="per-diem",
+        periodised=False,
+        rows=(),
+        evaluated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        believed_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    server = OperationMcpServer(surface=surface, section_history=history)
+    names = [entry["name"] for entry in server.list_tools()["tools"]]  # type: ignore[union-attr]
+    assert names[0] == "section_history"
+    result = server.call_tool(
+        name="section_history",
+        arguments={"doc_id": str(doc_id), "section_key": "per-diem", "k": 3},
+    )
+    assert result["isError"] is False
+    call = history.section_history.call_args.kwargs
+    assert call["deployment_id"] == _DEPLOYMENT
+    assert call["request"] == SectionHistoryRequest(
+        doc_id=doc_id, section_key="per-diem", k=3
+    )
+
+    history.section_history.side_effect = DocumentNotFoundError(doc_id)
+    missing = server.call_tool(
+        name="section_history",
+        arguments={"doc_id": str(doc_id), "section_key": "per-diem"},
+    )
+    assert missing["isError"] is True
+    assert "document_not_found" in str(missing["content"])

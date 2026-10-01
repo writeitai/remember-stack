@@ -921,6 +921,19 @@ class SelfHostProfile:
             _logger.exception(
                 "document binding rebuild failed; exact document-local T0 remains disabled"
             )
+        from rememberstack.spine.section_index_backfill import (  # noqa: PLC0415
+            SectionIndexBackfill,
+        )
+
+        # D140 §4.2: sections that predate section keys get their key and
+        # content hashes from the stored block grids. Idempotent and model-free;
+        # until it finishes, section_history reports those versions not_indexed.
+        try:
+            SectionIndexBackfill(
+                engine=self._engine, artifact_store=self._artifact_store
+            ).run(deployment_id=self._settings.deployment_id)
+        except Exception:  # noqa: BLE001 — setup completes; readers see not_indexed
+            _logger.exception("section index backfill failed; rerun setup to resume")
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
         from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
@@ -1009,6 +1022,7 @@ class SelfHostProfile:
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine import SectionHistory
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
@@ -1145,6 +1159,7 @@ class SelfHostProfile:
             ),
             documents=DocumentInventory(engine=self._engine),
             document_search=DocumentSearch(engine=self._engine),
+            section_history=SectionHistory(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,

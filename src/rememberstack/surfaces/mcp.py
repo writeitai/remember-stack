@@ -28,6 +28,7 @@ from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
+from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
 from remember.mcp_tools import map_error
@@ -37,6 +38,7 @@ from remember.mcp_tools import OPERATION_TOOL_NAMES
 from remember.mcp_tools import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
@@ -47,6 +49,8 @@ from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import PipelineReadinessReport
 from rememberstack.model.client import ReadinessRequirements
+from rememberstack.model.client import SectionHistoryPage
+from rememberstack.model.client import SectionHistoryRequest
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
@@ -54,6 +58,7 @@ from rememberstack.surfaces.http_api import DocumentDeletionPort
 from rememberstack.surfaces.http_api import DocumentSearchPort
 from rememberstack.surfaces.http_api import IngestPort
 from rememberstack.surfaces.http_api import PipelineReadinessPort
+from rememberstack.surfaces.http_api import SectionHistoryPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
@@ -170,6 +175,25 @@ class _LocalDocumentSearchBackend:
             raise _BadSearchRequest(str(error)) from error
 
 
+class _LocalSectionHistoryBackend:
+    """Adapt the in-process section history port to the shared tool (D140)."""
+
+    def __init__(self, *, history: SectionHistoryPort, deployment_id: UUID) -> None:
+        self._history = history
+        self._deployment_id = deployment_id
+
+    def section_history(self, *, request: SectionHistoryRequest) -> SectionHistoryPage:
+        """Read through the composed port with the HTTP route's refusal shapes."""
+        try:
+            return self._history.section_history(
+                deployment_id=self._deployment_id, request=request
+            )
+        except DocumentNotFoundError as error:
+            raise _DocumentNotFound() from error
+        except ValueError as error:
+            raise _BadSearchRequest(str(error)) from error
+
+
 class _BadSearchRequest(Exception):
     """The HTTP-shaped refusal of a malformed cursor."""
 
@@ -206,6 +230,7 @@ class OperationMcpServer:
         pipeline_readiness: PipelineReadinessPort | None = None,
         deletion: DocumentDeletionPort | None = None,
         document_search: DocumentSearchPort | None = None,
+        section_history: SectionHistoryPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -215,7 +240,8 @@ class OperationMcpServer:
         port alone is refused so tools/list never advertises a half-broken pair.
         Operation-only compositions omit the write tools (O2).
         `delete_document` is advertised only when `deletion` is composed, and
-        `search_documents` only when `document_search` is.
+        `search_documents` only when `document_search` is, and
+        `section_history` only when `section_history` is.
         """
         if open_query is not None and open_query.deployment_id != surface.deployment_id:
             raise ValueError(
@@ -250,6 +276,13 @@ class OperationMcpServer:
                 search=document_search, deployment_id=surface.deployment_id
             )
         )
+        self._history_backend: _LocalSectionHistoryBackend | None = (
+            None
+            if section_history is None
+            else _LocalSectionHistoryBackend(
+                history=section_history, deployment_id=surface.deployment_id
+            )
+        )
 
     def list_tools(self) -> dict[str, object]:
         """List the composed catalogue tools, in catalogue order.
@@ -269,6 +302,8 @@ class OperationMcpServer:
             names.append(DELETE_DOCUMENT_TOOL_NAME)
         if self._search_backend is not None:
             names.append(SEARCH_DOCUMENTS_TOOL_NAME)
+        if self._history_backend is not None:
+            names.append(SECTION_HISTORY_TOOL_NAME)
         names.extend(OPERATION_TOOL_NAMES)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
@@ -298,6 +333,10 @@ class OperationMcpServer:
         if name == SEARCH_DOCUMENTS_TOOL_NAME:
             return handle_search_documents_tool(
                 arguments=arguments, backend=self._search_backend
+            )
+        if name == SECTION_HISTORY_TOOL_NAME:
+            return handle_section_history_tool(
+                arguments=arguments, backend=self._history_backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:
             return handle_memory_write_tool(
