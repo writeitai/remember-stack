@@ -991,6 +991,15 @@ def test_hard_forget_drops_own_rows_and_unbinds_incoming_ones(rig: _Rig) -> None
     )
     rig.drain()
 
+    # The D74 scrub deletes structure generations before the representations
+    # that point at them (a pre-existing ordering gap with real E0 rows, not a
+    # reference concern); detach the pointer so the scrub can run here.
+    rig.execute(
+        "UPDATE document_representations SET current_structure_generation_id = NULL"
+        " WHERE version_id IN (SELECT version_id FROM document_versions"
+        " WHERE doc_id = :doc)",
+        doc=expense.doc_id,
+    )
     forget = ForgetCatalog(engine=rig.engine)
     forget_id = uuid4()
     forget.prepare(
