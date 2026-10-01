@@ -1,18 +1,27 @@
 export const metadata = {
   title: "Ingest, readiness and documents",
-  description: "The routes that add a document, report how far its processing has got, list what the deployment holds, and delete a document.",
+  description: "The routes that add a document, report how far its processing has got, list, find and delete documents, declare when versions are in force, and supply a version's references.",
 };
 
 # Ingest, readiness and documents
 
 <AppliesTo products={["remember.dev", "self-hosted"]} />
 
-Five routes cover the write side of memory. `POST /ingest` adds one file.
+These routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
 document first. `POST /documents/search` finds documents by name, metadata
 and text. `DELETE /documents/{doc_id}` removes a document from the
 memory.
+
+Four more routes describe versions after ingest.
+`PUT /documents/{doc_id}/versions/{version_id}/effective-periods` declares
+when a version's text is in force, and
+`DELETE /documents/{doc_id}/effective-periods` withdraws every such
+declaration of a document. `PUT /documents/{doc_id}/versions/{version_id}/references`
+supplies the references a version makes, and the `GET` of the same path
+reports what became of them. Reading sections and references across versions
+is on [Section history and references](/docs/reference/http-api/sections-and-references).
 
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](/docs/reference/http-api).
@@ -39,6 +48,9 @@ attribution, which travels in headers so that it never lands in access logs.
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
 | `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
+| `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
+| `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
+| `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -72,6 +84,51 @@ A MIME type the deployment has no converter for is still accepted. Its
 conversion waits until a converter route for that type exists, and the
 response says so with `"parked": "no_route"`. See
 [File formats and converters](/docs/self-hosting/converters).
+
+### Versions in force
+
+`effective_from` and `effective_until` declare when this version's text is
+in force, according to whoever publishes it: a policy edition, a price list,
+a contract version. The period is half-open: `effective_from` is included,
+`effective_until` is not. Without `effective_until`, the period ends where the
+next declared start of the same document begins, so declaring a new edition
+ends its predecessor without a second call. Periods are declared by you; the
+engine never infers them. They are a separate clock from `source_modified_at`;
+see [Time](/docs/concepts/time#when-a-version-is-in-force).
+
+- Periods need a source identity and a `snapshot` document. A `living`
+  document refuses them with `422` `effective_time_requires_snapshot`, because
+  there the newest version is by definition the one that applies.
+- The period is recorded on the version this call created, or, when the bytes
+  match the latest version and nothing is created, on that latest version.
+  Declaring a period never reprocesses anything.
+- The same period declared again is a no-op. The same start with a different
+  end replaces the earlier end.
+- A start that another version of the document already declares is refused
+  with `409` `effective_period_conflict`, and nothing is stored.
+
+Once a document has a declared period, every time-scoped read selects its
+versions by period instead of by "newest processed version"; see
+[Read a document as of a date](/docs/guides/versions-in-force). Change or
+withdraw periods later with
+[`PUT …/effective-periods`](#put-documentsdoc_idversionsversion_ideffective-periods).
+
+`version_key` names a version permanently, so that a
+[pinned reference](#put-documentsdoc_idversionsversion_idreferences) can
+point at exactly that edition. One version has at most one key, and a key
+names one version for good, even after that version is deleted:
+
+- a key the document has not used yet always creates a new version, even when
+  the bytes equal the latest version's (two editions with identical text are
+  two versions);
+- the key of the latest version, sent again with the same bytes, is a retry:
+  `"created": false`;
+- any other use of an existing key (different bytes, or the key of an older
+  version) is refused with `409` `version_key_conflict`, naming the version
+  that owns the key. To put an older edition back in force, declare a period
+  on that version instead.
+
+Without `version_key`, ingest behaves as described above.
 
 ### What the first ingest fixes
 
@@ -136,11 +193,13 @@ does not change it.
   "mime": "text/markdown",
   "title": "Q3 plan",
   "versioning_mode": "snapshot",
-  "parked": null
+  "parked": null,
+  "version_key": null
 }
 ```
 
-`200` means the version is stored. `"parked": null` means only
+`200` means the version is stored. `version_key` is the version's key, or
+`null` when it has none. `"parked": null` means only
 that it is not parked for `no_route`; poll [`POST /readiness`](#post-readiness)
 with the `version_id` for its processing state. `"parked": "no_route"` means
 its conversion is parked waiting for a conversion route for the `mime`: the
@@ -155,9 +214,13 @@ for it; it will not become ready on its own.
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
+| `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
+| `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
-| `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | `source_modified_at`, `source_version_ref` or `versioning_mode=living` without a source identity. |
-| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
+| `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
+| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
+| `422` | `effective_until requires an earlier effective_from` | `effective_until` without `effective_from`, or not later than it. |
+| `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | A period with `versioning_mode=living`, or for a document that was first ingested as `living`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
@@ -417,6 +480,7 @@ A [`DocumentSearchRequest`](/docs/reference/result-types#documentsearchrequest):
 | `query` | string | no | | 1 to 4,096 characters. Words from the file name, title, source path or text. |
 | `filters` | object | no | `{}` | See below. Every filter you give must hold. |
 | `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
+| `time` | object | no | `{"mode": "current"}` | For documents with declared effective periods: which editions are candidates. `{"mode": "current"}`, `{"mode": "at", "at": …}`, `{"mode": "overlap", "from": …, "to": …}` or `{"mode": "history"}`; see [Editions in force](#editions-in-force). |
 | `k` | integer | no | `20` | 1 to 200 results. |
 | `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
 
@@ -450,7 +514,11 @@ documents and deleted versions never match.
 Each result's `p3_path` is the document's stable path in the
 [filesystem view](/docs/self-hosting/filesystem-views), relative to its root:
 `documents/<doc_id>`. It exists there only when the deployment publishes the
-filesystem view; `source_path` is where the file came from instead.
+filesystem view; `source_path` is where the file came from instead. That
+path always shows the document's served version (its newest processed one),
+so `p3_path` is `null`, and `served_version` is `false`, when the result
+describes another version. Open the described version with `version_id` and
+`representation_id` instead.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -474,6 +542,34 @@ is given, `people_matched` lists each distinct person it matched, with the
 number of matching documents, so you can narrow an ambiguous filter (for
 example to an address) instead of guessing.
 
+### Editions in force
+
+For a document with declared [effective periods](#versions-in-force), `time`
+decides which of its versions are candidates: the ones in force now
+(`current`, the default), at an instant (`at`), at any point of a window
+(`overlap`, both ends included) or at any point up to now (`history`). An
+edition that is not in force for `time` never matches, even if it is the
+newest. Documents without declared periods are judged exactly as described
+above, whatever `time` says.
+
+- With `versions: current`, only the candidate whose period starts latest is
+  judged, and the result describes it.
+- With `versions: all`, any candidate may match, and the result describes the
+  matching candidate whose period starts latest.
+
+Each such result carries `effective` (the described version's in-force
+intervals) and `matching_editions`: every candidate that matched, by period
+start, each with `version_id`, `version_no`, `version_key`,
+`representation_id` and `effective`, so you can open any of them without
+another call. When two editions are in force at once (overlapping periods),
+both are candidates; none is chosen silently.
+
+`scope_pending` names the documents this search examined whose edition in
+force for `time` is still being processed, at most 50 ids with a `count`, so
+"nothing is in force" can be told from "the edition in force is not ready
+yet". A search with a `query` examines only the documents it returns; a
+search without one examines every document it walked for the page.
+
 ### Order and paging
 
 With `query`, results are ranked, and there is no next page: `cursor` is
@@ -485,8 +581,13 @@ range is a filter, not the order. Pass `cursor` back for the next page. The
 first page fixes an instant, returned as `as_of`, and every later page judges
 each document by its newest version ingested by then. A document added, a
 version promoted to current, or a date filled in by processing while you
-page therefore neither moves nor repeats a row. Start a new search to see
-what arrived since.
+page therefore neither moves nor repeats a row. The same instant is used to
+read effective periods, so a period declared or corrected while you page
+does not move a row either. Start a new search to see what arrived since.
+
+A page stops after walking ten times `k` documents. It can then hold fewer
+than `k` results and still return a `cursor`: keep paging until `cursor` is
+`null`.
 
 ### Response
 
@@ -505,6 +606,10 @@ what arrived since.
       "title": null,
       "source_path": "finance/2025",
       "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "served_version": true,
+      "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
+      "effective": [],
+      "matching_editions": [],
       "family": "spreadsheet",
       "created_at": null,
       "modified_at": null,
@@ -521,7 +626,8 @@ what arrived since.
   ],
   "cursor": null,
   "as_of": "2026-09-24T10:12:03.117Z",
-  "people_matched": []
+  "people_matched": [],
+  "scope_pending": null
 }
 ```
 
@@ -656,4 +762,365 @@ try:
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+## PUT /documents/\{doc_id\}/versions/\{version_id\}/effective-periods
+
+Replace the periods during which one version's text is in force. Use it to
+declare periods after ingest, to correct them, or to withdraw a version from
+force by giving it an end.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `periods` | array of objects | yes | 0 to 1,000 items, no two with the same `effective_from`. |
+| `periods[].effective_from` | date-time | yes | UTC (`Z` or `+00:00`). Included. |
+| `periods[].effective_until` | date-time | no | UTC. Excluded; later than `effective_from`. Omitted: the period lasts until the next declared start in the document. |
+
+Unknown fields are rejected (`422`).
+
+### What it does
+
+The body is the version's complete set. Periods already declared with the
+same start and end are kept; the version's other periods are withdrawn, and
+the new ones are declared, in one step. Nothing is reprocessed.
+
+- **An empty set** leaves the version with no period. The document still has
+  declared effective time, so that version is not in force at any
+  instant; it does not become "current" again.
+- **A start that another version already declares** is refused with `409`,
+  and nothing changes.
+- **A `living` document** is refused with `422`.
+
+Declarations are kept as a history: a replaced or withdrawn period is marked
+with the instant it stopped being believed, never deleted. A read that pages
+with a cursor keeps seeing the periods as they were when it started.
+
+### Response
+
+`200` with an [`EffectivePeriodsSet`](/docs/reference/result-types#effectiveperiodsset):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+  "periods": [
+    {
+      "period_id": "5e2d9c1b-0a3f-4b7e-8d6c-1f2e3a4b5c6d",
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_until": "2027-06-30T00:00:00Z",
+      "declared_at": "2027-06-30T09:12:44.081Z"
+    }
+  ],
+  "declared": 1,
+  "retracted": 1
+}
+```
+
+`periods` lists the version's periods after the call, as declared (an
+`effective_until` of `null` means "until the next declared start").
+`declared` and `retracted` count what this call changed.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+| `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
+| `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
+| `422` | validation list | A timestamp without a zero UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
+
+### Example
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/effective-periods" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"periods": [{"effective_from": "2026-01-01T00:00:00Z", "effective_until": "2027-06-30T00:00:00Z"}]}'
+```
+
+```python
+from datetime import UTC, datetime
+
+from remember import Client, EffectivePeriodInput
+
+memory = Client()
+memory.set_effective_periods(
+    doc_id=doc_id,
+    version_id=version_id,
+    periods=[
+        EffectivePeriodInput(
+            effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+            effective_until=datetime(2027, 6, 30, tzinfo=UTC),
+        )
+    ],
+)
+```
+
+## DELETE /documents/\{doc_id\}/effective-periods
+
+Withdraw every declared period of a document and return it to "the newest
+processed version is the current one". This is the only way back: a document
+with declared periods keeps reading by period, even with none left, until you
+call it.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+
+There is no body.
+
+### Response
+
+`200` with an [`EffectiveTimeCleared`](/docs/reference/result-types#effectivetimecleared):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "retracted": 2,
+  "cleared_at": "2027-07-01T08:00:00.412Z"
+}
+```
+
+`retracted` counts the periods withdrawn. `cleared_at` is the instant the
+document left effective time; it is `null` when the document never had
+declared periods, and then nothing changed. The change is recorded, so a
+paged read that started earlier still sees the periods it started with.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `422` | validation list | `doc_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/documents/$DOC_ID/effective-periods" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+cleared = memory.clear_effective_time(doc_id=doc_id)
+```
+
+## PUT /documents/\{doc_id\}/versions/\{version_id\}/references
+
+Supply the references one version makes: which sections of which other
+documents it points at, and how. The body replaces the version's complete
+supplied set.
+
+**Scope:** `write`.<Cloud> **Spend hold (remember.dev):** none.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+| `Content-Type` | header | | no | `application/x-ndjson` by convention; the body is read as NDJSON whatever it says. |
+
+### Request body
+
+NDJSON: one JSON object per line, one reference per object, at most 64 MiB
+(67,108,864 bytes) in all. Blank lines are skipped; an empty body is a set
+with no references. Each object:
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `kind` | string | yes | `refers_to`, `amends`, `implements`, `cites`, `links_to`, `attaches` or `replies_to`. See [Reference kinds](#reference-kinds). |
+| `from_section_key` | string | no | The [section key](/docs/concepts/documents-and-sources#section-keys) in this version the reference is made from; omitted, the whole document. 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`. |
+| `target.source_kind` | string | yes | 1 to 128 characters. The target document's `source_kind`. |
+| `target.source_ref` | string | yes | 1 to 512 characters. The target document's `source_ref`. The target need not be ingested yet. |
+| `target.version_key` | string | with `binding: pinned` | 1 to 512 characters. The target version's `version_key`. |
+| `target.section_key` | string | no | A section key in the target; omitted, the whole document. Same syntax as `from_section_key`. |
+| `binding` | `floating` \| `pinned` | no | Default `floating`: the reference points at whichever target versions are in force when it is read. `pinned` points at the one version named by `target.version_key`. |
+| `change_date_known` | boolean | with `kind: amends` | Whether the source states when its change takes effect. Only for `amends`. |
+| `change_effective_from` | date-time | with `change_date_known: true` | UTC. When the change takes effect. Only for `amends`, and forbidden when `change_date_known` is `false`. |
+| `source_label` | string | no | 1 to 200 characters. Your own type code for the reference, returned as you sent it. |
+| `context` | string | no | 1 to 2,000 characters. Text around the reference, shown when it is read. |
+
+Unknown fields are rejected.
+
+```text
+{"kind": "refers_to", "from_section_key": "approvals", "target": {"source_kind": "intranet", "source_ref": "policy/expense", "section_key": "approvals-process"}}
+{"kind": "amends", "from_section_key": "per-diem", "target": {"source_kind": "intranet", "source_ref": "policy/travel-rates", "version_key": "2025"}, "binding": "pinned", "change_date_known": true, "change_effective_from": "2026-01-01T00:00:00Z"}
+```
+
+### Reference kinds
+
+| Kind | Meaning |
+|---|---|
+| `refers_to` | An in-text pointer to another passage or document: "see section 4.2", "as defined in section 3". |
+| `amends` | The source changes the target's text or force: an amendment to a contract clause. |
+| `implements` | The source elaborates or carries out the target: a procedure that implements a policy. |
+| `cites` | A bibliographic citation. |
+| `links_to` | A hyperlink. |
+| `attaches` | Container membership, such as an e-mail attachment. |
+| `replies_to` | Conversation threading. |
+
+### What it does
+
+The latest call wins. Each call is compared with the version's current
+intent: its newest set that is neither rejected nor replaced.
+
+- **The same set again** (the same references in the same order; spacing and
+  key order do not matter) is a retry and
+  changes nothing: `outcome` is `unchanged`.
+- **The set that is already active**, sent while a newer set is still
+  pending, cancels the pending set: `outcome` is `pending_cancelled`, and the
+  active set stays.
+- **Any other set** is recorded as a new `pending` generation and replaces
+  every older pending one: `outcome` is `created`.
+
+A pending set is checked against the version's sections and then made
+active by the pipeline's `crossref` stage, in one step that also retires the
+previously active set. Readers never see half of a set. The check is all or
+nothing: one `from_section_key` the version does not have rejects the whole
+set (`status: "rejected"` with `errors`), and the previously active set stays
+active. When the version's sections already exist, this check runs during
+the call, so a `created` generation can come back already `rejected`. Section
+keys in `target` are not checked here; they are checked whenever the
+reference is read.
+
+A target is named by its `source_kind` and `source_ref`, so a reference may
+point at a document you have not ingested yet. It starts working when that
+document is first ingested.
+
+[`POST /readiness`](#post-readiness) does not wait for references. Check a
+set with [`GET …/references`](#get-documentsdoc_idversionsversion_idreferences),
+and read references with
+[`document_references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+### Response
+
+`200` with a [`ReferencesSet`](/docs/reference/result-types#referencesset):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+  "outcome": "created",
+  "generation": {
+    "generation_id": "3d1c0b9a-8e7f-4a6b-9c5d-4e3f2a1b0c9d",
+    "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+    "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+    "origin": "supplied",
+    "status": "pending",
+    "request_seq": 1,
+    "input_hash": "9b1f…",
+    "item_count": 2,
+    "representation_id": null,
+    "crossref_version": null,
+    "errors": [],
+    "created_at": "2025-11-15T10:02:31.551Z",
+    "activated_at": null
+  }
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+| `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | The body is over 64 MiB. |
+| `422` | `{"code": "invalid_reference_set", "line": 3, "message": "…"}` | A line is not a JSON object, or not a valid reference: a missing or unknown field, a pinned reference without `target.version_key`, an `amends` without `change_date_known`, or a date on another kind. `line` is the first failing line. Nothing was recorded. |
+
+### Example
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @references.ndjson
+```
+
+```python
+from remember import Client, ReferenceInput, ReferenceTarget
+
+memory = Client()
+result = memory.set_references(
+    doc_id=doc_id,
+    version_id=version_id,
+    references=[
+        ReferenceInput(
+            kind="refers_to",
+            from_section_key="approvals",
+            target=ReferenceTarget(
+                source_kind="intranet",
+                source_ref="policy/expense",
+                section_key="approvals-process",
+            ),
+        )
+    ],
+)
+print(result.outcome, result.generation.status)
+```
+
+## GET /documents/\{doc_id\}/versions/\{version_id\}/references
+
+Report a version's reference generations, newest first: each supplied set
+and what became of it.
+
+**Scope:** `read`.<Cloud> **Spend hold (remember.dev):** `search`.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+
+### Response
+
+`200` with a [`ReferenceGenerations`](/docs/reference/result-types#referencegenerations):
+`doc_id`, `version_id` and `generations`, newest first, at most 100 (an
+active generation is always included). Each generation's `status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `pending` | Recorded, waiting for the pipeline to check and activate it. |
+| `active` | Its references are the ones readers see. At most one per version and origin. |
+| `rejected` | It named a section the version does not have. `errors` lists up to 100 `{item, field, reason}` entries; `item` is the reference's 1-based position. |
+| `superseded` | A later set replaced it, or it was cancelled before it became active. |
+
+`origin` is `supplied` for sets sent through `PUT`. A generation with origin
+`extracted` would hold references the engine found in the text itself; this
+release finds none ([What is not built yet](/docs/project/not-built-yet)).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+for generation in memory.reference_generations(doc_id=doc_id, version_id=version_id).generations:
+    print(generation.status, generation.item_count, generation.errors)
 ```

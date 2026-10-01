@@ -72,8 +72,8 @@ The general pool's size is fixed. The retrieval and graph pools follow
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 215 (23 +
-12 × 16), within the default limit of 300. When you add replicas or API
+the sum of its ceilings. The default stack's ceilings add up to 231 (23 +
+13 × 16), within the default limit of 300. When you add replicas or API
 processes, keep the sum of their ceilings under the limit, and when
 PostgreSQL refuses connections (`too many clients already` in the logs),
 raise it in `.env` and restart PostgreSQL:

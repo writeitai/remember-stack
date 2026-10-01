@@ -82,6 +82,11 @@ has a field or value in the API, it is shown in code.
 : A part of a document found from its structure, such as its headings, with
   a role. Chunks and claims know which section they belong to.
 
+**Section key** (`section_key`)
+: A stable name for a section, written in the source as a trailing `{#key}`
+  on its heading. It names the same section in every version. See
+  [Section keys](/docs/concepts/documents-and-sources#section-keys).
+
 **Chunk** (`chunk_id`)
 : A passage of a document's converted text: a run of whole blocks, not
   overlapping any other chunk. Chunks are what claims are extracted from and
@@ -95,7 +100,35 @@ has a field or value in the API, it is shown in code.
 
 **`source_modified_at`**
 : When the source says the content was written or last changed. It becomes
-  the said-on time of every claim from that version.
+  the said-on time of the claims first read from that version.
+
+**Text origin time** (`text_origin_at`)
+: When a passage's words were first written in a document, as far as the
+  engine can tell: an unchanged passage of a new version keeps the date of
+  the earlier version that first had it. See
+  [Unchanged passages keep their date](/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date).
+
+**Version key** (`version_key`)
+: Your own permanent name for one version, unique within its document, such
+  as `edition-2`. A pinned reference names a version by it.
+
+**Effective period** (`effective_from`, `effective_until`)
+: When, according to its publisher, a version's text is in force. Declared
+  by you, never inferred. Not the same as the claim valid kind
+  `effective_period`. See
+  [Time](/docs/concepts/time#when-a-version-is-in-force).
+
+**Served version**
+: A document's newest version that has finished processing and is not
+  deleted. Reads without a time scope, and documents without declared
+  effective periods, use it.
+
+**Reference** (`crossref_id`)
+: A pointer from a version of one document, optionally from one of its
+  sections, to another document or one of its sections, with a kind such as
+  `refers_to` or `amends`. `floating` references follow whichever target
+  version is in force; `pinned` ones name one version. See
+  [Section history and references](/docs/reference/http-api/sections-and-references).
 
 **`source_version_ref`**
 : An optional revision marker from the source system, such as an ETag or
@@ -258,8 +291,15 @@ has a field or value in the API, it is shown in code.
   `measurement_period` or `proposition_validity`.
 
 **Time mode** (`current`, `at`, `overlap`, `history`)
-: Which facts a query selects by world time. See
+: Which facts a query selects by world time, and which versions of a
+  document with effective periods count as text. See
   [Time](/docs/concepts/time#asking-about-time).
+
+**Evidence gate**
+: The rule that a fact read under a time scope is returned only when a claim
+  supporting it occurs in a version in force for that scope, or in a document
+  without effective periods. See
+  [Text in force](/docs/reference/assured-operations#text-in-force).
 
 **Temporal match** (`confirmed`, `possible`)
 : Whether a fact's window establishes that it matches the query's time, or
