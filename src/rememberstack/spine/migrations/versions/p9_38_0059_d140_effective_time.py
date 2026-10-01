@@ -116,10 +116,10 @@ CREATE TABLE document_version_scope (
   periodised      boolean NOT NULL,            -- the lineage's latest effective-time event is declared
   selectable      boolean NOT NULL,            -- the version is ready with a ready current representation
   PRIMARY KEY (deployment_id, version_id),
-  FOREIGN KEY (deployment_id, doc_id, version_id) REFERENCES document_versions (deployment_id, doc_id, version_id)
+  FOREIGN KEY (deployment_id, doc_id, version_id) REFERENCES document_versions (deployment_id, doc_id, version_id) ON DELETE CASCADE
 );
 COMMENT ON TABLE document_version_scope IS
-  'D140 current-belief selection projection: one row per non-deleted version of every live lineage, rewritten per lineage by refresh_document_version_scope in the transaction of every write that changes it (declaration, retraction, mode event, readiness or current-pointer move, deletion). Rebuildable from the ledgers and version rows.';
+  'D140 current-belief selection projection: one row per non-deleted version of every live lineage, rewritten per lineage by refresh_document_version_scope in the transaction of every write that changes it (declaration, retraction, mode event, readiness or current-pointer move, deletion). Rebuildable from the ledgers and version rows, so a hard-deleted version row takes its projection row with it (ON DELETE CASCADE); the ledgers keep no-cascade foreign keys.';
 CREATE INDEX ix_version_scope_in_force ON document_version_scope USING gist (deployment_id, in_force) WHERE selectable;
 CREATE INDEX ix_version_scope_lineage ON document_version_scope (deployment_id, doc_id);
 """

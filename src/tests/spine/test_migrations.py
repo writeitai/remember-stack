@@ -153,8 +153,9 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
     # here even if another one is removed: D79's structural migration performs
     # the required legacy-generation backfill, D102's is a derived-projection
     # trigger, and p9_23_0044's DOWNGRADE rebuilds a derived cache from the
-    # aliases already present (D103). All derive from existing rows; none
-    # seeds a deployment.
+    # aliases already present (D103), and D140 fills its selection projection
+    # from existing versions and rewrites it per lineage in a trigger
+    # function. All derive from existing rows; none seeds a deployment.
     inserts_per_revision = {
         path.name: path.read_text(encoding="utf-8").lower().count("insert into")
         for path in _VERSIONS.glob("p*_*.py")
@@ -165,6 +166,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_22_0043_document_entity_bindings.py": 1,
         "p9_23_0044_drop_generic_identifier_guard.py": 1,
         "p9_35_0056_document_metadata.py": 2,
+        "p9_38_0059_d140_effective_time.py": 2,
     }
     assert "bootstrap_deployment" not in migration_source
 

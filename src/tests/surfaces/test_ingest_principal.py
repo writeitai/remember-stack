@@ -341,6 +341,7 @@ def test_receipt_never_serializes_the_internal_admission_hint() -> None:
         "title",
         "versioning_mode",
         "parked",
+        "version_key",
     }
 
 
