@@ -902,8 +902,9 @@ def _gate_corpus(rig: _Rig) -> _Facts:
                     "INSERT INTO relations (relation_id, deployment_id,"
                     " subject_entity_id, predicate, object_entity_id,"
                     " normalizer_version, fact_label, ingested_at, valid_from,"
-                    " valid_precision) VALUES (:fact, :d, :subject, 'works_for',"
-                    " :object, 'd140-test', :label, :at, :valid_from, 'open')"
+                    " valid_precision, window_claim_ids) VALUES (:fact, :d,"
+                    " :subject, 'works_for', :object, 'd140-test', :label, :at,"
+                    " :valid_from, 'open', :witnesses)"
                 ),
                 {
                     "fact": fact_id,
@@ -915,6 +916,7 @@ def _gate_corpus(rig: _Rig) -> _Facts:
                     # "dated": its own window says it holds since 2025, but its
                     # only text is in force from the future
                     "valid_from": _REVISED if key == "dated" else _PAST,
+                    "witnesses": [claims[support[key][0]]],
                 },
             )
             for claim_key in support[key]:
