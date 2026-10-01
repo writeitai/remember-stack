@@ -32,6 +32,7 @@ from remember.models import DocumentStatusFilter
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
 from remember.models import EffectiveInterval
+from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
@@ -72,6 +73,7 @@ __all__ = (
     "DocumentSearchPerson",
     "DocumentSearchRequest",
     "DocumentSearchResult",
+    "MatchingEdition",
     "ReadTime",
     "DocumentReference",
     "DocumentReferenceSource",

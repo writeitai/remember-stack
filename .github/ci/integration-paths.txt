@@ -72,3 +72,4 @@ src/tests/spine/test_d140_effective_time.py
 src/tests/spine/test_d140_migration.py
 src/tests/spine/test_section_history.py
 src/tests/spine/test_document_references.py
+src/tests/surfaces/test_d140_scoped_retrieval.py

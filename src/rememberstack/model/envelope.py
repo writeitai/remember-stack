@@ -16,8 +16,10 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import JsonValue
 from pydantic import model_validator
 
+from remember.models import EffectiveInterval
 from rememberstack.model.adjudication import TranscriptEntry
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import EvidenceSpan
@@ -200,6 +202,24 @@ class KFreshness(BaseModel):
     open_flags: int = Field(default=0, ge=0)
 
 
+SCOPE_PENDING_MAX_DOC_IDS = 50
+"""Most lineages ``scope_pending`` names; ``count`` is always exact."""
+
+
+class ScopePending(BaseModel):
+    """Lineages whose in-force text for a time scope is still processing (D140 §3.7).
+
+    A scoped read that returns nothing from a lineage may mean "nothing is in
+    force" or "the version in force is not readable yet"; this block names the
+    second case for the lineages the request touched.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    doc_ids: tuple[UUID, ...] = Field(max_length=SCOPE_PENDING_MAX_DOC_IDS)
+    count: int = Field(ge=0)
+
+
 class Freshness(BaseModel):
     """Per-source freshness stamps (S42): what lag the answer could carry.
 
@@ -217,6 +237,7 @@ class Freshness(BaseModel):
     # write-lag horizon replaces this constant with measurement (retrieval §5)
     p1_believed_at_horizon: UTCDateTime | None = None  # None = unbounded
     k: KFreshness | None = None  # present only when the answer consumed a K page
+    scope_pending: ScopePending | None = None  # D140 §3.7, on time-scoped reads
 
 
 class EntityCandidate(BaseModel):
@@ -282,6 +303,27 @@ class FactResult(BaseModel):
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
 
 
+class ClaimOccurrence(BaseModel):
+    """Where a claim occurs in one version a time scope selected (D140 §3.4).
+
+    D56 attaches one immutable claim to every version-chunk that carried it;
+    each occurrence has its own coordinates and evidence spans in its own
+    version's current reading.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chunk_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    char_start: int
+    char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
+    source_locators: JsonValue = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    served_version: bool = True
+
+
 class EvidenceResult(BaseModel):
     """One evidence-grain record: a claim with its provenance anchors.
 
@@ -290,6 +332,11 @@ class EvidenceResult(BaseModel):
     ``evidence_spans`` is the complete body support for the same origin
     occurrence, in that chunk's representation. Current-version remapped
     positions live on ``memory_v1.claim_occurrences_live``.
+
+    Under a D140 time scope a claim of a lineage with declared effective
+    periods is returned through its occurrences in the selected versions
+    instead (``occurrences``, by effective start); the coordinates above are
+    then the first occurrence's and ``version_id`` names its version.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -348,6 +395,10 @@ class EvidenceResult(BaseModel):
     source_kind: str | None = None
     corroboration_count: int | None = Field(default=None, ge=1)
     grouped_claim_ids: tuple[UUID, ...] = ()
+    version_id: UUID | None = None
+    representation_id: UUID | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    occurrences: tuple[ClaimOccurrence, ...] = ()
 
 
 class FactEvidence(BaseModel):
@@ -397,6 +448,8 @@ class ChunkEvidenceResult(BaseModel):
     source_kind: str
     source_modified_at: UTCDateTime | None = None
     published_at: UTCDateTime | None = None
+    effective: tuple[EffectiveInterval, ...] = ()  # D140 §3.7, periodised only
+    served_version: bool = True  # whether version_id is the served version
 
 
 class SourceRecord(BaseModel):

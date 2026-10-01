@@ -22,6 +22,7 @@ from remember.errors import ProjectResolutionError
 from remember.errors import RateLimited
 from remember.errors import StoredKeyRefused
 from remember.models import CapabilityReadiness
+from remember.models import ClaimOccurrence
 from remember.models import ClaimValidPrecision
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
@@ -47,6 +48,7 @@ from remember.models import EffectivePeriodsSet
 from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
 from remember.models import IngestedVersion
+from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
@@ -60,6 +62,7 @@ from remember.models import ReferenceItemError
 from remember.models import ReferencesSet
 from remember.models import ReferenceTarget
 from remember.models import ReferenceWindow
+from remember.models import ScopePending
 from remember.models import SectionAmendment
 from remember.models import SectionHistoryPage
 from remember.models import SectionHistoryRequest
@@ -94,6 +97,9 @@ __all__ = (
     "DocumentSearchPage",
     "DocumentSearchRequest",
     "DocumentSearchResult",
+    "MatchingEdition",
+    "ScopePending",
+    "ClaimOccurrence",
     "ReadTime",
     "DocumentReference",
     "DocumentReferenceSource",

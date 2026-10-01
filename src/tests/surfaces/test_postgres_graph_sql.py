@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import RowMapping
 
+from rememberstack.core.text_scope import fact_in_scope_public
 from rememberstack.spine.migrations.versions import p9_17_0038_postgres19_live_graph
 from rememberstack.spine.migrations.versions import (
     p9_18_0039_graph_entity_provenance_plan,
@@ -19,6 +20,7 @@ from rememberstack.spine.migrations.versions import (
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import gated_neighborhood_statements
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
 from rememberstack.spine.query_space import build_manifest
@@ -89,7 +91,8 @@ def test_guard_refusal_never_executes_the_pgq_statement(
     rows = graph_queries._shallow_neighborhood_rows(
         connection=Mock(spec=Connection), parameters={}
     )
-    assert statements == [HISTORY_NEIGHBORHOOD_GUARD]
+    guard, _pgq = gated_neighborhood_statements()
+    assert statements == [guard]
     assert rows[0]["row_kind"] == "status"
     assert rows[0]["truncation_reason"] == "expansion_budget"
 
@@ -104,6 +107,25 @@ def test_history_pgq_has_both_half_open_clocks_on_its_pattern_edge() -> None:
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 2
     assert "valid_from IS NULL" not in HISTORY_NEIGHBORHOOD_PGQ
     assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 1
+
+
+def test_gated_one_hop_statements_apply_the_evidence_gate_before_budgets() -> None:
+    """D140 §8.1: every guard edge scan and the PGQ result carry the gate."""
+    guard, pgq = gated_neighborhood_statements()
+    guard_gate = fact_in_scope_public(fact_kind="relation", fact_id="c.relation_id")
+    assert guard.count(guard_gate) == 2
+    # the gate sits inside the scan, before the budget LIMIT
+    assert guard.index(guard_gate) < guard.index("LIMIT b.budget + 1")
+    assert pgq.endswith(
+        "WHERE "
+        + fact_in_scope_public(fact_kind="relation", fact_id="g.relation_id")
+        + "\n"
+    )
+    # traversal runs as the query role: only the public surface is read
+    assert "relation_evidence" not in guard
+    assert "document_version_scope" not in guard
+    rendered = re.sub(r"(?<!:):([a-z_]+)", "NULL", guard)
+    assert parse_sql(rendered)
 
 
 def test_temporal_template_marker_drift_fails_loudly() -> None:

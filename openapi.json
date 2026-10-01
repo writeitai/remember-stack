@@ -370,6 +370,14 @@
             ],
             "title": "Document Title"
           },
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
           "published_at": {
             "anyOf": [
               {
@@ -397,6 +405,11 @@
               }
             ],
             "title": "Section Role"
+          },
+          "served_version": {
+            "default": true,
+            "title": "Served Version",
+            "type": "boolean"
           },
           "source_kind": {
             "title": "Source Kind",
@@ -432,6 +445,68 @@
           "source_kind"
         ],
         "title": "ChunkEvidenceResult",
+        "type": "object"
+      },
+      "ClaimOccurrence": {
+        "additionalProperties": false,
+        "description": "Where a claim occurs in one version a time scope selected (D140 \u00a73.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+        "properties": {
+          "char_end": {
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
+          "evidence_spans": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceSpan"
+            },
+            "title": "Evidence Spans",
+            "type": "array"
+          },
+          "representation_id": {
+            "format": "uuid",
+            "title": "Representation Id",
+            "type": "string"
+          },
+          "served_version": {
+            "default": true,
+            "title": "Served Version",
+            "type": "boolean"
+          },
+          "source_locators": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "version_id",
+          "representation_id",
+          "char_start",
+          "char_end"
+        ],
+        "title": "ClaimOccurrence",
         "type": "object"
       },
       "ClaimValidPrecision": {
@@ -1446,6 +1521,16 @@
             },
             "title": "People Matched",
             "type": "array"
+          },
+          "scope_pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/remember__models__ScopePending"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1530,6 +1615,39 @@
             ],
             "title": "Query"
           },
+          "time": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CurrentReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AtReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OverlapReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HistoryReadTime"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time"
+          },
           "versions": {
             "default": "current",
             "enum": [
@@ -1571,6 +1689,14 @@
             "format": "uuid",
             "title": "Doc Id",
             "type": "string"
+          },
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
           },
           "extra": {
             "additionalProperties": {
@@ -1628,6 +1754,14 @@
             "title": "Matched By",
             "type": "array"
           },
+          "matching_editions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MatchingEdition"
+            },
+            "title": "Matching Editions",
+            "type": "array"
+          },
           "modified_at": {
             "anyOf": [
               {
@@ -1661,8 +1795,15 @@
             "title": "Overview"
           },
           "p3_path": {
-            "title": "P3 Path",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P3 Path"
           },
           "recipients": {
             "default": [],
@@ -1671,6 +1812,18 @@
             },
             "title": "Recipients",
             "type": "array"
+          },
+          "representation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representation Id"
           },
           "score": {
             "anyOf": [
@@ -1682,6 +1835,11 @@
               }
             ],
             "title": "Score"
+          },
+          "served_version": {
+            "default": true,
+            "title": "Served Version",
+            "type": "boolean"
           },
           "source_path": {
             "anyOf": [
@@ -1743,7 +1901,6 @@
           "version_id",
           "version_no",
           "status",
-          "p3_path",
           "family"
         ],
         "title": "DocumentSearchResult",
@@ -2255,7 +2412,7 @@
       },
       "EvidenceResult": {
         "additionalProperties": false,
-        "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+        "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
         "properties": {
           "asserted_at": {
             "anyOf": [
@@ -2364,6 +2521,14 @@
             ],
             "title": "Document Title"
           },
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
           "evidence_spans": {
             "default": [],
             "items": {
@@ -2389,6 +2554,26 @@
             "title": "Is Current Testimony",
             "type": "boolean"
           },
+          "occurrences": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClaimOccurrence"
+            },
+            "title": "Occurrences",
+            "type": "array"
+          },
+          "representation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representation Id"
+          },
           "source_kind": {
             "anyOf": [
               {
@@ -2403,6 +2588,18 @@
           "source_span": {
             "title": "Source Span",
             "type": "string"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
           }
         },
         "required": [
@@ -2636,6 +2833,16 @@
             "format": "date-time",
             "title": "Pg Live Ts",
             "type": "string"
+          },
+          "scope_pending": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rememberstack__model__envelope__ScopePending"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -3323,6 +3530,58 @@
           }
         },
         "title": "KFreshness",
+        "type": "object"
+      },
+      "MatchingEdition": {
+        "additionalProperties": false,
+        "description": "One candidate edition of a periodised document that matched (D140 \u00a73.5).\n\n``version_id`` with ``representation_id`` is the ``source_open`` handle\nthat opens exactly this edition.",
+        "properties": {
+          "effective": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectiveInterval"
+            },
+            "title": "Effective",
+            "type": "array"
+          },
+          "representation_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Representation Id"
+          },
+          "version_id": {
+            "format": "uuid",
+            "title": "Version Id",
+            "type": "string"
+          },
+          "version_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Key"
+          },
+          "version_no": {
+            "title": "Version No",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version_id",
+          "version_no"
+        ],
+        "title": "MatchingEdition",
         "type": "object"
       },
       "NamedReferenceTarget": {
@@ -4454,6 +4713,39 @@
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
+                  },
+                  "propertyName": "mode"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CurrentReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AtReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OverlapReadTime"
+                  },
+                  {
+                    "$ref": "#/components/schemas/HistoryReadTime"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time"
           }
         },
         "required": [
@@ -5354,6 +5646,58 @@
           "stages"
         ],
         "title": "VersionPipelineReadiness",
+        "type": "object"
+      },
+      "remember__models__ScopePending": {
+        "additionalProperties": false,
+        "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "doc_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Doc Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "doc_ids",
+          "count"
+        ],
+        "title": "ScopePending",
+        "type": "object"
+      },
+      "rememberstack__model__envelope__ScopePending": {
+        "additionalProperties": false,
+        "description": "Lineages whose in-force text for a time scope is still processing (D140 \u00a73.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "doc_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Doc Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "doc_ids",
+          "count"
+        ],
+        "title": "ScopePending",
         "type": "object"
       }
     },
@@ -7466,7 +7810,7 @@
         "summary": "Search Chunks"
       },
       "post": {
-        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134).",
+        "description": "Search live source chunks as separately typed evidence.\n\n``documents`` keeps chunks whose document version matches (D134);\n``time`` keeps chunks of versions in force for the scope (D140).",
         "operationId": "post_search_chunks_search_chunks_post",
         "requestBody": {
           "content": {
@@ -7579,7 +7923,7 @@
         "summary": "Search Claims"
       },
       "post": {
-        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter.",
+        "description": "Claim search \u2014 evidence grain, never current-fact truth.\n\n``documents`` keeps claims with a live occurrence in a matching\ndocument (D134); the returned evidence is the claim's origin, as\nwithout a filter. ``time`` (D140) selects claims of documents with\ndeclared effective periods through their occurrences in the versions\nin force for the scope, and returns those occurrences.",
         "operationId": "post_search_claims_search_claims_post",
         "requestBody": {
           "content": {

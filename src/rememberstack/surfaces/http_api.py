@@ -118,7 +118,6 @@ from rememberstack.model import ToolDescriptor
 from rememberstack.model import track_read_embedding_cost
 from rememberstack.model import VersionKeyConflictError
 from rememberstack.model.auth import PerimeterScope
-from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
 from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
@@ -683,7 +682,9 @@ def build_api(
 
         ``documents`` keeps claims with a live occurrence in a matching
         document (D134); the returned evidence is the claim's origin, as
-        without a filter.
+        without a filter. ``time`` (D140) selects claims of documents with
+        declared effective periods through their occurrences in the versions
+        in force for the scope, and returns those occurrences.
         """
         return engine.search_claims(
             deployment_id=deployment_id,
@@ -697,7 +698,8 @@ def build_api(
     def post_search_chunks(body: Annotated[SearchRequest, Body()]) -> Envelope:
         """Search live source chunks as separately typed evidence.
 
-        ``documents`` keeps chunks whose document version matches (D134).
+        ``documents`` keeps chunks whose document version matches (D134);
+        ``time`` keeps chunks of versions in force for the scope (D140).
         """
         return engine.search_chunks(
             deployment_id=deployment_id,
@@ -1363,9 +1365,14 @@ def _mount_document_inventory(
             raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-def _documents_scope(body: SearchRequest) -> dict[str, DocumentSearchFilters]:
-    """The D134 ``documents`` keyword, only when the request carries one."""
-    return {} if body.documents is None else {"documents": body.documents}
+def _documents_scope(body: SearchRequest) -> dict[str, Any]:
+    """The D134 ``documents`` and D140 ``time`` keywords, only when present."""
+    scope: dict[str, Any] = {}
+    if body.documents is not None:
+        scope["documents"] = body.documents
+    if body.time is not None:
+        scope["time"] = body.time
+    return scope
 
 
 def _mount_document_search(

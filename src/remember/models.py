@@ -259,142 +259,6 @@ class EffectiveTimeCleared(BaseModel):
     """When the document left effective time; ``None`` when it had none."""
 
 
-DOCUMENT_SEARCH_MAX_K: Final = 200
-DOCUMENT_SEARCH_DEFAULT_K: Final = 20
-
-
-class DocumentSearchFilters(BaseModel):
-    """General document metadata filters (D134 §3); every one given must hold.
-
-    ``authors`` and ``recipients`` match a person when any listed term equals
-    their normalized address or appears as whole words in their normalized
-    name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
-    Date ranges are inclusive and exclude documents that do not declare the
-    date.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    family: tuple[str, ...] = ()
-    authors: tuple[str, ...] = ()
-    recipients: tuple[str, ...] = ()
-    created_from: AwareDatetime | None = None
-    created_to: AwareDatetime | None = None
-    modified_from: AwareDatetime | None = None
-    modified_to: AwareDatetime | None = None
-    language: str | None = None
-    thread_ref: str | None = None
-    doc_ids: tuple[UUID, ...] = ()
-
-
-class DocumentSearchRequest(BaseModel):
-    """One ``search_documents`` call.
-
-    With a ``query`` the results are ranked by name and content matches and
-    there is no cursor. Without one they are every document the filters
-    match, newest declared creation date first, paged by ``cursor``.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    query: str | None = Field(default=None, min_length=1, max_length=4096)
-    filters: DocumentSearchFilters = DocumentSearchFilters()
-    versions: Literal["current", "all"] = "current"
-    k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
-    cursor: str | None = Field(default=None, min_length=1)
-
-    @model_validator(mode="after")
-    def cursor_pages_filters_only(self) -> Self:
-        """A ranked query has no stable order to page, so it takes no cursor."""
-        if self.query is not None and self.cursor is not None:
-            raise ValueError("cursor pages filter-only searches; drop query or cursor")
-        return self
-
-
-class DocumentSearchPerson(BaseModel):
-    """One author or recipient as the document declares them."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    name: str | None = None
-    address: str | None = None
-
-
-class DocumentSearchResult(BaseModel):
-    """One matching document, described by the version it was judged by."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    doc_id: UUID
-    version_id: UUID
-    version_no: int
-    status: DocumentStatus
-    lineage_title: str | None = None
-    file_name: str | None = None
-    title: str | None = None
-    source_path: str | None = None
-    p3_path: str
-    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
-    the corpus root; present in a published snapshot only where the
-    deployment builds the filesystem view."""
-    family: str
-    created_at: datetime | None = None
-    modified_at: datetime | None = None
-    language: str | None = None
-    thread_ref: str | None = None
-    authors: tuple[DocumentSearchPerson, ...] = ()
-    recipients: tuple[DocumentSearchPerson, ...] = ()
-    extra: dict[str, JsonValue] = Field(default_factory=dict)
-    overview: str | None = None
-    other_matching_version_ids: tuple[UUID, ...] = ()
-    matched_by: tuple[Literal["name", "content"], ...] = ()
-    score: float | None = None
-
-
-class DocumentPeopleMatch(BaseModel):
-    """One distinct person an authors/recipients filter matched."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    role: Literal["author", "recipient"]
-    name: str | None = None
-    address: str | None = None
-    documents: int = Field(ge=0)
-
-
-class DocumentSearchPage(BaseModel):
-    """A page of ``search_documents`` results."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    documents: tuple[DocumentSearchResult, ...]
-    cursor: str | None = None
-    as_of: datetime
-    people_matched: tuple[DocumentPeopleMatch, ...] = ()
-
-
-class SearchRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=1, max_length=4096)
-    k: int = Field(default=10, ge=1, le=400)
-    channel: Literal["semantic", "bm25"] = "semantic"
-    documents: DocumentSearchFilters | None = None
-    """D134: only results found in a document version matching these
-    general-metadata filters (the ``search_documents`` filters), applied before
-    the top-k; returned claims still cite their origin."""
-
-
-ADJACENT_CHUNKS_MIN_WINDOW: Final = 1
-ADJACENT_CHUNKS_MAX_WINDOW: Final = 2
-
-
-class AdjacentChunksRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    chunk_id: UUID
-    window: int = Field(
-        default=1, ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW
-    )
-
-
-SECTION_HISTORY_DEFAULT_K: Final = 50
-SECTION_HISTORY_MAX_K: Final = 200
-SECTION_KEY_MAX_LEN: Final = 200
-
-
 class CurrentReadTime(BaseModel):
     """Text in force now."""
 
@@ -443,19 +307,6 @@ ReadTime = Annotated[
 """The D140 §3.1 time scope of a text read (the MCP ``time`` argument)."""
 
 
-class SectionHistoryRequest(BaseModel):
-    """One ``section_history`` call (D140 §6.2)."""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    doc_id: UUID
-    section_key: str = Field(
-        min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
-    )
-    time: ReadTime = HistoryReadTime()
-    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
-    cursor: str | None = Field(default=None, min_length=1)
-
-
 class EffectiveInterval(BaseModel):
     """One in-force interval ``[from, until)``; null bounds are open."""
 
@@ -469,6 +320,195 @@ class EffectiveInterval(BaseModel):
     until_declared: bool = False
     """True when the end was declared; false when it is derived from the
     next declared start, or open."""
+
+
+DOCUMENT_SEARCH_MAX_K: Final = 200
+DOCUMENT_SEARCH_DEFAULT_K: Final = 20
+
+
+class DocumentSearchFilters(BaseModel):
+    """General document metadata filters (D134 §3); every one given must hold.
+
+    ``authors`` and ``recipients`` match a person when any listed term equals
+    their normalized address or appears as whole words in their normalized
+    name (lower case, accents removed): ``"alice"`` matches "Alice Novák".
+    Date ranges are inclusive and exclude documents that do not declare the
+    date.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    family: tuple[str, ...] = ()
+    authors: tuple[str, ...] = ()
+    recipients: tuple[str, ...] = ()
+    created_from: AwareDatetime | None = None
+    created_to: AwareDatetime | None = None
+    modified_from: AwareDatetime | None = None
+    modified_to: AwareDatetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    doc_ids: tuple[UUID, ...] = ()
+
+
+class DocumentSearchRequest(BaseModel):
+    """One ``search_documents`` call.
+
+    With a ``query`` the results are ranked by name and content matches and
+    there is no cursor. Without one they are every document the filters
+    match, newest declared creation date first, paged by ``cursor``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    query: str | None = Field(default=None, min_length=1, max_length=4096)
+    filters: DocumentSearchFilters = DocumentSearchFilters()
+    versions: Literal["current", "all"] = "current"
+    time: ReadTime | None = None
+    """D140 §3.5: which editions of a document with declared effective periods
+    are candidates (default ``current``: the ones in force now). Documents
+    without declared periods are judged as without it."""
+    k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def cursor_pages_filters_only(self) -> Self:
+        """A ranked query has no stable order to page, so it takes no cursor."""
+        if self.query is not None and self.cursor is not None:
+            raise ValueError("cursor pages filter-only searches; drop query or cursor")
+        return self
+
+
+class DocumentSearchPerson(BaseModel):
+    """One author or recipient as the document declares them."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    name: str | None = None
+    address: str | None = None
+
+
+class MatchingEdition(BaseModel):
+    """One candidate edition of a periodised document that matched (D140 §3.5).
+
+    ``version_id`` with ``representation_id`` is the ``source_open`` handle
+    that opens exactly this edition.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version_id: UUID
+    version_no: int
+    version_key: str | None = None
+    representation_id: UUID | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+
+
+class DocumentSearchResult(BaseModel):
+    """One matching document, described by the version it was judged by."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    version_no: int
+    status: DocumentStatus
+    lineage_title: str | None = None
+    file_name: str | None = None
+    title: str | None = None
+    source_path: str | None = None
+    p3_path: str | None = None
+    """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
+    the corpus root; present in a published snapshot only where the
+    deployment builds the filesystem view. The path opens the lineage's
+    served version, so it is null when the result describes another version
+    (``served_version`` false)."""
+    served_version: bool = True
+    """Whether ``version_id`` is the lineage's served (current) version."""
+    representation_id: UUID | None = None
+    """The judged version's current reading; with ``version_id`` it opens
+    exactly the version described."""
+    effective: tuple[EffectiveInterval, ...] = ()
+    """The judged version's in-force intervals, when the document declares
+    effective periods."""
+    matching_editions: tuple[MatchingEdition, ...] = ()
+    """Every candidate edition that matched, by effective start, for a
+    document with declared effective periods."""
+    family: str
+    created_at: datetime | None = None
+    modified_at: datetime | None = None
+    language: str | None = None
+    thread_ref: str | None = None
+    authors: tuple[DocumentSearchPerson, ...] = ()
+    recipients: tuple[DocumentSearchPerson, ...] = ()
+    extra: dict[str, JsonValue] = Field(default_factory=dict)
+    overview: str | None = None
+    other_matching_version_ids: tuple[UUID, ...] = ()
+    matched_by: tuple[Literal["name", "content"], ...] = ()
+    score: float | None = None
+
+
+class DocumentPeopleMatch(BaseModel):
+    """One distinct person an authors/recipients filter matched."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    role: Literal["author", "recipient"]
+    name: str | None = None
+    address: str | None = None
+    documents: int = Field(ge=0)
+
+
+class DocumentSearchPage(BaseModel):
+    """A page of ``search_documents`` results."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    documents: tuple[DocumentSearchResult, ...]
+    cursor: str | None = None
+    as_of: datetime
+    people_matched: tuple[DocumentPeopleMatch, ...] = ()
+    scope_pending: ScopePending | None = None
+    """D140 §3.7: examined documents whose edition in force for ``time`` is
+    still processing, so "nothing in force" can be told from "not ready"."""
+
+
+class SearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=4096)
+    k: int = Field(default=10, ge=1, le=400)
+    channel: Literal["semantic", "bm25"] = "semantic"
+    documents: DocumentSearchFilters | None = None
+    """D134: only results found in a document version matching these
+    general-metadata filters (the ``search_documents`` filters), applied before
+    the top-k; returned claims still cite their origin."""
+    time: ReadTime | None = None
+    """D140 §3.1: only text in force for this scope (default ``current``).
+    Documents without declared effective periods read their served version
+    under every mode; a claim of a document with declared periods returns its
+    occurrence in each selected version."""
+
+
+ADJACENT_CHUNKS_MIN_WINDOW: Final = 1
+ADJACENT_CHUNKS_MAX_WINDOW: Final = 2
+
+
+class AdjacentChunksRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_id: UUID
+    window: int = Field(
+        default=1, ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW
+    )
+
+
+SECTION_HISTORY_DEFAULT_K: Final = 50
+SECTION_HISTORY_MAX_K: Final = 200
+SECTION_KEY_MAX_LEN: Final = 200
+
+
+class SectionHistoryRequest(BaseModel):
+    """One ``section_history`` call (D140 §6.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    section_key: str = Field(
+        min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
+    )
+    time: ReadTime = HistoryReadTime()
+    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
 
 
 class SectionHistorySection(BaseModel):
@@ -1100,12 +1140,24 @@ class KFreshness(BaseModel):
     open_flags: int = Field(default=0, ge=0)
 
 
+SCOPE_PENDING_MAX_DOC_IDS: Final = 50
+
+
+class ScopePending(BaseModel):
+    """Documents whose in-force text for the scope is still processing (D140 §3.7)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_ids: tuple[UUID, ...] = Field(max_length=SCOPE_PENDING_MAX_DOC_IDS)
+    count: int = Field(ge=0)
+
+
 class Freshness(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     pg_live_ts: UTCDateTime
     p1_written_inline: bool = True
     p1_believed_at_horizon: UTCDateTime | None = None
     k: KFreshness | None = None
+    scope_pending: ScopePending | None = None
 
 
 class EntityCandidate(BaseModel):
@@ -1160,6 +1212,21 @@ class EvidenceSpan(BaseModel):
         return self
 
 
+class ClaimOccurrence(BaseModel):
+    """Where a claim occurs in one selected version (D140 §3.4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    chunk_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    char_start: int
+    char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
+    source_locators: JsonValue = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    served_version: bool = True
+
+
 class EvidenceResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     claim_id: UUID
@@ -1181,6 +1248,14 @@ class EvidenceResult(BaseModel):
     source_kind: str | None = None
     corroboration_count: int | None = Field(default=None, ge=1)
     grouped_claim_ids: tuple[UUID, ...] = ()
+    version_id: UUID | None = None
+    """For a document with declared effective periods read under a time
+    scope: the selected version the coordinates above belong to."""
+    representation_id: UUID | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    occurrences: tuple[ClaimOccurrence, ...] = ()
+    """One occurrence per selected version, by effective start; the first
+    is the one the top-level coordinates describe."""
 
 
 class FactEvidence(BaseModel):
@@ -1221,6 +1296,11 @@ class ChunkEvidenceResult(BaseModel):
     source_kind: str
     source_modified_at: UTCDateTime | None = None
     published_at: UTCDateTime | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    """The version's in-force intervals, when its document declares
+    effective periods (D140 §3.7)."""
+    served_version: bool = True
+    """Whether the chunk's version is its document's served version."""
 
 
 class SourceRecord(BaseModel):
