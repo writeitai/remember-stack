@@ -122,7 +122,12 @@ def rig(database_engine: Engine) -> _Rig:
             corpusfs_bucket="mem://corpusfs",
         )
     )
-    index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
+    read_pool = BoundedPostgresReadPool(
+        engine=database_engine, max_concurrency=4, pool_wait_seconds=5.0
+    )
+    index = PostgresP1Index(
+        engine=database_engine, embedding_model=_MODEL, read_pool=read_pool
+    )
     index.configure_channels(deployment_id=_DEPLOYMENT_ID)
     provider = MagicMock()
     provider.embed.return_value = SimpleNamespace(vectors=(_NEAR,), usage=None)
@@ -134,9 +139,7 @@ def rig(database_engine: Engine) -> _Rig:
             search_index=index,
             model_provider=provider,
             embedding_model=_MODEL,
-            fact_read_pool=BoundedPostgresReadPool(
-                engine=database_engine, max_concurrency=4, pool_wait_seconds=5.0
-            ),
+            fact_read_pool=read_pool,
         ),
         periods=EffectiveTimeCatalog(engine=database_engine),
         documents=DocumentSearch(engine=database_engine),
