@@ -5,15 +5,19 @@ bucket a key resolves in (raw vs artifacts) is deployment configuration, and
 the composing profile binds one `ObjectStorePort` per bucket.
 """
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Annotated
+from typing import Self
 from uuid import UUID
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import model_validator
 
 from remember.models import IngestedVersion as IngestedVersion  # noqa: F401
+from remember.models import VERSION_KEY_MAX_LEN
 from rememberstack.model.queue import UTCDateTime
 
 NonEmptyString = Annotated[str, Field(min_length=1)]
@@ -65,6 +69,20 @@ class DocumentUpload(BaseModel):
     source_path: str | None = None
     """Where the file lives at its source (a folder path, a URL), as observed
     now; recorded per version in D134 document metadata and names."""
+    version_key: str | None = Field(
+        default=None, min_length=1, max_length=VERSION_KEY_MAX_LEN
+    )
+    """D140: the caller's immutable key for the version these bytes are; a key
+    new to the lineage always creates a version."""
+    effective_from: UTCDateTime | None = None
+    """D140: start of the period this version is in force for (inclusive)."""
+    effective_until: UTCDateTime | None = None
+    """D140: declared end of that period (exclusive); requires a start."""
+
+    @model_validator(mode="after")
+    def _period_is_well_formed(self) -> Self:
+        _check_period(start=self.effective_from, end=self.effective_until)
+        return self
 
 
 class UploadRecord(BaseModel):
@@ -94,6 +112,30 @@ class UploadRecord(BaseModel):
     title, which falls back to the file stem."""
     source_path: str | None = None
     """The source location observed with these bytes (D134)."""
+    version_key: str | None = Field(
+        default=None, min_length=1, max_length=VERSION_KEY_MAX_LEN
+    )
+    """D140: the version's caller-chosen key, assigned only when the version
+    is created."""
+    effective_from: UTCDateTime | None = None
+    """D140: start of the declared in-force period (inclusive)."""
+    effective_until: UTCDateTime | None = None
+    """D140: declared end of that period (exclusive); requires a start."""
+
+    @model_validator(mode="after")
+    def _period_is_well_formed(self) -> Self:
+        _check_period(start=self.effective_from, end=self.effective_until)
+        return self
+
+
+def _check_period(*, start: datetime | None, end: datetime | None) -> None:
+    """A declared end needs a start and must come after it."""
+    if end is None:
+        return
+    if start is None:
+        raise ValueError("effective_until requires effective_from")
+    if end <= start:
+        raise ValueError("effective_until must be later than effective_from")
 
 
 class ConvertSource(BaseModel):
@@ -175,6 +217,62 @@ class SyntheticRootRecord(BaseModel):
 
 class DocumentVersionNotFoundError(Exception):
     """A stage referenced a document version the spine does not know."""
+
+
+class VersionKeyConflictError(Exception):
+    """A version key was used for an observation it cannot name (D140 §2.3).
+
+    A key names exactly one version and is assigned when that version is
+    created. Reusing it is accepted only as an idempotent retry of the
+    lineage's latest version with the same bytes; any other use is refused
+    and names the version that owns the key. ``status_code``, ``code`` and
+    ``detail`` let an in-process MCP backend map it like the HTTP 409.
+    """
+
+    status_code = 409
+    code = "version_key_conflict"
+
+    def __init__(self, *, version_key: str, version_id: UUID) -> None:
+        """Record the key and the version it belongs to."""
+        super().__init__(
+            f"version_key {version_key!r} already names version {version_id}"
+        )
+        self.version_key = version_key
+        self.version_id = version_id
+        self.detail = str(self)
+
+
+class EffectivePeriodConflictError(Exception):
+    """A declared start equals a live declaration of another version (D140)."""
+
+    status_code = 409
+    code = "effective_period_conflict"
+
+    def __init__(self, *, effective_from: datetime, version_id: UUID) -> None:
+        """Record the contested start and the version that holds it."""
+        super().__init__(
+            f"a period starting {effective_from.isoformat()} is already declared"
+            f" for version {version_id}"
+        )
+        self.effective_from = effective_from
+        self.version_id = version_id
+        self.detail = str(self)
+
+
+class EffectiveTimeNotSupportedError(ValueError):
+    """Effective periods were declared on a ``living`` lineage (D140 §2.4).
+
+    ``living`` means the newest version is the standing statement; a declared
+    period would be a second authority over the same question.
+    """
+
+    status_code = 422
+    code = "effective_time_requires_snapshot"
+
+    @property
+    def detail(self) -> str:
+        """The refusal, for callers that map errors by status and detail."""
+        return str(self)
 
 
 class DocumentNotFoundError(LookupError):

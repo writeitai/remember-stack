@@ -55,6 +55,10 @@ from remember.models import DocumentSearchFilters
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
+from remember.models import EffectivePeriodInput
+from remember.models import EffectivePeriodsRequest
+from remember.models import EffectivePeriodsSet
+from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
@@ -773,6 +777,9 @@ class MemoryClient:
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
@@ -781,6 +788,15 @@ class MemoryClient:
         ``source_path`` records where the file lives at its source (a folder
         path or URL) with the version's metadata; sending the same bytes
         again under a new name, title or path records that name too.
+
+        ``version_key`` is your immutable name for this version, unique within
+        the document: a new key always creates a version (even for bytes equal
+        to the latest), and an existing key is accepted only when re-sending
+        the latest version's bytes (``MemoryApiError`` 409 otherwise).
+        ``effective_from`` and optional ``effective_until`` declare when this
+        version's text is in force (UTC, half-open); without an end it lasts
+        until the next declared start. Both need ``source_kind``/``source_ref``
+        and periods need ``versioning_mode="snapshot"``.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -788,16 +804,32 @@ class MemoryClient:
             source_modified_at is not None
             or source_version_ref is not None
             or versioning_mode != "snapshot"
+            or version_key is not None
+            or effective_from is not None
+            or effective_until is not None
         ):
             raise ValueError(
-                "source timestamps, revisions, and living mode require"
-                " source_kind/source_ref"
+                "source timestamps, revisions, living mode, version keys and"
+                " effective periods require source_kind/source_ref"
             )
-        if source_modified_at is not None and (
-            source_modified_at.tzinfo is None
-            or source_modified_at.utcoffset() != timedelta(0)
+        for name, instant in (
+            ("source_modified_at", source_modified_at),
+            ("effective_from", effective_from),
+            ("effective_until", effective_until),
         ):
-            raise ValueError("source_modified_at must be timezone-aware UTC")
+            if instant is not None and (
+                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
+            ):
+                raise ValueError(f"{name} must be timezone-aware UTC")
+        if effective_until is not None and effective_from is None:
+            raise ValueError("effective_until requires effective_from")
+        if effective_from is not None:
+            if versioning_mode != "snapshot":
+                raise ValueError("effective periods require versioning_mode='snapshot'")
+            # the same validation the engine applies, before any request
+            EffectivePeriodInput(
+                effective_from=effective_from, effective_until=effective_until
+            )
 
         # An explicit mime always wins. Otherwise a file path's type comes
         # from the real path name (an overridden filename does not change
@@ -842,6 +874,12 @@ class MemoryClient:
             ),
             ("source_version_ref", source_version_ref),
             ("source_path", source_path),
+            ("version_key", version_key),
+            ("effective_from", effective_from.isoformat() if effective_from else None),
+            (
+                "effective_until",
+                effective_until.isoformat() if effective_until else None,
+            ),
         ):
             if value is not None:
                 params[key] = value
@@ -937,6 +975,50 @@ class MemoryClient:
             DocumentDeletion,
             self._json("DELETE", f"/documents/{document}"),
             endpoint="DELETE /documents/{doc_id}",
+        )
+
+    def set_effective_periods(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        periods: Sequence[EffectivePeriodInput],
+    ) -> EffectivePeriodsSet:
+        """Replace the periods during which one version's text is in force (D140).
+
+        ``periods`` is the version's complete set: declarations not listed are
+        retracted and new ones declared, atomically. An empty sequence leaves
+        the version with no in-force period while the document keeps its
+        declared effective time; :meth:`clear_effective_time` leaves it. A
+        start already declared for another version of the document raises
+        ``MemoryApiError`` 409, a ``living`` document 422, an unknown document
+        or version 404.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = EffectivePeriodsRequest(periods=tuple(periods))
+        return _validated(
+            EffectivePeriodsSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/effective-periods",
+                json_body=body.model_dump(mode="json"),
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+        )
+
+    def clear_effective_time(self, *, doc_id: UUID | str) -> EffectiveTimeCleared:
+        """Return a document to "the newest processed version is current" (D140).
+
+        Retracts every declared period of the document and records the change,
+        so reads pinned to an earlier instant still see what they saw. An
+        unknown or deleted ``doc_id`` raises ``MemoryApiError`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            EffectiveTimeCleared,
+            self._json("DELETE", f"/documents/{document}/effective-periods"),
+            endpoint="DELETE /documents/{doc_id}/effective-periods",
         )
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
@@ -1221,6 +1303,9 @@ class Client(MemoryClient):
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Ingest a document from a file path, string path, or raw bytes."""
         resolved_source = Path(source) if isinstance(source, str) else source
@@ -1236,6 +1321,9 @@ class Client(MemoryClient):
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
             source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def ingest_file(
@@ -1251,6 +1339,9 @@ class Client(MemoryClient):
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1264,6 +1355,9 @@ class Client(MemoryClient):
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
             source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def __enter__(self) -> Self:

@@ -109,6 +109,8 @@ def test_the_checked_in_schema_matches_the_app() -> None:
 _SURFACE: frozenset[tuple[str, str]] = frozenset(
     (
         ("DELETE", "/documents/{doc_id}"),
+        ("DELETE", "/documents/{doc_id}/effective-periods"),
+        ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),
         ("GET", "/chunks/{chunk_id}/adjacent"),
         ("GET", "/deployment"),
         ("GET", "/documents"),
@@ -163,6 +165,7 @@ _CAPABILITY_PORTS = frozenset(
         "documents",
         "document_search",
         "deletion",
+        "effective_time",
         "graph",
         "build_info",
     }

@@ -135,3 +135,5 @@ src/tests/core/test_format_registry.py
 src/tests/workers/test_d138_extraction_eligibility.py
 src/tests/adapters/test_data_profiles.py
 src/tests/adapters/test_document_family_converters.py
+src/tests/surfaces/test_effective_time_http.py
+src/tests/surfaces/test_effective_time_clients.py

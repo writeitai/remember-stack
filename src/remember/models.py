@@ -40,6 +40,9 @@ UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
 
+UTCInstant: TypeAlias = Annotated[AwareDatetime, AfterValidator(_require_utc)]
+"""A request instant: ISO 8601 text or a datetime, with a zero UTC offset."""
+
 
 # ---------------------------------------------------------------------------
 # Client Data Plane & Readiness Models (D36/D37/D62)
@@ -162,6 +165,97 @@ class DocumentDeletion(BaseModel):
     claims_retired: int = Field(ge=0)
     relations_closed: int = Field(ge=0)
     observations_closed: int = Field(ge=0)
+
+
+EFFECTIVE_PERIODS_MAX: Final = 1000
+"""Most periods one version may be declared with in one request (a starting
+bound, not a measured limit)."""
+
+VERSION_KEY_MAX_LEN: Final = 512
+"""Longest caller-chosen version key, the same bound as a source reference."""
+
+
+class EffectivePeriodInput(BaseModel):
+    """One declared period during which a version's text is in force (D140).
+
+    The period is half-open: ``effective_from`` is included and
+    ``effective_until`` is not. Without ``effective_until`` the period lasts
+    until the next declared start in the document's lineage, so declaring a
+    new edition ends its predecessor without touching it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    effective_from: UTCInstant
+    effective_until: UTCInstant | None = None
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self) -> Self:
+        if self.effective_until is not None and (
+            self.effective_until <= self.effective_from
+        ):
+            raise ValueError("effective_until must be later than effective_from")
+        return self
+
+
+class EffectivePeriodsRequest(BaseModel):
+    """The complete set of periods one version is in force for (D140).
+
+    It replaces the version's current declarations: periods not listed are
+    retracted and new ones are declared, atomically. An empty set is allowed
+    and leaves the version with no in-force period; the document keeps its
+    declared effective time.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    periods: tuple[EffectivePeriodInput, ...] = Field(max_length=EFFECTIVE_PERIODS_MAX)
+
+    @model_validator(mode="after")
+    def _starts_are_distinct(self) -> Self:
+        starts = [period.effective_from for period in self.periods]
+        if len(set(starts)) != len(starts):
+            raise ValueError("two periods start at the same instant")
+        return self
+
+
+class DeclaredEffectivePeriod(BaseModel):
+    """One live declaration of a version, exactly as it was declared."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    period_id: UUID
+    effective_from: datetime
+    effective_until: datetime | None
+    """The declared end; ``None`` means until the next declared start."""
+    declared_at: datetime
+    """When the declaration became known."""
+
+
+class EffectivePeriodsSet(BaseModel):
+    """What replacing one version's declared periods left in force."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    periods: tuple[DeclaredEffectivePeriod, ...]
+    """The version's live declarations after the call, by start."""
+    declared: int = Field(ge=0)
+    """Declarations this call added."""
+    retracted: int = Field(ge=0)
+    """Declarations this call retracted."""
+
+
+class EffectiveTimeCleared(BaseModel):
+    """What leaving effective time did to one document (D140).
+
+    Every live declaration of the document is retracted and, when it had
+    declared effective time, the document returns to "the newest processed
+    version is current" for every reader believing after ``cleared_at``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    retracted: int = Field(ge=0)
+    cleared_at: datetime | None
+    """When the document left effective time; ``None`` when it had none."""
 
 
 DOCUMENT_SEARCH_MAX_K: Final = 200
@@ -388,6 +482,8 @@ class IngestedVersion(BaseModel):
     until an operator adds a conversion route and releases the parked work.
     ``None`` means only that it is not parked for ``no_route``; processing
     state comes from readiness."""
+    version_key: str | None = None
+    """The version's caller-chosen key (D140), ``None`` when it has none."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )

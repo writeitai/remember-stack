@@ -26,6 +26,7 @@ from remember.models import ClaimValidPrecision
 from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
+from remember.models import DeclaredEffectivePeriod
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentSearchFilters
@@ -34,6 +35,9 @@ from remember.models import DocumentSearchRequest
 from remember.models import DocumentSearchResult
 from remember.models import DocumentSummary
 from remember.models import DocumentVersionSummary
+from remember.models import EffectivePeriodInput
+from remember.models import EffectivePeriodsSet
+from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
@@ -62,6 +66,7 @@ __all__ = (
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "ContextBundleV2",
+    "DeclaredEffectivePeriod",
     "DocumentDeletion",
     "DocumentPage",
     "DocumentSearchFilters",
@@ -70,6 +75,9 @@ __all__ = (
     "DocumentSearchResult",
     "DocumentSummary",
     "DocumentVersionSummary",
+    "EffectivePeriodInput",
+    "EffectivePeriodsSet",
+    "EffectiveTimeCleared",
     "Envelope",
     "IngestedVersion",
     "MemoryApiError",

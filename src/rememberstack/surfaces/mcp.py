@@ -93,10 +93,19 @@ class _LocalMemoryWriteBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Accept one body through the composed E0 ingest port."""
         upload = DocumentUpload(
-            filename=filename, mime=mime, content=content, title=title
+            filename=filename,
+            mime=mime,
+            content=content,
+            title=title,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
         if source_kind is None or source_ref is None:
             return self._ingest.ingest(deployment_id=self._deployment_id, upload=upload)

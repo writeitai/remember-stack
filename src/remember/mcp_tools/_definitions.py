@@ -50,6 +50,7 @@ TITLE_MAX_LEN: Final = 512
 SOURCE_KIND_MAX_LEN: Final = 128
 SOURCE_REF_MAX_LEN: Final = 512
 SOURCE_VERSION_REF_MAX_LEN: Final = 512
+VERSION_KEY_MAX_LEN: Final = 512
 VERSION_IDS_MAX: Final = 1000
 
 Permission = Literal["memory:read", "memory:write"]
@@ -120,6 +121,11 @@ _INGEST_DESCRIPTION: Final = (
     " a maximum body size (oversized or empty bodies map to structured"
     " body_too_large / empty_body errors). source_kind and source_ref must be"
     " supplied together when either is set (stable lineage)."
+    " version_key names this version for good (a new key always creates a"
+    " version; reusing a key is only accepted when re-sending that latest"
+    " version's bytes). effective_from/effective_until declare when this"
+    " version's text is in force (UTC; snapshot lineages only); without"
+    " effective_until it lasts until the next declared start."
     ' If the result has parked="no_route", the original is stored but its'
     " conversion is parked waiting for a conversion route for its MIME type."
     " Tell the user now instead of polling readiness."
@@ -377,6 +383,34 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
             "Optional upstream revision label. Requires source_kind/source_ref."
         ),
     },
+    "version_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": VERSION_KEY_MAX_LEN,
+        "description": (
+            "Optional immutable name for this version, unique within the"
+            " document (e.g. an edition id). A new key always creates a"
+            " version; an existing key is refused unless it re-sends the latest"
+            " version's bytes. Requires source_kind/source_ref."
+        ),
+    },
+    "effective_from": {
+        "type": "string",
+        "format": "date-time",
+        "description": (
+            "Optional ISO-8601 UTC start (inclusive) of the period this"
+            " version's text is in force. Requires source_kind/source_ref and"
+            " versioning_mode snapshot."
+        ),
+    },
+    "effective_until": {
+        "type": "string",
+        "format": "date-time",
+        "description": (
+            "Optional ISO-8601 UTC end (exclusive) of that period; requires"
+            " effective_from. Omit it to last until the next declared start."
+        ),
+    },
 }
 _INGEST_BODY_SOURCES: Final = ("path", "text", "content_base64")
 
@@ -499,7 +533,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_INGEST_DESCRIPTION,
         input_schema=_INGEST_INPUT_SCHEMA,
         permission="memory:write",
-        tool_version=1,
+        tool_version=2,
         http_route="POST /ingest",
     ),
     ToolDefinition(

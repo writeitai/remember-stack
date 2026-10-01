@@ -73,6 +73,9 @@ class _ClientBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Send one ingest through the HTTP SDK."""
         return self._client.ingest(
@@ -85,6 +88,9 @@ class _ClientBackend:
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def pipeline_readiness(

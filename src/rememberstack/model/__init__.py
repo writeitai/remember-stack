@@ -124,6 +124,8 @@ from rememberstack.model.documents import ConvertSource
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import DocumentVersionNotFoundError
+from rememberstack.model.documents import EffectivePeriodConflictError
+from rememberstack.model.documents import EffectiveTimeNotSupportedError
 from rememberstack.model.documents import IngestedVersion
 from rememberstack.model.documents import IngestPrincipal
 from rememberstack.model.documents import IngestPrincipalKind
@@ -134,6 +136,7 @@ from rememberstack.model.documents import StructureSource
 from rememberstack.model.documents import SyncCycleSummary
 from rememberstack.model.documents import SyntheticRootRecord
 from rememberstack.model.documents import UploadRecord
+from rememberstack.model.documents import VersionKeyConflictError
 from rememberstack.model.envelope import AggregateBucket
 from rememberstack.model.envelope import AggregateReport
 from rememberstack.model.envelope import AsOfTemporalScope
@@ -467,6 +470,8 @@ __all__ = (
     "DeploymentBootstrapResult",
     "DeploymentConflictError",
     "DocumentNotFoundError",
+    "EffectivePeriodConflictError",
+    "EffectiveTimeNotSupportedError",
     "DocumentUpload",
     "DocumentVersionNotFoundError",
     "DeploymentBuildInfo",
@@ -749,6 +754,7 @@ __all__ = (
     "UnroutableMimeError",
     "VideoRegionLocator",
     "UploadRecord",
+    "VersionKeyConflictError",
     "Validity",
     "VersionPipelineReadiness",
     "WorkLedgerError",

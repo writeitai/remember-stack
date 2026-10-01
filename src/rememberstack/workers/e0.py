@@ -224,6 +224,16 @@ class UploadIngestor:
         creation-scoped: an identical-bytes re-ingest is the D55 no-op and
         never rewrites the original attribution.
         """
+        if (
+            upload.version_key is not None
+            or upload.effective_from is not None
+            or upload.effective_until is not None
+        ):
+            # D140: a one-shot upload's lineage is its bytes; a version key or
+            # a period only means something on a lineage that has versions
+            raise ValueError(
+                "version_key and effective periods require source_kind/source_ref"
+            )
         content_hash = hashlib.sha256(upload.content).hexdigest()
         self._guard_ingest(
             deployment_id=deployment_id,
@@ -291,7 +301,9 @@ class UploadIngestor:
         Identity is connector-native (source_kind, source_ref) — bytes
         cannot identify a lineage (they change; that is the premise). A
         changed file becomes a new VERSION of its lineage; identical bytes
-        are the content-hash no-op.
+        are the content-hash no-op. The upload's D140 ``version_key`` and
+        effective period, when given, are applied by the catalog in the same
+        transaction.
         """
         content_hash = hashlib.sha256(upload.content).hexdigest()
         self._guard_ingest(
@@ -326,6 +338,9 @@ class UploadIngestor:
             file_name=upload.filename,
             declared_title=upload.title,
             source_path=upload.source_path,
+            version_key=upload.version_key,
+            effective_from=upload.effective_from,
+            effective_until=upload.effective_until,
         )
         if metering is None:
             try:

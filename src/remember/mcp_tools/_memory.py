@@ -32,6 +32,7 @@ import logging
 import os
 from pathlib import Path
 import stat
+from typing import Any
 from typing import Final
 from typing import Literal
 from typing import Protocol
@@ -54,6 +55,7 @@ from remember.mcp_tools._definitions import SOURCE_REF_MAX_LEN
 from remember.mcp_tools._definitions import SOURCE_VERSION_REF_MAX_LEN
 from remember.mcp_tools._definitions import TITLE_MAX_LEN
 from remember.mcp_tools._definitions import VERSION_IDS_MAX
+from remember.mcp_tools._definitions import VERSION_KEY_MAX_LEN
 from remember.mcp_tools._errors import error_result
 from remember.mcp_tools._errors import invalid_arguments
 from remember.mcp_tools._errors import map_error
@@ -131,6 +133,9 @@ class MemoryWriteBackend(Protocol):
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Accept one document body into E0 and return the version identity."""
         ...
@@ -327,6 +332,17 @@ def _run_ingest(
         settings=settings,
         capability_limit=backend.max_ingest_body_bytes(),
     )
+    # D140 arguments travel only when given, so a backend that predates them
+    # keeps serving every call that does not use them.
+    effective_time: dict[str, Any] = {
+        key: value
+        for key, value in (
+            ("version_key", parsed.version_key),
+            ("effective_from", parsed.effective_from),
+            ("effective_until", parsed.effective_until),
+        )
+        if value is not None
+    }
     ingested = backend.ingest(
         content=parsed.content,
         filename=parsed.filename,
@@ -337,6 +353,7 @@ def _run_ingest(
         source_modified_at=parsed.source_modified_at,
         versioning_mode=parsed.versioning_mode,
         source_version_ref=parsed.source_version_ref,
+        **effective_time,
     )
     return _ingest_success_payload(ingested=ingested)
 
@@ -394,6 +411,9 @@ class ParsedIngest:
     source_modified_at: datetime | None
     versioning_mode: Literal["snapshot", "living"]
     source_version_ref: str | None
+    version_key: str | None = None
+    effective_from: datetime | None = None
+    effective_until: datetime | None = None
 
 
 def parse_ingest_arguments(
@@ -422,6 +442,9 @@ def parse_ingest_arguments(
             "versioning_mode",
             "source_modified_at",
             "source_version_ref",
+            "version_key",
+            "effective_from",
+            "effective_until",
         },
     )
     path = _optional_nonempty_string(arguments, key="path", max_length=None)
@@ -477,6 +500,15 @@ def parse_ingest_arguments(
     )
     versioning_mode = _parse_versioning_mode(arguments.get("versioning_mode"))
     source_modified_at = _parse_source_modified_at(arguments.get("source_modified_at"))
+    version_key = _optional_nonempty_string(
+        arguments, key="version_key", max_length=VERSION_KEY_MAX_LEN
+    )
+    effective_from = _parse_source_modified_at(
+        arguments.get("effective_from"), key="effective_from"
+    )
+    effective_until = _parse_source_modified_at(
+        arguments.get("effective_until"), key="effective_until"
+    )
 
     if (source_kind is None) != (source_ref is None):
         raise ToolArgumentError(
@@ -492,19 +524,37 @@ def parse_ingest_arguments(
         source_modified_at is not None
         or source_version_ref is not None
         or versioning_mode != "snapshot"
+        or version_key is not None
+        or effective_from is not None
+        or effective_until is not None
     ):
         raise ToolArgumentError(
             error=ToolError(
                 code="source_lineage_pair",
                 detail=(
-                    "source timestamps, revisions, and living mode require"
-                    " source_kind/source_ref."
+                    "source timestamps, revisions, living mode, version_key and"
+                    " effective periods require source_kind/source_ref."
                 ),
                 status_code=None,
                 retryable=False,
                 agent_action=(
                     "Provide source_kind and source_ref together with lineage fields."
                 ),
+            )
+        )
+
+    if effective_until is not None and (
+        effective_from is None or effective_until <= effective_from
+    ):
+        raise ToolArgumentError(
+            error=invalid_arguments(
+                detail="effective_until requires an earlier effective_from."
+            )
+        )
+    if effective_from is not None and versioning_mode != "snapshot":
+        raise ToolArgumentError(
+            error=invalid_arguments(
+                detail="effective periods require versioning_mode snapshot."
             )
         )
 
@@ -578,6 +628,9 @@ def parse_ingest_arguments(
         source_modified_at=source_modified_at,
         versioning_mode=versioning_mode,
         source_version_ref=source_version_ref,
+        version_key=version_key,
+        effective_from=effective_from,
+        effective_until=effective_until,
     )
 
 
@@ -939,29 +992,27 @@ def _parse_versioning_mode(value: object) -> Literal["snapshot", "living"]:
     )
 
 
-def _parse_source_modified_at(value: object) -> datetime | None:
-    """Parse optional ISO-8601 UTC timestamp."""
+def _parse_source_modified_at(
+    value: object, *, key: str = "source_modified_at"
+) -> datetime | None:
+    """Parse one optional ISO-8601 UTC timestamp argument."""
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
         raise ToolArgumentError(
             error=invalid_arguments(
-                detail="source_modified_at must be an ISO-8601 timestamp string."
+                detail=f"{key} must be an ISO-8601 timestamp string."
             )
         )
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as error:
         raise ToolArgumentError(
-            error=invalid_arguments(
-                detail="source_modified_at must be a valid ISO-8601 timestamp."
-            )
+            error=invalid_arguments(detail=f"{key} must be a valid ISO-8601 timestamp.")
         ) from error
     if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
         raise ToolArgumentError(
-            error=invalid_arguments(
-                detail="source_modified_at must be timezone-aware UTC."
-            )
+            error=invalid_arguments(detail=f"{key} must be timezone-aware UTC.")
         )
     return parsed.astimezone(timezone.utc)
 

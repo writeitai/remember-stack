@@ -769,6 +769,12 @@ def test_parked_deployment_refuses_the_document_list() -> None:
         ("GET", "/healthz", None),
         ("GET", "/operations", None),
         ("DELETE", f"/documents/{_DEPLOYMENT}", None),
+        ("DELETE", f"/documents/{_DEPLOYMENT}/effective-periods", None),
+        (
+            "PUT",
+            f"/documents/{_DEPLOYMENT}/versions/{_DEPLOYMENT}/effective-periods",
+            None,
+        ),
         ("GET", "/connectors", None),
         ("GET", "/query/saved//x", None),
     ],
@@ -851,6 +857,8 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         ("POST", "/readiness"),
         ("GET", "/operations"),
         ("DELETE", "/documents/{doc_id}"),
+        ("DELETE", "/documents/{doc_id}/effective-periods"),
+        ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),
     }
     schema = json.loads(
         (Path(__file__).parents[3] / "openapi.json").read_text(encoding="utf-8")

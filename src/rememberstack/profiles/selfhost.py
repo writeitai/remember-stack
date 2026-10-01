@@ -55,6 +55,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
@@ -1149,6 +1150,7 @@ class SelfHostProfile:
                 model_provider=self._model_provider,
                 embedding_model=embedding_model,
             ),
+            effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
