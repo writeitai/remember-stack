@@ -415,8 +415,9 @@ class DocumentSearchResult(BaseModel):
     """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
     the corpus root; present in a published snapshot only where the
     deployment builds the filesystem view. The path opens the lineage's
-    served version, so it is null when the result describes another version
-    (``served_version`` false)."""
+    served version, so for a document with declared effective periods it is
+    null when the result describes another edition (``served_version``
+    false)."""
     served_version: bool = True
     """Whether ``version_id`` is the lineage's served (current) version."""
     representation_id: UUID | None = None

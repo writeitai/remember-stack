@@ -35,7 +35,8 @@ by the start of the version's in-force interval that meets the scope's window,
 then ``version_no``. Each such result lists its ``matching_editions`` with
 their intervals and the handle that opens each. Lineages without declarations
 are judged exactly as above. A result's ``p3_path`` opens the lineage's served
-version, so it is set only when the described version is the served one.
+version, so a periodised result carries it only when the described version is
+the served one; ``served_version`` says which.
 
 **Paging.** Without a query, lineages are walked newest first by when the
 lineage's newest live version that had arrived by the pinned as-of instant was
@@ -505,9 +506,13 @@ def _judge_batch(
         set(
             connection.execute(
                 text(
-                    "SELECT m.version_id FROM document_metadata m"
-                    " WHERE m.deployment_id = :deployment_id"
-                    " AND m.version_id = ANY(CAST(:judged AS uuid[]))"
+                    # ``j`` is the judged version, as in the shared CTEs.
+                    "SELECT j.version_id FROM document_versions j"
+                    " JOIN document_metadata m"
+                    "   ON m.deployment_id = j.deployment_id"
+                    "  AND m.version_id = j.version_id"
+                    " WHERE j.deployment_id = :deployment_id"
+                    " AND j.version_id = ANY(CAST(:judged AS uuid[]))"
                     f"{scope.metadata_where}"  # noqa: S608 -- bound predicates
                 ),
                 {**parameters, "judged": judged_ids},
@@ -812,7 +817,14 @@ def _describe(
                 file_name=row["file_name"],
                 title=row["title"],
                 source_path=row["source_path"],
-                p3_path=p3_path(doc_id=pick.doc_id) if served else None,
+                # The P3 path opens the served version: a periodised result
+                # describing another edition carries none (§3.3); an
+                # undeclared lineage keeps D134's path unchanged.
+                p3_path=(
+                    p3_path(doc_id=pick.doc_id)
+                    if served or not pick.periodised
+                    else None
+                ),
                 served_version=served,
                 representation_id=row["current_representation_id"],
                 effective=effective.get(pick.version_id, ()),

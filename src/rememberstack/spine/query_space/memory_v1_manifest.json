@@ -349,6 +349,73 @@
                 "maxLength": 8192,
                 "minLength": 1,
                 "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
               }
             },
             "required": [
@@ -625,6 +692,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -653,6 +728,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -689,6 +769,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -815,6 +958,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -848,7 +1032,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -963,6 +1147,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -988,6 +1180,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -1003,6 +1216,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -1240,6 +1466,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -1471,6 +1708,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -1694,6 +1932,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -2183,7 +2447,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 2
+          "version": 3
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
@@ -2560,6 +2824,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -2588,6 +2860,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -2624,6 +2901,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -2748,6 +3088,47 @@
                   "believed_at"
                 ],
                 "title": "CurrentTemporalScope",
+                "type": "object"
+              },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
                 "type": "object"
               },
               "EntityCandidate": {
@@ -2988,7 +3369,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -3103,6 +3484,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -3128,6 +3517,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -3143,6 +3553,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -3380,6 +3803,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -3611,6 +4045,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -3834,6 +4269,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -4545,6 +5006,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -4573,6 +5042,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -4609,6 +5083,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -4735,6 +5272,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -4768,7 +5346,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -4883,6 +5461,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -4908,6 +5494,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -4923,6 +5530,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -5160,6 +5780,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -5391,6 +6022,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -5614,6 +6246,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -6391,6 +7049,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -6419,6 +7085,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -6455,6 +7126,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -6581,6 +7315,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -6614,7 +7389,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -6729,6 +7504,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -6754,6 +7537,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -6769,6 +7573,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -7006,6 +7823,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -7237,6 +8065,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -7460,6 +8289,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -44341,5 +45196,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "9d2835e9068f5ec123d0202a8183ae15fc7ecc953e3d202023ddea1d067686e5"
+  "surface_manifest_hash": "3e3fbb7e7c3721fa6a8e667fad7b4275906b18db7c7512f19012323964a28355"
 }
