@@ -144,6 +144,7 @@ from rememberstack.model.envelope import AsOfTemporalScope
 from rememberstack.model.envelope import AtTemporalScope
 from rememberstack.model.envelope import ChangeRecord
 from rememberstack.model.envelope import ChunkEvidenceResult
+from rememberstack.model.envelope import ClaimOccurrence
 from rememberstack.model.envelope import CoMember
 from rememberstack.model.envelope import ContextBundleV2
 from rememberstack.model.envelope import Contradiction
@@ -170,6 +171,7 @@ from rememberstack.model.envelope import OverlapTemporalScope
 from rememberstack.model.envelope import PageRef
 from rememberstack.model.envelope import RankedItem
 from rememberstack.model.envelope import ScanRow
+from rememberstack.model.envelope import ScopePending
 from rememberstack.model.envelope import SourceRecord
 from rememberstack.model.envelope import Truncation
 from rememberstack.model.envelope import Validity
@@ -517,11 +519,13 @@ __all__ = (
     "SpendLeaseRefused",
     "SpendLeaseUnavailable",
     "track_read_embedding_cost",
+    "ClaimOccurrence",
     "Freshness",
     "Grain",
     "IdentityRegime",
     "HistoryTemporalScope",
     "KFreshness",
+    "ScopePending",
     "HandlerAlreadyRegisteredError",
     "IngestedVersion",
     "IngestPrincipal",

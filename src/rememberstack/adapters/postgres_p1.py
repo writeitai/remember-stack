@@ -23,6 +23,10 @@ from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.embedding_input_policy import embedding_text_hash
+from rememberstack.core.text_scope import claim_selected
+from rememberstack.core.text_scope import fact_in_scope
+from rememberstack.core.text_scope import TextScope
+from rememberstack.core.text_scope import version_selected
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
@@ -474,6 +478,7 @@ class PostgresP1Index:
         k: int,
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic claim IDs."""
         return tuple(
@@ -484,6 +489,7 @@ class PostgresP1Index:
                 k=k,
                 current_only=current_only,
                 documents=documents,
+                time=time,
             )
         )
 
@@ -495,6 +501,7 @@ class PostgresP1Index:
         k: int,
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 claim IDs."""
         return tuple(
@@ -505,6 +512,7 @@ class PostgresP1Index:
                 k=k,
                 current_only=current_only,
                 documents=documents,
+                time=time,
             )
         )
 
@@ -517,6 +525,7 @@ class PostgresP1Index:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic chunk IDs."""
         return tuple(
@@ -528,6 +537,7 @@ class PostgresP1Index:
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
                 documents=documents,
+                time=time,
             )
         )
 
@@ -540,6 +550,7 @@ class PostgresP1Index:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 chunk IDs."""
         return tuple(
@@ -551,6 +562,7 @@ class PostgresP1Index:
                 policy_generation=policy_generation,
                 embedder_generation=embedder_generation,
                 documents=documents,
+                time=time,
             )
         )
 
@@ -581,8 +593,15 @@ class PostgresP1Index:
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank semantic claims after authority and optional filters."""
+        """Rank semantic claims after authority, time scope and filters.
+
+        ``time`` (D140 §3.4, default the current scope) selects claims inside
+        the ranked statement: a claim of a lineage without declared periods by
+        today's currency rule, a claim of a periodised lineage by an
+        occurrence in a version in force for the scope.
+        """
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,
@@ -598,6 +617,9 @@ class PostgresP1Index:
         predicates, parameters = _claim_filters(equality_filters)
         _add_claim_documents(
             documents=documents, predicates=predicates, parameters=parameters
+        )
+        _add_claim_scope(
+            time=time, published=published, predicates=predicates, parameters=parameters
         )
         entity_scope = ""
         coverage_order = ""
@@ -620,12 +642,9 @@ class PostgresP1Index:
             SELECT indexed.claim_id::text AS item_id,
                    1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
             FROM claims AS indexed
-            JOIN {published} AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.claim_id = indexed.claim_id
             JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = published.deployment_id
-             AND document.doc_id = published.doc_id
+              ON document.deployment_id = indexed.deployment_id
+             AND document.doc_id = indexed.doc_id
             {entity_scope}
             WHERE indexed.deployment_id = :deployment_id
               AND indexed.embedding IS NOT NULL
@@ -661,6 +680,7 @@ class PostgresP1Index:
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank current claims through the one explicit partial BM25 index."""
         if not current_only:
@@ -671,6 +691,12 @@ class PostgresP1Index:
         predicates, parameters = _claim_filters(equality_filters)
         _add_claim_documents(
             documents=documents, predicates=predicates, parameters=parameters
+        )
+        _add_claim_scope(
+            time=time,
+            published="memory_v1.claims_live",
+            predicates=predicates,
+            parameters=parameters,
         )
         entity_scope = ""
         coverage_order = ""
@@ -694,12 +720,9 @@ class PostgresP1Index:
                    -(indexed.claim_text <@> to_bm25query(
                        :query, 'ix_claims_current_bm25'))::double precision AS score
             FROM claims AS indexed
-            JOIN memory_v1.claims_live AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.claim_id = indexed.claim_id
             JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = published.deployment_id
-             AND document.doc_id = published.doc_id
+              ON document.deployment_id = indexed.deployment_id
+             AND document.doc_id = indexed.doc_id
             {entity_scope}
             WHERE indexed.deployment_id = :deployment_id
               AND indexed.is_current_testimony
@@ -725,8 +748,15 @@ class PostgresP1Index:
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank semantic chunks with live-source filtering in the same statement."""
+        """Rank semantic chunks with live-source filtering in the same statement.
+
+        ``time`` (D140 §3.2, default the current scope) keeps a chunk only
+        when its version is in force for the scope, inside the ranked
+        statement; candidates come from every live ready version, not only
+        the served one.
+        """
         _require_vector(vector)
         policy = policy_generation or self._chunk_input_policy
         model = embedder_generation or self._embedding_model
@@ -744,6 +774,7 @@ class PostgresP1Index:
             )
             predicates.append(version_sql)
             parameters.update(document_parameters)
+        _add_chunk_scope(time=time, predicates=predicates, parameters=parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -765,13 +796,13 @@ class PostgresP1Index:
             SELECT indexed.chunk_id::text AS item_id,
                    1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
             FROM chunk_search AS indexed
-            JOIN memory_v1.chunks_live AS published
+            JOIN memory_v1.chunks_all_versions_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
             JOIN memory_v1.documents_live AS document
               ON document.deployment_id = published.deployment_id
              AND document.doc_id = published.doc_id
-            LEFT JOIN memory_v1.sections_live AS section
+            LEFT JOIN document_sections AS section
               ON section.deployment_id = published.deployment_id
              AND section.section_id = published.section_id
             {entity_scope}
@@ -809,8 +840,15 @@ class PostgresP1Index:
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank BM25 chunks with live-source filtering in the same statement."""
+        """Rank BM25 chunks with live-source filtering in the same statement.
+
+        ``time`` (D140 §3.2, default the current scope) keeps a chunk only
+        when its version is in force for the scope, inside the ranked
+        statement; candidates come from every live ready version, not only
+        the served one.
+        """
         self._require_channel(
             deployment_id=deployment_id, target="chunks", channel="bm25", policy=None
         )
@@ -821,6 +859,7 @@ class PostgresP1Index:
             )
             predicates.append(version_sql)
             parameters.update(document_parameters)
+        _add_chunk_scope(time=time, predicates=predicates, parameters=parameters)
         entity_scope = ""
         coverage_order = ""
         if entity_ids:
@@ -843,13 +882,13 @@ class PostgresP1Index:
                    -(indexed.search_text <@> to_bm25query(
                        :query, 'ix_chunk_search_bm25'))::double precision AS score
             FROM chunk_search AS indexed
-            JOIN memory_v1.chunks_live AS published
+            JOIN memory_v1.chunks_all_versions_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
             JOIN memory_v1.documents_live AS document
               ON document.deployment_id = published.deployment_id
              AND document.doc_id = published.doc_id
-            LEFT JOIN memory_v1.sections_live AS section
+            LEFT JOIN document_sections AS section
               ON section.deployment_id = published.deployment_id
              AND section.section_id = published.section_id
             {entity_scope}
@@ -876,8 +915,13 @@ class PostgresP1Index:
         query: str | None = None,
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank cheap entity-scoped testimony candidates for later confirmation."""
+        """Rank cheap entity-scoped testimony candidates for later confirmation.
+
+        The D140 time scope (default current) is part of the candidate
+        predicate, so text not in force never takes a nomination slot.
+        """
         if not entity_ids:
             raise ValueError("scoped testimony nomination requires entity_ids")
         if grain == "claim":
@@ -888,7 +932,13 @@ class PostgresP1Index:
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
-            current_predicate = "AND indexed.is_current_testimony"
+            current_predicate = "AND indexed.is_current_testimony AND " + (
+                claim_selected(
+                    claim="indexed.claim_id",
+                    doc="indexed.doc_id",
+                    current_testimony="TRUE",
+                )
+            )
         elif grain == "chunk":
             table = "chunk_search"
             id_column = "chunk_id"
@@ -897,7 +947,17 @@ class PostgresP1Index:
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
-            current_predicate = ""
+            current_predicate = (
+                "AND EXISTS (SELECT 1 FROM chunks AS candidate"
+                " JOIN document_versions AS candidate_version"
+                "   ON candidate_version.deployment_id = candidate.deployment_id"
+                "  AND candidate_version.version_id = candidate.version_id"
+                "  AND candidate_version.current_representation_id"
+                "      = candidate.representation_id"
+                " WHERE candidate.deployment_id = indexed.deployment_id"
+                " AND candidate.chunk_id = indexed.chunk_id"
+                f" AND {version_selected(version='candidate.version_id')})"
+            )
         else:
             raise ValueError(f"unknown testimony grain {grain!r}")
 
@@ -905,6 +965,9 @@ class PostgresP1Index:
             "deployment_id": UUID(deployment_id),
             "entity_ids": _uuid_strings(entity_ids),
             "limit": k,
+            **(
+                time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
+            ).parameters(),
         }
         if channel == "semantic":
             if vector is None:
@@ -994,7 +1057,7 @@ class PostgresP1Index:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
     ) -> dict[str, P1ChunkText]:
-        """Hydrate normalized text only for live authority-confirmed chunks."""
+        """Hydrate normalized text for live chunks of any live ready version (D140 §3.3)."""
         if not chunk_ids:
             return {}
         rows = self._engine_rows(
@@ -1002,10 +1065,10 @@ class PostgresP1Index:
             SELECT indexed.chunk_id, indexed.search_text AS indexed_text,
                    section.role::text AS section_role
             FROM chunk_search AS indexed
-            JOIN memory_v1.chunks_live AS published
+            JOIN memory_v1.chunks_all_versions_live AS published
               ON published.deployment_id = indexed.deployment_id
              AND published.chunk_id = indexed.chunk_id
-            LEFT JOIN memory_v1.sections_live AS section
+            LEFT JOIN document_sections AS section
               ON section.deployment_id = published.deployment_id
              AND section.section_id = published.section_id
             WHERE indexed.deployment_id = :deployment_id
@@ -1043,6 +1106,10 @@ class PostgresP1Index:
     ) -> tuple[P1Nomination, ...]:
         """Rank facts after applying identity, temporal, and entity authority.
 
+        The D140 §8.1 evidence gate for ``time`` is part of every branch's
+        predicate, before its ``LIMIT``: a fact whose only support is text not
+        in force for the scope is never a candidate.
+
         ``documents`` keeps a fact only when at least one live supporting
         claim has a live occurrence in a matching document version (D134).
         """
@@ -1069,6 +1136,8 @@ class PostgresP1Index:
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
+        gate = TextScope.of(time=selected_time, evaluated_at=evaluation)
+        parameters.update(gate.parameters())
         supporting_sql = ""
         if documents is not None and not is_empty(documents):
             occurrence_sql, document_parameters = matching_occurrence_exists(
@@ -1156,6 +1225,7 @@ class PostgresP1Index:
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {entity_sql} {key_sql} {filter_sql} {supporting_sql}
+                   AND {fact_in_scope(fact_kind=fact_kind, fact_id=f"indexed.{id_column}")}
                  ORDER BY {branch_order}, indexed.{id_column}
                  LIMIT :branch_limit)
                 """
@@ -1185,7 +1255,10 @@ class PostgresP1Index:
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
     ) -> tuple[P1Nomination, ...]:
-        """Rank cheap base-table candidates for a caller that confirms every row."""
+        """Rank cheap base-table candidates for a caller that confirms every row.
+
+        The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``.
+        """
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -1209,6 +1282,8 @@ class PostgresP1Index:
         time_sql, parameters = _fact_time(
             selected_time, evaluated_at=evaluation, alias="indexed"
         )
+        gate = TextScope.of(time=selected_time, evaluated_at=evaluation)
+        parameters.update(gate.parameters())
         ranking_ids = entity_ids if ranking_entity_ids is None else ranking_entity_ids
         if not set(ranking_ids).issubset(entity_ids):
             raise ValueError(
@@ -1309,6 +1384,7 @@ class PostgresP1Index:
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {scope_filter}
+                   AND {fact_in_scope(fact_kind=fact_kind, fact_id=f"indexed.{id_column}")}
                  ORDER BY {branch_order},
                           indexed.{id_column}
                  LIMIT :branch_limit)
@@ -1559,6 +1635,42 @@ def _add_claim_documents(
     parameters.update(document_parameters)
 
 
+def _add_claim_scope(
+    *,
+    time: TextScope | None,
+    published: str,
+    predicates: list[str],
+    parameters: dict[str, Any],
+) -> None:
+    """Select claims by the D140 time scope (default current) in the statement.
+
+    ``published`` is the relation whose membership is today's rule for the
+    claim; it keeps deciding claims of lineages without declared periods.
+    """
+    scope = time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
+    predicates.append(
+        claim_selected(
+            claim="indexed.claim_id",
+            doc="indexed.doc_id",
+            current_testimony=(
+                f"EXISTS (SELECT 1 FROM {published} AS published"
+                " WHERE published.deployment_id = indexed.deployment_id"
+                " AND published.claim_id = indexed.claim_id)"
+            ),
+        )
+    )
+    parameters.update(scope.parameters())
+
+
+def _add_chunk_scope(
+    *, time: TextScope | None, predicates: list[str], parameters: dict[str, Any]
+) -> None:
+    """Select chunks of versions in force for the scope (default current)."""
+    scope = time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
+    predicates.append(version_selected(version="published.version_id"))
+    parameters.update(scope.parameters())
+
+
 def _claim_filters(
     filters: Mapping[str, str] | None,
 ) -> tuple[list[str], dict[str, Any]]:
@@ -1567,7 +1679,7 @@ def _claim_filters(
     parameters: dict[str, Any] = {}
     for key, value in (filters or {}).items():
         if key == "doc_id":
-            clauses.append("published.doc_id = :filter_doc_id")
+            clauses.append("indexed.doc_id = :filter_doc_id")
             parameters["filter_doc_id"] = UUID(value)
         elif key == "source_kind":
             clauses.append("document.source_kind = :filter_source_kind")
@@ -1581,10 +1693,10 @@ def _claim_filters(
             )
             parameters["filter_entity_id"] = UUID(value)
         elif key == "asserted_from":
-            clauses.append("published.asserted_at >= :filter_asserted_from")
+            clauses.append("indexed.asserted_at >= :filter_asserted_from")
             parameters["filter_asserted_from"] = datetime.fromisoformat(value)
         elif key == "asserted_to":
-            clauses.append("published.asserted_at <= :filter_asserted_to")
+            clauses.append("indexed.asserted_at <= :filter_asserted_to")
             parameters["filter_asserted_to"] = datetime.fromisoformat(value)
         else:
             raise ValueError(f"unsupported claims search filter {key!r}")

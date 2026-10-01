@@ -223,6 +223,45 @@ _STRING_LIST: Final[dict[str, object]] = {
     "items": {"type": "string", "minLength": 1},
 }
 
+_SEARCH_DOCUMENTS_TIME_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "default": {"mode": "current"},
+    "description": (
+        "For a document with declared effective periods, which editions are"
+        " candidates: current (default, in force now), at an instant, overlap"
+        " a window, or history. Other documents are unaffected."
+    ),
+    "oneOf": [
+        {
+            "properties": {"mode": {"const": "current"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "at"},
+                "at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "at"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "overlap"},
+                "from": {"type": "string", "format": "date-time"},
+                "to": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "from", "to"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {"mode": {"const": "history"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    ],
+}
+
 _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "additionalProperties": False,
@@ -252,6 +291,7 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "enum": ["current", "all"],
             "description": "current (default) or all live versions.",
         },
+        "time": _SEARCH_DOCUMENTS_TIME_SCHEMA,
         "k": {"type": "integer", "minimum": 1, "maximum": 200},
         "cursor": {
             "type": "string",
@@ -643,7 +683,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=1,
+        tool_version=2,
         http_route="POST /documents/search",
     ),
     ToolDefinition(
@@ -680,11 +720,12 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                     "minimum": 1,
                     "maximum": 400,
                 },
+                "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=2,
+        tool_version=3,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(

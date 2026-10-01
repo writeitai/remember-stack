@@ -283,11 +283,18 @@ class MemoryClient:
         assert isinstance(res, ContextBundleV2)
         return res
 
-    def claims_and_sources_context(self, query: str) -> Envelope:
-        """Run the assured claims_and_sources_context operation."""
-        res = self.run_operation(
-            name="claims_and_sources_context", arguments={"query": query}
-        )
+    def claims_and_sources_context(
+        self, query: str, *, time: Mapping[str, object] | None = None
+    ) -> Envelope:
+        """Run the assured claims_and_sources_context operation.
+
+        ``time`` (D140) reads the text in force for the scope (default
+        current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
+        """
+        args: dict[str, object] = {"query": query}
+        if time is not None:
+            args["time"] = dict(time)
+        res = self.run_operation(name="claims_and_sources_context", arguments=args)
         assert isinstance(res, Envelope)
         return res
 
@@ -521,22 +528,29 @@ class MemoryClient:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Search source claims; the returned envelope remains evidence grain.
 
         ``documents`` (D134) keeps only claims found in a document version
         matching the filters ``search_documents`` takes; each returned claim
-        still cites its origin. The filter travels in a body,
-        so a filtered search uses ``POST /search/claims``.
+        still cites its origin. ``time`` (D140, default current) reads only
+        text in force for the scope; a claim of a document with declared
+        effective periods returns its occurrence in each selected version.
+        Either travels in a body, so such a search uses ``POST /search/claims``.
         """
-        if documents is not None:
+        if documents is not None or time is not None:
             return _validated(
                 Envelope,
                 self._json(
                     "POST",
                     "/search/claims",
                     json_body=SearchRequest(
-                        query=query, k=k, channel=channel, documents=documents
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
                     ).model_dump(mode="json", exclude_none=True),
                 ),
                 endpoint="POST /search/claims",
@@ -558,21 +572,27 @@ class MemoryClient:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Search live source passages as separately typed evidence.
 
         ``documents`` (D134) keeps only chunks whose document version matches
-        the filters ``search_documents`` takes. The filter travels in a body,
-        so a filtered search uses ``POST /search/chunks``.
+        the filters ``search_documents`` takes. ``time`` (D140, default
+        current) keeps only chunks of versions in force for the scope. Either
+        travels in a body, so such a search uses ``POST /search/chunks``.
         """
-        if documents is not None:
+        if documents is not None or time is not None:
             return _validated(
                 Envelope,
                 self._json(
                     "POST",
                     "/search/chunks",
                     json_body=SearchRequest(
-                        query=query, k=k, channel=channel, documents=documents
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
                     ).model_dump(mode="json", exclude_none=True),
                 ),
                 endpoint="POST /search/chunks",
@@ -932,6 +952,7 @@ class MemoryClient:
         versions: Literal["current", "all"] = "current",
         k: int = 20,
         cursor: str | None = None,
+        time: ReadTime | None = None,
     ) -> DocumentSearchPage:
         """Find documents by name, general metadata and content (D134).
 
@@ -940,7 +961,9 @@ class MemoryClient:
         names too) and its text. ``filters`` narrow by family, authors,
         recipients, date ranges, language, thread and doc ids. Without a
         ``query`` results are newest first and ``cursor`` pages them; with one
-        they are ranked and not paged. Invalid combinations raise
+        they are ranked and not paged. ``time`` (D140) picks which editions of
+        a document with declared effective periods are candidates (default
+        current). Invalid combinations raise
         ``pydantic.ValidationError`` before any request is sent.
         """
         return self.search_documents_request(
@@ -948,6 +971,7 @@ class MemoryClient:
                 query=query,
                 filters=filters if filters is not None else DocumentSearchFilters(),
                 versions=versions,
+                time=time,
                 k=k,
                 cursor=cursor,
             )
