@@ -400,7 +400,10 @@
       "remember.mcp_tools._validate.validate_arguments": {
         "typescript": "validateArguments",
         "arguments": "name: str, arguments: Mapping[str, object], *, path_ingest: bool=False, settings: McpMemorySettings | None=None, max_body_bytes: int | None=None",
-        "returns": "dict[str, object]"
+        "returns": "dict[str, object]",
+        "typescriptArguments": "{name: string, arguments: Record<string, unknown>, pathResolver?: PathBodyResolver, maxBodyBytes?: number}",
+        "typescriptReturns": "Promise<Record<string, unknown>>",
+        "adaptation": "No settings/path_ingest or implicit MCP environment; path requires injected resolver owned by MCP host. See design \u00a77."
       },
       "remember.mcp_tools._query.validate_saved_query_identifier": {
         "typescript": "validateSavedQueryIdentifier",
@@ -421,6 +424,11 @@
         "typescript": "mapError",
         "arguments": "error: BaseException",
         "returns": "ToolError"
+      },
+      "remember.connection.environment_issuer": {
+        "typescript": "environmentIssuer",
+        "arguments": "",
+        "returns": "str | None"
       }
     },
     "types": {
@@ -707,7 +715,7 @@
         "fields": {},
         "methods": {
           "__init__": {
-            "typescript": "Init",
+            "typescript": "constructor",
             "arguments": "self, *, error: ToolError",
             "returns": "None"
           }
@@ -824,7 +832,7 @@
         }
       },
       "definitionFields": "remember.mcp_tools._definitions.ToolDefinition",
-      "contract": "all definitions, permissions, versions, routes, annotations, schemas and pure validators/error mapping; no host I/O"
+      "contract": "all definitions, permissions, versions, routes, annotations, schemas and validators/error mapping; no SDK-owned host I/O, optional injected path resolver"
     }
   }
 }

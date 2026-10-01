@@ -287,6 +287,8 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | Secure cross-origin metadata endpoints allowed | Issuer-origin authenticated endpoints required | Hostile metadata |
 | Arbitrary account path strings | Relative paths without traversal/absolute origin | Encoded/double-encoded traversal |
 | Wait deadline checked between polls | Deadline also bounds in-flight calls/sleep, TimeoutError retains last report | Slow HTTP and cancellation |
+| MCP validate_arguments path_ingest/settings implicitly reads host files/environment | validateArguments uses an explicit injected PathBodyResolver; no resolver refuses path; separate MCP package owns settings and Python-equivalent root/regular-file/size checks | Resolver opt-in, disabled path, empty/oversize body; host security fixtures required before MCP release |
+| TypeScript-only transport/precision errors have no Python exact class | mapError reports AbortError as cancelled (not retryable), NumericPrecisionError as invalid_response (not retryable), RequestTimeoutError as engine_unavailable (retryable hint only) | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
 | Windows file mode rejects stored credentials | Same refusal; explicit settings work | Windows fixture |
 | HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | Native fetch defaults; explicit fetch adapter required for custom proxy/CA | Injection and documented settings |
@@ -336,6 +338,23 @@ Connection return/fields, credential/issuer read helpers, and all 28 current
 MCP-library disposition. Backend protocols, host settings and the three
 host-execution handlers live in that separate MCP library; the base client
 supplies their complete catalogue/validation/error dependencies, not host I/O.
+`validateArguments({name, arguments, pathResolver?, maxBodyBytes?})` returns a
+Promise of parsed arguments. It has no `pathIngest`/`settings` parameters and
+never loads REMEMBERSTACK_MCP settings. Text/base64 bodies are resolved and
+validated inside the client. An ingest path requires a caller-injected
+`PathBodyResolver({path, filename?, mime?, maxBodyBytes?})` returning
+`Promise<{content: Uint8Array, filename: string, mime: string}>`; without one,
+refuse with ToolArgumentError code path_not_allowed. Base validation checks the
+returned body's non-emptiness and capability limit. This opt-in resolver is
+the explicit exception to pure validation, not SDK-owned filesystem I/O.
+The separate MCP library owns one resolver implementing Python `_memory.py`
+`_resolve_path_body`: configured roots only, resolved-path/symlink containment,
+regular file, pre-read size and bounded read, served cap or local resource
+cap, and actual-path MIME inference before display-name override. Its separate
+binding design and security parity fixtures are release gates; hosts reuse
+that resolver and catalogue instead of redefining tools or path guards.
+Ordinary Client.ingestFile keeps its own caller-directed local-file contract.
+
 No MCP host or interactive login is pulled into the base library.
 The CLI library owns device login/logout, credential writing/locking and the
 pending-revocation journal. It consumes exported schemas/security read helpers

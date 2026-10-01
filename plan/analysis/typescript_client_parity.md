@@ -208,3 +208,16 @@ and credential/issuer helpers. Minor findings explicitly name route_scope.py,
 pin the MIME fallback, distinguish cancellation/request/readiness timeout
 classes and limit structured diagnostics to query errors. Superseded retry
 and POST-only exploration above is labelled rather than treated as current.
+
+## Opus round 3 disposition
+
+Round 3 verified the complete catalogue/support manifest but identified that
+Python validate_arguments is not pure in path mode and consumes host settings.
+Choose its Option B: the base receives an explicit injected path resolver,
+never MCP settings/environment; the separate MCP package owns the single
+Python-equivalent security resolver and release-gated fixtures. This avoids
+pulling host configuration into a library that only provides the client and
+catalogue. The normative manifest preserves Python signatures as drift inputs
+and specifies this TypeScript signature/behavior adaptation explicitly.
+Additional nits add environmentIssuer, correct constructor naming, and state
+structured mappings for cancellation/request timeout/numeric precision errors.
