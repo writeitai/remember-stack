@@ -220,6 +220,8 @@ def test_inventory_scrub_and_verification_preserve_independent_evidence(
         "mem://artifacts/writer-transcript.json",
         f"mem://raw/target.bin?marker={_TOKEN}",
         "mem://artifacts/planner-transcript.json",
+        # D140: the forgotten lineage's stored reference sets
+        f"mem://artifacts/{_TARGET_DOC_ID}/references/{_TOKEN}.ndjson",
     }
 
     catalog.accept_and_enqueue(manifest=manifest)
@@ -1411,6 +1413,15 @@ def _assert_scrubbed_and_control_survives(*, engine: Engine) -> None:
         assert (
             _count(connection, "document_crossrefs", "to_doc_id", _TARGET_DOC_ID) == 0
         )
+        # D140 §9: the control's reference TO the forgotten lineage is the
+        # control's own content; it survives unbound, ready to re-bind
+        assert connection.execute(
+            text(
+                "SELECT to_doc_id, resolved FROM document_crossrefs"
+                " WHERE deployment_id = :d AND from_doc_id = :doc"
+            ),
+            {"d": _DEPLOYMENT_ID, "doc": _CONTROL_DOC_ID},
+        ).one() == (None, False)
         assert (
             _count(connection, "document_crossrefs", "from_doc_id", _TARGET_DOC_ID) == 0
         )

@@ -2424,6 +2424,7 @@ _READ_ROUTES: Final = frozenset(
         ("GET", "/query/saved"),
         ("GET", "/documents"),
         ("POST", "/documents/search"),
+        ("POST", "/documents/references"),
     }
 )
 
@@ -2448,6 +2449,15 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         and parts[-1] == "history"
     ):
         # /documents/{doc_id}/sections/{section_key}/history (keys may hold '/')
+        return ("search", None)
+    if (
+        method == "GET"
+        and len(parts) == 5
+        and parts[0] == "documents"
+        and parts[2] == "versions"
+        and parts[4] == "references"
+    ):
+        # /documents/{doc_id}/versions/{version_id}/references (D140)
         return ("search", None)
     if method == "GET" and len(parts) == 3:
         # /chunks/{id}/adjacent, /hydrate/relation/{id}, /transcript/relation/{id}

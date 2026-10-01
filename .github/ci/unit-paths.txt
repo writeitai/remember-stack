@@ -141,3 +141,5 @@ src/tests/adapters/test_data_profiles.py
 src/tests/adapters/test_document_family_converters.py
 src/tests/surfaces/test_effective_time_http.py
 src/tests/surfaces/test_effective_time_clients.py
+src/tests/spine/test_document_references_rules.py
+src/tests/surfaces/test_document_references_clients.py
