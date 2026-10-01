@@ -1213,7 +1213,7 @@ def _fact_authority_views() -> tuple[tuple[str, str], ...]:
     return tuple(pairs)
 
 
-_GRAPH_GATE_DDL = r"""
+GRAPH_GATE_DDL = r"""
 CREATE FUNCTION rememberstack_graph_internal.relation_evidence_in_scope(
   deployment_id uuid,
   relation_id uuid,
@@ -1306,7 +1306,7 @@ $$;
 COMMENT ON FUNCTION rememberstack_graph_internal.relation_evidence_in_scope(
   uuid, uuid, timestamptz, timestamptz, timestamptz
 ) IS
-  'D140 §8.1 evidence gate for one relation edge, at the valid instant: true when a supporting occurrence (or, for a relation with no supporting evidence at all, an occurrence of either stance) lies in a selected version or a live undeclared version, in that version''s current reading. A belief instant that some later declaration, retraction or mode event has moved past reads the declaration ledgers (memory_v1.fact_in_scope_support); otherwise the current projection answers. SECURITY DEFINER over private evidence; EXECUTE only for the graph role, which calls it inside every traversal before expansion, ordering and limits.';
+  'D140 §8.1 evidence gate for one relation edge, at the valid instant: true when a supporting occurrence (or, for a relation with no supporting evidence at all, an occurrence of either stance) lies in a selected version or a live undeclared version, in that version''s current reading. A belief instant that some later declaration, retraction or mode event has moved past reads the declaration ledgers (memory_v1.fact_in_scope_support); otherwise the current projection answers. SECURITY DEFINER over private evidence; EXECUTE for the graph and query roles, whose traversal helpers call it on every candidate edge before expansion and limits.';
 """
 """The graph traversal's evidence gate (§7/§8.1). The graph role cannot read
 evidence, so this one narrow, deployment-bound predicate is the only private
@@ -1323,53 +1323,81 @@ _GRAPH_LEVEL_LIMIT = (
 )
 
 
-def _gated_graph_helpers() -> tuple[tuple[str, str], ...]:
-    """(prior, D140) definitions of the two traversal helpers.
+_GATE_SIGNATURE = (
+    "rememberstack_graph_internal.relation_evidence_in_scope("
+    "uuid, uuid, timestamptz, timestamptz, timestamptz)"
+)
 
-    Each BFS level's adjacency statement keeps its order and becomes a
-    subquery (``OFFSET 0`` keeps the planner from pushing the gate below the
-    sort); the gate filters the ordered candidates and the level's expansion
-    limit counts only the edges that pass. The gate is therefore applied
-    before expansion and the limit, but evaluated lazily: only until the
-    level's budget is filled, never across a whole dense hub up front.
+GRAPH_GATE_GRANTS = f"""
+REVOKE ALL ON FUNCTION {_GATE_SIGNATURE} FROM PUBLIC;
+ALTER FUNCTION {_GATE_SIGNATURE} OWNER TO {_VIEW_OWNER};
+DO $do$
+BEGIN
+  EXECUTE format(
+    'GRANT EXECUTE ON FUNCTION {_GATE_SIGNATURE} TO %I, %I',
+    'rememberstack_graph_' || current_database(),
+    'rememberstack_query_' || current_database()
+  );
+END
+$do$;
+"""
+"""The gate runs inside the public traversal helpers, which both the graph role
+and the query role execute (SECURITY INVOKER), so both need EXECUTE on it. It
+answers one boolean per (deployment, relation) and reveals nothing the query
+role cannot already read through ``memory_v1.fact_in_scope_support``."""
+
+
+def gated_graph_helper(*, sql: str, function: str) -> str:
+    """One traversal helper with the §8.1 gate applied inside each BFS level.
+
+    Each level's adjacency statement keeps its order and becomes a subquery
+    (``OFFSET 0`` keeps the planner from pushing the gate below the sort); the
+    gate filters the ordered candidates and the level's expansion limit counts
+    only the edges that pass. The gate is therefore applied before expansion
+    and the limit, but evaluated lazily: only until the level's budget is
+    filled, never across a whole dense hub up front.
     """
-    from rememberstack.spine.migrations.versions.p9_17_0038_postgres19_live_graph import (
-        _NEIGHBORHOOD_HELPER,
+    if sql.count(_GRAPH_LEVEL_SELECT) != 1 or sql.count(_GRAPH_LEVEL_LIMIT) != 1:
+        raise RuntimeError(f"unexpected {function} shape")
+    return sql.replace(
+        _GRAPH_LEVEL_SELECT,
+        "    FOR edge_record IN\n"
+        "      SELECT ordered.* FROM (\n"
+        "      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*\n",
+    ).replace(
+        _GRAPH_LEVEL_LIMIT,
+        "      ORDER BY path.path_ordinal, edge.relation_id\n"
+        "      OFFSET 0\n"
+        "      ) AS ordered\n"
+        "      WHERE rememberstack_graph_internal.relation_evidence_in_scope(\n"
+        f"        {function}.deployment_id, ordered.relation_id, clock_valid,\n"
+        "        clock_believed, statement_timestamp())\n"
+        "      ORDER BY ordered.path_ordinal, ordered.relation_id\n"
+        "      LIMIT greatest(expansion_cap - examined + 1, 1)\n",
     )
-    from rememberstack.spine.migrations.versions.p9_17_0038_postgres19_live_graph import (
-        _PATH_HELPER,
+
+
+def _restore_helper_settings() -> None:
+    """Reapply p9_19's per-helper planner settings a CREATE OR REPLACE dropped."""
+    from rememberstack.spine.migrations.versions.p9_19_0040_graph_tenant_planner_settings import (
+        _GRAPH_HELPER_INDEX_SETTINGS,
     )
+
+    apply_ddl(sql=_GRAPH_HELPER_INDEX_SETTINGS)
+
+
+def _gated_graph_helpers() -> tuple[tuple[str, str], ...]:
+    """(prior chosen-window, D140 gated) definitions of the traversal helpers."""
+    from rememberstack.spine.fact_graph_contract import chosen_window_helpers
 
     pairs = []
-    for prior, function in (
-        (_NEIGHBORHOOD_HELPER, "graph_neighborhood"),
-        (_PATH_HELPER, "graph_path"),
+    for sql, function in zip(
+        chosen_window_helpers(), ("graph_neighborhood", "graph_path"), strict=True
     ):
-        if (
-            prior.count(_GRAPH_LEVEL_SELECT) != 1
-            or prior.count(_GRAPH_LEVEL_LIMIT) != 1
-        ):
-            raise RuntimeError(f"unexpected {function} shape")
-        replaced = prior.replace(
+        prior = sql.replace(
             "CREATE FUNCTION memory_v1.", "CREATE OR REPLACE FUNCTION memory_v1.", 1
         )
-        gated = replaced.replace(
-            _GRAPH_LEVEL_SELECT,
-            "    FOR edge_record IN\n"
-            "      SELECT ordered.* FROM (\n"
-            "      SELECT path.current_path, path.path_ordinal, head.head_id, edge.*\n",
-        ).replace(
-            _GRAPH_LEVEL_LIMIT,
-            "      ORDER BY path.path_ordinal, edge.relation_id\n"
-            "      OFFSET 0\n"
-            "      ) AS ordered\n"
-            "      WHERE rememberstack_graph_internal.relation_evidence_in_scope(\n"
-            f"        {function}.deployment_id, ordered.relation_id, clock_valid,\n"
-            "        clock_believed, statement_timestamp())\n"
-            "      ORDER BY ordered.path_ordinal, ordered.relation_id\n"
-            "      LIMIT greatest(expansion_cap - examined + 1, 1)\n",
-        )
-        pairs.append((replaced, gated))
+        pairs.append((prior, gated_graph_helper(sql=prior, function=function)))
     return tuple(pairs)
 
 
@@ -1566,27 +1594,11 @@ def upgrade() -> None:
     for _, widened in _fact_authority_views():
         op.execute(widened)
 
-    apply_ddl(sql=_GRAPH_GATE_DDL)
-    gate = (
-        "rememberstack_graph_internal.relation_evidence_in_scope("
-        "uuid, uuid, timestamptz, timestamptz, timestamptz)"
-    )
-    op.execute(f"REVOKE ALL ON FUNCTION {gate} FROM PUBLIC")
-    op.execute(f"ALTER FUNCTION {gate} OWNER TO {_VIEW_OWNER}")
-    op.execute(
-        f"""
-        DO $do$
-        BEGIN
-          EXECUTE format(
-            'GRANT EXECUTE ON FUNCTION {gate} TO %I',
-            'rememberstack_graph_' || current_database()
-          );
-        END
-        $do$;
-        """
-    )
+    apply_ddl(sql=GRAPH_GATE_DDL)
+    apply_ddl(sql=GRAPH_GATE_GRANTS)
     for _, gated in _gated_graph_helpers():
         op.execute(gated)
+    _restore_helper_settings()
 
 
 def downgrade() -> None:
@@ -1615,10 +1627,8 @@ def downgrade() -> None:
 
     for prior, _ in _gated_graph_helpers():
         op.execute(prior)
-    op.execute(
-        "DROP FUNCTION rememberstack_graph_internal.relation_evidence_in_scope("
-        "uuid, uuid, timestamptz, timestamptz, timestamptz)"
-    )
+    _restore_helper_settings()
+    op.execute(f"DROP FUNCTION {_GATE_SIGNATURE}")
     for prior, _ in _fact_authority_views():
         op.execute(prior)
     op.execute("DROP VIEW v_memory_claim_carried_periodised")
