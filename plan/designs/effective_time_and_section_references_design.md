@@ -423,10 +423,16 @@ cannot remove a candidate from the walk:
 - Every chunk, passage, claim occurrence and document result from a periodised lineage
   includes `effective: [{from, until, until_declared}]` for its version.
 - Scoped responses report lineages whose in-force version for the scope is not ready in a new
-  envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count}`. It is
-  computed from `document_version_scope` rows that are in force for the window but not
-  `selectable`, restricted to the lineages the request touched, so an
-  agent can tell "nothing is in force" from "the in-force text is still processing".
+  envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count}`, so an agent
+  can tell "nothing is in force" from "the in-force text is still processing". A lineage is
+  reported when the request touched it: it was named by a document filter, it is in the
+  answer, or its readable text would have made one of the request's own nominations. For the
+  last case, and only when some lineage has an in-force version that is not ready (a partial
+  index finds them), each nomination the request ran — same grain (chunk or claim), channel
+  (semantic, reusing the query embedding, or BM25) and k — is run once more over just those
+  lineages' readable editions; a lineage counts when it scores at least the nomination's k-th
+  score (any score when it returned fewer than k) and, for BM25, matches a term. These probe
+  hits only name lineages and never enter the answer.
 
 ## 4. Section keys
 

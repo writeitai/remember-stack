@@ -112,7 +112,6 @@ from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
-from rememberstack.ports.p1_index import P1ScoredSearchPort
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
@@ -395,6 +394,10 @@ class QueryEngine:
         scope: TextScope,
         query: str,
         documents: DocumentSearchFilters | None,
+        probes: tuple[
+            tuple[Literal["chunk", "claim"], Literal["semantic", "bm25"], int], ...
+        ],
+        entity_ids: tuple[UUID, ...] = (),
     ) -> tuple[UUID, ...]:
         """Pending lineages the query reaches although their text is excluded (§3.7).
 
@@ -402,16 +405,28 @@ class QueryEngine:
         ranked cut, so an empty answer alone cannot tell "nothing is in force"
         from "the in-force text is still processing". When (and only when)
         some lineage has such a version for the window — a small set, read
-        through a partial index — one bounded lexical probe over just those
-        lineages' readable editions (every edition in force up to the
-        evaluation instant) says which of them the query's terms reach. Only
-        real term matches count, it needs no second query embedding, and its
-        hits only name pending lineages: they never enter the answer.
+        through a partial index — each of the request's own nominations
+        (``probes``: grain, channel and k, exactly as the request ranked) is
+        run once more over just those lineages' readable editions. A pending
+        lineage is reported when its text would have made that nomination's
+        top k: its score is at least the k-th score of the real nomination
+        (any score when the real one returned fewer than k), and a lexical hit
+        is a real term match. Semantic probes reuse the request's query
+        embedding. The probe only names lineages; its hits never enter the
+        answer or its top-k.
         """
-        if not callable(
-            getattr(self._search_index, "search_chunks_lexical_scored", None)
+        index = self._search_index
+        methods = {
+            ("chunk", "semantic"): "search_chunks_scored",
+            ("chunk", "bm25"): "search_chunks_lexical_scored",
+            ("claim", "semantic"): "search_claims_scored",
+            ("claim", "bm25"): "search_claims_lexical_scored",
+        }
+        if not any(
+            callable(getattr(index, methods[(grain, channel)], None))
+            for grain, channel, _ in probes
         ):
-            return ()  # an index without scores cannot tell a real term match
+            return ()  # an index without scores cannot rank a probe
         with self._engine.connect() as connection:
             candidates = tuple(
                 connection.execute(
@@ -431,25 +446,59 @@ class QueryEngine:
         restricted = (documents or DocumentSearchFilters()).model_copy(
             update={"doc_ids": candidates}
         )
-        scored = cast(P1ScoredSearchPort, self._search_index)
-        hits = scored.search_chunks_lexical_scored(
-            deployment_id=str(deployment_id),
-            query=query,
-            k=SCOPE_PENDING_PROBE_LINEAGES,
-            policy_generation=self._policy_generation,
-            embedder_generation=self._embedder_generation,
-            documents=restricted,
-            time=TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at),
-        )
-        matched = [item.item_id for item in hits if item.score > 0]
-        if not matched:
-            return ()
-        with self._engine.connect() as connection:
-            return tuple(
-                connection.execute(
-                    _PENDING_ITEM_DOCS, {"deployment_id": deployment_id, "ids": matched}
-                ).scalars()
+        readable = TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at)
+        touched: dict[UUID, None] = {}
+        for grain, channel, k in probes:
+            method = getattr(index, methods[(grain, channel)], None)
+            if not callable(method):
+                continue
+            arguments: dict[str, Any] = {
+                "deployment_id": str(deployment_id),
+                "k": k,
+                "entity_ids": tuple(str(entity) for entity in entity_ids),
+            }
+            if grain == "claim":
+                arguments["current_only"] = True
+            else:
+                arguments["policy_generation"] = self._policy_generation
+                arguments["embedder_generation"] = self._embedder_generation
+            if channel == "semantic":
+                arguments["vector"] = self._reuse_embedding(
+                    deployment_id=deployment_id, query=query
+                ) or self._embed(
+                    query=query,
+                    call_site=(
+                        SurfaceCallSite.SEARCH_CLAIMS
+                        if grain == "claim"
+                        else SurfaceCallSite.SEARCH_CHUNKS
+                    ),
+                    deployment_id=deployment_id,
+                )
+            else:
+                arguments["query"] = query
+            answered = cast(
+                tuple[P1Nomination, ...],
+                method(**arguments, documents=documents, time=scope),
             )
+            floor = answered[-1].score if len(answered) >= k else None
+            hits = [
+                item.item_id
+                for item in cast(
+                    tuple[P1Nomination, ...],
+                    method(**arguments, documents=restricted, time=readable),
+                )
+                if (channel != "bm25" or item.score > 0)
+                and (floor is None or item.score >= floor)
+            ]
+            if not hits:
+                continue
+            with self._engine.connect() as connection:
+                for doc_id in connection.execute(
+                    _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
+                    {"deployment_id": deployment_id, "ids": hits},
+                ).scalars():
+                    touched[doc_id] = None
+        return tuple(touched)
 
     def _scoped_freshness(
         self, *, deployment_id: UUID, scope: TextScope, doc_ids: Sequence[UUID]
@@ -1374,7 +1423,17 @@ class QueryEngine:
             nominate_in_scope=time is not None,
         )
         touched = self._touched_pending(
-            deployment_id=deployment_id, scope=scope, query=query, documents=None
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=None,
+            probes=(
+                ("claim", "semantic", candidate_k),
+                ("claim", "bm25", candidate_k),
+                ("chunk", "semantic", candidate_k),
+                ("chunk", "bm25", candidate_k),
+            ),
+            entity_ids=entity_ids,
         )
         scoped = self._scoped_freshness(
             deployment_id=deployment_id,
@@ -1602,7 +1661,11 @@ class QueryEngine:
             scope=scope,
         )
         touched = self._touched_pending(
-            deployment_id=deployment_id, scope=scope, query=query, documents=documents
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=documents,
+            probes=(("claim", channel, k),),
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -1692,7 +1755,11 @@ class QueryEngine:
             scope=scope,
         )
         touched = self._touched_pending(
-            deployment_id=deployment_id, scope=scope, query=query, documents=documents
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=documents,
+            probes=(("chunk", channel, k),),
         )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -3580,7 +3647,21 @@ class QueryEngine:
                 call_site=call_site,
                 deployment_id=deployment_id,
             )
+        self._last_embedding = ((deployment_id, query), response.vectors[0])
         return response.vectors[0]
+
+    def _reuse_embedding(
+        self, *, deployment_id: UUID, query: str
+    ) -> tuple[float, ...] | None:
+        """The vector this request already embedded for ``query``, if any.
+
+        Keyed by deployment and query text, so a concurrent request on another
+        thread can only ever supply the identical vector.
+        """
+        cached = getattr(self, "_last_embedding", None)
+        if cached is not None and cached[0] == (deployment_id, query):
+            return cached[1]
+        return None
 
 
 def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:
@@ -5132,6 +5213,14 @@ _PENDING_IN_FORCE = text(
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
+)
+
+_PENDING_CLAIM_DOCS = text(
+    """
+    SELECT DISTINCT doc_id FROM claims
+    WHERE deployment_id = :deployment_id
+      AND claim_id = ANY(CAST(:ids AS uuid[]))
+    """
 )
 
 _PENDING_ITEM_DOCS = text(

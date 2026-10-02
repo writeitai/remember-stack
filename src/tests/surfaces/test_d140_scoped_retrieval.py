@@ -1569,7 +1569,12 @@ def test_an_empty_answer_names_the_pending_lineage_the_query_reaches(rig: _Rig) 
     for name, answer in (("chunks", chunks), ("claims", claims), ("context", context)):
         assert answer.chunks == () and answer.evidence == (), name
         assert answer.freshness.scope_pending is not None, name
-        assert answer.freshness.scope_pending.doc_ids == (lineage.doc_id,), name
+    # BM25 reaches only the lineage whose text has the terms
+    for answer in (chunks, claims):
+        assert answer.freshness.scope_pending.doc_ids == (lineage.doc_id,)
+    # the compound context also nominates semantically (top candidate_k by
+    # vector), which in this two-lineage corpus reaches every readable text
+    assert lineage.doc_id in context.freshness.scope_pending.doc_ids
     documents = _search(rig, query="quartz allowance", k=5)
     assert documents.documents == ()
     assert documents.scope_pending is not None
@@ -1670,3 +1675,73 @@ def test_traversal_and_gate_read_one_snapshot(rig: _Rig) -> None:
         _endpoint(rig, eligible, "object_entity_id")
     ]
     assert graph.neighborhood(entity_id=subject, hops=1).nodes == ()
+
+
+# --- implementation review round 2 (P1-6 remainder): probe follows the request -
+
+
+def _pending_pair(
+    rig: _Rig, *, label: str, body: str, vector: tuple[float, ...]
+) -> _Lineage:
+    """A lineage whose readable edition holds ``body``; the in-force one converts."""
+    lineage = _lineage(
+        rig,
+        label=label,
+        bodies=((body,), (body + " revised",)),
+        vectors=((vector,), (vector,)),
+    )
+    _declare(rig, lineage, 0, (_PAST, _REVISED))
+    _declare(rig, lineage, 1, (_REVISED, None))
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
+            {"v": lineage.version(0), "doc": lineage.doc_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET status = 'converting'"
+                " WHERE version_id = :v"
+            ),
+            {"v": lineage.version(1)},
+        )
+    return lineage
+
+
+def test_a_semantic_only_match_names_its_pending_lineage(rig: _Rig) -> None:
+    """The query vector reaches the text although no query term occurs in it."""
+    reached = _pending_pair(
+        rig, label="vehicle", body="automobile parking", vector=_NEAR
+    )
+    _pending_pair(rig, label="unrelated", body="garden hedges", vector=_FAR)
+    answer = rig.query.search_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="vehicle rules", k=1, channel="semantic"
+    )
+    assert answer.chunks == ()
+    assert answer.freshness.scope_pending is not None
+    assert answer.freshness.scope_pending.doc_ids == (reached.doc_id,)
+
+
+def test_a_claim_text_only_match_names_its_pending_lineage(rig: _Rig) -> None:
+    """Claim search matches decontextualized claim text, not the chunk's words."""
+    reached = _pending_pair(rig, label="tenure", body="she said so", vector=_FAR)
+    _claim(
+        rig,
+        lineage=reached,
+        origin=reached.chunk(0),
+        body="the employee tenure requirement",
+        occurrences={reached.chunk(0): (0, 11)},
+    )
+    unrelated = _pending_pair(rig, label="hedges", body="garden hedges", vector=_FAR)
+    _claim(
+        rig,
+        lineage=unrelated,
+        origin=unrelated.chunk(0),
+        body="hedges are trimmed",
+        occurrences={unrelated.chunk(0): (0, 6)},
+    )
+    answer = rig.query.search_claims(
+        deployment_id=_DEPLOYMENT_ID, query="tenure requirement", k=5, channel="bm25"
+    )
+    assert answer.evidence == ()
+    assert answer.freshness.scope_pending is not None
+    assert answer.freshness.scope_pending.doc_ids == (reached.doc_id,)
