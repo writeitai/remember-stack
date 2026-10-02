@@ -247,7 +247,7 @@ Executed Python client wire cases therefore differ from the SDK's unchanged
 AJV date-time assertion, which requires an offset.
 
 The server has a stricter boundary than its Python client. In
-`src/remember/http_api.py`, `_require_utc`/`UTCInstant`, the `valid_at` lookup
+`src/rememberstack/surfaces/http_api.py`, `_require_utc`/`UTCInstant`, the `valid_at` lookup
 parameter and the graph request models refuse naive and non-UTC instants with
 422. This shipped in v0.17.1/v0.17.2 (G27, commit 78660f99); v0.16.0 used plain
 datetime fields. `src/tests/surfaces/test_http_api_robustness.py`, UTC lookup
@@ -263,8 +263,8 @@ The selected adaptation refuses naive TypeScript options locally as
 InputValidationError. The current server would refuse them too; older servers
 would interpret an unspecified timezone. Date inputs become UTC ISO. Offset
 strings remain unchanged so the server remains the authority: +02:00 receives
-the same 422 MemoryApiError as Python on v0.17.1+ and is accepted at the v0.16
-boundary. Tests must distinguish client wire parity from deployed acceptance.
+the same 422 MemoryApiError as Python on v0.17.1+ and is accepted at pre-v0.17.1
+boundaries (matrix: v0.15.0 and v0.16.0). Tests must distinguish client wire parity from deployed acceptance.
 An alternative would permit naive values and add a separate source-runtime
 conformance disposition; it adds ambiguity and weakens the common assertion.
 UTC-only lineage/model fields stay UTC-only. This selects no further client
