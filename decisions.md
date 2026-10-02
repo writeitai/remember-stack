@@ -6704,3 +6704,6 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 - **Alternatives:** Generated-only clients omit routing/files/readiness; handwritten DTOs drift; a separate repository multiplies publisher coordination; browser core and newer generator are viable unselected alternatives with adoption triggers.
 - **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
 - **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md); issue #501; D136 amended only as stated above.
+
+D140 transport evidence: [Fetch-standard 421 replay and single-transmission
+adapter choice](plan/analysis/typescript_transport_421.md), measured 2026-10-02.

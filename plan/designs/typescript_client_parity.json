@@ -1,8 +1,258 @@
 {
-  "pythonSourceRevision": "1dc23f21f24ec5f22ec4e51c751363b3658df7a6",
-  "publishedBaseline": {
-    "version": "0.17.2",
-    "revision": "dd0c78015099cdd84ab5f3501744d6e225125989"
+  "QueryResultDict": [
+    "rows",
+    "columns",
+    "truncated"
+  ],
+  "adaptations": "typescript_client_design.md#7-language-and-safety-adaptations",
+  "classes": {
+    "AccountApi": {
+      "__init__": {
+        "arguments": "self, *, connection: Connection | None, http: httpx.Client",
+        "property": false,
+        "returns": "None"
+      },
+      "get": {
+        "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
+        "property": false,
+        "returns": "object"
+      },
+      "whoami": {
+        "arguments": "self",
+        "property": false,
+        "returns": "dict[str, object]"
+      }
+    },
+    "Client": {
+      "account": {
+        "arguments": "self",
+        "property": true,
+        "returns": "AccountApi"
+      },
+      "from_env": {
+        "arguments": "cls, **overrides: object",
+        "property": false,
+        "returns": "Self"
+      },
+      "ingest": {
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "property": false,
+        "returns": "IngestedVersion"
+      },
+      "ingest_file": {
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "property": false,
+        "returns": "IngestedVersion"
+      }
+    },
+    "MemoryClient": {
+      "__init__": {
+        "arguments": "self, *, api_key: str | None=None, base_url: str | None=None, project: str | None=None, timeout: float=30.0, client: httpx.Client | None=None, transport: httpx.BaseTransport | None=None",
+        "property": false,
+        "returns": "None",
+        "typescriptOptions": "{apiKey?, baseUrl?, project?, timeoutMs?, client?: HttpClient, transport?: HttpClient, agents?: {http?: NodeHttpAgent, https?: NodeHttpsAgent}}"
+      },
+      "add_connector": {
+        "arguments": "self, *, connector: ConnectorCreate",
+        "property": false,
+        "returns": "ConnectorDescriptor"
+      },
+      "adjacent_chunks": {
+        "arguments": "self, *, chunk_id: UUID | str, window: int=1",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "call_open_query": {
+        "arguments": "self, *, name: str, arguments: Mapping[str, object]",
+        "property": false,
+        "returns": "object"
+      },
+      "claims_and_sources_context": {
+        "arguments": "self, query: str",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "close": {
+        "arguments": "self",
+        "property": false,
+        "returns": "None"
+      },
+      "combined_context": {
+        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
+        "property": false,
+        "returns": "ContextBundleV2"
+      },
+      "connector_status": {
+        "arguments": "self, *, connector_id: UUID",
+        "property": false,
+        "returns": "ConnectorDescriptor"
+      },
+      "connectors": {
+        "arguments": "self",
+        "property": false,
+        "returns": "tuple[ConnectorDescriptor, ...]"
+      },
+      "delete_document": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "property": false,
+        "returns": "DocumentDeletion"
+      },
+      "deployment_build_info": {
+        "arguments": "self",
+        "property": false,
+        "returns": "DeploymentBuildInfo"
+      },
+      "describe_query_space": {
+        "arguments": "self, *, pattern: str | None=None, include_examples: bool=False",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "describe_saved_query": {
+        "arguments": "self, *, namespace: str, name: str, version: int | None=None",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "explain_query": {
+        "arguments": "self, sql: str, *, parameters: Sequence[object]=()",
+        "property": false,
+        "returns": "QueryResultDict"
+      },
+      "explain_sql": {
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=()",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "facts_context": {
+        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "graph_citation_path": {
+        "arguments": "self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int=6",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "graph_neighborhood": {
+        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=500, continuation: str | None=None, include_paths: bool=False",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "graph_path": {
+        "arguments": "self, *, from_entity_id: UUID, to_entity_id: UUID, max_hops: int=4, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "hydrate_relation": {
+        "arguments": "self, *, relation_id: UUID",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "ingest": {
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "property": false,
+        "returns": "IngestedVersion"
+      },
+      "list_documents": {
+        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None",
+        "property": false,
+        "returns": "DocumentPage"
+      },
+      "list_operations": {
+        "arguments": "self",
+        "property": false,
+        "returns": "tuple[ToolDescriptor, ...]"
+      },
+      "list_saved_queries": {
+        "arguments": "self, *, namespace: str | None=None, status: str | None=None",
+        "property": false,
+        "returns": "list[dict[str, object]]"
+      },
+      "lookup_observations": {
+        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "lookup_relations": {
+        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, k: int=50",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "open_query": {
+        "arguments": "self, sql: str, *, parameters: Sequence[object]=(), max_rows: int | None=None",
+        "property": false,
+        "returns": "QueryResultDict"
+      },
+      "pause_connector": {
+        "arguments": "self, *, connector_id: UUID",
+        "property": false,
+        "returns": "ConnectorDescriptor"
+      },
+      "pipeline_readiness": {
+        "arguments": "self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements",
+        "property": false,
+        "returns": "PipelineReadinessReport"
+      },
+      "query_sql": {
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), max_rows: int | None=None",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "resolve": {
+        "arguments": "self, *, name: str, context_entity_ids: tuple[UUID, ...]=()",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "resolve_entity": {
+        "arguments": "self, name: str",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "run_operation": {
+        "arguments": "self, *, name: str, arguments: Mapping[str, object] | None=None",
+        "property": false,
+        "returns": "Envelope | ContextBundleV2"
+      },
+      "run_saved_query": {
+        "arguments": "self, *, namespace: str, name: str, parameters: list[object] | tuple[object, ...]=(), version: int | None=None, max_rows: int | None=None",
+        "property": false,
+        "returns": "dict[str, object]"
+      },
+      "search_chunks": {
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "search_claims": {
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "search_documents": {
+        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None",
+        "property": false,
+        "returns": "DocumentSearchPage"
+      },
+      "search_documents_request": {
+        "arguments": "self, *, request: DocumentSearchRequest",
+        "property": false,
+        "returns": "DocumentSearchPage"
+      },
+      "search_query_space": {
+        "arguments": "self, *, query: str, k: int=10",
+        "property": false,
+        "returns": "list[dict[str, object]]"
+      },
+      "transcript_relation": {
+        "arguments": "self, *, relation_id: UUID",
+        "property": false,
+        "returns": "Envelope"
+      },
+      "wait_for_readiness": {
+        "arguments": "self, version_ids: Sequence[str | UUID], *, timeout: float=1800.0, poll_interval: float=15.0, require_p3: bool=False",
+        "property": false,
+        "returns": "PipelineReadinessReport"
+      }
+    }
   },
   "exports": [
     "AccountApi",
@@ -41,408 +291,262 @@
     "__version__",
     "resolve_connection"
   ],
-  "classes": {
-    "MemoryClient": {
-      "__init__": {
-        "arguments": "self, *, api_key: str | None=None, base_url: str | None=None, project: str | None=None, timeout: float=30.0, client: httpx.Client | None=None, transport: httpx.BaseTransport | None=None",
-        "returns": "None",
-        "property": false
-      },
-      "close": {
-        "arguments": "self",
-        "returns": "None",
-        "property": false
-      },
-      "list_operations": {
-        "arguments": "self",
-        "returns": "tuple[ToolDescriptor, ...]",
-        "property": false
-      },
-      "run_operation": {
-        "arguments": "self, *, name: str, arguments: Mapping[str, object] | None=None",
-        "returns": "Envelope | ContextBundleV2",
-        "property": false
-      },
-      "query_sql": {
-        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), max_rows: int | None=None",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "open_query": {
-        "arguments": "self, sql: str, *, parameters: Sequence[object]=(), max_rows: int | None=None",
-        "returns": "QueryResultDict",
-        "property": false
-      },
-      "explain_query": {
-        "arguments": "self, sql: str, *, parameters: Sequence[object]=()",
-        "returns": "QueryResultDict",
-        "property": false
-      },
-      "facts_context": {
-        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
-        "returns": "Envelope",
-        "property": false
-      },
-      "combined_context": {
-        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
-        "returns": "ContextBundleV2",
-        "property": false
-      },
-      "claims_and_sources_context": {
-        "arguments": "self, query: str",
-        "returns": "Envelope",
-        "property": false
-      },
-      "resolve_entity": {
-        "arguments": "self, name: str",
-        "returns": "Envelope",
-        "property": false
-      },
-      "explain_sql": {
-        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=()",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "describe_query_space": {
-        "arguments": "self, *, pattern: str | None=None, include_examples: bool=False",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "search_query_space": {
-        "arguments": "self, *, query: str, k: int=10",
-        "returns": "list[dict[str, object]]",
-        "property": false
-      },
-      "list_saved_queries": {
-        "arguments": "self, *, namespace: str | None=None, status: str | None=None",
-        "returns": "list[dict[str, object]]",
-        "property": false
-      },
-      "describe_saved_query": {
-        "arguments": "self, *, namespace: str, name: str, version: int | None=None",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "run_saved_query": {
-        "arguments": "self, *, namespace: str, name: str, parameters: list[object] | tuple[object, ...]=(), version: int | None=None, max_rows: int | None=None",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "call_open_query": {
-        "arguments": "self, *, name: str, arguments: Mapping[str, object]",
-        "returns": "object",
-        "property": false
-      },
-      "resolve": {
-        "arguments": "self, *, name: str, context_entity_ids: tuple[UUID, ...]=()",
-        "returns": "Envelope",
-        "property": false
-      },
-      "lookup_relations": {
-        "arguments": "self, *, subject_entity_id: UUID | None=None, predicate: str | None=None, object_entity_id: UUID | None=None, valid_at: datetime | None=None, k: int=50",
-        "returns": "Envelope",
-        "property": false
-      },
-      "transcript_relation": {
-        "arguments": "self, *, relation_id: UUID",
-        "returns": "Envelope",
-        "property": false
-      },
-      "lookup_observations": {
-        "arguments": "self, *, entity_id: UUID, property_query: str | None=None, k: int=10",
-        "returns": "Envelope",
-        "property": false
-      },
-      "search_claims": {
-        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
-        "returns": "Envelope",
-        "property": false
-      },
-      "search_chunks": {
-        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
-        "returns": "Envelope",
-        "property": false
-      },
-      "adjacent_chunks": {
-        "arguments": "self, *, chunk_id: UUID | str, window: int=1",
-        "returns": "Envelope",
-        "property": false
-      },
-      "hydrate_relation": {
-        "arguments": "self, *, relation_id: UUID",
-        "returns": "Envelope",
-        "property": false
-      },
-      "graph_neighborhood": {
-        "arguments": "self, *, entity_id: UUID, hops: int=2, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None, limit: int=500, continuation: str | None=None, include_paths: bool=False",
-        "returns": "Envelope",
-        "property": false
-      },
-      "graph_path": {
-        "arguments": "self, *, from_entity_id: UUID, to_entity_id: UUID, max_hops: int=4, predicates: tuple[str, ...]=(), valid_at: datetime | None=None, believed_at: datetime | None=None",
-        "returns": "Envelope",
-        "property": false
-      },
-      "graph_citation_path": {
-        "arguments": "self, *, from_doc_id: UUID, to_doc_id: UUID, max_hops: int=6",
-        "returns": "Envelope",
-        "property": false
-      },
-      "deployment_build_info": {
-        "arguments": "self",
-        "returns": "DeploymentBuildInfo",
-        "property": false
-      },
-      "pipeline_readiness": {
-        "arguments": "self, *, version_ids: tuple[UUID, ...], require: ReadinessRequirements",
-        "returns": "PipelineReadinessReport",
-        "property": false
-      },
-      "wait_for_readiness": {
-        "arguments": "self, version_ids: Sequence[str | UUID], *, timeout: float=1800.0, poll_interval: float=15.0, require_p3: bool=False",
-        "returns": "PipelineReadinessReport",
-        "property": false
-      },
-      "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
-        "returns": "IngestedVersion",
-        "property": false
-      },
-      "list_documents": {
-        "arguments": "self, *, limit: int=50, cursor: str | None=None, status: DocumentStatusFilter | None=None",
-        "returns": "DocumentPage",
-        "property": false
-      },
-      "search_documents": {
-        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None",
-        "returns": "DocumentSearchPage",
-        "property": false
-      },
-      "search_documents_request": {
-        "arguments": "self, *, request: DocumentSearchRequest",
-        "returns": "DocumentSearchPage",
-        "property": false
-      },
-      "delete_document": {
-        "arguments": "self, *, doc_id: UUID | str",
-        "returns": "DocumentDeletion",
-        "property": false
-      },
-      "connectors": {
-        "arguments": "self",
-        "returns": "tuple[ConnectorDescriptor, ...]",
-        "property": false
-      },
-      "add_connector": {
-        "arguments": "self, *, connector: ConnectorCreate",
-        "returns": "ConnectorDescriptor",
-        "property": false
-      },
-      "pause_connector": {
-        "arguments": "self, *, connector_id: UUID",
-        "returns": "ConnectorDescriptor",
-        "property": false
-      },
-      "connector_status": {
-        "arguments": "self, *, connector_id: UUID",
-        "returns": "ConnectorDescriptor",
-        "property": false
-      }
-    },
-    "Client": {
-      "from_env": {
-        "arguments": "cls, **overrides: object",
-        "returns": "Self",
-        "property": false
-      },
-      "account": {
-        "arguments": "self",
-        "returns": "AccountApi",
-        "property": true
-      },
-      "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
-        "returns": "IngestedVersion",
-        "property": false
-      },
-      "ingest_file": {
-        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
-        "returns": "IngestedVersion",
-        "property": false
-      }
-    },
-    "AccountApi": {
-      "__init__": {
-        "arguments": "self, *, connection: Connection | None, http: httpx.Client",
-        "returns": "None",
-        "property": false
-      },
-      "whoami": {
-        "arguments": "self",
-        "returns": "dict[str, object]",
-        "property": false
-      },
-      "get": {
-        "arguments": "self, path: str, *, params: Mapping[str, str | int] | None=None",
-        "returns": "object",
-        "property": false
-      }
-    }
+  "publishedBaseline": {
+    "revision": "dd0c78015099cdd84ab5f3501744d6e225125989",
+    "version": "0.17.2"
   },
+  "pythonSourceRevision": "1dc23f21f24ec5f22ec4e51c751363b3658df7a6",
   "resolve_connection": {
     "arguments": "*, api_key: str | None=None, api_url: str | None=None, project: str | None=None, issuer: str | None=None, mcp_url: str | None=None",
     "returns": "Connection",
     "typescript": "resolveConnection"
   },
-  "QueryResultDict": [
-    "rows",
-    "columns",
-    "truncated"
-  ],
-  "adaptations": "typescript_client_design.md#7-language-and-safety-adaptations",
   "supportExports": {
     "functions": {
-      "remember.credentials.config_dir": {
-        "typescript": "configDir",
-        "arguments": "",
-        "returns": "Path"
-      },
-      "remember.credentials.credentials_path": {
-        "typescript": "credentialsPath",
-        "arguments": "",
-        "returns": "Path"
-      },
-      "remember.credentials.load_credentials": {
-        "typescript": "loadCredentials",
-        "arguments": "",
-        "returns": "StoredCredentials | None"
-      },
-      "remember.issuer.signed_key_claims": {
-        "typescript": "signedKeyClaims",
-        "arguments": "key: str",
-        "returns": "KeyClaims | None"
-      },
-      "remember.issuer.is_loopback": {
-        "typescript": "isLoopback",
-        "arguments": "host: str",
-        "returns": "bool"
-      },
-      "remember.issuer.require_secure_url": {
-        "typescript": "requireSecureUrl",
-        "arguments": "url: str, *, what: str",
-        "returns": "httpx.URL"
-      },
-      "remember.issuer.origin": {
-        "typescript": "origin",
-        "arguments": "url: str | httpx.URL",
-        "returns": "tuple[str, str, int | None]"
-      },
-      "remember.issuer.same_origin": {
-        "typescript": "sameOrigin",
-        "arguments": "left: str | httpx.URL, right: str | httpx.URL",
-        "returns": "bool"
-      },
-      "remember.issuer.send_same_origin": {
-        "typescript": "sendSameOrigin",
-        "arguments": "http: httpx.Client, request: httpx.Request, *, max_redirects: int=_MAX_REDIRECTS, stream: bool=False",
-        "returns": "httpx.Response"
-      },
-      "remember.issuer.normalize_issuer": {
-        "typescript": "normalizeIssuer",
-        "arguments": "issuer: str",
-        "returns": "str"
-      },
-      "remember.issuer.metadata_url": {
-        "typescript": "metadataUrl",
-        "arguments": "issuer: str",
-        "returns": "str"
-      },
-      "remember.issuer.fetch_issuer_metadata": {
-        "typescript": "fetchIssuerMetadata",
-        "arguments": "issuer: str, *, http: httpx.Client",
-        "returns": "IssuerMetadata"
-      },
-      "remember.issuer.clear_metadata_cache": {
-        "typescript": "clearMetadataCache",
-        "arguments": "",
-        "returns": "None"
-      },
-      "remember.connection.normalize_key": {
-        "typescript": "normalizeKey",
-        "arguments": "value: str",
-        "returns": "str"
-      },
       "remember.connection.clear_host_cache": {
-        "typescript": "clearHostCache",
         "arguments": "",
-        "returns": "None"
-      },
-      "remember.connection.resolve_project": {
-        "typescript": "resolveProject",
-        "arguments": "*, key: str, claims: KeyClaims, project: str | None, http: httpx.Client, clock: Callable[[], float]=time.monotonic, refresh: bool=False",
-        "returns": "ResolvedProject"
-      },
-      "remember.mcp_tools._definitions.memory_tools": {
-        "typescript": "memoryTools",
-        "arguments": "",
-        "returns": "tuple[ToolDefinition, ...]"
-      },
-      "remember.mcp_tools._definitions.tool": {
-        "typescript": "tool",
-        "arguments": "name: str",
-        "returns": "ToolDefinition"
-      },
-      "remember.mcp_tools._definitions.render_tools_list": {
-        "typescript": "renderToolsList",
-        "arguments": "tools: Iterable[ToolDefinition], *, project: bool, path_ingest: bool, read_only: bool",
-        "returns": "list[dict[str, object]]"
-      },
-      "remember.mcp_tools._validate.validate_arguments": {
-        "typescript": "validateArguments",
-        "arguments": "name: str, arguments: Mapping[str, object], *, path_ingest: bool=False, settings: McpMemorySettings | None=None, max_body_bytes: int | None=None",
-        "returns": "dict[str, object]",
-        "typescriptArguments": "{name: string, arguments: Record<string, unknown>, pathResolver?: PathBodyResolver, maxBodyBytes?: number}",
-        "typescriptReturns": "Promise<Record<string, unknown>>",
-        "adaptation": "No settings/path_ingest or implicit MCP environment; path requires injected resolver owned by MCP host. See design \u00a77."
-      },
-      "remember.mcp_tools._query.validate_saved_query_identifier": {
-        "typescript": "validateSavedQueryIdentifier",
-        "arguments": "*, value: object, field: str",
-        "returns": "str"
-      },
-      "remember.mcp_tools._errors.error_result": {
-        "typescript": "errorResult",
-        "arguments": "error: ToolError",
-        "returns": "dict[str, object]"
-      },
-      "remember.mcp_tools._errors.invalid_arguments": {
-        "typescript": "invalidArguments",
-        "arguments": "*, detail: str",
-        "returns": "ToolError"
-      },
-      "remember.mcp_tools._errors.map_error": {
-        "typescript": "mapError",
-        "arguments": "error: BaseException",
-        "returns": "ToolError"
+        "returns": "None",
+        "typescript": "clearHostCache"
       },
       "remember.connection.environment_issuer": {
-        "typescript": "environmentIssuer",
         "arguments": "",
-        "returns": "str | None"
+        "returns": "str | None",
+        "typescript": "environmentIssuer"
+      },
+      "remember.connection.normalize_key": {
+        "arguments": "value: str",
+        "returns": "str",
+        "typescript": "normalizeKey"
+      },
+      "remember.connection.resolve_project": {
+        "arguments": "*, key: str, claims: KeyClaims, project: str | None, http: httpx.Client, clock: Callable[[], float]=time.monotonic, refresh: bool=False",
+        "returns": "ResolvedProject",
+        "typescript": "resolveProject"
+      },
+      "remember.credentials.config_dir": {
+        "arguments": "",
+        "returns": "Path",
+        "typescript": "configDir"
+      },
+      "remember.credentials.credentials_path": {
+        "arguments": "",
+        "returns": "Path",
+        "typescript": "credentialsPath"
+      },
+      "remember.credentials.load_credentials": {
+        "arguments": "",
+        "returns": "StoredCredentials | None",
+        "typescript": "loadCredentials"
+      },
+      "remember.issuer.clear_metadata_cache": {
+        "arguments": "",
+        "returns": "None",
+        "typescript": "clearMetadataCache"
+      },
+      "remember.issuer.fetch_issuer_metadata": {
+        "arguments": "issuer: str, *, http: httpx.Client",
+        "returns": "IssuerMetadata",
+        "typescript": "fetchIssuerMetadata"
+      },
+      "remember.issuer.is_loopback": {
+        "arguments": "host: str",
+        "returns": "bool",
+        "typescript": "isLoopback"
+      },
+      "remember.issuer.metadata_url": {
+        "arguments": "issuer: str",
+        "returns": "str",
+        "typescript": "metadataUrl"
+      },
+      "remember.issuer.normalize_issuer": {
+        "arguments": "issuer: str",
+        "returns": "str",
+        "typescript": "normalizeIssuer"
+      },
+      "remember.issuer.origin": {
+        "arguments": "url: str | httpx.URL",
+        "returns": "tuple[str, str, int | None]",
+        "typescript": "origin"
+      },
+      "remember.issuer.require_secure_url": {
+        "arguments": "url: str, *, what: str",
+        "returns": "httpx.URL",
+        "typescript": "requireSecureUrl"
+      },
+      "remember.issuer.same_origin": {
+        "arguments": "left: str | httpx.URL, right: str | httpx.URL",
+        "returns": "bool",
+        "typescript": "sameOrigin"
+      },
+      "remember.issuer.send_same_origin": {
+        "arguments": "http: httpx.Client, request: httpx.Request, *, max_redirects: int=_MAX_REDIRECTS, stream: bool=False",
+        "returns": "httpx.Response",
+        "typescript": "sendSameOrigin"
+      },
+      "remember.issuer.signed_key_claims": {
+        "arguments": "key: str",
+        "returns": "KeyClaims | None",
+        "typescript": "signedKeyClaims"
+      },
+      "remember.mcp_tools._definitions.memory_tools": {
+        "arguments": "",
+        "returns": "tuple[ToolDefinition, ...]",
+        "typescript": "memoryTools"
+      },
+      "remember.mcp_tools._definitions.render_tools_list": {
+        "arguments": "tools: Iterable[ToolDefinition], *, project: bool, path_ingest: bool, read_only: bool",
+        "returns": "list[dict[str, object]]",
+        "typescript": "renderToolsList"
+      },
+      "remember.mcp_tools._definitions.tool": {
+        "arguments": "name: str",
+        "returns": "ToolDefinition",
+        "typescript": "tool"
+      },
+      "remember.mcp_tools._errors.error_result": {
+        "arguments": "error: ToolError",
+        "returns": "dict[str, object]",
+        "typescript": "errorResult"
+      },
+      "remember.mcp_tools._errors.invalid_arguments": {
+        "arguments": "*, detail: str",
+        "returns": "ToolError",
+        "typescript": "invalidArguments"
+      },
+      "remember.mcp_tools._errors.map_error": {
+        "arguments": "error: BaseException",
+        "returns": "ToolError",
+        "typescript": "mapError"
+      },
+      "remember.mcp_tools._query.validate_saved_query_identifier": {
+        "arguments": "*, value: object, field: str",
+        "returns": "str",
+        "typescript": "validateSavedQueryIdentifier"
+      },
+      "remember.mcp_tools._validate.validate_arguments": {
+        "adaptation": "No settings/path_ingest or implicit MCP environment; path requires injected resolver owned by MCP host. See design \u00a77.",
+        "arguments": "name: str, arguments: Mapping[str, object], *, path_ingest: bool=False, settings: McpMemorySettings | None=None, max_body_bytes: int | None=None",
+        "returns": "dict[str, object]",
+        "typescript": "validateArguments",
+        "typescriptArguments": "{name: string, arguments: Record<string, unknown>, pathResolver?: PathBodyResolver, maxBodyBytes?: number}",
+        "typescriptReturns": "Promise<Record<string, unknown>>"
       }
+    },
+    "memoryToolCatalogue": {
+      "contract": "all definitions, permissions, versions, routes, annotations, schemas and validators/error mapping; no SDK-owned host I/O, optional injected path resolver",
+      "definitionFields": "remember.mcp_tools._definitions.ToolDefinition",
+      "exports": {
+        "ADJACENT_CHUNKS_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "ADJACENT_CHUNKS_TOOL_NAME"
+        },
+        "DELETE_DOCUMENT_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "DELETE_DOCUMENT_TOOL_NAME"
+        },
+        "DocumentDeleteBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "DocumentSearchBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "INGEST_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "INGEST_TOOL_NAME"
+        },
+        "MEMORY_WRITE_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "MEMORY_WRITE_TOOL_NAMES"
+        },
+        "McpMemorySettings": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "MemoryWriteBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "OPEN_QUERY_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "OPEN_QUERY_TOOL_NAMES"
+        },
+        "OPERATION_TOOL_NAMES": {
+          "disposition": "public client support export",
+          "typescript": "OPERATION_TOOL_NAMES"
+        },
+        "PIPELINE_READINESS_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "PIPELINE_READINESS_TOOL_NAME"
+        },
+        "PROJECT_ARGUMENT": {
+          "disposition": "public client support export",
+          "typescript": "PROJECT_ARGUMENT"
+        },
+        "Permission": {
+          "disposition": "public client support export",
+          "typescript": "Permission"
+        },
+        "SEARCH_DOCUMENTS_TOOL_NAME": {
+          "disposition": "public client support export",
+          "typescript": "SEARCH_DOCUMENTS_TOOL_NAME"
+        },
+        "ToolArgumentError": {
+          "disposition": "public client support export",
+          "typescript": "ToolArgumentError"
+        },
+        "ToolDefinition": {
+          "disposition": "public client support export",
+          "typescript": "ToolDefinition"
+        },
+        "ToolError": {
+          "disposition": "public client support export",
+          "typescript": "ToolError"
+        },
+        "error_result": {
+          "disposition": "public client support export",
+          "typescript": "errorResult"
+        },
+        "handle_delete_document_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_memory_write_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_search_documents_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "invalid_arguments": {
+          "disposition": "public client support export",
+          "typescript": "invalidArguments"
+        },
+        "map_error": {
+          "disposition": "public client support export",
+          "typescript": "mapError"
+        },
+        "memory_tools": {
+          "disposition": "public client support export",
+          "typescript": "memoryTools"
+        },
+        "render_tools_list": {
+          "disposition": "public client support export",
+          "typescript": "renderToolsList"
+        },
+        "tool": {
+          "disposition": "public client support export",
+          "typescript": "tool"
+        },
+        "validate_arguments": {
+          "disposition": "public client support export",
+          "typescript": "validateArguments"
+        },
+        "validate_saved_query_identifier": {
+          "disposition": "public client support export",
+          "typescript": "validateSavedQueryIdentifier"
+        }
+      },
+      "source": "remember.mcp_tools"
     },
     "types": {
       "remember.connection.Connection": {
-        "typescript": "Connection",
         "fields": {
-          "key": {
-            "annotation": "SecretStr | None",
-            "default": null
-          },
-          "key_source": {
-            "annotation": "Source | None",
-            "default": null
-          },
           "api_url": {
             "annotation": "str | None",
             "default": null
@@ -451,39 +555,47 @@
             "annotation": "Source | None",
             "default": null
           },
-          "project": {
-            "annotation": "str | None",
+          "claims": {
+            "annotation": "KeyClaims | None",
             "default": null
           },
           "issuer": {
             "annotation": "str | None",
             "default": null
           },
+          "key": {
+            "annotation": "SecretStr | None",
+            "default": null
+          },
+          "key_source": {
+            "annotation": "Source | None",
+            "default": null
+          },
           "mcp_url": {
+            "annotation": "str | None",
+            "default": null
+          },
+          "project": {
             "annotation": "str | None",
             "default": null
           },
           "stored": {
             "annotation": "StoredCredentials | None",
             "default": null
-          },
-          "claims": {
-            "annotation": "KeyClaims | None",
-            "default": null
           }
         },
         "methods": {
           "authorization": {
-            "typescript": "authorization",
             "arguments": "self",
-            "returns": "str | None"
+            "returns": "str | None",
+            "typescript": "authorization"
           }
-        }
+        },
+        "typescript": "Connection"
       },
       "remember.connection.ResolvedProject": {
-        "typescript": "ResolvedProject",
         "fields": {
-          "project": {
+          "api_url": {
             "annotation": "str",
             "default": "Field(min_length=1)"
           },
@@ -491,19 +603,27 @@
             "annotation": "str",
             "default": null
           },
-          "api_url": {
+          "project": {
             "annotation": "str",
             "default": "Field(min_length=1)"
           }
         },
-        "methods": {}
+        "methods": {},
+        "typescript": "ResolvedProject"
       },
       "remember.credentials.StoredCredentials": {
-        "typescript": "StoredCredentials",
         "fields": {
-          "version": {
-            "annotation": "Literal[2]",
-            "default": null
+          "api_url": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "default_project": {
+            "annotation": "str | None",
+            "default": "Field(default=None, min_length=1, max_length=200)"
+          },
+          "expires_at": {
+            "annotation": "datetime | None",
+            "default": "None"
           },
           "issuer": {
             "annotation": "str | None",
@@ -517,86 +637,29 @@
             "annotation": "str | None",
             "default": "None"
           },
-          "expires_at": {
-            "annotation": "datetime | None",
-            "default": "None"
-          },
-          "default_project": {
-            "annotation": "str | None",
-            "default": "Field(default=None, min_length=1, max_length=200)"
-          },
-          "api_url": {
-            "annotation": "str | None",
-            "default": "None"
+          "version": {
+            "annotation": "Literal[2]",
+            "default": null
           }
         },
-        "methods": {}
-      },
-      "remember.issuer.KeyClaims": {
-        "typescript": "KeyClaims",
-        "fields": {
-          "iss": {
-            "annotation": "str",
-            "default": "Field(min_length=1)"
-          },
-          "jti": {
-            "annotation": "str | None",
-            "default": "None"
-          },
-          "sub": {
-            "annotation": "str | None",
-            "default": "None"
-          },
-          "org": {
-            "annotation": "str | None",
-            "default": "None"
-          },
-          "exp": {
-            "annotation": "int | None",
-            "default": "None"
-          },
-          "projects": {
-            "annotation": "list[str] | Literal['org:*'] | None",
-            "default": "None"
-          },
-          "permissions": {
-            "annotation": "list[str]",
-            "default": "Field(default_factory=list)"
-          }
-        },
-        "methods": {
-          "covers": {
-            "typescript": "covers",
-            "arguments": "self, project_id: str",
-            "returns": "bool"
-          },
-          "expires_at": {
-            "typescript": "expiresAt",
-            "arguments": "self",
-            "returns": "datetime | None"
-          }
-        }
+        "methods": {},
+        "typescript": "StoredCredentials"
       },
       "remember.issuer.IssuerMetadata": {
-        "typescript": "IssuerMetadata",
         "fields": {
-          "issuer": {
-            "annotation": "str",
-            "default": null
-          },
           "device_authorization_endpoint": {
             "annotation": "str | None",
             "default": "None"
           },
-          "token_endpoint": {
-            "annotation": "str | None",
-            "default": "None"
-          },
-          "revocation_endpoint": {
-            "annotation": "str | None",
-            "default": "None"
+          "issuer": {
+            "annotation": "str",
+            "default": null
           },
           "jwks_uri": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "remember_account_endpoint": {
             "annotation": "str | None",
             "default": "None"
           },
@@ -608,32 +671,89 @@
             "annotation": "str | None",
             "default": "None"
           },
-          "remember_account_endpoint": {
+          "revocation_endpoint": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "token_endpoint": {
             "annotation": "str | None",
             "default": "None"
           }
         },
         "methods": {
           "endpoint": {
-            "typescript": "endpoint",
             "arguments": "self, name: Literal['device_authorization_endpoint', 'token_endpoint', 'revocation_endpoint', 'remember_project_endpoint', 'remember_account_endpoint', 'remember_mcp_endpoint']",
-            "returns": "str"
+            "returns": "str",
+            "typescript": "endpoint"
           }
-        }
+        },
+        "typescript": "IssuerMetadata"
+      },
+      "remember.issuer.KeyClaims": {
+        "fields": {
+          "exp": {
+            "annotation": "int | None",
+            "default": "None"
+          },
+          "iss": {
+            "annotation": "str",
+            "default": "Field(min_length=1)"
+          },
+          "jti": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "org": {
+            "annotation": "str | None",
+            "default": "None"
+          },
+          "permissions": {
+            "annotation": "list[str]",
+            "default": "Field(default_factory=list)"
+          },
+          "projects": {
+            "annotation": "list[str] | Literal['org:*'] | None",
+            "default": "None"
+          },
+          "sub": {
+            "annotation": "str | None",
+            "default": "None"
+          }
+        },
+        "methods": {
+          "covers": {
+            "arguments": "self, project_id: str",
+            "returns": "bool",
+            "typescript": "covers"
+          },
+          "expires_at": {
+            "arguments": "self",
+            "returns": "datetime | None",
+            "typescript": "expiresAt"
+          }
+        },
+        "typescript": "KeyClaims"
       },
       "remember.mcp_tools._definitions.ToolDefinition": {
-        "typescript": "ToolDefinition",
         "fields": {
-          "name": {
+          "description": {
             "annotation": "str",
             "default": null
           },
-          "description": {
+          "destructive": {
+            "annotation": "bool",
+            "default": "False"
+          },
+          "http_route": {
             "annotation": "str",
             "default": null
           },
           "input_schema": {
             "annotation": "dict[str, object]",
+            "default": null
+          },
+          "name": {
+            "annotation": "str",
             "default": null
           },
           "permission": {
@@ -643,49 +763,44 @@
           "tool_version": {
             "annotation": "int",
             "default": null
-          },
-          "http_route": {
-            "annotation": "str",
-            "default": null
-          },
-          "destructive": {
-            "annotation": "bool",
-            "default": "False"
           }
         },
         "methods": {
-          "mutates": {
-            "typescript": "mutates",
-            "arguments": "self",
-            "returns": "bool"
-          },
           "annotations": {
-            "typescript": "annotations",
             "arguments": "self",
-            "returns": "dict[str, bool]"
+            "returns": "dict[str, bool]",
+            "typescript": "annotations"
+          },
+          "mutates": {
+            "arguments": "self",
+            "returns": "bool",
+            "typescript": "mutates"
           }
-        }
+        },
+        "typescript": "ToolDefinition"
+      },
+      "remember.mcp_tools._errors.ToolArgumentError": {
+        "fields": {},
+        "methods": {
+          "__init__": {
+            "arguments": "self, *, error: ToolError",
+            "returns": "None",
+            "typescript": "constructor"
+          }
+        },
+        "typescript": "ToolArgumentError"
       },
       "remember.mcp_tools._errors.ToolError": {
-        "typescript": "ToolError",
         "fields": {
+          "agent_action": {
+            "annotation": "str",
+            "default": null
+          },
           "code": {
             "annotation": "str",
             "default": null
           },
           "detail": {
-            "annotation": "str",
-            "default": null
-          },
-          "status_code": {
-            "annotation": "int | None",
-            "default": null
-          },
-          "retryable": {
-            "annotation": "bool",
-            "default": null
-          },
-          "agent_action": {
             "annotation": "str",
             "default": null
           },
@@ -700,139 +815,25 @@
           "retry_after": {
             "annotation": "float | None",
             "default": "None"
+          },
+          "retryable": {
+            "annotation": "bool",
+            "default": null
+          },
+          "status_code": {
+            "annotation": "int | None",
+            "default": null
           }
         },
         "methods": {
           "as_dict": {
-            "typescript": "asDict",
             "arguments": "self",
-            "returns": "dict[str, object]"
+            "returns": "dict[str, object]",
+            "typescript": "asDict"
           }
-        }
-      },
-      "remember.mcp_tools._errors.ToolArgumentError": {
-        "typescript": "ToolArgumentError",
-        "fields": {},
-        "methods": {
-          "__init__": {
-            "typescript": "constructor",
-            "arguments": "self, *, error: ToolError",
-            "returns": "None"
-          }
-        }
+        },
+        "typescript": "ToolError"
       }
-    },
-    "memoryToolCatalogue": {
-      "source": "remember.mcp_tools",
-      "exports": {
-        "ADJACENT_CHUNKS_TOOL_NAME": {
-          "typescript": "ADJACENT_CHUNKS_TOOL_NAME",
-          "disposition": "public client support export"
-        },
-        "DELETE_DOCUMENT_TOOL_NAME": {
-          "typescript": "DELETE_DOCUMENT_TOOL_NAME",
-          "disposition": "public client support export"
-        },
-        "INGEST_TOOL_NAME": {
-          "typescript": "INGEST_TOOL_NAME",
-          "disposition": "public client support export"
-        },
-        "MEMORY_WRITE_TOOL_NAMES": {
-          "typescript": "MEMORY_WRITE_TOOL_NAMES",
-          "disposition": "public client support export"
-        },
-        "OPEN_QUERY_TOOL_NAMES": {
-          "typescript": "OPEN_QUERY_TOOL_NAMES",
-          "disposition": "public client support export"
-        },
-        "OPERATION_TOOL_NAMES": {
-          "typescript": "OPERATION_TOOL_NAMES",
-          "disposition": "public client support export"
-        },
-        "PIPELINE_READINESS_TOOL_NAME": {
-          "typescript": "PIPELINE_READINESS_TOOL_NAME",
-          "disposition": "public client support export"
-        },
-        "PROJECT_ARGUMENT": {
-          "typescript": "PROJECT_ARGUMENT",
-          "disposition": "public client support export"
-        },
-        "SEARCH_DOCUMENTS_TOOL_NAME": {
-          "typescript": "SEARCH_DOCUMENTS_TOOL_NAME",
-          "disposition": "public client support export"
-        },
-        "DocumentDeleteBackend": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "DocumentSearchBackend": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "McpMemorySettings": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "MemoryWriteBackend": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "Permission": {
-          "typescript": "Permission",
-          "disposition": "public client support export"
-        },
-        "ToolArgumentError": {
-          "typescript": "ToolArgumentError",
-          "disposition": "public client support export"
-        },
-        "ToolDefinition": {
-          "typescript": "ToolDefinition",
-          "disposition": "public client support export"
-        },
-        "ToolError": {
-          "typescript": "ToolError",
-          "disposition": "public client support export"
-        },
-        "error_result": {
-          "typescript": "errorResult",
-          "disposition": "public client support export"
-        },
-        "handle_delete_document_tool": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "invalid_arguments": {
-          "typescript": "invalidArguments",
-          "disposition": "public client support export"
-        },
-        "handle_memory_write_tool": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "handle_search_documents_tool": {
-          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
-        },
-        "map_error": {
-          "typescript": "mapError",
-          "disposition": "public client support export"
-        },
-        "memory_tools": {
-          "typescript": "memoryTools",
-          "disposition": "public client support export"
-        },
-        "render_tools_list": {
-          "typescript": "renderToolsList",
-          "disposition": "public client support export"
-        },
-        "tool": {
-          "typescript": "tool",
-          "disposition": "public client support export"
-        },
-        "validate_arguments": {
-          "typescript": "validateArguments",
-          "disposition": "public client support export"
-        },
-        "validate_saved_query_identifier": {
-          "typescript": "validateSavedQueryIdentifier",
-          "disposition": "public client support export"
-        }
-      },
-      "definitionFields": "remember.mcp_tools._definitions.ToolDefinition",
-      "contract": "all definitions, permissions, versions, routes, annotations, schemas and validators/error mapping; no SDK-owned host I/O, optional injected path resolver"
     }
   }
 }

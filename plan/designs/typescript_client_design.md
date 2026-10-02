@@ -42,12 +42,18 @@ fail when an entry lacks an implemented mapping or documented adaptation.
 
 An injected `client` is a caller-owned HttpClient request adapter: it supplies
 its own base URL/headers, skips SDK connection/routing, and cannot be combined
-with apiKey/baseUrl/project/fetch settings. A fetch injection instead replaces
-network I/O while retaining SDK routing. Client constructor timeoutMs remains
-optional; an injected client owns its own timeout/lifecycle. Export `version`
-as the npm package version, and `pythonCompatibility` as source SHA/baseline,
-not a false Python-version identity. Query results retain rows, columns and
-truncated properties.
+with apiKey/baseUrl/project/transport/agents settings. A `transport` injection
+implements the same request interface with absolute URLs and SDK-provided
+headers, retaining SDK connection/routing. It replaces Python's lower-level
+transport option; neither mode uses a Fetch-standard implementation. Optional
+`agents: {http?, https?}` accepts caller-owned Node HTTP/HTTPS agents and reuses
+the SDK's single-transmission adapter for proxy/custom-CA configuration; it is
+mutually exclusive with client/transport injection. Missing agents are created
+and owned by the SDK. Constructor timeoutMs still bounds injected calls, while
+the injected adapter owns any additional timeout and its lifecycle. Export
+`version` as the npm package version and `pythonCompatibility` as source
+SHA/baseline, not a false Python-version identity. Query results retain rows,
+columns and truncated properties.
 
 All public client methods are covered, including assured operations; SQL and
 saved-query execution/discovery; primitive search, resolve, hydration,
@@ -70,11 +76,29 @@ caller-owned injected transport. Every handwritten function has JSDoc/docstrings
 The package supports Node.js 22 and newer with import and require entry points
 and declaration files. Local paths and stored login files are part of its
 scope. Browser support is not advertised: privileged API keys belong on the
-application backend. The default adapter uses Node HTTP/HTTPS requests with per-client
-owned agents, one transmission per invocation, no automatic redirects/retries,
-and response buffering under the operation deadline. Close destroys only the
-SDK-owned agents. `fetch` injection supports tests/proxies, with redirects
-left under SDK control; arbitrary injected implementations are caller-owned.
+application backend. The default adapter uses Node HTTP/HTTPS requests with
+per-client engine agents: one transmission per invocation, no automatic
+redirects/retries, and full-response buffering under the operation deadline.
+Buffering is time-bounded, not subject to an invented byte cap; Python also
+buffers responses without such a cap. Default SDK agents never use environment
+proxies, including NODE_USE_ENV_PROXY. For proxies supply caller-owned agents
+(e.g. an operator-configured proxy agent) or a conforming request transport.
+Node TLS defaults apply, including NODE_EXTRA_CA_CERTS; --use-system-ca applies
+only on Node versions supporting that flag. A caller-owned HTTPS agent can
+supply explicit ca material. HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE
+are not read by the SDK. Close destroys only SDK-owned engine agents, cancels
+this client's waiters/requests as AbortError, refuses subsequent calls and never
+recreates agents. Caller-owned agents/transports remain open.
+
+SDK-owned agents retire idle sockets after at most four seconds as an initial
+policy, below the engine's five-second keep-alive. Active transfers remain
+controlled by operation deadlines, not an idle-pool expiry. After a 421, retire
+that socket before returning the buffered response so a later request cannot
+reuse a connection which refused the destination. HTTPS follows the same
+single-transmission and retirement rules. Shared discovery uses separate
+process-owned agents (or borrowed caller-owned agents/transports); no single
+client close destroys those resources, and idle discovery sockets do not keep
+the process alive. Shared work has its own finite deadline.
 
 ## 3. Connection, routing and secret handling
 
@@ -172,19 +196,27 @@ without replay; surface the original error. For reads, use the source-owned
 _READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
 separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
 remain eligible. Timeout and caller abort never trigger retry or re-resolution.
-Node fetch automatically repeats reusable requests after 421; manual redirects
-cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
-not global fetch. Injected fetch/HTTP adapters must transmit once per invocation,
-honor cancellation and preserve manual redirects; ordinary Node fetch is not a
-conforming injection. Caller-owned adapters remain responsible for their own
-behavior and lifecycle. The universal no-write-replay contract applies at the
-wire, not merely to SDK adapter-call counts. See
+The Fetch standard automatically repeats reusable requests after 421; manual
+redirects cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
+not global fetch. The SDK invokes an adapter at most once per write, and its default/supplied-agent
+adapter transmits exactly once. Injected request transports must transmit once
+per invocation, honor cancellation and return redirects without following them;
+the SDK cannot detect violations inside a caller-owned transport. The retired
+fetch option is removed rather than retained as a nonconforming fallback. One
+`deleteDocument` sends one DELETE to the engine, including after a 421. The
+universal no-write-replay contract applies at the wire, not merely to adapter
+call counts. See
 [the measured 421 transport evidence](../analysis/typescript_transport_421.md).
 Engine error envelopes do not trigger moved-host refresh. A failed refresh
 surfaces the original failure rather than silently selecting a fallback.
 
 Provide a finite request timeout (30 seconds by default) and AbortSignal.
 Cancellation covers issuer discovery, routing, requests and polling waits.
+The HTTP timeout is a total operation deadline including routing, upload and
+response buffering, unlike httpx's per-phase idle timeout. Raise timeoutMs for
+large/slow uploads (a 50 MB upload at 5 Mbit/s exceeds the default 30 seconds).
+Expiry after an upload may have arrived leaves an unknown write outcome; never
+replay it automatically.
 Readiness waits poll immediately, including after `created=false`, validate
 every report, continue through retry-scheduled `failed` stages and stop on
 `dead_letter`. Default wait timeout is 1800 seconds and interval 15 seconds;
@@ -254,6 +286,8 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
    values, JSON bodies/defaults and Boolean query encodings.
    Include local HTTP server tests of the default adapter and conforming injections;
    count received requests to detect automatic transport replays, not just mocked calls.
+   Cover HTTP and HTTPS on the minimum Node version, 421 socket retirement, idle
+   retirement, caller-agent ownership and close during a shared discovery lookup.
 5. **Issuer/provider compatibility.** Publish public JSON Schemas for the
    consumed issuer metadata fields, ResolvedProject and object-shaped whoami.
    `account.get` returns unknown JSON and whoami returns a JSON object, matching
@@ -300,12 +334,20 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | TypeScript-only cancellation/precision errors | mapError reports AbortError as cancelled (no HTTP status, not retryable), NumericPrecisionError as local_backend_error (not retryable), reusing published codes | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
 | Windows file mode rejects stored credentials | Same refusal; explicit settings work | Windows fixture |
-| HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | Node HTTP/HTTPS and TLS defaults; a conforming explicit adapter supplies custom proxy/CA | Injection and documented settings |
+| HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | SDK-owned agents never use environment proxies, including NODE_USE_ENV_PROXY; Node TLS defaults/NODE_EXTRA_CA_CERTS apply; supplied agents or a conforming request transport handle custom proxy/CA | Agent ownership, HTTPS/custom-CA and documented settings |
+| httpx per-phase idle timeout | timeoutMs is a total operation deadline including routing/upload/body reads; raise it for large/slow uploads | Slow continuous-response deadline and distinct readiness timeout |
 
 Use process-wide issuer/project caches keyed by issuer, SHA-256 key fingerprint
-and project; a client pins project identity separately. Shared resolutions have
-their own bounded timeout. Each waiter may abort without cancelling shared
-work or poisoning other clients' result. SDK code never logs keys, bodies or
+and project; a client pins project identity separately. Completed successful results may be reused across transports. In-flight issuer
+and project resolutions additionally key by transport identity: clients using
+different proxies/adapters do not inherit each other's pending failures. Default
+SDK discovery has one process-owned transport; borrowed agent pairs share a
+discovery transport only when the identical HTTP/HTTPS agent objects are used;
+a custom transport shares pending work only by object identity. Shared
+resolutions have their own bounded timeout. Each waiter may abort or close
+without cancelling shared work or poisoning other clients' result. Close-ended
+operations are cancellation, never movement/network errors; they neither
+refresh nor clear shared results. SDK code never logs keys, bodies or
 URLs containing metadata. Connection secrets are private and inspect/toJSON
 redact them; deliberate authorization access is explicit.
 
