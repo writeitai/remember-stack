@@ -116,14 +116,15 @@ Constructing a client performs no network I/O. Resolve each setting with the
 Python precedence: explicit options, `REMEMBER_API_KEY/PROJECT/API_URL/ISSUER`,
 then version-2 stored credentials. Include REMEMBER_MCP_URL/mcpUrl for
 resolveConnection consumers; empty connection environment values are unset.
-Connection environment names are case-insensitive, matching Python settings.
+Connection and config-directory environment names, including REMEMBER_CONFIG_DIR
+and XDG_CONFIG_HOME, are case-insensitive, matching Python settings.
 Empty REMEMBER_CONFIG_DIR resolves to credentials.json in the current directory;
 empty XDG_CONFIG_HOME resolves to remember/credentials.json there. These exact
 paths let TypeScript read the file Python CLI writes in the same environment. Normalize
 bare or Bearer-prefixed keys and refuse line breaks. No retired aliases.
 Use `REMEMBER_CONFIG_DIR`, otherwise `$XDG_CONFIG_HOME/remember`, otherwise
 `~/.config/remember`, and the same `credentials.json` shape as Python. Read
-only when required by precedence; explicit key and URL bypass a stale file.
+only when required by precedence; argument or environment key and URL bypass a stale file.
 Refuse symlinks, non-regular files, and files readable by other users on POSIX;
 on Windows refuse automatic stored-file reads, as current Python does; explicit
 keys remain usable: explicit key plus URL bypasses the store, and an explicit or environment
@@ -341,11 +342,11 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | Pin never refreshes merely on TTL expiry | Refresh pinned project mapping every 600 seconds; never changed default | Expiry and concurrency |
 | Secure cross-origin metadata endpoints allowed | Issuer-origin authenticated endpoints required | Hostile metadata |
 | Arbitrary account path strings | Relative paths without traversal/absolute origin | Encoded/double-encoded traversal |
-| Wait deadline checked between polls, including one poll for zero timeout | Request/readiness timeouts and poll intervals must be finite, greater than zero and at most 2,147,483,647 ms. InputValidationError refuses invalid values before HTTP. A zero in-flight deadline cannot complete Python's single poll; pipelineReadiness is the one-poll API. Larger values overflow Node timers to 1 ms. Valid deadlines also bound calls/sleep; TimeoutError retains the last report | Zero/nonfinite/upper-bound refusal, accepted maximum, slow HTTP and cancellation |
+| Wait deadline checked between polls, including one poll for zero timeout | Request/readiness timeouts and poll intervals must be finite, greater than zero and at most 2,147,483,647 ms. InputValidationError refuses invalid values before HTTP. A zero in-flight deadline cannot complete Python's single poll; pipelineReadiness is the one-poll API. Larger values overflow Node timers to 1 ms. Valid deadlines also bound calls/sleep; TimeoutError retains the last report | Zero/negative/nonfinite/upper-bound refusal, accepted maximum, slow HTTP and cancellation |
 | MCP validate_arguments path_ingest/settings implicitly reads host files/environment | validateArguments uses an explicit injected PathBodyResolver; no resolver refuses path; separate MCP package owns settings and Python-equivalent root/regular-file/size checks | Resolver opt-in, disabled path, empty/oversize body; host security fixtures required before MCP release |
 | TypeScript-only cancellation/precision errors | mapError reports AbortError as cancelled (no HTTP status, not retryable), NumericPrecisionError as local_backend_error (not retryable), reusing published codes | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
-| Windows file mode rejects stored credentials | Refuse automatic stored files. Explicit key plus URL bypasses the file; argument or environment signed keys without a URL route via their issuer without file reads, in Python too. Unsigned keys without a URL refuse an existing file; absent file retains localhost default | Windows argument/environment keys, present/absent file, signed/unsigned cases |
+| Windows file mode rejects stored credentials | Refuse automatic stored files. Argument or environment key plus URL bypasses the file; argument or environment signed keys without a URL route via their issuer without file reads, in Python too. Unsigned keys without a URL refuse an existing file; absent file retains localhost default | Windows argument/environment keys, present/absent file, signed/unsigned cases |
 | HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | SDK-owned agents never use environment proxies, including NODE_USE_ENV_PROXY; Node TLS defaults/NODE_EXTRA_CA_CERTS apply; supplied agents or a conforming request transport handle custom proxy/CA | Agent ownership, HTTPS/custom-CA and documented settings |
 | httpx per-phase idle timeout; constructor timeout ignored with injected client | timeoutMs bounds every operation including injected calls, routing/upload/body reads; raise it for large/slow uploads | Injected deadline, slow continuous-response deadline and distinct readiness timeout |
 
