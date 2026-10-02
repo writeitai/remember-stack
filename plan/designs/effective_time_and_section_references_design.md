@@ -431,8 +431,12 @@ cannot remove a candidate from the walk:
   index finds them), each nomination the request ran — same grain (chunk or claim), channel
   (semantic, reusing the query embedding, or BM25) and k — is run once more over just those
   lineages' readable editions; a lineage counts when it scores at least the nomination's k-th
-  score (any score when it returned fewer than k) and, for BM25, matches a term. These probe
-  hits only name lineages and never enter the answer.
+  score (any score when it returned fewer than k) and, for BM25, matches a term. An
+  entity-filtered context nominates coverage-first (the number of requested entities an item
+  mentions, across all versions, then relevance), so there the probe replays that same
+  nomination at the same k with its candidate set widened to the pending lineages' readable
+  editions, and a lineage counts when one of its items makes that top k. These probe hits
+  only name lineages and never enter the answer.
 
 ## 4. Section keys
 

@@ -443,6 +443,17 @@ class QueryEngine:
             candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
         if not candidates:
             return ()
+        testimony = getattr(index, "nominate_testimony_scored", None)
+        if entity_ids and callable(testimony):
+            return self._touched_by_testimony(
+                deployment_id=deployment_id,
+                scope=scope,
+                query=query,
+                probes=probes,
+                entity_ids=entity_ids,
+                candidates=candidates,
+                testimony=testimony,
+            )
         restricted = (documents or DocumentSearchFilters()).model_copy(
             update={"doc_ids": candidates}
         )
@@ -498,6 +509,70 @@ class QueryEngine:
                     {"deployment_id": deployment_id, "ids": hits},
                 ).scalars():
                     touched[doc_id] = None
+        return tuple(touched)
+
+    def _touched_by_testimony(
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        query: str,
+        probes: tuple[
+            tuple[Literal["chunk", "claim"], Literal["semantic", "bm25"], int], ...
+        ],
+        entity_ids: tuple[UUID, ...],
+        candidates: tuple[UUID, ...],
+        testimony: Callable[..., object],
+    ) -> tuple[UUID, ...]:
+        """The entity-scoped form of the §3.7 probe: replay the real nomination.
+
+        An entity-filtered context nominates through
+        ``nominate_testimony_scored`` (mentions across versions, survivor
+        resolution, coverage-first ranking). The probe runs that same
+        nomination, at the same k and scope, with its candidate set widened
+        to the pending lineages' readable editions; any of their items in the
+        result would have made the real cut. One code path, so the probe
+        cannot drift from what the request ranked.
+        """
+        pending = tuple(str(doc_id) for doc_id in candidates)
+        touched: dict[UUID, None] = {}
+        for grain, channel, k in probes:
+            arguments: dict[str, Any] = {
+                "deployment_id": str(deployment_id),
+                "grain": grain,
+                "channel": channel,
+                "k": k,
+                "entity_ids": tuple(str(entity) for entity in entity_ids),
+                "time": scope,
+                "pending_doc_ids": pending,
+            }
+            if channel == "semantic":
+                arguments["vector"] = self._reuse_embedding(
+                    deployment_id=deployment_id, query=query
+                ) or self._embed(
+                    query=query,
+                    call_site=(
+                        SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS
+                        if grain == "claim"
+                        else SurfaceCallSite.CLAIMS_AND_SOURCES_CHUNKS
+                    ),
+                    deployment_id=deployment_id,
+                )
+            else:
+                arguments["query"] = query
+            hits = [
+                item.item_id
+                for item in cast(tuple[P1Nomination, ...], testimony(**arguments))
+            ]
+            if not hits:
+                continue
+            with self._engine.connect() as connection:
+                for doc_id in connection.execute(
+                    _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
+                    {"deployment_id": deployment_id, "ids": hits},
+                ).scalars():
+                    if doc_id in candidates:
+                        touched[doc_id] = None
         return tuple(touched)
 
     def _scoped_freshness(

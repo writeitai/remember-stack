@@ -919,11 +919,17 @@ class PostgresP1Index:
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         time: TextScope | None = None,
+        pending_doc_ids: tuple[str, ...] | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Rank cheap entity-scoped testimony candidates for later confirmation.
 
         The D140 time scope (default current) is part of the candidate
         predicate, so text not in force never takes a nomination slot.
+
+        ``pending_doc_ids`` (the §3.7 probe) widens the candidate set to the
+        readable editions of those lineages as well, with ordering and limit
+        unchanged: any of their items in the result would have made this
+        nomination's top k had their in-force edition been ready.
         """
         if not entity_ids:
             raise ValueError("scoped testimony nomination requires entity_ids")
@@ -935,13 +941,25 @@ class PostgresP1Index:
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
-            current_predicate = "AND indexed.is_current_testimony AND " + (
-                claim_selected(
-                    claim="indexed.claim_id",
-                    doc="indexed.doc_id",
-                    current_testimony="TRUE",
-                )
+            selected = claim_selected(
+                claim="indexed.claim_id", doc="indexed.doc_id", current_testimony="TRUE"
             )
+            if pending_doc_ids is not None:
+                selected = (
+                    f"({selected} OR EXISTS (SELECT 1 FROM chunk_claims AS pending_occ"
+                    " JOIN chunks AS pending_chunk"
+                    "   ON pending_chunk.deployment_id = pending_occ.deployment_id"
+                    "  AND pending_chunk.chunk_id = pending_occ.chunk_id"
+                    " JOIN document_versions AS pending_version"
+                    "   ON pending_version.deployment_id = pending_chunk.deployment_id"
+                    "  AND pending_version.version_id = pending_chunk.version_id"
+                    "  AND pending_version.current_representation_id"
+                    "      = pending_chunk.representation_id"
+                    " WHERE pending_occ.deployment_id = indexed.deployment_id"
+                    " AND pending_occ.claim_id = indexed.claim_id"
+                    f" AND {_PENDING_READABLE.format(version='pending_chunk.version_id')}))"
+                )
+            current_predicate = "AND indexed.is_current_testimony AND " + selected
         elif grain == "chunk":
             table = "chunk_search"
             id_column = "chunk_id"
@@ -959,7 +977,14 @@ class PostgresP1Index:
                 "      = candidate.representation_id"
                 " WHERE candidate.deployment_id = indexed.deployment_id"
                 " AND candidate.chunk_id = indexed.chunk_id"
-                f" AND {version_selected(version='candidate.version_id')})"
+                f" AND ({version_selected(version='candidate.version_id')}"
+                + (
+                    ""
+                    if pending_doc_ids is None
+                    else " OR "
+                    + _PENDING_READABLE.format(version="candidate.version_id")
+                )
+                + "))"
             )
         else:
             raise ValueError(f"unknown testimony grain {grain!r}")
@@ -967,6 +992,7 @@ class PostgresP1Index:
         parameters: dict[str, object] = {
             "deployment_id": UUID(deployment_id),
             "entity_ids": _uuid_strings(entity_ids),
+            "pending_doc_ids": _uuid_strings(pending_doc_ids or ()),
             "limit": k,
             **(
                 time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
@@ -1663,6 +1689,17 @@ def _add_claim_scope(
         )
     )
     parameters.update(scope.parameters())
+
+
+_PENDING_READABLE = (
+    "EXISTS (SELECT 1 FROM public.document_version_scope AS pending_scope"
+    " WHERE pending_scope.deployment_id = :deployment_id"
+    " AND pending_scope.version_id = {version}"
+    " AND pending_scope.selectable"
+    " AND pending_scope.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))"
+)
+"""A readable (ready, current-reading) edition of one of the §3.7 probe's
+pending lineages, whatever its in-force interval."""
 
 
 def _chunk_scope_join(*, time: TextScope | None, parameters: dict[str, Any]) -> str:

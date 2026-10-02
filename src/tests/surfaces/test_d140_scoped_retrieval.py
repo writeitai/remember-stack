@@ -1843,3 +1843,69 @@ def test_pinned_pages_keep_reporting_pending_as_known_at_their_belief(
         fresh.scope_pending is None
         or converting.doc_id not in fresh.scope_pending.doc_ids
     )
+
+
+# --- implementation review round 3 (P1): entity-scoped pending probe ---------
+
+
+def test_an_entity_scoped_context_names_a_lineage_reached_only_on_an_older_edition(
+    rig: _Rig,
+) -> None:
+    """Three editions: the entity is mentioned only in an older, readable,
+    non-served edition; another edition is served; the in-force edition is
+    still converting. The entity-scoped nomination (mentions across versions,
+    coverage first) reaches the older edition, so the empty answer must say
+    the lineage is pending."""
+    lineage = _lineage(
+        rig,
+        label="contract",
+        bodies=(("Acme renewal terms",), ("renewal terms",), ("renewal terms v3",)),
+    )
+    _declare(rig, lineage, 0, (_PAST, _REVISED))
+    _declare(rig, lineage, 1, (_REVISED, _NOW - timedelta(days=1)))
+    _declare(rig, lineage, 2, (_NOW - timedelta(days=1), None))
+    claim_id = _claim(
+        rig,
+        lineage=lineage,
+        origin=lineage.chunk(0),
+        body="Acme renewal terms",
+        occurrences={lineage.chunk(0): (0, 18)},
+    )
+    entity = uuid4()
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                " normalized_name) VALUES (:e, :d, 'Acme', 'acme')"
+            ),
+            {"e": entity, "d": _DEPLOYMENT_ID},
+        )
+        seed_entity_mention(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            entity_id=entity,
+            doc_id=lineage.doc_id,
+            chunk_id=lineage.chunk(0),
+            claim_id=claim_id,
+            surface_form="Acme",
+            at=_PAST,
+            resolver_version="d140-test",
+        )
+        # the middle edition is served; the in-force one is still converting
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
+            {"v": lineage.version(1), "doc": lineage.doc_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET status = 'converting'"
+                " WHERE version_id = :v"
+            ),
+            {"v": lineage.version(2)},
+        )
+    answer = rig.query.claims_and_sources_context(
+        deployment_id=_DEPLOYMENT_ID, query="renewal terms", entity_ids=(entity,), k=5
+    )
+    assert answer.chunks == () and answer.evidence == ()
+    pending = answer.freshness.scope_pending
+    assert pending is not None and pending.doc_ids == (lineage.doc_id,)
