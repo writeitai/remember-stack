@@ -87,10 +87,29 @@ possible matches when a needed endpoint is unknown. Precision describes dates,
 not a permanent classification of the statement.
 
 The current fact row is authoritative. The ordinary adjudication transcript
-records prior values and the reason for changing them. System timestamps on a
-row alone do not reconstruct every earlier date revision; historical-belief
-queries must use retained revision history where that is part of their contract.
-This amendment does not claim a new historical-belief query API.
+records prior values and the reason for changing them.
+
+**Belief-time reads use the current window.** A belief-time read asks "what
+did the memory believe at instant B?" The shipped ones are the
+`facts_as_of(valid_at, believed_at, max_rows)` query-space function and the
+graph helpers given both `valid_at` and `believed_at`. They select facts by
+their system timestamps (`ingested_at <= B` and not invalidated by `B`) and
+then apply the world-time filter to each fact's window **as it stands now**.
+A window corrected in place after `B` is therefore shown corrected. Example:
+a fact first recorded on 1 August as "2026-07-01 to open" and corrected on
+17 September to "2026-06-15 to open" appears in a read at `believed_at =
+2026-08-10` with the June start. The August value is kept in the fact's
+adjudication transcript (the before/after window of that decision); the read
+does not replay it. The public documentation of both reads states this.
+
+Keeping a versioned copy of every window (a window-history table that
+belief-time reads would join) is the rejected alternative. It would add a
+second write per window change inside the fact-application transaction, a
+second store for hard forget to scrub, and a history-join on every as-of read,
+to answer a question the transcript already answers for a single fact. The
+fact operations (`facts_context` and the other assured operations) answer
+current belief only; their `time` selects world time. A belief-time question
+goes through `facts_as_of` or the graph helpers.
 
 ## 3. Identity and dates are one ordinary adjudication
 
