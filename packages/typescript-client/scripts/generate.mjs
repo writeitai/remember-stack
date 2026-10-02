@@ -50,7 +50,10 @@ function exactNulls({content,schema,name}) {
   if(schema.type!=='null' && nullProperties.size===0 && !recursive) return content;
   const source=ts.createSourceFile(name+'.ts',content,ts.ScriptTarget.Latest,true);
   const result=ts.transform(source,[context=>{
-    /** Visit just the named model's source-owned exact-null properties. */
+    /** Visit the named model's source-owned exact-null/recursive properties.
+     * @param {import("typescript").Node} node
+     * @returns {import("typescript").VisitResult<import("typescript").Node>}
+     */
     function visit(node) {
       if(ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) && node.typeName.text==='Record'
         && node.typeArguments?.length===2 && ts.isTypeReferenceNode(node.typeArguments[1])
@@ -88,7 +91,7 @@ async function files({directory,prefix=''}) {
   const entries=await readdir(directory,{withFileTypes:true});
   const result=[];
   for(const entry of entries.sort((a,b)=>a.name.localeCompare(b.name))) {
-    const name=join(prefix,entry.name);
+    const name=join(prefix,entry.name).replaceAll('\\','/');
     if(entry.isDirectory()) result.push(...await files({directory:join(directory,entry.name),prefix:name}));
     else result.push(name);
   }

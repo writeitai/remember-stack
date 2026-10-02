@@ -275,6 +275,7 @@ def artifacts() -> dict[Path, str]:
     from remember.mcp_tools import PROJECT_ARGUMENT
     from remember.mcp_tools._definitions import _INGEST_INPUT_SCHEMA_WITHOUT_PATH
     from remember.mime import KNOWN_UPLOAD_MIME_TYPES
+    from remember.models import _SECRET_CONFIGURATION_KEYS
 
     inventory = verify_inventory()
     document = build_document()
@@ -369,6 +370,34 @@ def artifacts() -> dict[Path, str]:
                 "queryErrorStatus": _QUERY_ERROR_HTTP_STATUS,
                 "mime": KNOWN_UPLOAD_MIME_TYPES,
                 "readRoutes": read_routes(),
+                "secretConfigurationKeys": sorted(_SECRET_CONFIGURATION_KEYS),
+                "modelValidators": {
+                    node.name: [
+                        method.name
+                        for method in node.body
+                        if isinstance(method, ast.FunctionDef)
+                        and any(
+                            isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Name)
+                            and decorator.func.id
+                            in {"model_validator", "field_validator"}
+                            for decorator in method.decorator_list
+                        )
+                    ]
+                    for node in source_tree(module="remember.models").body
+                    if isinstance(node, ast.ClassDef)
+                    and any(
+                        isinstance(method, ast.FunctionDef)
+                        and any(
+                            isinstance(decorator, ast.Call)
+                            and isinstance(decorator.func, ast.Name)
+                            and decorator.func.id
+                            in {"model_validator", "field_validator"}
+                            for decorator in method.decorator_list
+                        )
+                        for method in node.body
+                    )
+                },
             }
         ),
         PACKAGE / "contracts/parity.json": serialize(value=inventory),

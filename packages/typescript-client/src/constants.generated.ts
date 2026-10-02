@@ -14,6 +14,26 @@ export default {
     ".txt": "text/plain",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
   },
+  "modelValidators": {
+    "ConnectorCreate": [
+      "_credentials_are_references"
+    ],
+    "ContextBundleV2": [
+      "_child_grains_are_exact"
+    ],
+    "DocumentSearchRequest": [
+      "cursor_pages_filters_only"
+    ],
+    "EvidenceSpan": [
+      "_end_after_start"
+    ],
+    "EvidenceTotal": [
+      "_returned_does_not_exceed_total"
+    ],
+    "OverlapTemporalScope": [
+      "_ordered"
+    ]
+  },
   "queryErrorStatus": {
     "cancelled": 500,
     "concurrency_exceeded": 409,
@@ -160,5 +180,15 @@ export default {
       "method": "GET",
       "pattern": "^/deployment$"
     }
+  ],
+  "secretConfigurationKeys": [
+    "accesstoken",
+    "apikey",
+    "credential",
+    "credentials",
+    "password",
+    "refreshtoken",
+    "secret",
+    "token"
   ]
 };

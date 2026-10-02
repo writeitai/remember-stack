@@ -1,2 +1,3 @@
-/** Remember SDK exports; the typed facade is completed before this PR leaves draft. */
+/** Remember SDK public exports. */
 export type * from './generated';
+export * from './errors';
