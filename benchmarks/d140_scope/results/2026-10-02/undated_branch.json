@@ -1,0 +1,46 @@
+{
+  "arguments": {
+    "conversations": 500,
+    "turns": 60,
+    "claims_per_turn": 3,
+    "entities": 2000,
+    "facts_per_conversation": 40,
+    "queries": 60,
+    "repeats": 2,
+    "skip_seed": false,
+    "out": "/home/jpuc/undated_branch.json"
+  },
+  "git": "",
+  "seed": {
+    "load_seconds": 1925.1500999639993
+  },
+  "corpus": {
+    "documents": 500,
+    "chunks": 30000,
+    "claims": 90000,
+    "relations": 16000,
+    "observations": 4000
+  },
+  "latency": {
+    "search_chunks_bm25": {
+      "p50_ms": 1214.01,
+      "p95_ms": 1231.0,
+      "max_ms": 1240.54
+    },
+    "search_chunks_semantic": {
+      "p50_ms": 640.02,
+      "p95_ms": 649.13,
+      "max_ms": 655.29
+    },
+    "claims_and_sources_context": {
+      "p50_ms": 4753.21,
+      "p95_ms": 4824.48,
+      "max_ms": 4868.21
+    },
+    "facts_context": {
+      "p50_ms": 4941.53,
+      "p95_ms": 5046.39,
+      "max_ms": 5089.61
+    }
+  }
+}

@@ -74,5 +74,10 @@ deployment of each lineage takes its own date (today's behaviour) and later vers
   PostgreSQL integration tests for scoped statements, views and functions; composite-FK
   rejection of cross-lineage rows.
 - The scale verification target of design §3.2 is measured on the synthetic corpus and the
-  result recorded in the PR.
+  result recorded in the PR. **Measured 2026-10-02** (analysis §11): at 500,000 chunks the
+  scoped statements are within 0.95–1.03× `main`'s p95 and the 1,000-version projection
+  rewrite takes 54 ms (p95); an undated corpus is not slower than on `main`. The full
+  50-million-chunk target was **not** measured: `main`'s own ranked statements scan every
+  chunk of the deployment at this shape, so a full-scale run is bounded by that pre-existing
+  linear cost, not by D140. Making ranked search index-driven at that scale is separate work.
 - MCP catalogue changes bump the affected tools' `tool_version` (D136).

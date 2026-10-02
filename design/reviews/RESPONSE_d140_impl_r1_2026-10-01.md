@@ -42,6 +42,18 @@ reviewed code. Commits: `2d82f75f`, `bcedc0b5`, `d61f5757`, `9f03ad53`, `86a33db
 - Owner decision (2026-10-02): the one-time full re-extraction after upgrade is accepted; the
   plan states it plainly, with no backfill or workaround.
 
-## Benchmark
+## Benchmark (P2-4)
 
-_Filled in from the VM run (see plan "Verification")._
+Measured 2026-10-02 on a short-lived GCE VM (deleted afterwards); full method, tables and
+raw JSON in analysis §11 and `benchmarks/d140_scope/results/2026-10-02/`.
+
+- **Dated, 500,000 chunks:** `current` / `at` p95 is 0.95–0.96× `main` for BM25 and 1.03×
+  for semantic search (target ≤ 1.2×); `history` ranks every edition (a different query).
+  The 1,000-version projection rewrite is 54 ms p95 (target < 100 ms).
+- **Undated LoCoMo-style corpus, `main` vs branch** (identical data, seeds, warm-up,
+  60 queries × 2 repeats): BM25 −2.4%, semantic −4.8%, `claims_and_sources_context` −34%,
+  `facts_context` −3.7% at p95. Nothing slower, so no fast path was added.
+- **Not measured:** the 50-million-chunk target. `main`'s ranked statements scan every chunk
+  of the deployment on this shape (absolute latencies of seconds at 30,000–500,000 chunks on
+  both sides, statistics current), so a full-scale run is bound by that pre-existing linear
+  cost rather than by D140. Called out in the plan as separate work.

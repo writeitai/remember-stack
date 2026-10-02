@@ -426,3 +426,53 @@ version. External references without a target fragment became one line with a UR
 The five largest versions carry 13,105–13,975 references each (≈ 4.0 MB each), consecutive
 consolidations of the same large acts. **Conclusion:** the 64 MiB bound is about 15 times the
 largest version in the whole statute book, so it is kept as a scope boundary (design §6.3).
+
+## 11. Measured: the time-scope cost (2026-10-02)
+
+Harnesses: `benchmarks/d140_scope/run.py` (dated corpus; `main`'s exact pre-D140 chunk
+statements against the scoped ones) and `benchmarks/d140_scope/undated.py` (an undated,
+LoCoMo-style corpus run unchanged on `origin/main` 1dc23f21 and on this branch). Raw results:
+`benchmarks/d140_scope/results/2026-10-02/`. One short-lived GCE VM (n2-highmem-16, 16 vCPU,
+125 GB RAM, 1 TB pd-ssd, `remember-stack` project, deleted afterwards); PostgreSQL 19 beta 3
+from this repository's `Dockerfile.postgres` with `shared_buffers=32GB`; synthetic text and
+random unit vectors, no model calls; every table analysed after loading.
+
+**Dated corpus**: 10,000 lineages × 5 versions × 10 chunks = 500,000 chunks; half the lineages
+declare yearly periods; 100,000 chunks carry vectors (HNSW). 40 queries per mode after a
+warm-up; p95 in milliseconds:
+
+| statement | `main` (served version) | `current` | `at 2003` | `history` |
+| --- | --- | --- | --- | --- |
+| BM25 chunk search | 2,759 | 2,630 (0.95×) | 2,640 (0.96×) | 8,037 |
+| semantic chunk search | 844 | 868 (1.03×) | 868 (1.03×) | 2,482 |
+
+`current` and `at` select one version per lineage and meet the 1.2× target. `history` selects
+every version, so it ranks five times the candidates; it is a different query (all
+editions), not the same query scoped. Projection rewrite for one lineage with 1,000 versions:
+49 ms p50, 54 ms p95 (target under 100 ms).
+
+**Undated corpus** (no periods anywhere): 500 conversations × 60 turns = 30,000 chunks,
+90,000 claims (each with its origin occurrence), 16,000 relations and 4,000 observations,
+each supported by 1–3 claims. Identical data, seeds, warm-up and 60 queries × 2 repeats on
+both sides; p95 in milliseconds:
+
+| path | `main` | branch | change |
+| --- | --- | --- | --- |
+| `search_chunks` BM25 | 1,261 | 1,231 | −2.4% |
+| `search_chunks` semantic | 682 | 649 | −4.8% |
+| `claims_and_sources_context` | 7,296 | 4,824 | −34% |
+| `facts_context` | 5,239 | 5,046 | −3.7% |
+
+No path is slower, so no undated fast path was added. (`claims_and_sources_context` is faster
+because the scope join replaces `main`'s served-version view joins.)
+
+**What was not measured, and why.** The design's target corpus (1 M lineages, 5 M versions,
+50 M chunks) was not run. On this data shape `main`'s ranked statements do not use the BM25 or
+vector index at all: the planner joins the visibility views first, scores every live chunk
+of the deployment and sorts (`EXPLAIN ANALYZE` on `main`: a sequential pass over all 30,000
+chunks for one BM25 query). Absolute latency therefore grows linearly with corpus size before
+D140 — seconds at 30,000–500,000 chunks — and a 50-million-chunk query would take minutes on
+both sides. That is a property of the existing engine, not of the synthetic setup (statistics
+were current, caches warm) and not of D140, whose ratio to `main` stayed flat between 100,000
+and 500,000 chunks. Index-driven ranked search at that scale is separate work.
+
