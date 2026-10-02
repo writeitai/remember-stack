@@ -236,26 +236,36 @@ evidence in [typescript_transport_421.md](typescript_transport_421.md). D140
 now selects a single-transmission Node HTTP/HTTPS adapter, borrowed-agent or
 request-transport injection, and explicit total-deadline/proxy adaptations.
 
-## General datetime inputs: Python/runtime versus the published format
+## General datetime inputs: Python client versus the published format
 
 Observed 2026-10-02 while reconciling implementation review round 2: Python's
 `lookup_relations`, `graph_neighborhood` and `graph_path` accept naive datetime
-objects and emit offset-free ISO strings. Their published OpenAPI fields use
-`format: date-time`. Executed Python wire cases pass, but validating those three
-requests with the SDK's unchanged AJV date-time format check fails: the format
-validator requires an offset. This is an actual source/schema interpretation
-mismatch, not an absent method.
+objects and emit offset-free ISO strings; they also forward non-UTC offsets
+unchanged (`src/remember/client.py`, those three methods). Their published
+OpenAPI fields use `format: date-time` and omit the runtime UTC constraint.
+Executed Python client wire cases therefore differ from the SDK's unchanged
+AJV date-time assertion, which requires an offset.
+
+The server has a stricter boundary than its Python client. In
+`src/remember/http_api.py`, `_require_utc`/`UTCInstant`, the `valid_at` lookup
+parameter and the graph request models refuse naive and non-UTC instants with
+422. This shipped in v0.17.1/v0.17.2 (G27, commit 78660f99); v0.16.0 used plain
+datetime fields. `src/tests/surfaces/test_http_api_robustness.py`, UTC lookup
+and graph/path boundary cases, require those refusals. The validator's UTC
+requirement is absent from the generated format annotation.
 
 [RFC 3339 §5.6](https://www.rfc-editor.org/rfc/rfc3339#section-5.6)
 defines full-time with a time offset. [JSON Schema validation §7](https://json-schema.org/draft/2020-12/json-schema-validation#section-7)
-defines the date-time format and distinguishes format annotation from optional
-format assertion (retrieved 2026-10-02). The SDK intentionally performs format
-assertion for its API conformance checks; this does not claim FastAPI refuses
-naive values at runtime.
+defines date-time and distinguishes format annotation from optional assertion
+(retrieved 2026-10-02). The SDK performs that assertion for conformance.
 
-The selected adaptation requires Z or a numeric offset for these TypeScript
-options. Offset strings remain unchanged and Date inputs become UTC ISO. It
-avoids an implicit local-time interpretation and keeps the existing format
-check meaningful. An alternative would permit naive values and add a separate
-source-runtime validation disposition, but that weakens the common format
-contract and adds ambiguity. UTC-only lineage/model fields stay UTC-only.
+The selected adaptation refuses naive TypeScript options locally as
+InputValidationError. The current server would refuse them too; older servers
+would interpret an unspecified timezone. Date inputs become UTC ISO. Offset
+strings remain unchanged so the server remains the authority: +02:00 receives
+the same 422 MemoryApiError as Python on v0.17.1+ and is accepted at the v0.16
+boundary. Tests must distinguish client wire parity from deployed acceptance.
+An alternative would permit naive values and add a separate source-runtime
+conformance disposition; it adds ambiguity and weakens the common assertion.
+UTC-only lineage/model fields stay UTC-only. This selects no further client
+UTC-only rule for the general methods.
