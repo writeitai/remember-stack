@@ -180,3 +180,16 @@ test('a delayed read retries at the new host when another request already repinn
     assert.equal(first.requests.length,2);assert.equal(next.requests.length,1);assert.equal(next.requests[0].method,'GET');
   }finally{release();client.close();await Promise.all([issuer.close(),first.close(),next.close()]);}
 });
+
+test('finite positive request/readiness deadlines refuse before sending',async()=>{
+  let calls=0;const adapter={request:async()=>{calls++;return Response.json(fixtures.readiness);}};
+  for(const invalid of [0,-1,NaN,Infinity]){
+    assert.throws(()=>new Client({client:adapter,timeoutMs:invalid}),InputValidationError);
+    const client=new Client({client:adapter});
+    try{
+      await assert.rejects(client.waitForReadiness({versionIds:[id],timeoutMs:invalid}),InputValidationError);
+      await assert.rejects(client.waitForReadiness({versionIds:[id],pollIntervalMs:invalid}),InputValidationError);
+    }finally{client.close();}
+  }
+  assert.equal(calls,0);
+});

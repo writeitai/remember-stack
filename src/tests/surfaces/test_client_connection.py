@@ -658,3 +658,29 @@ def test_windows_explicit_signed_key_bypasses_unusable_store(
     assert result.key_source == "explicit"
     assert result.api_url is None
     assert result.claims is not None
+
+
+def test_read_retries_when_another_request_already_repinned(issuer: FakeIssuer) -> None:
+    """Compare the refreshed host with this read's attempted host, not a newer pin."""
+    original = issuer.handle
+    client: Client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Repin through a write while the old-host read is still awaiting its 421."""
+        if request.url.host == "dp-a.test" and request.method == "GET":
+            original(request)
+            issuer.engines[DEPLOYMENT_A] = [421]
+            for name in (None, "p-docs", "docs"):
+                issuer.projects[name] = ("p-docs", "docs", DEPLOYMENT_B)
+            with pytest.raises(MemoryApiError) as failure:
+                client.ingest(content=b"fixture", filename="note.md")
+            assert failure.value.status_code == 421
+            return httpx.Response(421, json={"message": "moved"})
+        return original(request)
+
+    issuer.handle = handle  # type: ignore[method-assign]
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        assert client.list_operations() == ()
+    assert [
+        (request.url.host, request.method) for request in issuer.engine_requests()
+    ] == [("dp-a.test", "GET"), ("dp-a.test", "POST"), ("dp-b.test", "GET")]
