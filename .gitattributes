@@ -1,0 +1,3 @@
+# Generated SDK contracts use canonical LF on every supported platform.
+packages/typescript-client/** text eol=lf
+contracts/issuer-provider.json text eol=lf

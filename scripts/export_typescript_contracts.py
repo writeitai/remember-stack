@@ -355,10 +355,15 @@ def artifacts() -> dict[Path, str]:
         {**dataclasses.asdict(tool), "annotations": tool.annotations}
         for tool in memory_tools()
     ]
-    source_files = sorted((ROOT / "src/remember").rglob("*.py"))
+    source_files = sorted(
+        (ROOT / "src/remember").rglob("*.py"),
+        key=lambda path: path.relative_to(ROOT).as_posix(),
+    )
     source_hash = hashlib.sha256(
         b"".join(
-            path.relative_to(ROOT).as_posix().encode() + b"\0" + path.read_bytes()
+            path.relative_to(ROOT).as_posix().encode()
+            + b"\0"
+            + path.read_text(encoding="utf-8").encode()
             for path in source_files
         )
     ).hexdigest()
