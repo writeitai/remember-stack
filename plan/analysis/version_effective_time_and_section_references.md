@@ -473,6 +473,7 @@ of the deployment and sorts (`EXPLAIN ANALYZE` on `main`: a sequential pass over
 chunks for one BM25 query). Absolute latency therefore grows linearly with corpus size before
 D140 — seconds at 30,000–500,000 chunks — and a 50-million-chunk query would take minutes on
 both sides. That is a property of the existing engine, not of the synthetic setup (statistics
-were current, caches warm) and not of D140, whose ratio to `main` stayed flat between 100,000
-and 500,000 chunks. Index-driven ranked search at that scale is separate work.
+were current, caches warm) and not of D140, whose ratio to `main` was 0.95–1.03× at 500,000
+chunks (a ratio at full scale is an extrapolation, not a measurement). Index-driven ranked
+search at that scale is separate work.
 
