@@ -19,11 +19,19 @@ from uuid import UUID
 
 import httpx
 from pydantic import BaseModel
+from pydantic import SecretStr
 
 from remember import models
+from remember.client import AccountApi
 from remember.client import Client
+from remember.connection import clear_host_cache
+from remember.connection import Connection
+from remember.connection import resolve_project
 from remember.errors import MemoryApiError
 from remember.errors import RateLimited
+from remember.issuer import clear_metadata_cache
+from remember.issuer import fetch_issuer_metadata
+from remember.issuer import signed_key_claims
 from remember.mcp_tools import map_error
 from remember.mcp_tools import McpMemorySettings
 from remember.mcp_tools import memory_tools
@@ -612,6 +620,7 @@ def failure_fixtures() -> list[dict[str, Any]]:
         }
     )
     for detail in [
+        {},
         {"code": "concurrency_limited"},
         {"code": "x", "message": ""},
         {"message": 42},
@@ -865,6 +874,128 @@ def account_error_fixtures() -> list[dict[str, Any]]:
     return cases
 
 
+def issuer_redirect_fixtures() -> list[dict[str, Any]]:
+    """Execute all issuer call paths without touching environment or credential files."""
+    cases: list[dict[str, Any]] = []
+    for stage in ("account", "metadata", "project"):
+        for status, location in [
+            (300, None),
+            (302, None),
+            (304, None),
+            (307, None),
+            (300, "/final"),
+        ]:
+            clear_metadata_cache()
+            clear_host_cache()
+            issuer = "https://redirect-fixture.invalid"
+            payload = (
+                base64.urlsafe_b64encode(
+                    json.dumps({"iss": issuer, "projects": ["fixture"]}).encode()
+                )
+                .rstrip(b"=")
+                .decode()
+            )
+            key = "eyJhbGciOiJFUzI1NiJ9." + payload + ".fixture"
+            claims = signed_key_claims(key)
+            assert claims is not None
+            metadata = {
+                "issuer": issuer,
+                "remember_account_endpoint": issuer + "/account",
+                "remember_project_endpoint": issuer + "/project",
+            }
+            project = {
+                "project": "fixture",
+                "name": "fixture",
+                "api_url": "https://engine-fixture.invalid",
+            }
+            wire: list[dict[str, str]] = []
+            replies: list[dict[str, Any]] = []
+
+            def answer(
+                request: httpx.Request,
+                *,
+                stage: str = stage,
+                status: int = status,
+                location: str | None = location,
+                metadata: dict[str, Any] = metadata,
+                project: dict[str, str] = project,
+                wire: list[dict[str, str]] = wire,
+                replies: list[dict[str, Any]] = replies,
+            ) -> httpx.Response:
+                """Record actual Python hops and return the selected synthetic redirect."""
+                wire.append({"method": request.method, "url": str(request.url)})
+                target = (
+                    (
+                        stage == "metadata"
+                        and request.url.path.startswith("/.well-known")
+                    )
+                    or (
+                        stage == "account"
+                        and request.url.path == "/account/v1/keys/self"
+                    )
+                    or (stage == "project" and request.url.path == "/project")
+                )
+                if target:
+                    headers = {"location": location} if location else {}
+                    replies.append({"status": status, "headers": headers, "body": None})
+                    return httpx.Response(status, headers=headers)
+                body = (
+                    metadata
+                    if request.url.path.startswith("/.well-known")
+                    or stage == "metadata"
+                    else project
+                    if stage == "project"
+                    else {"ok": True}
+                )
+                replies.append({"status": 200, "headers": {}, "body": body})
+                return httpx.Response(200, json=body)
+
+            case: dict[str, Any] = {
+                "stage": stage,
+                "status": status,
+                "location": location,
+                "issuer": issuer,
+                "key": key,
+                "wire": wire,
+                "responses": replies,
+            }
+            with httpx.Client(transport=httpx.MockTransport(answer)) as http:
+                try:
+                    if stage == "account":
+                        connection = Connection(
+                            key=SecretStr(key),
+                            key_source="explicit",
+                            api_url=None,
+                            api_url_source=None,
+                            project=None,
+                            issuer=issuer,
+                            mcp_url=None,
+                            stored=None,
+                            claims=claims,
+                        )
+                        result = AccountApi(connection=connection, http=http).get(
+                            "/v1/keys/self"
+                        )
+                    elif stage == "metadata":
+                        result = fetch_issuer_metadata(issuer, http=http)
+                    else:
+                        result = resolve_project(
+                            key=key, claims=claims, project=None, http=http
+                        )
+                except MemoryApiError as error:
+                    case["error"] = {
+                        "class": type(error).__name__,
+                        "statusCode": error.status_code,
+                        "code": error.code,
+                    }
+                else:
+                    case["result"] = json_result(value=result)
+            cases.append(case)
+    clear_metadata_cache()
+    clear_host_cache()
+    return cases
+
+
 def main() -> int:
     """Write or check source-executed fixtures; generation never runs in check mode."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -875,6 +1006,7 @@ def main() -> int:
     result["tools"] = tool_fixtures()
     result["errorMappings"] = error_mapping_fixtures()
     result["accountErrors"] = account_error_fixtures()
+    result["issuerRedirects"] = issuer_redirect_fixtures()
     content = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if arguments.check:
         if not TARGET.exists() or TARGET.read_text() != content:

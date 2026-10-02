@@ -143,8 +143,8 @@ for(const source of ['explicit','environment'])for(const present of [false,true]
   }finally{rmSync(dir,{recursive:true,force:true});}
 });
 
-test('issuer 3xx without Location returns the ordinary response and readable body',async()=>{
+test('every issuer 3xx without Location refuses with IssuerError and status zero',async()=>{
   const {sendSameOrigin}=await import('../.test-build/internal.js');let calls=0;
-  const response=await sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>{calls++;return new Response('original body',{status:307});}}});
-  assert.equal(response.status,307);assert.equal(await response.text(),'original body');assert.equal(calls,1);
+  for(const status of [300,302,304,307,399])await assert.rejects(sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>{calls++;return new Response(null,{status});}}}),error=>error.name==='IssuerError'&&error.statusCode===0&&error.detail.includes('without a Location'));
+  assert.equal(calls,5);
 });

@@ -58,3 +58,21 @@ for(const scenario of fixture.accountErrors)test(`account ${scenario.status}/${s
     return true;
   });}finally{client.close();}
 });
+
+for(const scenario of fixture.issuerRedirects)test(`${scenario.stage} ${scenario.status}/${scenario.location??'missing Location'}: Python issuer redirect parity`,async()=>{
+  const {AccountApi,Connection,SecretString,signedKeyClaims,resolveProject,fetchIssuerMetadata,clearHostCache,clearMetadataCache}=await import('../.test-build/internal.js');
+  clearHostCache();clearMetadataCache();const wire=[];
+  const http={request:async request=>{
+    const response=scenario.responses[wire.length];assert(response,'redirect sent an extra request');
+    wire.push({method:request.method,url:request.url});
+    return new Response(response.body===null?null:JSON.stringify(response.body),{status:response.status,headers:{...response.headers,...(response.body===null?{}:{'content-type':'application/json'})}});
+  }};
+  const claims=signedKeyClaims({key:scenario.key});
+  const connection=new Connection({key:new SecretString({value:scenario.key}),keySource:'explicit',apiUrl:null,apiUrlSource:null,project:null,issuer:scenario.issuer,mcpUrl:null,stored:null,claims});
+  const operation=scenario.stage==='account'?()=>new AccountApi({connection,http}).get({path:'/v1/keys/self'}):scenario.stage==='metadata'?()=>fetchIssuerMetadata({issuer:scenario.issuer,http}):()=>resolveProject({key:scenario.key,claims,project:null,http});
+  try {
+    if(scenario.error)await assert.rejects(operation(),error=>{for(const key of ['name','statusCode','code'])assert.equal(error[key]??null,scenario.error[key==='name'?'class':key]??null);return true;});
+    else assert.deepEqual({...await operation()},scenario.result);
+    assert.deepEqual(wire,scenario.wire);
+  }finally{clearHostCache();clearMetadataCache();}
+});

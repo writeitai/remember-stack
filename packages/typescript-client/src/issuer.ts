@@ -68,10 +68,10 @@ export async function sendSameOrigin({ http, request, maxRedirects=3 }: { http: 
   let current=request;
   for (let hop=0;hop<=maxRedirects;hop++) {
     const response=await http.request(current);
-    if (![301,302,303,307,308].includes(response.status)) return response;
+    if (response.status<300 || response.status>=400) return response;
     const location=response.headers.get('location');
-    if (!location) return response;
     await response.body?.cancel();
+    if (!location) throw new IssuerError({detail:'issuer redirected without a Location'});
     const target=new URL(location,current.url);
     if (!sameOrigin({left:request.url,right:target}) || target.username || target.password) throw new IssuerError({detail:'refusing a cross-origin issuer redirect'});
     current={...current,url:target.toString(),query:undefined};
