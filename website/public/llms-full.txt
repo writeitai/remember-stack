@@ -17181,6 +17181,12 @@ objects and arrays, with validated defaults.
 | `listDocuments` | `DocumentPage` |
 | `searchDocuments` | `DocumentSearchPage` |
 | `searchDocumentsRequest` | `DocumentSearchPage` |
+| `sectionHistory`, `sectionHistoryRequest` | `SectionHistoryPage` |
+| `documentReferences`, `documentReferencesRequest` | `DocumentReferencesPage` |
+| `setReferences` | `ReferencesSet` |
+| `referenceGenerations` | `ReferenceGenerations` |
+| `setEffectivePeriods` | `EffectivePeriodsSet` |
+| `clearEffectiveTime` | `EffectiveTimeCleared` |
 | `deleteDocument` | `DocumentDeletion` |
 | `connectors` | `tuple[ConnectorDescriptor, ...]` |
 | `addConnector` | `ConnectorDescriptor` |
@@ -17204,13 +17210,34 @@ contracts only and do not add login or key-writing operations to this package.
 Bytes require `filename`. File MIME is inferred from the real path before a
 filename override; explicit `mime` wins. Lineage `sourceKind`/`sourceRef` must
 be supplied together. `sourceModifiedAt`, `sourceVersionRef` and living mode
-require that pair; `sourcePath` records upstream location metadata.
+require that pair; `sourcePath` records upstream location metadata. `versionKey`
+is the immutable caller name for an edition. `effectiveFrom` and optional
+`effectiveUntil` declare a half-open UTC period and require a snapshot lineage;
+use `setEffectivePeriods` to replace declarations or `clearEffectiveTime` to
+leave declared effective time. An empty period set retracts that version's
+periods while retaining the document's declared effective-time mode.
 
 Readiness polling starts immediately, including after `created: false` receipts.
 Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
 A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
 stops with PipelineDeadLettered and the full report. The readiness deadline
 covers routing, HTTP and polling waits, retaining the last validated report.
+
+### Version history and references
+
+`searchClaims`, `searchChunks`, `searchDocuments` and `claimsAndSourcesContext`
+accept a `time` scope. A time-scoped claims/chunks search uses POST; the ordinary
+unfiltered search retains GET. Nested scopes use the engine's wire names:
+`{ mode: 'at', at: '2026-01-01T00:00:00Z' }` or
+`{ mode: 'overlap', from: '2026-01-01T00:00:00Z', to: '2026-07-01T00:00:00Z' }`.
+ReadTime instants retain explicit offsets; ingest effective times require UTC.
+
+`sectionHistory({ docId, sectionKey })` defaults to the complete history scope.
+`documentReferences` accepts exactly one `chunkId` or `docId`, with `sectionKey`
+only for a document. Prepared request variants accept snake_case DTO fields.
+`setReferences({ docId, versionId, references })` replaces the complete supplied
+reference set as NDJSON; an empty array clears it. `referenceGenerations` reads
+its pending/active/rejected/superseded status. None of these writes is replayed.
 
 ### Results and validation
 
@@ -17221,13 +17248,27 @@ filled. Schema-owned input types use the `Input` suffix, such as
 an ordinary object with `.rows`, `.columns` and `.truncated` properties.
 `JsonValue` describes JSON values recursively.
 
+The additional version/history/reference models are exported with their matching
+`Input` types:
+
+| Area | Models |
+| --- | --- |
+| Time scopes | `ReadTime`, `CurrentReadTime`, `AtReadTime`, `OverlapReadTime`, `HistoryReadTime` |
+| Effective periods | `EffectivePeriodInput`, `EffectivePeriodsRequest`, `DeclaredEffectivePeriod`, `EffectiveInterval`, `EffectivePeriodsSet`, `EffectiveTimeCleared` |
+| Document/claim occurrences | `MatchingEdition`, `ScopePending`, `ClaimOccurrence` |
+| Section history | `SectionHistoryRequest`, `SectionHistoryPage`, `SectionHistoryRow`, `SectionHistorySection`, `SectionAmendment` |
+| Reference inputs | `ReferenceInput`, `ReferenceTarget`, `ReferenceKind` |
+| Reference generations | `ReferencesSet`, `ReferenceGenerations`, `ReferenceGeneration`, `ReferenceItemError` |
+| Reference reads | `DocumentReferencesRequest`, `DocumentReferencesPage`, `DocumentReference`, `DocumentReferenceSource`, `DocumentReferenceTarget`, `NamedReferenceTarget`, `ReferenceWindow`, `DocumentReferencesTooBroad` |
+
 Nested timestamps are ISO strings; top-level timestamp options accept strings
 or Date. Explicit nulls are distinct from omitted values where the schema says
 so. Inputs are not coerced from strings or booleans into numbers. Unsafe JSON
 integers fail with numeric precision errors before a rounded value is returned.
 For larger SQL integers, use string parameters and an explicit SQL cast.
 
-Filtered `searchClaims`/`searchChunks` use POST; unfiltered calls use GET as the
+Document-filtered or time-scoped `searchClaims`/`searchChunks` use POST;
+unfiltered calls use GET as the
 Python client does. `searchDocumentsRequest` omits fields equal to model defaults.
 Connector methods configure remote deployment adapters; they do not execute
 npm connector libraries on the client machine.

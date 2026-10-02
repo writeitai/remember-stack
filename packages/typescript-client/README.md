@@ -62,7 +62,7 @@ section history, supplied reference replacement and reference-generation reads.
 chunk or document. Reference sets are NDJSON, including an empty-set replacement.
 `versionKey`, `effectiveFrom` and `effectiveUntil` extend ingest; effective periods
 require UTC and a snapshot lineage. Nested time scopes keep wire keys (`from`,
-`to`) and explicit offsets. The transport-neutral catalogue has all18tools.
+`to`) and explicit offsets. The transport-neutral catalogue has all 18 tools.
 
 `QueryResultDict` is an ordinary typed object with `.rows`, `.columns` and
 `.truncated`. Response model types contain validated, defaulted fields; their

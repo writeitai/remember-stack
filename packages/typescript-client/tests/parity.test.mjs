@@ -76,3 +76,9 @@ for(const scenario of fixture.issuerRedirects)test(`${scenario.stage} ${scenario
     assert.deepEqual(wire,scenario.wire);
   }finally{clearHostCache();clearMetadataCache();}
 });
+
+for(const scenario of fixture.inputValidation)test(`${scenario.typescriptMethod}: Python input refusal ${JSON.stringify(scenario.typescriptOptions).slice(0,80)}`,async()=>{
+  let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json({},{status:500});}}});
+  const options={...scenario.typescriptOptions};if(options.content?.base64)options.content=Buffer.from(options.content.base64,'base64');
+  try{await assert.rejects(client[scenario.typescriptMethod](options),error=>error.name==='InputValidationError');assert.equal(calls,0);}finally{client.close();}
+});

@@ -8266,6 +8266,384 @@
       ]
     },
     {
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "variant": "time-current0",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4/history",
+          "query": [
+            [
+              "mode",
+              "current"
+            ],
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4",
+        "time": {
+          "mode": "history"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4",
+        "time": {
+          "mode": "history"
+        }
+      },
+      "variant": "time-history1",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4/history",
+          "query": [
+            [
+              "mode",
+              "history"
+            ],
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4",
+        "time": {
+          "at": "2026-01-01T00:00:00.000001Z",
+          "mode": "at"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4",
+        "time": {
+          "at": "2026-01-01T00:00:00.000001Z",
+          "mode": "at"
+        }
+      },
+      "variant": "time-at2",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4/history",
+          "query": [
+            [
+              "mode",
+              "at"
+            ],
+            [
+              "k",
+              "50"
+            ],
+            [
+              "at",
+              "2026-01-01T00:00:00.000001+00:00"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4",
+        "time": {
+          "from": "2026-01-01T00:00:00Z",
+          "mode": "overlap",
+          "to": "2026-01-01T00:00:00+00:00"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4",
+        "time": {
+          "from": "2026-01-01T00:00:00Z",
+          "mode": "overlap",
+          "to": "2026-01-01T00:00:00+00:00"
+        }
+      },
+      "variant": "time-overlap3",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4/history",
+          "query": [
+            [
+              "mode",
+              "overlap"
+            ],
+            [
+              "k",
+              "50"
+            ],
+            [
+              "from",
+              "2026-01-01T00:00:00+00:00"
+            ],
+            [
+              "to",
+              "2026-01-01T00:00:00+00:00"
+            ]
+          ]
+        }
+      ]
+    },
+    {
       "method": "ingest",
       "options": {
         "content": {
@@ -8359,6 +8737,139 @@
               "2026-10-02T12:00:00+00:00"
             ]
           ]
+        }
+      ]
+    },
+    {
+      "method": "section_history_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000000000000000000000000001",
+          "section_key": "part/4"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistoryRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000000000000000000000000001",
+          "section_key": "part/4"
+        }
+      },
+      "variant": "compact-uuid",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4/history",
+          "query": [
+            [
+              "mode",
+              "history"
+            ],
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "document_references_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000000000000000000000000001"
+        }
+      },
+      "responses": [
+        {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "rows": [],
+          "too_broad": null
+        }
+      ],
+      "result": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "rows": [],
+        "too_broad": null
+      },
+      "typescriptMethod": "documentReferencesRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000000000000000000000000001"
+        }
+      },
+      "variant": "compact-uuid",
+      "wire": [
+        {
+          "body": {
+            "direction": "both",
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "k": 50
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/references",
+          "query": []
         }
       ]
     },
@@ -8983,6 +9494,196 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /documents/{doc_id}/sections/{section_key}/history returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4"
+      },
+      "status": 200,
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "GET /documents/{doc_id}/sections/{section_key}/history returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "section_history_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "section_key": "part/4"
+        }
+      },
+      "status": 200,
+      "typescriptMethod": "sectionHistoryRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "section_key": "part/4"
+        }
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "PUT /documents/{doc_id}/versions/{version_id}/references returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "set_references",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "status": 200,
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "GET /documents/{doc_id}/versions/{version_id}/references returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "reference_generations",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "status": 200,
+      "typescriptMethod": "referenceGenerations",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "POST /documents/references returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "document_references",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "POST /documents/references returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "document_references_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001"
+        }
+      },
+      "status": 200,
+      "typescriptMethod": "documentReferencesRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001"
+        }
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "PUT /documents/{doc_id}/versions/{version_id}/effective-periods returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "set_effective_periods",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "status": 200,
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "DELETE /documents/{doc_id}/effective-periods returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "clear_effective_time",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "clearEffectiveTime",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
         "detail": "DELETE /documents/{doc_id} returned an invalid response body",
         "requestId": null,
         "retryable": null,
@@ -9374,6 +10075,381 @@
       "typescriptMethod": "listOperations",
       "typescriptOptions": {},
       "variant": "admission-message-fallback"
+    }
+  ],
+  "inputValidation": [
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": ""
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "bad%key"
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "bad!key"
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "\u017e"
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "k": 0,
+        "sectionKey": "key"
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "key",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00"
+        }
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "key",
+        "time": {
+          "at": "2026-01-01T00:00:00",
+          "mode": "at"
+        }
+      }
+    },
+    {
+      "method": "section_history",
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "key",
+        "time": {
+          "from": "2026-01-01T00:00:00.000002Z",
+          "mode": "overlap",
+          "to": "2026-01-01T00:00:00.000001Z"
+        }
+      }
+    },
+    {
+      "method": "document_references",
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {}
+    },
+    {
+      "method": "document_references",
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "chunkId": "10000000-0000-0000-0000-000000000001",
+        "docId": "10000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "method": "document_references",
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "chunkId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "key"
+      }
+    },
+    {
+      "method": "document_references",
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "kinds": []
+      }
+    },
+    {
+      "method": "document_references_request",
+      "typescriptMethod": "documentReferencesRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "unknown": true
+        }
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "binding": "pinned",
+            "kind": "cites",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": true,
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": false,
+            "change_effective_from": "2026-10-02T12:00:00+00:00",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": true,
+            "change_effective_from": "2026-01-01T00:00:00+02:00",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "context": "\ud800",
+            "kind": "cites",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_references",
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": false,
+            "kind": "cites",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_effective_periods",
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-10-02T12:00:00+00:00",
+            "effective_until": "2026-10-02T12:00:00+00:00"
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_effective_periods",
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-01-01T00:00:00+02:00"
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_effective_periods",
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-01-01T00:00:00.000002Z",
+            "effective_until": "2026-01-01T00:00:00.000001Z"
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "set_effective_periods",
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-01-01T00:00:00Z"
+          },
+          {
+            "effective_from": "2026-01-01T00:00:00+00:00"
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "note.md",
+        "versionKey": "edition"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effectiveUntil": "2026-10-02T12:00:00+00:00",
+        "filename": "note.md",
+        "sourceKind": "policy",
+        "sourceRef": "expenses"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effectiveFrom": "2026-10-02T12:00:00+00:00",
+        "filename": "note.md",
+        "sourceKind": "policy",
+        "sourceRef": "expenses",
+        "versioningMode": "living"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effectiveFrom": "2026-01-01T00:00:00+02:00",
+        "filename": "note.md",
+        "sourceKind": "policy",
+        "sourceRef": "expenses"
+      }
+    },
+    {
+      "method": "ingest",
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effectiveFrom": "2026-10-02T12:00:00+00:00",
+        "effectiveUntil": "2026-10-02T12:00:00+00:00",
+        "filename": "note.md",
+        "sourceKind": "policy",
+        "sourceRef": "expenses"
+      }
     }
   ],
   "issuerRedirects": [
@@ -10894,7 +11970,10 @@
     {
       "arguments": {
         "doc_id": "10000000-0000-0000-0000-000000000001",
-        "section_key": "part/4"
+        "section_key": "part/4",
+        "time": {
+          "mode": "history"
+        }
       },
       "name": "section_history",
       "result": {
@@ -10914,6 +11993,9 @@
       "arguments": {
         "doc_id": "10000000-0000-0000-0000-000000000001",
         "section_key": "part/4",
+        "time": {
+          "mode": "history"
+        },
         "unknown": true
       },
       "error": {
@@ -10936,7 +12018,11 @@
     },
     {
       "arguments": {
-        "doc_id": "10000000-0000-0000-0000-000000000001"
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
       },
       "name": "document_references",
       "result": {
@@ -10948,7 +12034,10 @@
           "k": 50,
           "kinds": null,
           "section_key": null,
-          "time": null
+          "time": {
+            "at": "2026-10-02T12:00:00Z",
+            "mode": "at"
+          }
         }
       },
       "variant": "valid"
@@ -10956,6 +12045,10 @@
     {
       "arguments": {
         "doc_id": "10000000-0000-0000-0000-000000000001",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        },
         "unknown": true
       },
       "error": {
@@ -11426,6 +12519,132 @@
       },
       "name": "ingest",
       "variant": "invalid-body"
+    },
+    {
+      "arguments": {
+        "effective_from": "2026-10-02T12:00:00+00:00",
+        "filename": "note.md",
+        "source_kind": "policy",
+        "source_ref": "expenses",
+        "text": "note",
+        "version_key": "edition-2"
+      },
+      "name": "ingest",
+      "result": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effective_from": "2026-10-02T12:00:00+00:00",
+        "effective_until": null,
+        "filename": "note.md",
+        "mime": "text/markdown",
+        "source_kind": "policy",
+        "source_modified_at": null,
+        "source_ref": "expenses",
+        "source_version_ref": null,
+        "title": null,
+        "version_key": "edition-2",
+        "versioning_mode": "snapshot"
+      },
+      "variant": "effective-period"
+    },
+    {
+      "arguments": {
+        "filename": "note.md",
+        "text": "note",
+        "version_key": "edition-2"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "source_lineage_pair",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "ingest",
+      "variant": "effective-lineage-refusal"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "bad%key"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "section_history",
+      "variant": "invalid-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "key",
+        "time": {
+          "from": "2026-10-02T12:00:00+00:00",
+          "mode": "overlap",
+          "to": "2026-01-01T00:00:00Z"
+        }
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "section_history",
+      "variant": "invalid-time"
+    },
+    {
+      "arguments": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "document_references",
+      "variant": "two-sources"
     }
   ]
 }

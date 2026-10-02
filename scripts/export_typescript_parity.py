@@ -414,6 +414,27 @@ def scenarios() -> list[dict[str, Any]]:
             for name in ("search_claims", "search_chunks")
         ]
     )
+    result.extend(
+        [
+            {
+                "method": "section_history",
+                "variant": "time-" + scope["mode"] + str(index),
+                "options": {"doc_id": ID, "section_key": "part/4", "time": scope},
+            }
+            for index, scope in enumerate(
+                [
+                    {"mode": "current"},
+                    {"mode": "history"},
+                    {"mode": "at", "at": "2026-01-01T00:00:00.000001Z"},
+                    {
+                        "mode": "overlap",
+                        "from": "2026-01-01T00:00:00Z",
+                        "to": "2026-01-01T00:00:00+00:00",
+                    },
+                ]
+            )
+        ]
+    )
     result.append(
         {
             "method": "ingest",
@@ -428,6 +449,25 @@ def scenarios() -> list[dict[str, Any]]:
                 "effective_until": STAMP,
             },
         }
+    )
+    result.extend(
+        [
+            {
+                "method": "section_history_request",
+                "variant": "compact-uuid",
+                "options": {
+                    "request": {
+                        "doc_id": ID.replace("-", "").upper(),
+                        "section_key": "part/4",
+                    }
+                },
+            },
+            {
+                "method": "document_references_request",
+                "variant": "compact-uuid",
+                "options": {"request": {"doc_id": ID.replace("-", "").upper()}},
+            },
+        ]
     )
     result.extend(
         [
@@ -654,7 +694,7 @@ def python_options(
         "request": {
             "section_history_request": models.SectionHistoryRequest,
             "document_references_request": models.DocumentReferencesRequest,
-        }.get(method, models.DocumentSearchRequest),
+        }.get(method or "", models.DocumentSearchRequest),
         "require": models.ReadinessRequirements,
         "connector": models.ConnectorCreate,
     }.items():
@@ -811,6 +851,26 @@ def failure_fixtures() -> list[dict[str, Any]]:
         ),
         ("list_documents", {}, {}),
         ("search_documents", {}, {}),
+        ("section_history", {"doc_id": ID, "section_key": "part/4"}, {}),
+        (
+            "section_history_request",
+            {"request": {"doc_id": ID, "section_key": "part/4"}},
+            {},
+        ),
+        (
+            "set_references",
+            {"doc_id": ID, "version_id": OTHER_ID, "references": []},
+            {},
+        ),
+        ("reference_generations", {"doc_id": ID, "version_id": OTHER_ID}, {}),
+        ("document_references", {"doc_id": ID}, {}),
+        ("document_references_request", {"request": {"doc_id": ID}}, {}),
+        (
+            "set_effective_periods",
+            {"doc_id": ID, "version_id": OTHER_ID, "periods": []},
+            {},
+        ),
+        ("clear_effective_time", {"doc_id": ID}, {}),
         ("delete_document", {"doc_id": ID}, {}),
         ("connectors", {}, [{}]),
         ("describe_query_space", {}, []),
@@ -925,6 +985,225 @@ def failure_fixtures() -> list[dict[str, Any]]:
     return cases
 
 
+def input_validation_fixtures() -> list[dict[str, Any]]:
+    """Record new API validation refusals and prove no HTTP call was made."""
+    pairs: list[tuple[str, dict[str, Any]]] = [
+        ("section_history", {"doc_id": ID, "section_key": key})
+        for key in ("", "bad%key", "bad!key", "ž", "x" * 201)
+    ]
+    pairs.extend(
+        [
+            ("section_history", {"doc_id": ID, "section_key": "key", "k": 0}),
+            (
+                "section_history",
+                {"doc_id": ID, "section_key": "key", "time": {"at": STAMP}},
+            ),
+            (
+                "section_history",
+                {
+                    "doc_id": ID,
+                    "section_key": "key",
+                    "time": {"mode": "at", "at": "2026-01-01T00:00:00"},
+                },
+            ),
+            (
+                "section_history",
+                {
+                    "doc_id": ID,
+                    "section_key": "key",
+                    "time": {
+                        "mode": "overlap",
+                        "from": "2026-01-01T00:00:00.000002Z",
+                        "to": "2026-01-01T00:00:00.000001Z",
+                    },
+                },
+            ),
+            ("document_references", {}),
+            ("document_references", {"doc_id": ID, "chunk_id": ID}),
+            ("document_references", {"chunk_id": ID, "section_key": "key"}),
+            ("document_references", {"doc_id": ID, "kinds": []}),
+            (
+                "document_references_request",
+                {"request": {"doc_id": ID, "unknown": True}},
+            ),
+            (
+                "set_references",
+                {
+                    "doc_id": ID,
+                    "version_id": OTHER_ID,
+                    "references": [
+                        {
+                            "kind": "cites",
+                            "binding": "pinned",
+                            "target": {
+                                "source_kind": "policy",
+                                "source_ref": "expenses",
+                            },
+                        }
+                    ],
+                },
+            ),
+        ]
+    )
+    pairs.extend(
+        [
+            (
+                "set_references",
+                {
+                    "doc_id": ID,
+                    "version_id": OTHER_ID,
+                    "references": [
+                        {
+                            "kind": "amends",
+                            "target": {
+                                "source_kind": "policy",
+                                "source_ref": "expenses",
+                            },
+                            **changes,
+                        }
+                    ],
+                },
+            )
+            for changes in (
+                {},
+                {"change_date_known": True},
+                {"change_date_known": False, "change_effective_from": STAMP},
+                {
+                    "change_date_known": True,
+                    "change_effective_from": "2026-01-01T00:00:00+02:00",
+                },
+            )
+        ]
+    )
+    pairs.append(
+        (
+            "set_references",
+            {
+                "doc_id": ID,
+                "version_id": OTHER_ID,
+                "references": [
+                    {
+                        "kind": "cites",
+                        "target": {"source_kind": "policy", "source_ref": "expenses"},
+                        "context": "\ud800",
+                    }
+                ],
+            },
+        )
+    )
+    pairs.append(
+        (
+            "set_references",
+            {
+                "doc_id": ID,
+                "version_id": OTHER_ID,
+                "references": [
+                    {
+                        "kind": "cites",
+                        "target": {"source_kind": "policy", "source_ref": "expenses"},
+                        "change_date_known": False,
+                    }
+                ],
+            },
+        )
+    )
+    pairs.extend(
+        [
+            (
+                "set_effective_periods",
+                {"doc_id": ID, "version_id": OTHER_ID, "periods": periods},
+            )
+            for periods in (
+                [{"effective_from": STAMP, "effective_until": STAMP}],
+                [{"effective_from": "2026-01-01T00:00:00+02:00"}],
+                [
+                    {
+                        "effective_from": "2026-01-01T00:00:00.000002Z",
+                        "effective_until": "2026-01-01T00:00:00.000001Z",
+                    }
+                ],
+                [
+                    {"effective_from": "2026-01-01T00:00:00Z"},
+                    {"effective_from": "2026-01-01T00:00:00+00:00"},
+                ],
+            )
+        ]
+    )
+    pairs.extend(
+        [
+            (
+                "ingest",
+                {"content": {"base64": "bm90ZQ=="}, "filename": "note.md", **options},
+            )
+            for options in (
+                {"version_key": "edition"},
+                {
+                    "source_kind": "policy",
+                    "source_ref": "expenses",
+                    "effective_until": STAMP,
+                },
+                {
+                    "source_kind": "policy",
+                    "source_ref": "expenses",
+                    "effective_from": STAMP,
+                    "versioning_mode": "living",
+                },
+                {
+                    "source_kind": "policy",
+                    "source_ref": "expenses",
+                    "effective_from": "2026-01-01T00:00:00+02:00",
+                },
+                {
+                    "source_kind": "policy",
+                    "source_ref": "expenses",
+                    "effective_from": STAMP,
+                    "effective_until": STAMP,
+                },
+            )
+        ]
+    )
+    cases = []
+    with tempfile.TemporaryDirectory(prefix="remember-ts-refusals-") as directory:
+        for method, options in pairs:
+            calls: list[httpx.Request] = []
+
+            def answer(
+                request: httpx.Request, *, calls: list[httpx.Request] = calls
+            ) -> httpx.Response:
+                """Detect an invalid argument unexpectedly reaching a backend."""
+                calls.append(request)
+                return httpx.Response(500)
+
+            with Client(
+                client=httpx.Client(
+                    base_url="http://fixture.test",
+                    transport=httpx.MockTransport(answer),
+                )
+            ) as client:
+                try:
+                    getattr(client, method)(
+                        **python_options(
+                            options=options,
+                            file_path=Path(directory) / "note.md",
+                            method=method,
+                        )
+                    )
+                except (ValueError, TypeError):
+                    assert not calls, f"invalid {method} reached HTTP"
+                else:
+                    raise AssertionError(f"invalid {method} succeeded")
+            cases.append(
+                {
+                    "method": method,
+                    "typescriptMethod": camel(value=method),
+                    "typescriptOptions": {
+                        camel(value=key): value for key, value in options.items()
+                    },
+                }
+            )
+    return cases
+
+
 def tool_fixtures() -> list[dict[str, Any]]:
     """Run every catalogue validator on shared positive and negative arguments."""
     valid = {
@@ -933,8 +1212,12 @@ def tool_fixtures() -> list[dict[str, Any]]:
         "delete_document": {"doc_id": ID},
         "search_documents": {"language": "en", "authors": ["alice"]},
         "adjacent_chunks": {"chunk_id": ID},
-        "section_history": {"doc_id": ID, "section_key": "part/4"},
-        "document_references": {"doc_id": ID},
+        "section_history": {
+            "doc_id": ID,
+            "section_key": "part/4",
+            "time": {"mode": "history"},
+        },
+        "document_references": {"doc_id": ID, "time": {"mode": "at", "at": STAMP}},
         "resolve_entity": {"name": "fixture"},
         "claims_and_sources_context": {"query": "fixture"},
         "facts_context": {"query": "fixture"},
@@ -969,6 +1252,54 @@ def tool_fixtures() -> list[dict[str, Any]]:
                 {"content_base64": "AA", "filename": "fixture.bin"},
                 {"text": "", "filename": "fixture.md"},
             ]
+        ]
+    )
+    cases.extend(
+        [
+            {
+                "name": "ingest",
+                "variant": "effective-period",
+                "arguments": {
+                    "text": "note",
+                    "filename": "note.md",
+                    "source_kind": "policy",
+                    "source_ref": "expenses",
+                    "version_key": "edition-2",
+                    "effective_from": STAMP,
+                },
+            },
+            {
+                "name": "ingest",
+                "variant": "effective-lineage-refusal",
+                "arguments": {
+                    "text": "note",
+                    "filename": "note.md",
+                    "version_key": "edition-2",
+                },
+            },
+            {
+                "name": "section_history",
+                "variant": "invalid-key",
+                "arguments": {"doc_id": ID, "section_key": "bad%key"},
+            },
+            {
+                "name": "section_history",
+                "variant": "invalid-time",
+                "arguments": {
+                    "doc_id": ID,
+                    "section_key": "key",
+                    "time": {
+                        "mode": "overlap",
+                        "from": STAMP,
+                        "to": "2026-01-01T00:00:00Z",
+                    },
+                },
+            },
+            {
+                "name": "document_references",
+                "variant": "two-sources",
+                "arguments": {"doc_id": ID, "chunk_id": ID},
+            },
         ]
     )
     for case in cases:
@@ -1256,6 +1587,7 @@ def main() -> int:
     arguments = parser.parse_args()
     result = record()
     result["failures"] = failure_fixtures()
+    result["inputValidation"] = input_validation_fixtures()
     result["tools"] = tool_fixtures()
     result["errorMappings"] = error_mapping_fixtures()
     result["accountErrors"] = account_error_fixtures()

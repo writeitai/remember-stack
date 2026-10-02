@@ -2,7 +2,7 @@ import {queryArgumentError} from './query-arguments';
 import catalogue from './catalogue.generated';
 import { InputValidationError } from './errors';
 import { assertJson } from './json';
-import { validateModel, validateSchema } from './validation';
+import { validateModel, validateSchema, modelDump } from './validation';
 import { inferUploadMime } from './mime';
 import { ToolError, ToolArgumentError, invalidArguments } from './tool-errors';
 export type Permission = 'memory:read' | 'memory:write';
@@ -121,11 +121,11 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       const window=args.window??1;if(!Number.isInteger(window)||(window as number)<1||(window as number)>2)refuse({detail:'window must be an integer (1 or 2).'});
       return {chunk_id:uuid({value:args.chunk_id,field:'chunk_id'}),window};
     }
-    if(name===SECTION_HISTORY_TOOL_NAME||name===DOCUMENT_REFERENCES_TOOL_NAME)return {request:validateModel({name:name===SECTION_HISTORY_TOOL_NAME?'SectionHistoryRequest':'DocumentReferencesRequest',value:args})};
+    if(name===SECTION_HISTORY_TOOL_NAME||name===DOCUMENT_REFERENCES_TOOL_NAME)return {request:modelDump({name:name===SECTION_HISTORY_TOOL_NAME?'SectionHistoryRequest':'DocumentReferencesRequest',value:args})};
     if(name==='search_documents') {
       const top=new Set(['query','versions','time','k','cursor']);const payload:Record<string,unknown>={filters:{}};
       for(const [key,value]of Object.entries(args)) if(top.has(key))payload[key]=value;else (payload.filters as Record<string,unknown>)[key]=value;
-      return {request:validateModel({name:'DocumentSearchRequest',value:payload})};
+      return {request:modelDump({name:'DocumentSearchRequest',value:payload})};
     }
     const required=definition.input_schema.required as string[]|undefined;
     const missing=(required??[]).filter(key=>!(key in args)).sort();if(missing.length)refuse({detail:`Missing required arguments: ${missing.join(', ')}.`});

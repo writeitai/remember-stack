@@ -205,13 +205,27 @@ filled. Schema-owned input types use the `Input` suffix, such as
 an ordinary object with `.rows`, `.columns` and `.truncated` properties.
 `JsonValue` describes JSON values recursively.
 
+The additional version/history/reference models are exported with their matching
+`Input` types:
+
+| Area | Models |
+| --- | --- |
+| Time scopes | `ReadTime`, `CurrentReadTime`, `AtReadTime`, `OverlapReadTime`, `HistoryReadTime` |
+| Effective periods | `EffectivePeriodInput`, `EffectivePeriodsRequest`, `DeclaredEffectivePeriod`, `EffectiveInterval`, `EffectivePeriodsSet`, `EffectiveTimeCleared` |
+| Document/claim occurrences | `MatchingEdition`, `ScopePending`, `ClaimOccurrence` |
+| Section history | `SectionHistoryRequest`, `SectionHistoryPage`, `SectionHistoryRow`, `SectionHistorySection`, `SectionAmendment` |
+| Reference inputs | `ReferenceInput`, `ReferenceTarget`, `ReferenceKind` |
+| Reference generations | `ReferencesSet`, `ReferenceGenerations`, `ReferenceGeneration`, `ReferenceItemError` |
+| Reference reads | `DocumentReferencesRequest`, `DocumentReferencesPage`, `DocumentReference`, `DocumentReferenceSource`, `DocumentReferenceTarget`, `NamedReferenceTarget`, `ReferenceWindow`, `DocumentReferencesTooBroad` |
+
 Nested timestamps are ISO strings; top-level timestamp options accept strings
 or Date. Explicit nulls are distinct from omitted values where the schema says
 so. Inputs are not coerced from strings or booleans into numbers. Unsafe JSON
 integers fail with numeric precision errors before a rounded value is returned.
 For larger SQL integers, use string parameters and an explicit SQL cast.
 
-Filtered `searchClaims`/`searchChunks` use POST; unfiltered calls use GET as the
+Document-filtered or time-scoped `searchClaims`/`searchChunks` use POST;
+unfiltered calls use GET as the
 Python client does. `searchDocumentsRequest` omits fields equal to model defaults.
 Connector methods configure remote deployment adapters; they do not execute
 npm connector libraries on the client machine.

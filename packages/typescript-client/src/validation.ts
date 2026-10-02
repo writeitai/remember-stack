@@ -70,6 +70,13 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
   const resolved = resolveSchema({ schema });
   schema = resolved.schema;
   name = resolved.name ?? name;
+  if(typeof value==='string'&&schema.type==='string') {
+    if(!value.isWellFormed())fail({detail:'model strings must contain valid Unicode'});
+    if(schema.format==='uuid') {
+      const compact=value.replace(/^urn:uuid:/,'').replace(/^\{|\}$/g,'').replace(/-/g,'');
+      if(/^[0-9a-fA-F]{32}$/.test(compact))return compact.toLowerCase().replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/,'$1-$2-$3-$4-$5');
+    }
+  }
   const variants = schema.anyOf ?? schema.oneOf;
   if (variants) {
     if(schema.discriminator&&(value===null||typeof value!=='object'||!(schema.discriminator.propertyName in value)))fail({detail:'time requires an explicit mode'});

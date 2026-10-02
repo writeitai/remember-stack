@@ -49,9 +49,9 @@ async function moving({firstOutcome='421',successfulValue=fixtures.ingest}) {
     close:async()=>{await Promise.all([first.close(),next.close(),issuer.close()]);}};
 }
 
-for(const firstOutcome of ['421','404','network'])for(const kind of ['ingest','delete','connector','pause','assured'])test(`${kind} is never replayed after ${firstOutcome}; next call uses fresh mapping`,async()=>{
+for(const firstOutcome of ['421','404','network'])for(const kind of ['ingest','delete','connector','pause','assured','references','periods','clear-time'])test(`${kind} is never replayed after ${firstOutcome}; next call uses fresh mapping`,async()=>{
   const setup=await moving({firstOutcome});const client=new Client({apiKey:setup.key});
-  const actions={ingest:()=>client.ingest({content:new Uint8Array([1]),filename:'note.md'}),delete:()=>client.deleteDocument({docId:id}),connector:()=>client.addConnector({connector:{kind:'custom',name:'fixture'}}),pause:()=>client.pauseConnector({connectorId:id}),assured:()=>client.runOperation({name:'facts_context',arguments:{query:'fixture'}})};
+  const actions={references:()=>client.setReferences({docId:id,versionId:id,references:[]}),periods:()=>client.setEffectivePeriods({docId:id,versionId:id,periods:[]}),'clear-time':()=>client.clearEffectiveTime({docId:id}),ingest:()=>client.ingest({content:new Uint8Array([1]),filename:'note.md'}),delete:()=>client.deleteDocument({docId:id}),connector:()=>client.addConnector({connector:{kind:'custom',name:'fixture'}}),pause:()=>client.pauseConnector({connectorId:id}),assured:()=>client.runOperation({name:'facts_context',arguments:{query:'fixture'}})};
   try {
     await assert.rejects(actions[kind](),MemoryApiError);
     assert.equal(setup.first.requests.length,1);assert.equal(setup.next.requests.length,0);
@@ -74,7 +74,7 @@ for(const firstOutcome of ['421','404','network'])test(`read-only POST replays o
 
 test('engine-shaped 404 and timeout never refresh or replay',async()=>{
   for(const firstOutcome of ['engine-404','timeout']) {
-    const setup=await moving({firstOutcome});const client=new Client({apiKey:setup.key,timeoutMs:100});
+    const setup=await moving({firstOutcome});const client=new Client({apiKey:setup.key,timeoutMs:500});
     try {
       await assert.rejects(client.listOperations(),firstOutcome==='timeout'?RequestTimeoutError:MemoryApiError);
       assert.equal(setup.first.requests.length,1);assert.equal(setup.next.requests.length,0);
@@ -236,4 +236,26 @@ test('general API timestamps require offsets before HTTP while UTC-only fields r
 test('unsafe integer query parameters refuse before HTTP',async()=>{
   let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
   try{await assert.rejects(client.lookupRelations({k:2**53}),error=>error instanceof InputValidationError&&error.code==='numeric.precision');assert.equal(calls,0);}finally{client.close();}
+});
+
+for(const kind of ['references','periods','clear-time'])test(`${kind} connection refusal sends once and leaves the refreshed target for a later call`,async()=>{
+  clearHostCache();clearMetadataCache();let resolutions=0;
+  const closed=await server({handler:({response})=>json({response,value:{}})});
+  const value=kind==='references'?fixtures.references_set:kind==='periods'?fixtures.effective_periods:fixtures.effective_cleared;
+  const next=await server({handler:({response})=>json({response,value})});let issuer;
+  issuer=await server({handler:({recorded,response})=>json({response,value:recorded.url.startsWith('/.well-known')?{issuer:issuer.url,remember_project_endpoint:issuer.url+'/project'}:{project:'p1',name:'fixture',api_url:++resolutions===1?closed.url:next.url}})});
+  await closed.close();
+  const {Agent}=await import('node:http');const attempts=[];
+  /** Observe the default Node adapter without replacing its request behavior. */
+  class RecordingAgent extends Agent {
+    /** Count actual native requests by destination, excluding issuer discovery. */
+    addRequest(request,options){attempts.push({method:request.method,port:String(options.port)});super.addRequest(request,options);}
+  }
+  const agent=new RecordingAgent({keepAlive:true});const client=new Client({apiKey:signedKey({issuer:issuer.url}),agents:{http:agent}});
+  const action=kind==='references'?()=>client.setReferences({docId:id,versionId:id,references:[]}):kind==='periods'?()=>client.setEffectivePeriods({docId:id,versionId:id,periods:[]}):()=>client.clearEffectiveTime({docId:id});
+  try{
+    await assert.rejects(action(),error=>error instanceof MemoryApiError&&error.statusCode===0);
+    assert.equal(attempts.filter(entry=>entry.port===new URL(closed.url).port).length,1);assert.equal(next.requests.length,0);assert.equal(resolutions,2);
+    await action();assert.equal(next.requests.length,1);
+  }finally{client.close();agent.destroy();await Promise.all([next.close(),issuer.close()]);}
 });

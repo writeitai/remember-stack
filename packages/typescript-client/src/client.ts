@@ -35,6 +35,10 @@ function apiTimestamp({value,field}:{value:string|Date;field:string}):string {
   if(year<1||month<1||month>12||day<1||day>days||hour>23||minute>59||second>59||!Number.isFinite(Date.parse(zone?value:value+'Z')))throw new InputValidationError({detail:`${field} must be a valid ISO datetime`});
   return value;
 }
+/** Render model timestamps like datetime.isoformat for query parameters. */
+function queryTimestamp({value}:{value:string}):string {
+  return value.replace(/[zZ]$/,'+00:00').replace(/\.(\d+)(?=[+-]\d{2}:\d{2}$)/,(_match,fraction:string)=>Number(fraction.slice(0,6))===0?'':'.'+fraction.slice(0,6).padEnd(6,'0'));
+}
 /** Require a JSON object in discovery/account APIs with intentionally open response fields. */
 function objectResponse({value}:{value:unknown}):Record<string,Models.JsonValue> {
   if(value===null||typeof value!=='object'||Array.isArray(value))throw new MemoryApiError({statusCode:200,detail:'response must be a JSON object'});
@@ -280,8 +284,8 @@ export class MemoryClient {
   async sectionHistoryRequest({request,signal}:{request:Models.SectionHistoryRequest;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
     const input=validateModel<Models.OutputSectionHistoryRequest>({name:'SectionHistoryRequest',value:request});
     const params:Record<string,string|number|null>={mode:input.time.mode,k:input.k};
-    if(input.time.mode==='at')params.at=input.time.at;
-    else if(input.time.mode==='overlap'){params.from=input.time.from;params.to=input.time.to;}
+    if(input.time.mode==='at')params.at=queryTimestamp({value:input.time.at});
+    else if(input.time.mode==='overlap'){params.from=queryTimestamp({value:input.time.from});params.to=queryTimestamp({value:input.time.to});}
     if(input.cursor!=null)params.cursor=input.cursor;
     return validateModel({name:'SectionHistoryPage',value:await this.json({method:'GET',path:`/documents/${input.doc_id}/sections/${segment({value:input.section_key})}/history`,params,signal}),response:true});
   }

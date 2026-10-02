@@ -29,7 +29,7 @@ function main() {
     npm({args:['install','--ignore-scripts','--no-audit','--no-fund',join(directory,packed.filename),`typescript@${metadata.devDependencies.typescript}`,`@types/node@${metadata.devDependencies['@types/node']}`],cwd:directory});
     const checks=`
 const client = new sdk.Client({client:{request:async()=>Response.json([])}});
-if(sdk.Client !== sdk.RememberClient || sdk.memoryTools().length!==16)throw new Error('public exports are incomplete');
+if(sdk.Client !== sdk.RememberClient || sdk.memoryTools().length!==18)throw new Error('public exports are incomplete');
 client.listOperations().then(operations=>{if(operations.length!==0)throw new Error('invalid response');client.close();});
 /** Verify filled response fields and recursive JSON typing in declarations. */
 function responseTypes({query,envelope}:{query:sdk.QueryResultDict;envelope:sdk.Envelope}):void {
@@ -38,6 +38,11 @@ function responseTypes({query,envelope}:{query:sdk.QueryResultDict;envelope:sdk.
   const defaults:boolean=envelope.freshness.p1_written_inline;
   void rows;void timestamp;void defaults;
 }
+const readTime:sdk.ReadTimeInput={mode:'overlap',from:'2026-01-01T00:00:00Z',to:'2026-07-01T00:00:00Z'};
+const sectionRequest:sdk.SectionHistoryRequestInput={doc_id:'10000000-0000-0000-0000-000000000001',section_key:'part/4',time:readTime};
+const referencesRequest:sdk.DocumentReferencesRequestInput={doc_id:sectionRequest.doc_id,time:readTime};
+const reference:sdk.ReferenceInputInput={kind:'amends',target:{source_kind:'policy',source_ref:'expenses'},change_date_known:false};
+void sectionRequest;void referencesRequest;void reference;
 const input:sdk.DocumentSearchFiltersInput={authors:['alice']};void input;void responseTypes;
 /** Verify incorrect public inputs are rejected by the installed declarations. */
 function inputTypes():void {
