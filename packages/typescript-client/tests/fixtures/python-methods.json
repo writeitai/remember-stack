@@ -7785,6 +7785,136 @@
       "issuer": "https://redirect-fixture.invalid",
       "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
       "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 201
+        }
+      ],
+      "stage": "account",
+      "status": 201,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 204
+        }
+      ],
+      "stage": "account",
+      "status": 204,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 401
+        }
+      ],
+      "stage": "account",
+      "status": 401,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 404
+        }
+      ],
+      "stage": "account",
+      "status": 404,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 500
+        }
+      ],
+      "stage": "account",
+      "status": 500,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
       "responses": [
         {
           "body": null,
@@ -7918,6 +8048,136 @@
         {
           "method": "GET",
           "url": "https://redirect-fixture.invalid/final"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 201
+        }
+      ],
+      "stage": "metadata",
+      "status": 201,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 204
+        }
+      ],
+      "stage": "metadata",
+      "status": 204,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 401
+        }
+      ],
+      "stage": "metadata",
+      "status": 401,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 404
+        }
+      ],
+      "stage": "metadata",
+      "status": 404,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "IssuerError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 500
+        }
+      ],
+      "stage": "metadata",
+      "status": 500,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
         }
       ]
     },
@@ -8123,6 +8383,136 @@
         {
           "method": "GET",
           "url": "https://redirect-fixture.invalid/final"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "ProjectResolutionError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 201
+        }
+      ],
+      "stage": "project",
+      "status": 201,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "ProjectResolutionError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 204
+        }
+      ],
+      "stage": "project",
+      "status": 204,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "ProjectResolutionError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 401
+        }
+      ],
+      "stage": "project",
+      "status": 401,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "ProjectResolutionError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 404
+        }
+      ],
+      "stage": "project",
+      "status": 404,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
+        }
+      ]
+    },
+    {
+      "error": {
+        "class": "ProjectResolutionError",
+        "code": null,
+        "statusCode": 0
+      },
+      "issuer": "https://redirect-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9yZWRpcmVjdC1maXh0dXJlLmludmFsaWQiLCAicHJvamVjdHMiOiBbImZpeHR1cmUiXX0.fixture",
+      "location": null,
+      "metadataFailure": true,
+      "responses": [
+        {
+          "body": null,
+          "headers": {},
+          "status": 500
+        }
+      ],
+      "stage": "project",
+      "status": 500,
+      "wire": [
+        {
+          "method": "GET",
+          "url": "https://redirect-fixture.invalid/.well-known/oauth-authorization-server"
         }
       ]
     }

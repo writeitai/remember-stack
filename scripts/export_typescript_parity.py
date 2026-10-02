@@ -875,15 +875,16 @@ def account_error_fixtures() -> list[dict[str, Any]]:
 
 
 def issuer_redirect_fixtures() -> list[dict[str, Any]]:
-    """Execute all issuer call paths without touching environment or credential files."""
+    """Record redirects and metadata HTTP failures through all issuer call paths."""
     cases: list[dict[str, Any]] = []
     for stage in ("account", "metadata", "project"):
-        for status, location in [
-            (300, None),
-            (302, None),
-            (304, None),
-            (307, None),
-            (300, "/final"),
+        for status, location, metadata_failure in [
+            (300, None, False),
+            (302, None, False),
+            (304, None, False),
+            (307, None, False),
+            (300, "/final", False),
+            *[(status, None, True) for status in (201, 204, 401, 404, 500)],
         ]:
             clear_metadata_cache()
             clear_host_cache()
@@ -917,6 +918,7 @@ def issuer_redirect_fixtures() -> list[dict[str, Any]]:
                 stage: str = stage,
                 status: int = status,
                 location: str | None = location,
+                metadata_failure: bool = metadata_failure,
                 metadata: dict[str, Any] = metadata,
                 project: dict[str, str] = project,
                 wire: list[dict[str, str]] = wire,
@@ -925,15 +927,19 @@ def issuer_redirect_fixtures() -> list[dict[str, Any]]:
                 """Record actual Python hops and return the selected synthetic redirect."""
                 wire.append({"method": request.method, "url": str(request.url)})
                 target = (
-                    (
-                        stage == "metadata"
-                        and request.url.path.startswith("/.well-known")
+                    request.url.path.startswith("/.well-known")
+                    if metadata_failure
+                    else (
+                        (
+                            stage == "metadata"
+                            and request.url.path.startswith("/.well-known")
+                        )
+                        or (
+                            stage == "account"
+                            and request.url.path == "/account/v1/keys/self"
+                        )
+                        or (stage == "project" and request.url.path == "/project")
                     )
-                    or (
-                        stage == "account"
-                        and request.url.path == "/account/v1/keys/self"
-                    )
-                    or (stage == "project" and request.url.path == "/project")
                 )
                 if target:
                     headers = {"location": location} if location else {}
@@ -959,6 +965,8 @@ def issuer_redirect_fixtures() -> list[dict[str, Any]]:
                 "wire": wire,
                 "responses": replies,
             }
+            if metadata_failure:
+                case["metadataFailure"] = True
             with httpx.Client(transport=httpx.MockTransport(answer)) as http:
                 try:
                     if stage == "account":

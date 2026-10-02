@@ -59,7 +59,7 @@ for(const scenario of fixture.accountErrors)test(`account ${scenario.status}/${s
   });}finally{client.close();}
 });
 
-for(const scenario of fixture.issuerRedirects)test(`${scenario.stage} ${scenario.status}/${scenario.location??'missing Location'}: Python issuer redirect parity`,async()=>{
+for(const scenario of fixture.issuerRedirects)test(`${scenario.stage} ${scenario.status}/${scenario.metadataFailure?'metadata failure':scenario.location??'missing Location'}: Python issuer status parity`,async()=>{
   const {AccountApi,Connection,SecretString,signedKeyClaims,resolveProject,fetchIssuerMetadata,clearHostCache,clearMetadataCache}=await import('../.test-build/internal.js');
   clearHostCache();clearMetadataCache();const wire=[];
   const http={request:async request=>{

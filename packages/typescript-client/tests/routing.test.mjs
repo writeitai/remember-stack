@@ -148,3 +148,14 @@ test('every issuer 3xx without Location refuses with IssuerError and status zero
   for(const status of [300,302,304,307,399])await assert.rejects(sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>{calls++;return new Response(null,{status});}}}),error=>error.name==='IssuerError'&&error.statusCode===0&&error.detail.includes('without a Location'));
   assert.equal(calls,5);
 });
+
+test('issuer redirect bodies are cancelled and the final response remains unread',async()=>{
+  const {sendSameOrigin}=await import('../.test-build/internal.js');let cancelled=0;let calls=0;
+  const redirect=new Response(new ReadableStream({/** Record disposal before following a redirect. */cancel(){cancelled++;}}),{status:300,headers:{location:'/final'}});
+  const final=new Response('final body');
+  const response=await sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>calls++===0?redirect:final}});
+  assert.equal(cancelled,1);assert.equal(calls,2);assert.equal(response,final);assert.equal(final.bodyUsed,false);
+  const refusal=new Response(new ReadableStream({/** Record disposal before refusing a redirect. */cancel(){cancelled++;}}),{status:399});
+  await assert.rejects(sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>refusal}}),error=>error.name==='IssuerError'&&error.statusCode===0);
+  assert.equal(cancelled,2);
+});

@@ -114,7 +114,7 @@ export async function fetchIssuerMetadata({issuer,http,signal,timeoutMs=30000}:{
     promise=bounded({timeoutMs,work:async sharedSignal=>{
       try {
         const response=await sendSameOrigin({http,request:{method:'GET',url:metadataUrl({issuer:normalized}),headers:{Accept:'application/json'},signal:sharedSignal}});
-        if (response.status!==200) throw new IssuerError({statusCode:response.status,detail:'issuer metadata is unavailable'});
+        if (response.status!==200) throw new IssuerError({detail:'issuer metadata is unavailable'});
         const metadata=new IssuerMetadata({value:await responseJson({response})});
         if (metadata.issuer.replace(/\/+$/,'')!==normalized) throw new IssuerError({detail:'issuer metadata names a different issuer'});
         metadataCache.set(normalized,metadata);return metadata;
