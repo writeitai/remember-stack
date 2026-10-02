@@ -126,6 +126,24 @@ search_documents(query?, filters?, k) → documents
   result returns the newest matching version and lists the other matching
   version IDs. Either way the returned metadata is that of the returned
   version, so a result never shows metadata that did not match.
+- **Declared effective periods (D140).** For a lineage whose versions carry
+  declared effective periods, the shared `time` scope (`current` by default,
+  or `at`, `overlap`, `history`) chooses the judged version(s) instead of the
+  current pointer: under `current`, the version in force now; a lineage with
+  no version in force at the instant does not match. Results stay one per
+  lineage: with `versions: current` only the latest-starting selected version
+  is judged; with `versions: all` any selected version may match and the
+  latest-starting matching one represents the lineage. Each result lists every
+  matching edition (`matching_editions`, with version-addressed handles). An
+  audit of all editions uses `time: history`; there is no option that ignores
+  the scope ([effective time design §3.5](effective_time_and_section_references_design.md#35-search_documents)).
+  Results carry their in-force intervals, their version id, and a P3 path only
+  when the judged version is the served one (`served_version`), with
+  `source_open(version_id)` otherwise, so an agent never opens a different
+  edition than it was shown. Filter-only paging uses the pinned `as_of` as the
+  belief instant for declarations, so a correction between pages moves no row.
+  Lineages without periods ignore `time` and behave as above
+  ([effective time design §3](effective_time_and_section_references_design.md#3-time-scoped-retrieval)).
 - **`query`** is matched on two channels, fused by rank (the D9 fusion):
   - **names** — every name the judged version(s) were observed under
     (`document_names`: the name at conversion plus each later metadata
@@ -135,8 +153,13 @@ search_documents(query?, filters?, k) → documents
     each document scores by its best-ranked chunk in the judged version.
     A data file's profile, a card, and a document's top-level text are all
     ordinary chunks, so no second search index is needed.
-- With filters only, results are ordered newest first by when the judged
-  version was **ingested** (immutable per version), then by `doc_id`; the
+- With filters only, results are ordered newest first by the ingest time of
+  the lineage's **newest version ingested at or before the cursor's as-of
+  instant** (immutable), then by `doc_id` — independently of which version is
+  judged. For lineages without declared effective periods that is the judged
+  version, as before; for periodised lineages the judged (representative)
+  edition is chosen by the D140 scope and never affects the cursor key, so a
+  period correction between pages cannot move a row. The
   `created` range remains a filter. The keyset cursor pins the first call's
   **as-of instant**, and while paging each document is judged by its newest
   live version ingested at or before that instant, so neither a later
@@ -173,6 +196,15 @@ same fields as §3. It restricts results to evidence from matching documents:
 
 The filter is applied inside the ranked statement, before the top results
 are cut (the existing D94 rule), never by filtering a finished top-k.
+
+`search` also takes the D140 `time` scope. It selects which versions of
+lineages with declared effective periods contribute chunks and claim
+occurrences, in the same statement as the `documents` filter; for other
+lineages the current version contributes, as before. For scoped reads of
+periodised lineages the returned claim evidence is the claim's **occurrence
+in the selected version** (its chunk, version and per-occurrence spans), not
+its origin — this refines the origin rule above for that case only
+([effective time design §3.4](effective_time_and_section_references_design.md#34-claims-under-a-time-scope)).
 
 **Worked example.** "Everything about Project X from emails from Alice":
 

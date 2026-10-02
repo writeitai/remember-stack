@@ -14,6 +14,7 @@ from rememberstack.spine.consumption import ConsumptionDeploymentNotFoundError
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.document_catalog import DocumentCatalog
 from rememberstack.spine.document_inventory import DocumentInventory
+from rememberstack.spine.document_references import DocumentReferences
 from rememberstack.spine.document_search import DocumentSearch
 from rememberstack.spine.entity_registry import EntityRegistry
 from rememberstack.spine.entity_registry import T0_RESOLVER_VERSION
@@ -43,11 +44,14 @@ from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.profile_refresher import ProfileRefreshResult
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
+from rememberstack.spine.references import ReferenceCatalog
 from rememberstack.spine.resolver import CascadeResolver
 from rememberstack.spine.resolver import ResolutionContendedError
 from rememberstack.spine.resolver import RESOLVER_VERSION
 from rememberstack.spine.resolver import seed_resolver_version
 from rememberstack.spine.review import ReviewQueue
+from rememberstack.spine.section_history import SectionHistory
+from rememberstack.spine.section_index_backfill import SectionIndexBackfill
 from rememberstack.spine.supersession import ADJUDICATOR_VERSION
 from rememberstack.spine.supersession import SupersessionAdjudicator
 from rememberstack.spine.sync import SyncCatalog
@@ -66,6 +70,10 @@ __all__ = (
     "ADJUDICATOR_VERSION",
     "CascadeResolver",
     "EntityProfileRefresher",
+    "SectionHistory",
+    "ReferenceCatalog",
+    "DocumentReferences",
+    "SectionIndexBackfill",
     "SupersessionAdjudicator",
     "SyncCatalog",
     "FactCatalog",

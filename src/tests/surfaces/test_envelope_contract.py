@@ -76,6 +76,7 @@ class _NullSearchIndex:
         k: int,
         current_only: bool,
         documents: object = None,
+        time: object = None,
     ) -> tuple[str, ...]:
         """Never called."""
         return ()
@@ -286,6 +287,16 @@ class _Corpus:
                 "end": len(label),
                 "at": _NOW,
             },
+        )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                " FROM claims WHERE claim_id = :origin_claim"
+            ),
+            {"origin_claim": claim_id},
         )
         connection.execute(
             text(

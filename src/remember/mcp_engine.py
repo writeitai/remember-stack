@@ -26,26 +26,34 @@ from remember.client import MemoryApiError
 from remember.client import MemoryClient
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools import error_result
 from remember.mcp_tools import handle_delete_document_tool
+from remember.mcp_tools import handle_document_references_tool
 from remember.mcp_tools import handle_memory_write_tool
 from remember.mcp_tools import handle_search_documents_tool
+from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import map_error
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
 from remember.mcp_tools import render_tools_list
 from remember.mcp_tools import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools import tool
 from remember.mcp_tools import ToolArgumentError
 from remember.mcp_tools import ToolError
 from remember.mcp_tools import validate_arguments
 from remember.models import DocumentDeletion
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import ReadinessRequirements
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +61,7 @@ MCP_PROTOCOL_VERSION = "2025-11-25"
 
 
 class _ClientBackend:
-    """The write, readiness, delete and document-search tools' backend.
+    """The write, readiness, delete, document-search, section and references backend.
 
     The deployment enforces its body-size limit; the tool maps the refusal.
     """
@@ -73,6 +81,9 @@ class _ClientBackend:
         source_modified_at: datetime | None,
         versioning_mode: Literal["snapshot", "living"],
         source_version_ref: str | None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Send one ingest through the HTTP SDK."""
         return self._client.ingest(
@@ -85,6 +96,9 @@ class _ClientBackend:
             source_modified_at=source_modified_at,
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def pipeline_readiness(
@@ -104,6 +118,16 @@ class _ClientBackend:
     def search_documents(self, *, request: DocumentSearchRequest) -> DocumentSearchPage:
         """Run one document search through the HTTP SDK (D134)."""
         return self._client.search_documents_request(request=request)
+
+    def section_history(self, *, request: SectionHistoryRequest) -> SectionHistoryPage:
+        """Read one section's history through the HTTP SDK (D140)."""
+        return self._client.section_history_request(request=request)
+
+    def document_references(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Read one page of references through the HTTP SDK (D140)."""
+        return self._client.document_references_request(request=request)
 
 
 class EngineMcpServer:
@@ -176,6 +200,14 @@ class EngineMcpServer:
             )
         if name == SEARCH_DOCUMENTS_TOOL_NAME:
             return handle_search_documents_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == SECTION_HISTORY_TOOL_NAME:
+            return handle_section_history_tool(
+                arguments=arguments, backend=self._backend
+            )
+        if name == DOCUMENT_REFERENCES_TOOL_NAME:
+            return handle_document_references_tool(
                 arguments=arguments, backend=self._backend
             )
         if name in MEMORY_WRITE_TOOL_NAMES:

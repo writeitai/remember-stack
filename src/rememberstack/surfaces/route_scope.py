@@ -78,6 +78,13 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # search_documents (D134): a read whose filters do not fit a query
         # string, like the other body-carrying reads above.
         ("POST", r"^/documents/search$"),
+        # section_history (D140): a read. The key may itself contain '/'.
+        ("GET", r"^/documents/[^/]+/sections/.+/history$"),
+        # D140 references: the generations of one version's supplied set, and
+        # document_references, a read whose arguments do not fit a query
+        # string. PUT of a set falls to the WRITE default.
+        ("GET", r"^/documents/[^/]+/versions/[^/]+/references$"),
+        ("POST", r"^/documents/references$"),
         # Build revision and model bindings: what this deployment is, not what
         # it holds. `remember doctor` checks it with whatever token it has.
         ("GET", r"^/deployment$"),

@@ -30,6 +30,8 @@ bytes adds a new version and never edits an old one. Each version records:
 - the SHA-256 hash of its bytes (`content_hash`),
 - the time the source says it was last modified (`source_modified_at`),
 - an optional revision marker from the source system (`source_version_ref`),
+- an optional permanent name you give it (`version_key`, see
+  [Editions in force](#editions-in-force)),
 - who ingested it (`ingested_by`, see [below](#who-ingested-a-version)).
 
 Everything RememberStack later derives from the file (its converted text,
@@ -94,8 +96,9 @@ bytes again is a no-op; sending edited bytes creates an unrelated document.
 Use this only for files that will never change. For anything an agent will
 write to again (notes, a running log, a spec), give a source so that later
 writes become versions of one document. Without a source you also cannot set
-`source_modified_at`, `source_version_ref` or `living` mode; the engine
-rejects them with `source timestamps, revisions, and living mode require
+`source_modified_at`, `source_version_ref`, `living` mode, a `version_key` or
+an effective period; the engine rejects them with `source timestamps,
+revisions, living mode, version keys and effective periods require
 source_kind/source_ref`.
 
 ## `source_modified_at` becomes the said-on time
@@ -117,6 +120,28 @@ resolved only against a date written inside the document itself.
 bytes with a different timestamp does not change it, because the claims were
 already extracted against the original value.
 
+### Unchanged passages keep their date
+
+A new version usually has a new `source_modified_at`, but most of its
+passages are the same words as before. Each passage (chunk) therefore records
+its own **text origin time**: when its words were first written in this
+document, as far as the engine can tell. A passage of a new version that is
+unchanged, with the same neighbouring text, from a passage of an earlier
+version keeps that earlier passage's date, as long as the date is not later
+than the new version's own. Such a passage is not read again: its claims and
+embeddings are reused, and they keep the `asserted_at` they were stamped
+with. A changed passage, or one whose neighbours changed, takes the new
+version's date and is read afresh.
+
+The rule only ever looks back to earlier dates. If you ingest the 2026
+edition of a document first and the identical 2024 edition later, the 2024
+passages take 2024 and are read afresh; nothing already stamped is re-dated.
+Passages of deleted versions are never drawn on, and the date is recorded
+once and never changes. `chunks_live.text_origin_at` in the
+[query space](/docs/reference/query-space#chunks_live) shows it. Passages
+written by an earlier release have no recorded origin, so the first new
+version of each document after an upgrade is read in full once.
+
 ## Re-ingesting the same bytes: `created=false`
 
 Every ingest returns an `IngestedVersion`:
@@ -131,9 +156,11 @@ Every ingest returns an `IngestedVersion`:
 | `mime` | The MIME type conversion uses for these bytes. |
 | `title` | The document's title, set by its first ingest. |
 | `versioning_mode` | `snapshot` or `living`, set by its first ingest. |
+| `version_key` | The version's key, or `null`. |
 
-When the bytes match the document's **latest** version, nothing new is
-created and no processing is scheduled. You get the existing `version_id`
+When the bytes match the document's **latest** version, and you send no
+`version_key` the document has not used yet, nothing new is created and no
+processing is scheduled. You get the existing `version_id`
 back with `created=false`. This makes ingest safe to retry and safe to run
 from a loop that re-sends everything: unchanged files cost nothing.
 
@@ -148,6 +175,60 @@ jumps back to an old snapshot.
 Bytes sent again after the document was [deleted](#deleting-a-document)
 also create a new version (`created=true`), and it is processed from the
 start.
+
+## Editions in force
+
+Some documents come in editions that each apply for a period, such as a
+company's travel policy. Two things help with them.
+
+A **version key** (`version_key` at ingest) is your own permanent name for
+one version, such as `edition-2` or a publisher's edition id. It is unique
+within the document and never moves: a key the document has not used yet
+always creates a new version, even for bytes identical to the latest, and a
+key that already names a version cannot be reused for another. It is how a
+[pinned reference](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences)
+names exactly one edition. It is separate from `source_version_ref`, which
+moves when a sync sees a new revision.
+
+An **effective period** (`effective_from`, optionally `effective_until`)
+says when a version's text is in force. Reads with a `time` scope then select
+the edition in force for that time rather than the newest one. Periods need a
+`snapshot` document. See [Time](/docs/concepts/time#when-a-version-is-in-force)
+and [Read a document as of a date](/docs/guides/versions-in-force).
+
+## Section keys
+
+A heading in Markdown can carry a stable key in a trailing attribute block,
+in the Pandoc and kramdown style:
+
+```markdown
+## 4. Per-diem allowance {#per-diem}
+### 5. Scope {#scope .note}
+```
+
+The `#identifier` becomes the section's **section key** and the whole
+`{…}` block is removed from the stored title; classes (`.note`) and
+`name=value` items are accepted and ignored. A key is 1 to 200 characters
+from `A–Z a–z 0–9 _ . : / -`, and a block may hold at most one. A block
+that breaks these rules is left in the title, and the heading gets no key.
+The block must end the heading line, on `#` headings and underlined
+headings alike.
+
+Keys come only from the source text: RememberStack never invents one, and
+sections it had to find without headings have none. Within one version a key
+is unique; if two headings carry the same key, the first keeps it and the
+later one gets none.
+
+Because the key stays the same when the text around it changes, it names
+"the same section" across versions. [`section_history`](/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory)
+lists what a key held in each version and whether it changed, and supplied
+references can point at a key in another document. Sections stored by an
+earlier release get their keys from their stored headings when `setup` runs
+after the upgrade, without reprocessing; until then they read as
+`not_indexed`.
+
+Writing keys is a new way of reading headings, so the first new version of
+each existing document after the upgrade is read in full once.
 
 ## Finding a document
 

@@ -338,8 +338,21 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   facts + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
-  the old one), source kind, source-modified/published date, language (from
-  `documents`/`document_versions`/`document_metadata`; never LLM-derived) — **no LLM *output* participates in the
+  the old one), source kind, the chunk's **text origin time**, language (from
+  `documents`/`document_versions`/`document_metadata` and the lineage's earlier chunks; never
+  LLM-derived). The text origin time (D140) replaces both the `source_modified_at` and the
+  `published_at` header facts. It is recorded once when the chunk is created: the
+  smallest `text_origin_at` (ties by version number, ordinal) among chunks of non-deleted
+  versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
+  and **not later than this version's own date** (so a back-filled older edition never inherits
+  a later date) — own and neighbour
+  block hashes, non-date header facts, blockizer/structurer/extractor versions, indexed per
+  lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
+  and replayed, never recomputed; deleting the origin version later does not change it. The
+  E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
+  in unchanged text stay resolved against the time the text was written, and a dated new
+  version reuses its unchanged chunks (with the version's own date in the key, nearly every
+  new version would miss every key) — **no LLM *output* participates in the
   key** (refines D56's original sketch, which had let the section path and prefix in — a key
   no re-run would ever match, the ~0 %-reuse hazard named in the stress test). Including
   `structurer_version` — a stable config string, not LLM output — closes the context-drift

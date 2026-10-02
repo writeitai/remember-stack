@@ -190,16 +190,21 @@ def _span_text(record: ClaimRecord) -> str | None:
 
 def test_header_carries_the_version_file_name() -> None:
     """The header gains ``file``; a recorded version shows only its own title."""
-    header = _header_text(source=_source())
+    header = _header_text(source=_source(), chunk=_chunk(document_md="x"))
     assert "title untitled;" in header
     assert "file Audit_2025.pdf;" in header
-    titled = _header_text(source=_source(version_title="2025 Audit"))
+    titled = _header_text(
+        source=_source(version_title="2025 Audit"), chunk=_chunk(document_md="x")
+    )
     assert titled.startswith("title 2025 Audit; file Audit_2025.pdf;")
 
 
 def test_header_without_recorded_metadata_keeps_the_lineage_title() -> None:
     """Versions from before D134 recorded names keep the lineage title."""
-    header = _header_text(source=_source(file_name=None, title="Legacy report"))
+    header = _header_text(
+        source=_source(file_name=None, title="Legacy report"),
+        chunk=_chunk(document_md="x"),
+    )
     assert header.startswith("title Legacy report; file unknown;")
 
 
@@ -217,7 +222,12 @@ def _reuse_key(*, source: ChunkSource) -> str:
         ),
     )
     return _chunk_record(
-        source=source, packed=packed, index=0, chunker_version="test-chunker"
+        source=source,
+        packed=packed,
+        index=0,
+        chunker_version="test-chunker",
+        reuse_identity_hash="identity",
+        text_origin_at=None,
     ).extraction_input_hash
 
 

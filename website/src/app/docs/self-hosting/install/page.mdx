@@ -80,7 +80,7 @@ RememberStack image, and starts everything in dependency order:
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
-3. `api` and the twelve workers start once `setup` has exited successfully.
+3. `api` and the thirteen workers start once `setup` has exited successfully.
 
 `--wait` returns when the services are running and healthy.
 
@@ -94,6 +94,7 @@ RememberStack image, and starts everything in dependency order:
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
+| `worker-crossref` | `worker --stage crossref` | Writes the references a caller supplied for a version, after checking them against the version's sections. See [Versions in force](/docs/guides/versions-in-force#supply-references). |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
 | `worker-embed-chunk` | `worker --stage embed_chunk` | Embeds chunks for semantic search. |
 | `worker-extract-claims` | `worker --stage extract_claims` | Reads each chunk and selects the sentences that state something. |

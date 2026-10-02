@@ -575,6 +575,8 @@ The `remember mcp` server gives the agent these tools:
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `delete_document` | Remove a document from the memory when the user asks. |
 | `search_documents` | Find a file by its name, title, path, authors, dates or text. |
+| `section_history` | Follow one section of a document across its versions. |
+| `document_references` | See what a passage, section or document points to, and what points to it, at a given time. |
 | `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
@@ -636,6 +638,8 @@ bytes adds a new version and never edits an old one. Each version records:
 - the SHA-256 hash of its bytes (`content_hash`),
 - the time the source says it was last modified (`source_modified_at`),
 - an optional revision marker from the source system (`source_version_ref`),
+- an optional permanent name you give it (`version_key`, see
+  [Editions in force](#editions-in-force)),
 - who ingested it (`ingested_by`, see [below](#who-ingested-a-version)).
 
 Everything RememberStack later derives from the file (its converted text,
@@ -698,8 +702,9 @@ bytes again is a no-op; sending edited bytes creates an unrelated document.
 Use this only for files that will never change. For anything an agent will
 write to again (notes, a running log, a spec), give a source so that later
 writes become versions of one document. Without a source you also cannot set
-`source_modified_at`, `source_version_ref` or `living` mode; the engine
-rejects them with `source timestamps, revisions, and living mode require
+`source_modified_at`, `source_version_ref`, `living` mode, a `version_key` or
+an effective period; the engine rejects them with `source timestamps,
+revisions, living mode, version keys and effective periods require
 source_kind/source_ref`.
 
 ## `source_modified_at` becomes the said-on time
@@ -721,6 +726,28 @@ resolved only against a date written inside the document itself.
 bytes with a different timestamp does not change it, because the claims were
 already extracted against the original value.
 
+### Unchanged passages keep their date
+
+A new version usually has a new `source_modified_at`, but most of its
+passages are the same words as before. Each passage (chunk) therefore records
+its own **text origin time**: when its words were first written in this
+document, as far as the engine can tell. A passage of a new version that is
+unchanged, with the same neighbouring text, from a passage of an earlier
+version keeps that earlier passage's date, as long as the date is not later
+than the new version's own. Such a passage is not read again: its claims and
+embeddings are reused, and they keep the `asserted_at` they were stamped
+with. A changed passage, or one whose neighbours changed, takes the new
+version's date and is read afresh.
+
+The rule only ever looks back to earlier dates. If you ingest the 2026
+edition of a document first and the identical 2024 edition later, the 2024
+passages take 2024 and are read afresh; nothing already stamped is re-dated.
+Passages of deleted versions are never drawn on, and the date is recorded
+once and never changes. `chunks_live.text_origin_at` in the
+[query space](https://remember.dev/docs/reference/query-space#chunks_live) shows it. Passages
+written by an earlier release have no recorded origin, so the first new
+version of each document after an upgrade is read in full once.
+
 ## Re-ingesting the same bytes: `created=false`
 
 Every ingest returns an `IngestedVersion`:
@@ -735,9 +762,11 @@ Every ingest returns an `IngestedVersion`:
 | `mime` | The MIME type conversion uses for these bytes. |
 | `title` | The document's title, set by its first ingest. |
 | `versioning_mode` | `snapshot` or `living`, set by its first ingest. |
+| `version_key` | The version's key, or `null`. |
 
-When the bytes match the document's **latest** version, nothing new is
-created and no processing is scheduled. You get the existing `version_id`
+When the bytes match the document's **latest** version, and you send no
+`version_key` the document has not used yet, nothing new is created and no
+processing is scheduled. You get the existing `version_id`
 back with `created=false`. This makes ingest safe to retry and safe to run
 from a loop that re-sends everything: unchanged files cost nothing.
 
@@ -752,6 +781,60 @@ jumps back to an old snapshot.
 Bytes sent again after the document was [deleted](#deleting-a-document)
 also create a new version (`created=true`), and it is processed from the
 start.
+
+## Editions in force
+
+Some documents come in editions that each apply for a period, such as a
+company's travel policy. Two things help with them.
+
+A **version key** (`version_key` at ingest) is your own permanent name for
+one version, such as `edition-2` or a publisher's edition id. It is unique
+within the document and never moves: a key the document has not used yet
+always creates a new version, even for bytes identical to the latest, and a
+key that already names a version cannot be reused for another. It is how a
+[pinned reference](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences)
+names exactly one edition. It is separate from `source_version_ref`, which
+moves when a sync sees a new revision.
+
+An **effective period** (`effective_from`, optionally `effective_until`)
+says when a version's text is in force. Reads with a `time` scope then select
+the edition in force for that time rather than the newest one. Periods need a
+`snapshot` document. See [Time](https://remember.dev/docs/concepts/time#when-a-version-is-in-force)
+and [Read a document as of a date](https://remember.dev/docs/guides/versions-in-force).
+
+## Section keys
+
+A heading in Markdown can carry a stable key in a trailing attribute block,
+in the Pandoc and kramdown style:
+
+```markdown
+## 4. Per-diem allowance {#per-diem}
+### 5. Scope {#scope .note}
+```
+
+The `#identifier` becomes the section's **section key** and the whole
+`{…}` block is removed from the stored title; classes (`.note`) and
+`name=value` items are accepted and ignored. A key is 1 to 200 characters
+from `A–Z a–z 0–9 _ . : / -`, and a block may hold at most one. A block
+that breaks these rules is left in the title, and the heading gets no key.
+The block must end the heading line, on `#` headings and underlined
+headings alike.
+
+Keys come only from the source text: RememberStack never invents one, and
+sections it had to find without headings have none. Within one version a key
+is unique; if two headings carry the same key, the first keeps it and the
+later one gets none.
+
+Because the key stays the same when the text around it changes, it names
+"the same section" across versions. [`section_history`](https://remember.dev/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory)
+lists what a key held in each version and whether it changed, and supplied
+references can point at a key in another document. Sections stored by an
+earlier release get their keys from their stored headings when `setup` runs
+after the upgrade, without reprocessing; until then they read as
+`not_indexed`.
+
+Writing keys is a new way of reading headings, so the first new version of
+each existing document after the upgrade is read in full once.
 
 ## Finding a document
 
@@ -1450,8 +1533,10 @@ which time it is asking about.
 
 ## Three clocks
 
-RememberStack keeps three separate clocks. Mixing them up is the most common
-source of wrong answers about time, so they never share a field.
+RememberStack keeps three separate clocks for what sources say. Mixing them
+up is the most common source of wrong answers about time, so they never share
+a field. A fourth, declared clock says which version of a document is in
+force; see [When a version is in force](#when-a-version-is-in-force).
 
 | Clock | Question it answers | Fields |
 |---|---|---|
@@ -1513,7 +1598,9 @@ phrase still present in `claim_text` is itself the signal: read it against
 `asserted_at`.
 
 The document date comes from `source_modified_at` when you ingest. Set it,
-especially for transcripts and chat logs, where "yesterday" is common. See
+especially for transcripts and chat logs, where "yesterday" is common. A
+passage that a newer version repeats unchanged keeps the date it was first
+written, not the new version's; see
 [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources#source_modified_at-becomes-the-said-on-time).
 
 Claim times never change. Two sources may state different, even conflicting,
@@ -1673,6 +1760,58 @@ A fact's window is corrected in place. A `believed_at` read filters on
 as it stands today. The windows a fact had before a correction are kept
 in its decision transcript, not replayed by the read.
 
+## When a version is in force
+
+Some documents come in editions that apply for a period: a travel policy, a
+price list, a contract and its amendments, a standard. The text in force on a
+date is not always the newest version. Edition 2 of a travel policy may be
+published in November and apply only from 1 January; until then edition 1
+is the one employees follow.
+
+For such a document you declare an **effective period** for each version:
+when, according to its publisher, its text is in force. You declare it when
+you ingest (`effective_from`, optionally `effective_until`) or later through
+the period routes; RememberStack never guesses it. Periods are half-open:
+the start is included, the end is not. A period with no end lasts until the
+next declared start of the same document, so declaring edition 2 from
+1 January ends edition 1 on that date without touching it. An explicit end
+withdraws a version, and a gap with nothing in force is allowed.
+
+It is a fourth clock, kept apart from the other three:
+
+| Clock | Question it answers | Travel policy, edition 2 |
+|---|---|---|
+| Said-on time | When was the text written? | `source_modified_at` 2025-11-10 |
+| Belief time | When did the memory receive it? | ingested 2025-11-15 |
+| World time on a claim | What period does a sentence talk about? | "in 2026 the daily allowance is …" |
+| **Effective period** | When is this version's text the one that applies? | from 2026-01-01 |
+
+Do not confuse it with the claim window kind `effective_period` above: that
+is what one sentence says about the world; an effective period of a version
+is what you declare about a whole edition.
+
+Once a document has a declared period, every read with a `time` scope
+selects its versions by period, using the same four modes as facts:
+`current` reads the edition in force now, `at` the one in force at an
+instant, `overlap` every edition in force during a window, and `history`
+every edition that has been in force up to now. A version still being
+processed is never replaced by the one before it: its document contributes
+nothing to that scope until it is ready, and the result says so in
+`freshness.scope_pending`. Documents without declared periods are read
+through their newest processed version under every mode, exactly as before.
+
+Facts are held to the same rule. A fact read under a `time` scope is
+returned only when at least one claim that supports it occurs in a version
+in force for that scope (or in a document without declared periods). So
+before 1 January, `facts_context` answers from edition 1's allowance, even
+though edition 2 is already stored and processed; with
+`time={"mode": "at", "at": "2026-02-01T00:00:00Z"}` it answers from edition 2.
+The fact's own validity window is not changed by this; both conditions must
+hold.
+
+[Read a document as of a date](https://remember.dev/docs/guides/versions-in-force) walks through
+the whole travel policy example.
+
 ## Time on claims and passages
 
 The claims-and-sources side of memory answers "what did the sources say?",
@@ -1692,6 +1831,8 @@ and [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past).
 
 - [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past): recipes for
   point-in-time and period questions.
+- [Read a document as of a date](https://remember.dev/docs/guides/versions-in-force): documents
+  whose editions are in force for a period.
 - [Facts](https://remember.dev/docs/concepts/facts): how windows are chosen and corrected.
 - [Reading a result](https://remember.dev/docs/concepts/reading-results): `validity`, `temporal_match` and
   `temporal_scope` field by field.
@@ -2058,8 +2199,10 @@ would retract the facts it alone supported.
 
 In both modes a new version is processed the same way: it is converted,
 chunked and read. Passages that did not change keep their existing claims
-(same `claim_id`) without being extracted again; changed passages produce new
-claims. New claims go through ordinary fact adjudication, so a changed value
+(same `claim_id`) without being extracted again, even when the new version
+has a later `source_modified_at`: they keep the date their words were first
+written ([text origin time](https://remember.dev/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date)).
+Changed passages produce new claims. New claims go through ordinary fact adjudication, so a changed value
 updates, supersedes or contradicts facts like any other new testimony.
 
 The modes differ in what happens to the **old** claims.
@@ -2129,10 +2272,24 @@ is RememberStack reading the same bytes differently, and it cannot tell
 whether the old reading or the new one is right. So a fact is taken back
 only when the source acts, or when its document is deleted. See [Facts](https://remember.dev/docs/concepts/facts#support-withdrawn).
 
+## Editions that apply for a period
+
+`snapshot` says every version stays standing testimony; it does not say
+which version applies today. For documents whose editions each apply for a
+period (a policy, a price list, a contract), declare **effective periods**
+on a `snapshot` document. Reads with a `time` scope then select the edition
+in force, and facts are only returned when an edition in force supports
+them. Testimony is unaffected: every edition's claims stay current
+testimony and keep counting as evidence. Periods are refused on a `living`
+document, where the newest version is by definition the one that applies.
+See [Time](https://remember.dev/docs/concepts/time#when-a-version-is-in-force) and
+[Read a document as of a date](https://remember.dev/docs/guides/versions-in-force).
+
 ## Unchanged bytes and `source_version_ref`
 
 Sending bytes identical to the document's latest version creates nothing
-(`created=false`), in both modes. See
+(`created=false`), in both modes, unless you also send a `version_key` the
+document has not used yet: a new key always makes a new version. See
 [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources#re-ingesting-the-same-bytes-createdfalse).
 
 `source_version_ref` is an optional revision marker from the source system:
@@ -2443,7 +2600,7 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](https://remember.dev/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](https://remember.dev/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, the four operations, adjacent chunks, and the seven SQL query tools. |
+| [MCP](https://remember.dev/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](https://remember.dev/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 ## The four assured operations
@@ -2527,14 +2684,16 @@ anything the facts do not cover. See
 
 Primitives are the building blocks the operations are made of, exposed for
 when you need one exact shape. They are available over HTTP and in the
-Python client. They are not assured operations and are not separate MCP
-tools.
+Python client. They are not assured operations, and most are not MCP tools;
+the table says which are.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions. |
-| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None)` | Source passages, likewise. |
-| Search documents | `search_documents(query=, filters=, versions="current", k=20)` | Documents (files) by name, metadata and text. Also an MCP tool. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None, time=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions, `time` to text in force for the scope. |
+| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None, time=None)` | Source passages, likewise. |
+| Search documents | `search_documents(query=, filters=, versions="current", k=20, time=None)` | Documents (files) by name, metadata and text. Also an MCP tool. |
+| Section history | `section_history(doc_id=, section_key=, time=None)` | One keyed section across a document's versions, with what changed. Also an MCP tool. |
+| Document references | `document_references(chunk_id= or doc_id=, section_key=, direction="both", time=None)` | What a passage, section or document references, and what references it, resolved against the versions in force. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
@@ -4841,9 +5000,331 @@ when it changed and a label.
 
 ## Next
 
+- [Read a document as of a date](https://remember.dev/docs/guides/versions-in-force): documents
+  whose editions each apply for a period
 - [Cite the source of an answer](https://remember.dev/docs/guides/cite-sources)
 - [Saved queries](https://remember.dev/docs/guides/saved-queries)
 - [Time](https://remember.dev/docs/concepts/time)
+
+---
+
+Source: https://remember.dev/docs/guides/versions-in-force
+
+# Read a document as of a date
+
+Dana keeps the company's travel policy in memory. Edition 1 has applied
+since 1 January 2024. Edition 2 was published on 15 November 2025, and it
+applies from 1 January 2026. Its section 4 raises the daily allowance, and
+its section 7 says that approvals follow section 3 of the expense policy.
+
+Ask "what is the daily allowance?" in December 2025 and the right answer
+comes from edition 1, even though edition 2 is newer and already stored. Ask
+the same question about February 2026 and the answer comes from edition 2.
+"Newest version wins" gets one of the two wrong. This guide shows how to
+tell RememberStack which edition is in force when, and how to read the text,
+the facts, a section's history and the references between documents at any
+date.
+
+The concepts are in [Time](https://remember.dev/docs/concepts/time#when-a-version-is-in-force)
+and [Documents, versions and sources](https://remember.dev/docs/concepts/documents-and-sources#editions-in-force).
+Setup is in the [Quickstart](https://remember.dev/docs/start/quickstart).
+
+## Mark the sections you want to follow
+
+Give a heading a stable key with a trailing `{#key}` block. The key is how
+you name the same section in every edition, and how other documents point
+at it.
+
+```markdown
+# Travel policy
+
+## 4. Per-diem allowance {#per-diem}
+
+The daily allowance for travel within the country is 45 EUR.
+
+## 7. Approvals {#approvals}
+
+Approvals follow section 3 of the expense policy.
+```
+
+The block is removed from the stored title ("4. Per-diem allowance"). Keys
+are 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`; see
+[Section keys](https://remember.dev/docs/concepts/documents-and-sources#section-keys).
+
+## Declare when each edition is in force
+
+Ingest each edition as a version of one document, with a `version_key` to
+name it and `effective_from` for the day it comes into force. Periods need a
+source identity and `snapshot` mode (the default).
+
+```python
+from datetime import UTC, datetime
+
+from remember import Client
+
+memory = Client()
+edition_1 = memory.ingest(
+    "travel_v1.md",
+    source_kind="intranet",
+    source_ref="policy/travel",
+    source_modified_at=datetime(2023, 12, 10, tzinfo=UTC),
+    version_key="edition-1",
+    effective_from=datetime(2024, 1, 1, tzinfo=UTC),
+)
+edition_2 = memory.ingest(
+    "travel_v2.md",
+    source_kind="intranet",
+    source_ref="policy/travel",
+    source_modified_at=datetime(2025, 11, 10, tzinfo=UTC),
+    version_key="edition-2",
+    effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+)
+memory.wait_for_readiness([edition_1.version_id, edition_2.version_id])
+doc_id = edition_2.doc_id
+```
+
+The same with the CLI:
+
+```bash
+remember ingest travel_v2.md --source-kind intranet --source-ref policy/travel \
+  --source-modified-at 2025-11-10T00:00:00+00:00 \
+  --version-key edition-2 --effective-from 2026-01-01T00:00:00+00:00
+```
+
+Neither edition has an end. Edition 1's period ends where the next declared
+start begins, so declaring edition 2 from 1 January 2026 gives edition 1 the
+period 1 January 2024 to 1 January 2026, without a second call. You can
+declare editions in any order; an archive can be back-filled oldest last.
+
+Edition 2 is processed like any new version, but only the changed parts are
+read again. Sections whose words are the same as in edition 1 keep edition
+1's claims and their date, 10 December 2023, because that is when those
+words were written; see
+[Unchanged passages keep their date](https://remember.dev/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date).
+
+A key names one version for good. Sending `edition-2` again with the same
+bytes is a harmless retry. Sending it with different bytes, or sending
+`edition-1` again, is refused with `409` `version_key_conflict`. Two
+editions cannot declare the same start (`409` `effective_period_conflict`).
+
+## Read the text in force
+
+Search passages with a `time` scope. `at` reads the edition in force at an
+instant; `current`, the default, reads the edition in force now.
+
+```python
+december = memory.search_chunks(
+    query="daily allowance",
+    time={"mode": "at", "at": "2025-12-01T00:00:00Z"},
+)
+february = memory.search_chunks(
+    query="daily allowance",
+    time={"mode": "at", "at": "2026-02-01T00:00:00Z"},
+)
+for chunk in december.chunks:
+    print(chunk.version_id, chunk.effective, chunk.served_version)
+```
+
+On 1 December 2025, the passage comes from edition 1, with
+`effective: [{from: 2024-01-01, until: 2026-01-01, until_declared: false}]`
+and `served_version: false`, because edition 2 is already the newest
+processed version. On 1 February 2026 it comes from edition 2.
+
+Every result names the version it came from, and its `chunk_id` and offsets
+belong to that version. `adjacent_chunks` with that `chunk_id` reads the
+text around it in the same edition. A claim that both editions carry is
+returned once, with an entry in `occurrences` for each edition the scope
+selects.
+
+`overlap` reads every edition in force during a window, and `history` every
+edition that has been in force up to now. The same `time` works on
+`search_claims`, `claims_and_sources_context`, `combined_context` and
+`search_documents`. In `search_documents`, each result for this policy lists
+the editions that matched in `matching_editions`, and `p3_path` is `null`
+when the described edition is not the newest processed one.
+
+If the edition in force is still being processed, the policy contributes
+nothing for that time, rather than an outdated edition. The envelope's
+`freshness.scope_pending` names such documents, so an empty answer can be
+told apart from one that is not ready yet. A search with a `documents`
+filter naming the policy's `doc_id` always reports it there.
+
+## Read the facts in force
+
+`facts_context` takes the same `time`. A fact is returned only if a claim
+that supports it occurs in an edition in force for that time.
+
+```python
+before = memory.facts_context(
+    "per diem allowance", time={"mode": "at", "at": "2025-12-01T00:00:00Z"}
+)
+after = memory.facts_context(
+    "per diem allowance", time={"mode": "at", "at": "2026-02-01T00:00:00Z"}
+)
+```
+
+`before` holds the edition-1 allowance; the edition-2 allowance is left out,
+although edition 2 is stored and processed, because no edition in force on
+1 December 2025 supports it. `after` holds the edition-2 allowance. The
+evidence shown with each fact is limited to claims in editions in force,
+shown where they occur in those editions. See
+[Text in force](https://remember.dev/docs/reference/assured-operations#text-in-force).
+
+## Withdraw an edition
+
+On 30 June 2027 the company withdraws the policy without a successor. Give
+edition 2 an end:
+
+```python
+from remember import EffectivePeriodInput
+
+memory.set_effective_periods(
+    doc_id=doc_id,
+    version_id=edition_2.version_id,
+    periods=[
+        EffectivePeriodInput(
+            effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+            effective_until=datetime(2027, 6, 30, tzinfo=UTC),
+        )
+    ],
+)
+```
+
+The call replaces edition 2's complete set of periods. From 30 June 2027,
+`current` returns nothing from the policy, and its facts lose their only
+support in force for `current`. `at` 1 May 2026 still reads edition 2.
+Nothing is reprocessed, and the change is recorded, not overwritten: a read
+that pages with a cursor keeps seeing the periods as they were when it
+started.
+
+Two other tools:
+
+- `set_effective_periods(…, periods=[])` leaves a version with no period.
+  The document still reads by period, so that version is never in
+  force; it does not become "current" again.
+- `clear_effective_time(doc_id=…)` withdraws every period of the document
+  and returns it to "the newest processed version is current". It is the
+  only way back.
+
+## Follow a section across editions
+
+```python
+history = memory.section_history(doc_id=doc_id, section_key="per-diem")
+for row in history.rows:
+    section = row.section
+    print(row.version_key, row.status, section and section.changed)
+```
+
+```text
+edition-1 present None
+edition-2 present True
+```
+
+Rows follow the editions' periods. `changed` compares the section with its
+subsections against the previous edition that had the key; `own_changed`
+compares only the section's own text. A row is `absent` when an edition has
+no such section any more, `not_indexed` when an edition stored before
+section keys existed has not been indexed yet, and `processing` while an
+edition is being processed. `first_chunk_ids` are the passages that hold the
+section's first block. The default scope is `history`.
+
+## Supply references
+
+Section 7 refers to section 3 of the expense policy. RememberStack does not
+find references in text yet, so you supply them, per version, as NDJSON:
+
+```python
+from remember import ReferenceInput, ReferenceTarget
+
+result = memory.set_references(
+    doc_id=doc_id,
+    version_id=edition_2.version_id,
+    references=[
+        ReferenceInput(
+            kind="refers_to",
+            from_section_key="approvals",
+            target=ReferenceTarget(
+                source_kind="intranet",
+                source_ref="policy/expense",
+                section_key="approvals-process",
+            ),
+            binding="floating",
+        )
+    ],
+)
+print(result.outcome, result.generation.status)
+```
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary '{"kind": "refers_to", "from_section_key": "approvals", "target": {"source_kind": "intranet", "source_ref": "policy/expense", "section_key": "approvals-process"}, "binding": "floating"}'
+```
+
+The target is named by its `source_kind` and `source_ref`, so it may not be
+ingested yet. Each call replaces the version's complete set, and the latest
+call wins. The set is checked against edition 2's sections and made active
+in one step by the pipeline; `reference_generations(doc_id=…, version_id=…)`
+shows whether it is `pending`, `active`, or `rejected` with the reason. One
+`from_section_key` the edition does not have rejects the whole set, and the
+previous set stays in place.
+
+A `floating` reference points at whichever editions of the target are in
+force when it is read. A `pinned` one names a single edition by its
+`version_key` (`target.version_key`). An `amends` reference must say whether
+its change has a known date (`change_date_known`, with
+`change_effective_from` when it is `true`); `section_history` of the target
+section lists such references in `amendments`.
+
+## Follow references
+
+```python
+page = memory.document_references(
+    doc_id=doc_id,
+    section_key="approvals",
+    direction="outgoing",
+    time={"mode": "overlap", "from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"},
+)
+for row in page.rows:
+    print(row.status, row.named_target.source_ref, row.target and row.target.applies_during)
+```
+
+While the expense policy is not ingested, the row's status is
+`target_unavailable`, and `named_target` still shows what the policy points
+at. Once the expense policy is ingested, the reference binds to it without
+any further call. If it also declares periods, the query returns one row per
+expense-policy edition in force during 2026, each with `applies_during`, the
+part of the year it covers, and `first_chunk_ids` to read the target
+section. Two expense-policy editions in force at the same time are both
+returned, marked `concurrent`.
+
+Other statuses say exactly what is missing: `target_processing`,
+`target_not_in_force`, `section_not_in_version`, `section_not_indexed` and
+`pinned_version_unavailable`; see
+[`POST /documents/references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+`direction="incoming"` lists the references other documents make to this
+one. Start from a passage with `chunk_id=` instead of `doc_id=` to ask what
+that passage pointed to while its edition was in force.
+
+## In SQL
+
+The query space exposes the same rules:
+[`versions_in_scope`](https://remember.dev/docs/reference/query-space#versions_in_scope) lists
+the versions a scope selects, [`effective_intervals`](https://remember.dev/docs/reference/query-space#effective_intervals)
+the periods with their derived ends,
+[`document_effective_periods_live`](https://remember.dev/docs/reference/query-space#document_effective_periods_live)
+the current declarations, and [`fact_in_scope_support`](https://remember.dev/docs/reference/query-space#fact_in_scope_support)
+the evidence gate for facts. `sections_live` carries `section_key`.
+
+## Next
+
+- [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references):
+  every field and status.
+- [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest#versions-in-force):
+  the rules for version keys and periods, and the period and reference
+  routes.
+- [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past): facts at a date.
 
 ---
 
@@ -6123,7 +6604,7 @@ Source: https://remember.dev/docs/self-hosting/requirements
 # Requirements
 
 A self-hosted RememberStack is a set of containers from one Compose file:
-PostgreSQL, SeaweedFS object storage, an API process and twelve pipeline
+PostgreSQL, SeaweedFS object storage, an API process and thirteen pipeline
 workers. The Compose file builds or pulls everything it needs. This page
 lists what has to be true of the machine and the accounts around it.
 
@@ -6295,7 +6776,7 @@ connections as it needs them, up to these ceilings:
 | `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
 | Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
 
-The ceilings of the default stack add up to 23 + 12 × 16 = 215, which fits
+The ceilings of the default stack add up to 23 + 13 × 16 = 231, which fits
 within 300 with room to spare. They are ceilings, not what a stack holds:
 pools open connections only on demand. Nothing caps the total, though, so
 budget against the ceilings when you add replicas or API processes: each
@@ -6308,7 +6789,7 @@ Other configured bounds:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 15: `postgres`, `object-store`, `setup` (exits), `api`, 12 workers |
+| Containers started by `docker compose up` | 16: `postgres`, `object-store`, `setup` (exits), `api`, 13 workers |
 | Items one worker process runs at once | 1 |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |
@@ -6394,7 +6875,7 @@ RememberStack image, and starts everything in dependency order:
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
-3. `api` and the twelve workers start once `setup` has exited successfully.
+3. `api` and the thirteen workers start once `setup` has exited successfully.
 
 `--wait` returns when the services are running and healthy.
 
@@ -6408,6 +6889,7 @@ RememberStack image, and starts everything in dependency order:
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](https://remember.dev/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
+| `worker-crossref` | `worker --stage crossref` | Writes the references a caller supplied for a version, after checking them against the version's sections. See [Versions in force](https://remember.dev/docs/guides/versions-in-force#supply-references). |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
 | `worker-embed-chunk` | `worker --stage embed_chunk` | Embeds chunks for semantic search. |
 | `worker-extract-claims` | `worker --stage extract_claims` | Reads each chunk and selects the sentences that state something. |
@@ -7582,8 +8064,8 @@ The general pool's size is fixed. The retrieval and graph pools follow
 [Retrieval and graph queries](#retrieval-and-graph-queries)).
 
 Pools open connections only on demand, so a running stack holds fewer than
-the sum of its ceilings. The default stack's ceilings add up to 215 (23 +
-12 × 16), within the default limit of 300. When you add replicas or API
+the sum of its ceilings. The default stack's ceilings add up to 231 (23 +
+13 × 16), within the default limit of 300. When you add replicas or API
 processes, keep the sum of their ceilings under the limit, and when
 PostgreSQL refuses connections (`too many clients already` in the logs),
 raise it in `.env` and restart PostgreSQL:
@@ -8854,11 +9336,12 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 28 documented operations:
+The API has 35 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
+| Ingest, readiness, documents | [Ingest](https://remember.dev/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references` |
+| Sections and references | [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](https://remember.dev/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](https://remember.dev/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
@@ -8982,6 +9465,13 @@ their arguments do not fit in a query string.
 | `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
+| `POST` | `/documents/search` | `read` |
+| `GET` | `/documents/{doc_id}/sections/{section_key}/history` | `read` |
+| `POST` | `/documents/references` | `read` |
+| `GET` | `/documents/{doc_id}/versions/{version_id}/references` | `read` |
+| `PUT` | `/documents/{doc_id}/versions/{version_id}/references` | `write` |
+| `PUT` | `/documents/{doc_id}/versions/{version_id}/effective-periods` | `write` |
+| `DELETE` | `/documents/{doc_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
@@ -9001,7 +9491,10 @@ Any route added later without a classification also requires `write`.
 
 Requests with a body send JSON (`Content-Type: application/json`), except
 `POST /ingest`, which sends the raw file bytes
-(`Content-Type: application/octet-stream`). Every response body is JSON.
+(`Content-Type: application/octet-stream`), and
+`PUT /documents/{doc_id}/versions/{version_id}/references`, which sends
+NDJSON, one JSON object per line (`Content-Type: application/x-ndjson`).
+Every response body is JSON.
 
 Timestamps are ISO 8601 strings. Wherever a timestamp is part of a result, it
 is UTC. Identifiers are UUID strings.
@@ -9094,16 +9587,26 @@ existing version with `"created": false` and starts no new work. For a
 document with a stable source identity (`source_kind` and `source_ref`), bytes
 identical to its latest version are the same no-op; changed bytes become a new
 version of the same document, and so do bytes that match only an older
-version (a revert). See [Ingest](https://remember.dev/docs/reference/http-api/ingest#post-ingest).
+version (a revert). A `version_key` new to the document always creates a
+version, even for identical bytes; sending the latest version's key again
+with the same bytes is the same no-op, so a retry stays safe. See
+[Ingest](https://remember.dev/docs/reference/http-api/ingest#post-ingest).
 
-Every other route only reads, so repeating it is safe.
+The two `PUT` routes replace a version's complete set of effective periods
+or references, so repeating one with the same body changes nothing.
+`DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
+to withdraw. Every other route except `DELETE /documents/{doc_id}` only
+reads, so repeating it is safe.
 
 ## Pagination and truncation
 
 Results are bounded everywhere, and a bound is never silent.
 
-- **`GET /documents`** pages with an opaque `cursor`. Pass the `cursor` from
-  one page to get the next; `null` means there is no next page.
+- **`GET /documents`**, `POST /documents/search` (without a query),
+  `section_history` and `document_references` page with an opaque `cursor`.
+  Pass the `cursor` from one page to get the next; `null` means there is no
+  next page. A page of the last three can hold fewer rows than asked for and
+  still carry a `cursor`.
 - **Envelope results** carry a `truncation` block when a cap applied:
   `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
   `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
@@ -9132,7 +9635,7 @@ call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins, or `http` origins on `localhost`, `127.0.0.1` or
 `[::1]`; empty by default). For those origins it allows:
 
-- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
+- methods `GET`, `POST`, `PUT` and `DELETE` (`PUT` and `DELETE` still need a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.
@@ -9164,12 +9667,21 @@ Source: https://remember.dev/docs/reference/http-api/ingest
 
 # Ingest, readiness and documents
 
-Five routes cover the write side of memory. `POST /ingest` adds one file.
+These routes cover the write side of memory. `POST /ingest` adds one file.
 `POST /readiness` tells you whether the versions you added are processed far
 enough to query. `GET /documents` lists what the deployment holds, newest
 document first. `POST /documents/search` finds documents by name, metadata
 and text. `DELETE /documents/{doc_id}` removes a document from the
 memory.
+
+Four more routes describe versions after ingest.
+`PUT /documents/{doc_id}/versions/{version_id}/effective-periods` declares
+when a version's text is in force, and
+`DELETE /documents/{doc_id}/effective-periods` withdraws every such
+declaration of a document. `PUT /documents/{doc_id}/versions/{version_id}/references`
+supplies the references a version makes, and the `GET` of the same path
+reports what became of them. Reading sections and references across versions
+is on [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references).
 
 Base URL, authentication and error shapes are described in
 [HTTP API conventions](https://remember.dev/docs/reference/http-api).
@@ -9196,6 +9708,9 @@ attribution, which travels in headers so that it never lands in access logs.
 | `versioning_mode` | query | `snapshot` \| `living` | no | `snapshot` | `living` requires `source_kind` and `source_ref`. |
 | `source_version_ref` | query | string | no | | The source system's own revision id. Requires `source_kind` and `source_ref`. |
 | `source_path` | query | string | no | | At least 1 character. Where the file lives at its source, such as a folder path or a URL. Recorded with this version's names; see [File names, titles and paths](#file-names-titles-and-paths). |
+| `version_key` | query | string | no | | 1 to 512 characters. Your own permanent name for this version, unique within the document, such as `edition-2`. Requires `source_kind` and `source_ref`. See [Versions in force](#versions-in-force). |
+| `effective_from` | query | date-time | no | | UTC only. The start (included) of the period during which this version's text is in force. Requires `source_kind` and `source_ref`, and a `snapshot` document. |
+| `effective_until` | query | date-time | no | | UTC only. The end (excluded) of that period. Requires `effective_from`, and must be later than it. Without it the period lasts until the next declared start. |
 | `X-Ingest-Principal-Kind` | header | `user` \| `api_credential` \| `service` | no | | Sent with `X-Ingest-Principal-Ref`. See [Attribution](#attribution). |
 | `X-Ingest-Principal-Ref` | header | string | no | | 1–255 printable ASCII characters. Sent with `X-Ingest-Principal-Kind`. |
 | `Content-Type` | header | | yes | | `application/octet-stream`. |
@@ -9229,6 +9744,51 @@ A MIME type the deployment has no converter for is still accepted. Its
 conversion waits until a converter route for that type exists, and the
 response says so with `"parked": "no_route"`. See
 [File formats and converters](https://remember.dev/docs/self-hosting/converters).
+
+### Versions in force
+
+`effective_from` and `effective_until` declare when this version's text is
+in force, according to whoever publishes it: a policy edition, a price list,
+a contract version. The period is half-open: `effective_from` is included,
+`effective_until` is not. Without `effective_until`, the period ends where the
+next declared start of the same document begins, so declaring a new edition
+ends its predecessor without a second call. Periods are declared by you; the
+engine never infers them. They are a separate clock from `source_modified_at`;
+see [Time](https://remember.dev/docs/concepts/time#when-a-version-is-in-force).
+
+- Periods need a source identity and a `snapshot` document. A `living`
+  document refuses them with `422` `effective_time_requires_snapshot`, because
+  there the newest version is by definition the one that applies.
+- The period is recorded on the version this call created, or, when the bytes
+  match the latest version and nothing is created, on that latest version.
+  Declaring a period never reprocesses anything.
+- The same period declared again is a no-op. The same start with a different
+  end replaces the earlier end.
+- A start that another version of the document already declares is refused
+  with `409` `effective_period_conflict`, and nothing is stored.
+
+Once a document has a declared period, every time-scoped read selects its
+versions by period instead of by "newest processed version"; see
+[Read a document as of a date](https://remember.dev/docs/guides/versions-in-force). Change or
+withdraw periods later with
+[`PUT …/effective-periods`](#put-documentsdoc_idversionsversion_ideffective-periods).
+
+`version_key` names a version permanently, so that a
+[pinned reference](#put-documentsdoc_idversionsversion_idreferences) can
+point at exactly that edition. One version has at most one key, and a key
+names one version for good, even after that version is deleted:
+
+- a key the document has not used yet always creates a new version, even when
+  the bytes equal the latest version's (two editions with identical text are
+  two versions);
+- the key of the latest version, sent again with the same bytes, is a retry:
+  `"created": false`;
+- any other use of an existing key (different bytes, or the key of an older
+  version) is refused with `409` `version_key_conflict`, naming the version
+  that owns the key. To put an older edition back in force, declare a period
+  on that version instead.
+
+Without `version_key`, ingest behaves as described above.
 
 ### What the first ingest fixes
 
@@ -9293,11 +9853,13 @@ does not change it.
   "mime": "text/markdown",
   "title": "Q3 plan",
   "versioning_mode": "snapshot",
-  "parked": null
+  "parked": null,
+  "version_key": null
 }
 ```
 
-`200` means the version is stored. `"parked": null` means only
+`200` means the version is stored. `version_key` is the version's key, or
+`null` when it has none. `"parked": null` means only
 that it is not parked for `no_route`; poll [`POST /readiness`](#post-readiness)
 with the `version_id` for its processing state. `"parked": "no_route"` means
 its conversion is parked waiting for a conversion route for the `mime`: the
@@ -9312,9 +9874,13 @@ for it; it will not become ready on its own.
 | `411` | `length_required` | The deployment caps bodies and the request has no `Content-Length`. |
 | `413` | `body_too_large` | The body is over the deployment's cap. |
 | `409` | `source_forgotten` | A hard forget removed these bytes, or the document with this `source_kind` and `source_ref`. A forget is permanent; do not retry. |
+| `409` | `{"code": "version_key_conflict", "message": …, "version_id": …, "version_key": …}` | The `version_key` already names another version of this document (`version_id`), or names the latest version but the bytes differ. Nothing was stored. |
+| `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version of this document (`version_id`) already declares this `effective_from`. Nothing was stored. |
 | `422` | `source_kind and source_ref must be supplied together` | Only one of the pair was sent. |
-| `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | `source_modified_at`, `source_version_ref` or `versioning_mode=living` without a source identity. |
-| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. |
+| `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | `source_modified_at`, `source_version_ref`, `versioning_mode=living`, `version_key` or `effective_from` without a source identity. |
+| `422` | `source_modified_at must be timezone-aware UTC` | The timestamp has no offset or a non-zero one. The same message names `effective_from` or `effective_until` for those parameters. |
+| `422` | `effective_until requires an earlier effective_from` | `effective_until` without `effective_from`, or not later than it. |
+| `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | A period with `versioning_mode=living`, or for a document that was first ingested as `living`. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with only one header. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or a malformed reference. |
 | `422` | `content_type_mismatch` | The declared MIME contradicts a content class identified from the bytes. No original or catalog row is written. |
@@ -9540,6 +10106,7 @@ A [`DocumentSearchRequest`](https://remember.dev/docs/reference/result-types#doc
 | `query` | string | no | | 1 to 4,096 characters. Words from the file name, title, source path or text. |
 | `filters` | object | no | `{}` | See below. Every filter you give must hold. |
 | `versions` | `current` \| `all` | no | `current` | Which versions of each document may match. |
+| `time` | object | no | `{"mode": "current"}` | For documents with declared effective periods: which editions are candidates. `{"mode": "current"}`, `{"mode": "at", "at": …}`, `{"mode": "overlap", "from": …, "to": …}` or `{"mode": "history"}`; see [Editions in force](#editions-in-force). |
 | `k` | integer | no | `20` | 1 to 200 results. |
 | `cursor` | string | no | | The `cursor` from the previous page. Only without `query`. |
 
@@ -9573,7 +10140,11 @@ documents and deleted versions never match.
 Each result's `p3_path` is the document's stable path in the
 [filesystem view](https://remember.dev/docs/self-hosting/filesystem-views), relative to its root:
 `documents/<doc_id>`. It exists there only when the deployment publishes the
-filesystem view; `source_path` is where the file came from instead.
+filesystem view; `source_path` is where the file came from instead. That
+path always shows the document's served version (its newest processed one),
+so `p3_path` is `null`, and `served_version` is `false`, when the result
+describes another version. Open the described version with `version_id` and
+`representation_id` instead.
 
 **`query`** matches every name the version was stored under: the
 `filename`, `title` and `source_path` of the ingest that created it, and of
@@ -9597,6 +10168,34 @@ is given, `people_matched` lists each distinct person it matched, with the
 number of matching documents, so you can narrow an ambiguous filter (for
 example to an address) instead of guessing.
 
+### Editions in force
+
+For a document with declared [effective periods](#versions-in-force), `time`
+decides which of its versions are candidates: the ones in force now
+(`current`, the default), at an instant (`at`), at any point of a window
+(`overlap`, both ends included) or at any point up to now (`history`). An
+edition that is not in force for `time` never matches, even if it is the
+newest. Documents without declared periods are judged exactly as described
+above, whatever `time` says.
+
+- With `versions: current`, only the candidate whose period starts latest is
+  judged, and the result describes it.
+- With `versions: all`, any candidate may match, and the result describes the
+  matching candidate whose period starts latest.
+
+Each such result carries `effective` (the described version's in-force
+intervals) and `matching_editions`: every candidate that matched, by period
+start, each with `version_id`, `version_no`, `version_key`,
+`representation_id` and `effective`, so you can open any of them without
+another call. When two editions are in force at once (overlapping periods),
+both are candidates; none is chosen silently.
+
+`scope_pending` names the documents this search examined whose edition in
+force for `time` is still being processed, at most 50 ids with a `count`, so
+"nothing is in force" can be told from "the edition in force is not ready
+yet". A search with a `query` examines only the documents it returns; a
+search without one examines every document it walked for the page.
+
 ### Order and paging
 
 With `query`, results are ranked, and there is no next page: `cursor` is
@@ -9608,8 +10207,13 @@ range is a filter, not the order. Pass `cursor` back for the next page. The
 first page fixes an instant, returned as `as_of`, and every later page judges
 each document by its newest version ingested by then. A document added, a
 version promoted to current, or a date filled in by processing while you
-page therefore neither moves nor repeats a row. Start a new search to see
-what arrived since.
+page therefore neither moves nor repeats a row. The same instant is used to
+read effective periods, so a period declared or corrected while you page
+does not move a row either. Start a new search to see what arrived since.
+
+A page stops after walking ten times `k` documents. It can then hold fewer
+than `k` results and still return a `cursor`: keep paging until `cursor` is
+`null`.
 
 ### Response
 
@@ -9628,6 +10232,10 @@ what arrived since.
       "title": null,
       "source_path": "finance/2025",
       "p3_path": "documents/a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+      "served_version": true,
+      "representation_id": "7c2e4b1a-9d3f-4e8a-b6c5-2f1a0e9d8c7b",
+      "effective": [],
+      "matching_editions": [],
       "family": "spreadsheet",
       "created_at": null,
       "modified_at": null,
@@ -9644,7 +10252,8 @@ what arrived since.
   ],
   "cursor": null,
   "as_of": "2026-09-24T10:12:03.117Z",
-  "people_matched": []
+  "people_matched": [],
+  "scope_pending": null
 }
 ```
 
@@ -9780,6 +10389,686 @@ except MemoryApiError as error:
     if error.status_code != 404:
         raise
 ```
+
+## PUT /documents/{doc_id}/versions/{version_id}/effective-periods
+
+Replace the periods during which one version's text is in force. Use it to
+declare periods after ingest, to correct them, or to withdraw a version from
+force by giving it an end.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+
+### Request body
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `periods` | array of objects | yes | 0 to 1,000 items, no two with the same `effective_from`. |
+| `periods[].effective_from` | date-time | yes | UTC (`Z` or `+00:00`). Included. |
+| `periods[].effective_until` | date-time | no | UTC. Excluded; later than `effective_from`. Omitted: the period lasts until the next declared start in the document. |
+
+Unknown fields are rejected (`422`).
+
+### What it does
+
+The body is the version's complete set. Periods already declared with the
+same start and end are kept; the version's other periods are withdrawn, and
+the new ones are declared, in one step. Nothing is reprocessed.
+
+- **An empty set** leaves the version with no period. The document still has
+  declared effective time, so that version is not in force at any
+  instant; it does not become "current" again.
+- **A start that another version already declares** is refused with `409`,
+  and nothing changes.
+- **A `living` document** is refused with `422`.
+
+Declarations are kept as a history: a replaced or withdrawn period is marked
+with the instant it stopped being believed, never deleted. A read that pages
+with a cursor keeps seeing the periods as they were when it started.
+
+### Response
+
+`200` with an [`EffectivePeriodsSet`](https://remember.dev/docs/reference/result-types#effectiveperiodsset):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+  "periods": [
+    {
+      "period_id": "5e2d9c1b-0a3f-4b7e-8d6c-1f2e3a4b5c6d",
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_until": "2027-06-30T00:00:00Z",
+      "declared_at": "2027-06-30T09:12:44.081Z"
+    }
+  ],
+  "declared": 1,
+  "retracted": 1
+}
+```
+
+`periods` lists the version's periods after the call, as declared (an
+`effective_until` of `null` means "until the next declared start").
+`declared` and `retracted` count what this call changed.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+| `409` | `{"code": "effective_period_conflict", "message": …, "version_id": …, "effective_from": …}` | Another version (`version_id`) already declares that start. |
+| `422` | `{"code": "effective_time_requires_snapshot", "message": …}` | The document is `living`. |
+| `422` | validation list | A timestamp without a zero UTC offset, an end not after its start, two periods with the same start, more than 1,000 periods, or an unknown field. |
+
+### Example
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/effective-periods" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"periods": [{"effective_from": "2026-01-01T00:00:00Z", "effective_until": "2027-06-30T00:00:00Z"}]}'
+```
+
+```python
+from datetime import UTC, datetime
+
+from remember import Client, EffectivePeriodInput
+
+memory = Client()
+memory.set_effective_periods(
+    doc_id=doc_id,
+    version_id=version_id,
+    periods=[
+        EffectivePeriodInput(
+            effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+            effective_until=datetime(2027, 6, 30, tzinfo=UTC),
+        )
+    ],
+)
+```
+
+## DELETE /documents/{doc_id}/effective-periods
+
+Withdraw every declared period of a document and return it to "the newest
+processed version is the current one". This is the only way back: a document
+with declared periods keeps reading by period, even with none left, until you
+call it.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+
+There is no body.
+
+### Response
+
+`200` with an [`EffectiveTimeCleared`](https://remember.dev/docs/reference/result-types#effectivetimecleared):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "retracted": 2,
+  "cleared_at": "2027-07-01T08:00:00.412Z"
+}
+```
+
+`retracted` counts the periods withdrawn. `cleared_at` is the instant the
+document left effective time; it is `null` when the document never had
+declared periods, and then nothing changed. The change is recorded, so a
+paged read that started earlier still sees the periods it started with.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `422` | validation list | `doc_id` is not a UUID. |
+
+### Example
+
+```bash
+curl -s -X DELETE "$REMEMBER_API_URL/documents/$DOC_ID/effective-periods" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+cleared = memory.clear_effective_time(doc_id=doc_id)
+```
+
+## PUT /documents/{doc_id}/versions/{version_id}/references
+
+Supply the references one version makes: which sections of which other
+documents it points at, and how. The body replaces the version's complete
+supplied set.
+
+**Scope:** `write`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+| `Content-Type` | header | | no | `application/x-ndjson` by convention; the body is read as NDJSON whatever it says. |
+
+### Request body
+
+NDJSON: one JSON object per line, one reference per object, at most 64 MiB
+(67,108,864 bytes) in all. Blank lines are skipped; an empty body is a set
+with no references. Each object:
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `kind` | string | yes | `refers_to`, `amends`, `implements`, `cites`, `links_to`, `attaches` or `replies_to`. See [Reference kinds](#reference-kinds). |
+| `from_section_key` | string | no | The [section key](https://remember.dev/docs/concepts/documents-and-sources#section-keys) in this version the reference is made from; omitted, the whole document. 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`. |
+| `target.source_kind` | string | yes | 1 to 128 characters. The target document's `source_kind`. |
+| `target.source_ref` | string | yes | 1 to 512 characters. The target document's `source_ref`. The target need not be ingested yet. |
+| `target.version_key` | string | with `binding: pinned` | 1 to 512 characters. The target version's `version_key`. |
+| `target.section_key` | string | no | A section key in the target; omitted, the whole document. Same syntax as `from_section_key`. |
+| `binding` | `floating` \| `pinned` | no | Default `floating`: the reference points at whichever target versions are in force when it is read. `pinned` points at the one version named by `target.version_key`. |
+| `change_date_known` | boolean | with `kind: amends` | Whether the source states when its change takes effect. Only for `amends`. |
+| `change_effective_from` | date-time | with `change_date_known: true` | UTC. When the change takes effect. Only for `amends`, and forbidden when `change_date_known` is `false`. |
+| `source_label` | string | no | 1 to 200 characters. Your own type code for the reference, returned as you sent it. |
+| `context` | string | no | 1 to 2,000 characters. Text around the reference, shown when it is read. |
+
+Unknown fields are rejected.
+
+```text
+{"kind": "refers_to", "from_section_key": "approvals", "target": {"source_kind": "intranet", "source_ref": "policy/expense", "section_key": "approvals-process"}}
+{"kind": "amends", "from_section_key": "per-diem", "target": {"source_kind": "intranet", "source_ref": "policy/travel-rates", "version_key": "2025"}, "binding": "pinned", "change_date_known": true, "change_effective_from": "2026-01-01T00:00:00Z"}
+```
+
+### Reference kinds
+
+| Kind | Meaning |
+|---|---|
+| `refers_to` | An in-text pointer to another passage or document: "see section 4.2", "as defined in section 3". |
+| `amends` | The source changes the target's text or force: an amendment to a contract clause. |
+| `implements` | The source elaborates or carries out the target: a procedure that implements a policy. |
+| `cites` | A bibliographic citation. |
+| `links_to` | A hyperlink. |
+| `attaches` | Container membership, such as an e-mail attachment. |
+| `replies_to` | Conversation threading. |
+
+### What it does
+
+The latest call wins. Each call is compared with the version's current
+intent: its newest set that is neither rejected nor replaced.
+
+- **The same set again** (the same references in the same order; spacing and
+  key order do not matter) is a retry and
+  changes nothing: `outcome` is `unchanged`.
+- **The set that is already active**, sent while a newer set is still
+  pending, cancels the pending set: `outcome` is `pending_cancelled`, and the
+  active set stays.
+- **Any other set** is recorded as a new `pending` generation and replaces
+  every older pending one: `outcome` is `created`.
+
+A pending set is checked against the version's sections and then made
+active by the pipeline's `crossref` stage, in one step that also retires the
+previously active set. Readers never see half of a set. The check is all or
+nothing: one `from_section_key` the version does not have rejects the whole
+set (`status: "rejected"` with `errors`), and the previously active set stays
+active. When the version's sections already exist, this check runs during
+the call, so a `created` generation can come back already `rejected`. Section
+keys in `target` are not checked here; they are checked whenever the
+reference is read.
+
+A target is named by its `source_kind` and `source_ref`, so a reference may
+point at a document you have not ingested yet. It starts working when that
+document is first ingested.
+
+[`POST /readiness`](#post-readiness) does not wait for references. Check a
+set with [`GET …/references`](#get-documentsdoc_idversionsversion_idreferences),
+and read references with
+[`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+### Response
+
+`200` with a [`ReferencesSet`](https://remember.dev/docs/reference/result-types#referencesset):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+  "outcome": "created",
+  "generation": {
+    "generation_id": "3d1c0b9a-8e7f-4a6b-9c5d-4e3f2a1b0c9d",
+    "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+    "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+    "origin": "supplied",
+    "status": "pending",
+    "request_seq": 1,
+    "input_hash": "9b1f…",
+    "item_count": 2,
+    "representation_id": null,
+    "crossref_version": null,
+    "errors": [],
+    "created_at": "2025-11-15T10:02:31.551Z",
+    "activated_at": null
+  }
+}
+```
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+| `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | The body is over 64 MiB. |
+| `422` | `{"code": "invalid_reference_set", "line": 3, "message": "…"}` | A line is not a JSON object, or not a valid reference: a missing or unknown field, a pinned reference without `target.version_key`, an `amends` without `change_date_known`, or a date on another kind. `line` is the first failing line. Nothing was recorded. |
+
+### Example
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary @references.ndjson
+```
+
+```python
+from remember import Client, ReferenceInput, ReferenceTarget
+
+memory = Client()
+result = memory.set_references(
+    doc_id=doc_id,
+    version_id=version_id,
+    references=[
+        ReferenceInput(
+            kind="refers_to",
+            from_section_key="approvals",
+            target=ReferenceTarget(
+                source_kind="intranet",
+                source_ref="policy/expense",
+                section_key="approvals-process",
+            ),
+        )
+    ],
+)
+print(result.outcome, result.generation.status)
+```
+
+## GET /documents/{doc_id}/versions/{version_id}/references
+
+Report a version's reference generations, newest first: each supplied set
+and what became of it.
+
+**Scope:** `read`.
+
+### Parameters
+
+| Name | In | Type | Required | Constraints |
+|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | A live document. |
+| `version_id` | path | UUID | yes | A version of that document that is not deleted. |
+
+### Response
+
+`200` with a [`ReferenceGenerations`](https://remember.dev/docs/reference/result-types#referencegenerations):
+`doc_id`, `version_id` and `generations`, newest first, at most 100 (an
+active generation is always included). Each generation's `status` is one of:
+
+| Status | Meaning |
+|---|---|
+| `pending` | Recorded, waiting for the pipeline to check and activate it. |
+| `active` | Its references are the ones readers see. At most one per version and origin. |
+| `rejected` | It named a section the version does not have. `errors` lists up to 100 `{item, field, reason}` entries; `item` is the reference's 1-based position. |
+| `superseded` | A later set replaced it, or it was cancelled before it became active. |
+
+`origin` is `supplied` for sets sent through `PUT`. A generation with origin
+`extracted` would hold references the engine found in the text itself; this
+release finds none ([What is not built yet](https://remember.dev/docs/project/not-built-yet)).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `version_not_found` | The version is not a live version of this document. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+for generation in memory.reference_generations(doc_id=doc_id, version_id=version_id).generations:
+    print(generation.status, generation.item_count, generation.errors)
+```
+
+---
+
+Source: https://remember.dev/docs/reference/http-api/sections-and-references
+
+# Section history and references
+
+Two reads work at the level of a document's sections rather than its
+passages. `GET /documents/{doc_id}/sections/{section_key}/history` lists
+what one [keyed section](https://remember.dev/docs/concepts/documents-and-sources#section-keys)
+held in each version of a document, and whether it changed.
+`POST /documents/references` lists the references a passage, section or
+document makes and receives, each resolved against the versions of the
+target that were in force at the time.
+
+Both take the same `time` scope as the other text reads, and both are
+easier to follow with a worked example: see
+[Read a document as of a date](https://remember.dev/docs/guides/versions-in-force). The writes
+they depend on (declaring effective periods and supplying references) are on
+[Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest).
+
+Base URL, authentication and error shapes are described in
+[HTTP API conventions](https://remember.dev/docs/reference/http-api).
+
+## The time scope
+
+| Mode | Selects |
+|---|---|
+| `current` | Versions in force now. |
+| `at` | Versions in force at the instant `at`. |
+| `overlap` | Versions in force at any point from `from` to `to`, both included. |
+| `history` | Versions in force at any point up to now. |
+
+For a document with declared [effective periods](https://remember.dev/docs/concepts/time#when-a-version-is-in-force),
+a version is selected by its periods. For any other document, every mode
+selects its served version, the newest processed one. Instants must carry a
+time zone. A cursor keeps the instant the first page was read at, and reads
+the periods as they were known then, so a correction made while you page
+cannot move a row from one page to another.
+
+## GET /documents/{doc_id}/sections/{section_key}/history
+
+List, for each version the time scope selects, what that version holds
+under one section key.
+
+**Scope:** `read`.
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | | A live document. |
+| `section_key` | path | string | yes | | 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`, without the leading `#`. A key may contain `/`. |
+| `mode` | query | `current` \| `at` \| `overlap` \| `history` | no | `history` | The time scope. |
+| `at` | query | date-time | with `mode=at` | | |
+| `from`, `to` | query | date-time | with `mode=overlap` | | `to` not before `from`. |
+| `k` | query | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | query | string | no | | The previous page's `cursor`. |
+
+### Response
+
+`200` with a [`SectionHistoryPage`](https://remember.dev/docs/reference/result-types#sectionhistorypage):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "section_key": "per-diem",
+  "periodised": true,
+  "rows": [
+    {
+      "version_id": "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d",
+      "version_no": 1,
+      "version_key": "edition-1",
+      "effective": [{"from": "2024-01-01T00:00:00Z", "until": "2026-01-01T00:00:00Z", "until_declared": false}],
+      "status": "present",
+      "section": {
+        "section_id": "…",
+        "node_path": "0.4",
+        "title": "4. Per-diem allowance",
+        "own_content_hash": "…",
+        "subtree_content_hash": "…",
+        "changed": null,
+        "own_changed": null,
+        "first_chunk_ids": ["…"]
+      }
+    },
+    {
+      "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "version_no": 2,
+      "version_key": "edition-2",
+      "effective": [{"from": "2026-01-01T00:00:00Z", "until": "2027-06-30T00:00:00Z", "until_declared": true}],
+      "status": "present",
+      "section": {"title": "4. Per-diem allowance", "changed": true, "own_changed": true, "…": "…"}
+    }
+  ],
+  "amendments": [],
+  "cursor": null,
+  "evaluated_at": "2027-07-01T08:00:00Z",
+  "believed_at": "2027-07-01T08:00:00Z"
+}
+```
+
+Rows are ordered by the start of each version's period for a document with
+declared periods (`periodised: true`), and by `version_no` otherwise. For a
+document without declared periods, `history` lists every live version (the
+served one with an open interval, the others with none), and every other
+mode lists the served version only.
+
+Each row's `status`:
+
+| Status | Meaning |
+|---|---|
+| `present` | The version has a section with this key; `section` describes it. |
+| `absent` | The version has been indexed for section keys and has no such section: it was removed or never existed there. |
+| `not_indexed` | The version's sections were stored before section keys existed and have not been indexed yet, so whether it has the key is unknown. |
+| `processing` | The version is selected but not fully processed yet. |
+
+In `section`, `changed` compares the whole section, subsections included,
+with the previous row that held the key; `own_changed` compares only the
+section's own text. Both are `null` on the first row that holds the key.
+`first_chunk_ids` are the passages holding the section's first block: pass
+one to [`adjacent_chunks`](https://remember.dev/docs/reference/http-api/search#get-chunkschunk_idadjacent)
+to read the section.
+
+`amendments`, on the first page only, lists up to 200 references of kind
+`amends` that live documents make to this section, each with
+`change_effective_from` and `change_date_known`. See
+[`ReferenceInput`](https://remember.dev/docs/reference/result-types#referenceinput).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/documents/$DOC_ID/sections/per-diem/history" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+page = memory.section_history(doc_id=doc_id, section_key="per-diem")
+for row in page.rows:
+    changed = row.section.changed if row.section else None
+    print(row.version_key, row.status, changed)
+```
+
+## POST /documents/references
+
+List what a passage, a section or a whole document references, and what
+references it, across versions and time.
+
+**Scope:** `read`.
+
+### Request body
+
+A [`DocumentReferencesRequest`](https://remember.dev/docs/reference/result-types#documentreferencesrequest):
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `chunk_id` | UUID | one of `chunk_id`, `doc_id` | | A passage. Its version and its section are the source. |
+| `doc_id` | UUID | one of `chunk_id`, `doc_id` | | A document. The versions `time` selects are the source. |
+| `section_key` | string | no | | Only with `doc_id`: the section and its subsections. Omitted: the whole document. |
+| `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
+| `kinds` | array of strings | no | all | 1 to 7 of the [reference kinds](https://remember.dev/docs/reference/http-api/ingest#reference-kinds). |
+| `time` | object | no | see below | The [time scope](#the-time-scope) of the source versions. |
+| `k` | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | string | no | | The previous page's `cursor`. |
+
+Unknown fields are rejected.
+
+`time` defaults to `current`. With `chunk_id` and no `time`, the window is
+the chunk's own version's in-force time up to now: "what did this passage
+point to while it was in force". For a document without declared periods,
+that is the instant now.
+
+### What it returns
+
+**The source side.** Outgoing rows are the references the selected source
+versions make from the section and its subsections. Incoming rows are
+references other documents make to this document, or to the section or one of
+its subsections, from versions that their own `time` scope selects. A section
+with more than 1,000 keyed subsections is too broad for one call: the result
+has no rows and a `too_broad` block asking for a narrower section.
+
+Each source version contributes its **source window**: its in-force time
+inside the query window (the instant for `current` and `at`, `from`–`to` for
+`overlap`, everything up to now for `history`). A document without declared
+periods counts as in force throughout.
+
+**The target side.** Each reference is resolved against the target versions
+for its source window:
+
+- a **floating** reference to a document with declared periods gives one row
+  per target version in force during the window, with `applies_during`, the
+  part of the window it covers. Two versions in force at the same time
+  (overlapping periods, or a point in time where both are in force) are both
+  returned, marked `concurrent: true`; none is chosen for you;
+- a **floating** reference to any other document gives one row for its
+  served version;
+- a **pinned** reference gives one row for the version with the named
+  `version_key`, whether or not it is in force, with that version's own
+  periods in `target.effective`.
+
+The target version is chosen first, then checked. If it cannot be read, the
+row says so; it never falls back to another version.
+
+| `status` | Meaning |
+|---|---|
+| `resolved` | The target version is readable, and the named section is in it. `target` has the version, its `representation_id`, the section's title and `first_chunk_ids` (empty when the reference names the whole document). |
+| `target_processing` | The target version is not fully processed yet. `target` has the version and `applies_during`, not the section. |
+| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, or it is deleted or forgotten. One status for all three, so a deletion is not revealed. `target` is `null`. |
+| `target_not_in_force` | Floating reference: the target exists, but none of its versions is in force during the window. |
+| `section_not_in_version` | The target version has no section with the named key. |
+| `section_not_indexed` | The target version's sections have not been indexed for keys yet, so whether it has the section is unknown. |
+| `pinned_version_unavailable` | Pinned reference: the target has no live version with that `version_key`. |
+
+Every row carries `named_target`: the target exactly as the source names it
+(`source_kind`, `source_ref`, `version_key`, `section_key`), whatever its
+status. That is part of the source document's content, like the passage
+that contains the reference.
+
+**Order and paging.** Rows are ordered by direction (outgoing first), source
+document, source version, reference, then target version. A page reads at
+most ten times `k` references; it can come back shorter than `k` with a
+`cursor`. Keep paging until `cursor` is `null`.
+
+### Response
+
+`200` with a [`DocumentReferencesPage`](https://remember.dev/docs/reference/result-types#documentreferencespage):
+
+```json
+{
+  "rows": [
+    {
+      "direction": "outgoing",
+      "crossref_id": "…",
+      "kind": "refers_to",
+      "origin": "supplied",
+      "binding": "floating",
+      "source_label": null,
+      "context": null,
+      "change_effective_from": null,
+      "change_date_known": null,
+      "source": {
+        "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+        "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+        "version_key": "edition-2",
+        "section_key": "approvals",
+        "section_title": "7. Approvals",
+        "window": {"from": "2026-01-01T00:00:00Z", "until": "2026-12-31T00:00:00Z", "until_inclusive": true}
+      },
+      "named_target": {"source_kind": "intranet", "source_ref": "policy/expense", "version_key": null, "section_key": "approvals-process"},
+      "status": "resolved",
+      "target": {
+        "doc_id": "…",
+        "version_id": "…",
+        "version_key": "2026",
+        "representation_id": "…",
+        "section_key": "approvals-process",
+        "section_title": "3. Approvals process",
+        "first_chunk_ids": ["…"],
+        "effective": [{"from": "2025-07-01T00:00:00Z", "until": null, "until_declared": false}],
+        "applies_during": {"from": "2026-01-01T00:00:00Z", "until": "2026-12-31T00:00:00Z", "until_inclusive": true},
+        "concurrent": false
+      }
+    }
+  ],
+  "cursor": null,
+  "evaluated_at": "2026-03-02T09:00:00Z",
+  "believed_at": "2026-03-02T09:00:00Z",
+  "too_broad": null
+}
+```
+
+A window runs from `from` (included; `null` is unbounded) to `until`
+(excluded, unless `until_inclusive` is `true`; `null` is unbounded). An
+instant window has `from` equal to `until` and `until_inclusive: true`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `chunk_not_found` | No such passage, or its document is deleted. |
+| `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"doc_id\": \"$DOC_ID\", \"section_key\": \"approvals\", \"direction\": \"outgoing\",
+       \"time\": {\"mode\": \"overlap\", \"from\": \"2026-01-01T00:00:00Z\", \"to\": \"2026-12-31T00:00:00Z\"}}"
+```
+
+```python
+page = memory.document_references(
+    doc_id=doc_id,
+    section_key="approvals",
+    direction="outgoing",
+    time={"mode": "overlap", "from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"},
+)
+for row in page.rows:
+    print(row.status, row.named_target.source_ref, row.target and row.target.applies_during)
+```
+
+References found in the text itself (links, citations) are not extracted
+yet; today every reference is one you [supplied](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+See [What is not built yet](https://remember.dev/docs/project/not-built-yet).
 
 ---
 
@@ -9944,8 +11233,8 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
 says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
 `facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` takes `query` and `time`; `claims_and_sources_context`
-takes `query`; `resolve_entity` takes `name`. Use `run_operation` for the rest
+`combined_context` and `claims_and_sources_context` take `query` and `time`;
+`resolve_entity` takes `name`. Use `run_operation` for the rest
 (`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
 operations).
 
@@ -10060,7 +11349,10 @@ now or at a past instant.
 Every filter is optional; the ones you send are combined with AND. A
 relation matches when it has not been invalidated and its validity window
 covers `valid_at` (or now). A relation with no known start or end is treated
-as open on that side.
+as open on that side. A relation must also pass the
+[evidence gate](https://remember.dev/docs/reference/assured-operations#text-in-force) at
+`valid_at` (or now): a relation whose only supporting text is a version not
+in force at that instant is left out.
 
 At most `k` relations come back. When more match, `truncation` says so
 (`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
@@ -10119,7 +11411,8 @@ well they match a phrase.
 | `k` | query | integer | no | `10` | 1–400. The most observations to return. |
 
 Without `property_query`, the live observations on the entity whose validity
-covers now are returned, strongest evidence first, at most `k`; when more
+covers now, and that pass the
+[evidence gate](https://remember.dev/docs/reference/assured-operations#text-in-force) now, are returned, strongest evidence first, at most `k`; when more
 exist, `truncation` says so (`reason: "lookup_k_limit"`). With
 `property_query`, up to `k` candidates are nominated by similarity and each is
 re-checked against the database before it is returned; candidates that no
@@ -10299,6 +11592,45 @@ where the claim was first extracted, which can be another version of the same
 document.
 Every result cites the document it came from.
 
+### Reading text as of a date
+
+The `POST` forms also accept `time`, the same scope the assured operations
+take: `{"mode": "current"}` (the default), `{"mode": "at", "at": …}`,
+`{"mode": "overlap", "from": …, "to": …}` (both ends included) or
+`{"mode": "history"}` (any point up to now). It matters for documents whose
+versions have declared [effective periods](https://remember.dev/docs/concepts/time#when-a-version-is-in-force):
+for those, only versions in force for the scope are searched. A document
+without declared periods is searched in its served version, its newest
+processed one, whatever `time` says, so leaving `time` out changes nothing
+for such a corpus.
+
+Like the `documents` filter, the scope is applied while ranking, before the
+`k` best are chosen. What changes in the results for a document with
+declared periods:
+
+- **Every result names its version.** A chunk's `version_id`,
+  `representation_id` and offsets are those of the selected version, and
+  `effective` lists that version's in-force intervals. `served_version` is
+  `false` when the selected version is not the document's served version.
+- **A claim is shown where it is in force.** A claim that occurs in several
+  versions is returned once, with one entry in `occurrences` per selected
+  version, earliest period first. Its top-level `chunk_id`, offsets,
+  `evidence_spans`, `version_id`, `representation_id` and `effective` are
+  those of the first occurrence, not of the passage the claim was first
+  extracted from.
+- **Not in force, not returned.** Under `current`, an edition that is not in
+  force yet, or no longer, contributes nothing. When two editions are in
+  force at once, both are searched and each result says which it came from.
+- **Still processing.** While the version in force is still being processed,
+  its document contributes nothing; it never falls back to the version it
+  replaces. The envelope's `freshness.scope_pending` lists such documents
+  (at most 50 ids, with a `count`) among the documents the results name and
+  the `doc_ids` your `documents` filter names, so "nothing is in force" can
+  be told from "not ready yet".
+
+`temporal_scope` reports the mode applied. The `GET` forms take no `time`
+and always read `current`.
+
 ## GET /search/claims
 
 Search claims.
@@ -10356,6 +11688,7 @@ Search claims, with the query in the body.
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
 | `documents` | [`DocumentSearchFilters`](https://remember.dev/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
+| `time` | object | no | `{"mode": "current"}` | Only text in force for the scope; see [Reading text as of a date](#reading-text-as-of-a-date). |
 
 Unknown fields are rejected.
 
@@ -10365,8 +11698,9 @@ As for [`GET /search/claims`](#get-searchclaims).
 
 ### Errors
 
-As for `GET /search/claims`, plus `422` for an empty or over-long `query`
-or an unknown field.
+As for `GET /search/claims`, plus `422` for an empty or over-long `query`,
+an unknown field, or a malformed `time` (an unknown mode, a missing instant,
+an instant without a time zone, or `to` before `from`).
 
 ### Example
 
@@ -10378,7 +11712,7 @@ curl -s -X POST "$REMEMBER_API_URL/search/claims" \
 ```
 
 The `remember` Python client's `search_claims` uses `GET`, and the `POST` form
-when you pass `documents`.
+when you pass `documents` or `time`.
 
 ## GET /search/chunks
 
@@ -10444,8 +11778,15 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
   -d '{"query": "rollback plan", "k": 10}'
 ```
 
+```bash
+curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "daily allowance", "time": {"mode": "at", "at": "2026-02-01T00:00:00Z"}}'
+```
+
 The `remember` Python client's `search_chunks` uses `GET`, and the `POST` form
-when you pass `documents`.
+when you pass `documents` or `time`.
 
 ## GET /chunks/{chunk_id}/adjacent
 
@@ -10460,7 +11801,9 @@ read a search hit in context.
 | `window` | query | integer | no | `1` | 1 or 2. How many chunks on each side. |
 
 The neighbours come from the same version of the same document as the target
-chunk.
+chunk. The target may be a chunk of any version that is not deleted and is
+fully processed, not only the served one, so a passage returned for an older
+or future edition can be read in context.
 
 ### Response
 
@@ -10564,6 +11907,14 @@ request runs. The result's `temporal_scope` always has mode `as_of` and names
 both clocks. Send them in UTC (`Z` or `+00:00`); a timestamp with no offset
 or another offset is refused with `422`. See
 [Time](https://remember.dev/docs/concepts/time).
+
+Entity traversals (`/graph/neighborhood`, `/graph/path`) apply the
+[evidence gate](https://remember.dev/docs/reference/assured-operations#text-in-force) at
+`valid_at`, reading effective periods as known at `believed_at`: a relation
+whose only supporting text is a document version not in force at `valid_at`
+is not an edge. A neighbourhood leaves such edges out before its budgets
+apply. A path search drops any path through such an edge after the search,
+and then marks the answer truncated.
 
 ## POST /graph/neighborhood
 
@@ -10701,7 +12052,10 @@ cites B, B cites C, and so on.
 | `max_hops` | integer | no | `6` | 1 to 6. |
 
 Unknown fields are rejected. At most 10 paths are returned. This route takes
-no clocks; it reads the current document graph.
+no clocks; it reads the current document graph. An edge here is one per pair
+of documents and reference kind, among the resolved references made by the
+versions in force now. To follow references at section level, or at another
+time, use [`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
 
 ### Response
 
@@ -10831,7 +12185,7 @@ any earlier `QueryResult` or `IngestedVersion` gives it to you.
   "grade": "exploratory_tabular",
   "request_id": "2b0f…",
   "deployment_id": "5d0c7a52-3b1e-4f55-9a8e-0e6c1f2b7a10",
-  "surface_manifest_hash": "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2",
+  "surface_manifest_hash": "327694a447119ba34e5386b2886311a2350cd59b0fcaa501efc261932e42a78b",
   "query_space_schema": "memory_v1",
   "query_hash": "91c4…",
   "query_language": "sql",
@@ -11234,12 +12588,14 @@ None.
   },
   "document_binding_generation": "…",
   "tools": {
-    "ingest": 1,
+    "ingest": 2,
     "pipeline_readiness": 1,
     "delete_document": 1,
-    "search_documents": 1,
+    "search_documents": 2,
+    "section_history": 1,
+    "document_references": 1,
     "resolve_entity": 1,
-    "claims_and_sources_context": 2,
+    "claims_and_sources_context": 3,
     "facts_context": 3,
     "combined_context": 4,
     "query_sql": 1,
@@ -11253,8 +12609,9 @@ None.
 | `build_revision` | The source revision stamped into the image when it was built (`REMEMBERSTACK_BUILD_REVISION`). Empty when the image was built without one. |
 | `model_bindings` | The model each pipeline role is bound to, by role name. A self-hosted deployment reports `structure_fallback`, `skeleton_check`, `section_role`, `section_summary`, `claim_extraction`, `relation_normalization`, `entity_resolution`, `fact_adjudication`, `p1_embedding` (the one embedding model, used for every vector), and the OpenRouter settings `openrouter_embedding_provider`, `openrouter_embedding_provider_order`, `openrouter_max_completion_tokens`, `openrouter_reasoning_effort` and `openrouter_reasoning_effort_map`. No secrets. |
 | `document_binding_generation` | The deployment's current document binding generation, or `null`. |
-| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, and `search_documents`
-only when document search is. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
+| `tools` | Each MCP memory tool this deployment serves, by tool name, with its tool version. A tool appears only when the route it calls is served: the seven query tools (`query_sql`, `explain_sql`, `describe_query_space`, `search_query_space`, `list_saved_queries`, `describe_saved_query`, `run_saved_query`) only when the open query space is enabled, `delete_document` only when document deletion is, `search_documents`
+only when document search is, and `section_history` and
+`document_references` only when their routes are. A tool's version rises whenever a call it accepts would fail, or mean something else, on a deployment serving the previous version. |
 
 The first three fields also appear on every
 [`PipelineReadinessReport`](https://remember.dev/docs/reference/result-types#pipelinereadinessreport).
@@ -11398,7 +12755,7 @@ four:
 | Operation | Version | Answers from | Result | Grain |
 |---|---|---|---|---|
 | [`resolve_entity`](#resolve_entity) | 1 | identity | `Envelope` | `fact` |
-| [`claims_and_sources_context`](#claims_and_sources_context) | 2 | what sources said | `Envelope` | `evidence` |
+| [`claims_and_sources_context`](#claims_and_sources_context) | 3 | what sources said | `Envelope` | `evidence` |
 | [`facts_context`](#facts_context) | 3 | what is held true | `Envelope` | `fact` |
 | [`combined_context`](#combined_context) | 4 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
 
@@ -11448,8 +12805,12 @@ A refused argument is HTTP `422` with
 
 ## The time object
 
-`facts_context` and `combined_context` take an optional `time` object that
-fixes which facts count. The default is `{"mode": "current"}`.
+`claims_and_sources_context`, `facts_context` and `combined_context` take an
+optional `time` object. The default is `{"mode": "current"}`. For facts it
+fixes which facts count, by their validity. For text it fixes which versions
+of a document with declared
+[effective periods](https://remember.dev/docs/concepts/time#when-a-version-is-in-force) are read;
+see [Text in force](#text-in-force).
 
 | Mode | Shape | Selects | Result `temporal_scope.mode` |
 |---|---|---|---|
@@ -11473,6 +12834,33 @@ at a past instant, use the [graph routes](https://remember.dev/docs/reference/ht
 Each returned fact carries `temporal_match`: `confirmed` when its validity
 certainly matches the requested time, `possible` when it may (for example, a
 fact with no known start). See [Time](https://remember.dev/docs/concepts/time).
+
+### Text in force
+
+When a document declares effective periods, the same `time` object selects
+which of its versions count as text: those in force now (`current`), at `at`,
+at any point from `from` to `to`, or at any point up to now (`history`). A
+document without declared periods always counts through its served version,
+so `time` changes nothing for it.
+
+- `claims_and_sources_context` searches only the versions in force, in every
+  channel, before the `k` best are chosen. Results name the version they came
+  from, as described in
+  [Reading text as of a date](https://remember.dev/docs/reference/http-api/search#reading-text-as-of-a-date),
+  and `freshness.scope_pending` names documents whose version in force is
+  still being processed.
+- `facts_context` applies an **evidence gate**: a fact is returned only if
+  its validity matches `time` *and* at least one claim supporting it occurs
+  in a version in force for `time`, or in a document without declared
+  periods. A fact whose only support is an edition not yet in force, or
+  already withdrawn, is not a candidate at all, so it never crowds an
+  in-force fact out of the `k` best. The evidence shown is limited to such
+  claims, each shown where it occurs in a version in force. The gate changes
+  what is shown, never the fact's validity, evidence counts or support.
+
+The two conditions are independent. If a claim says something holds "from
+2025" but it occurs only in an edition in force from 2026, a `current` read
+in mid-2025 does not return the fact, and an `at` read in February 2026 does.
 
 ## resolve_entity
 
@@ -11529,7 +12917,7 @@ Return what the sources said about a query: claims and the source passages
 around them, with high recall. This is testimony, not the memory's settled
 view.
 
-**Version** 2. **Answer intent** `claims_and_sources`. **Result contract**
+**Version** 3. **Answer intent** `claims_and_sources`. **Result contract**
 `envelope`, grain `evidence`. **Plan** one step: `claims_and_sources_context`.
 
 ### Parameters
@@ -11540,6 +12928,7 @@ view.
 | `entity_ids` | array of UUID | no | none | 1 to 20 unique ids. Restricts the search to claims and chunks about these entities. |
 | `k` | integer | no | `50` | 1 to 100. The most claims, and separately the most chunks, returned. |
 | `candidate_k` | integer | no | `200` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
+| `time` | object | no | `{"mode": "current"}` | Which versions of documents with declared effective periods are read. See [The time object](#the-time-object). |
 
 ### What it does
 
@@ -11561,7 +12950,7 @@ the result is `negative.kind` `unknown_entity`.
 `evidence` holds up to `k` [`EvidenceResult`](https://remember.dev/docs/reference/result-types#evidenceresult)
 entries and `chunks` up to `k`
 [`ChunkEvidenceResult`](https://remember.dev/docs/reference/result-types#chunkevidenceresult) entries.
-`temporal_scope.mode` is `current`. `truncation` is set when more results
+`temporal_scope.mode` is the `time` mode applied. `truncation` is set when more results
 existed than `k`, or when a channel returned its full `candidate_k` (then
 `total_is_exact` is `false`). Nothing found: `negative.kind` `known_empty`.
 
@@ -11742,7 +13131,7 @@ children are `claims_and_sources_context` then `facts_context`; its
 | `entity_ids` | array of UUID | no | none | 1 to 19 unique ids. Passed to both children. |
 | `hops` | integer | no | `1` | 1 to 2. Passed to `facts_context`. |
 | `predicate` | string | no | none | 1 to 200 characters. Passed to `facts_context`. |
-| `time` | object | no | `{"mode": "current"}` | Passed to `facts_context`. |
+| `time` | object | no | `{"mode": "current"}` | Passed to both children. |
 
 The children's other parameters are fixed: `claims_and_sources_context` runs
 with `k` 50 and `candidate_k` 200; `facts_context` with `k` 15 and
@@ -11761,8 +13150,7 @@ A [`ContextBundle/v2`](https://remember.dev/docs/reference/result-types#contextb
 ```
 
 Each child is a complete envelope with its own `negative`, `truncation` and
-`temporal_scope`. `claims_and_sources` is always current; `facts` follows
-`time`. Read them separately: a claim in the first is testimony, a fact in the
+`temporal_scope`. Both follow `time`. Read them separately: a claim in the first is testimony, a fact in the
 second is the memory's view. See [Reading a result](https://remember.dev/docs/concepts/reading-results).
 
 ### Example
@@ -11788,7 +13176,7 @@ per operation. The values that identify the shipped build:
 | Operation | `version` | `result_contract` | `output_grain` | `answer_intent` | `implementation_plan_hash` |
 |---|---|---|---|---|---|
 | `resolve_entity` | 1 | `envelope` | `fact` | `identity` | `fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a` |
-| `claims_and_sources_context` | 2 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
+| `claims_and_sources_context` | 3 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
 | `facts_context` | 3 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
 | `combined_context` | 4 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
 
@@ -11816,6 +13204,7 @@ The shapes group into five families:
 | Context bundle | [`ContextBundle/v2`](#contextbundlev2) | `combined_context`. |
 | Query result | [`QueryResult/v1`](#queryresultv1) | `POST /query/sql`, `POST /query/sql/explain`, `POST /query/saved/{namespace}/{name}/run`. |
 | Write and readiness | [`IngestedVersion`](#ingestedversion), [`PipelineReadinessReport`](#pipelinereadinessreport), [`DocumentPage`](#documentpage) | `POST /ingest`, `POST /readiness`, `GET /documents`. |
+| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `DELETE /documents/{doc_id}`, the effective-period and reference routes, `section_history`, `document_references`. |
 | Deployment | [`ToolDescriptor`](#tooldescriptor), [`DeploymentBuildInfo`](#deploymentbuildinfo) | `GET /operations`, `GET /deployment`. |
 
 ## Conventions
@@ -12024,6 +13413,30 @@ One claim with its provenance.
 | `source_kind` | string, nullable | |
 | `corroboration_count` | integer ≥ 1, nullable | Claims with identical text grouped under this one (`claims_and_sources_context`). |
 | `grouped_claim_ids` | array of UUID | The ids of the grouped claims. |
+| `version_id` | UUID, nullable | Set when the claim's document has declared effective periods and the read had a time scope: the selected version that `chunk_id` and the offsets above belong to. |
+| `representation_id` | UUID, nullable | The converted reading of that version. |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | That version's in-force intervals. Empty for documents without declared periods. |
+| `occurrences` | array of [`ClaimOccurrence`](#claimoccurrence) | One per selected version that carries the claim, earliest period first. The first is the one the fields above describe. Empty for documents without declared periods. |
+
+Without those fields set, `chunk_id` and the offsets are where the claim was
+first extracted. With them, they are where the claim occurs in a version in
+force for the scope; see
+[Reading text as of a date](https://remember.dev/docs/reference/http-api/search#reading-text-as-of-a-date).
+
+### ClaimOccurrence
+
+Where a claim occurs in one selected version.
+
+| Field | Type |
+|---|---|
+| `chunk_id` | UUID |
+| `version_id` | UUID |
+| `representation_id` | UUID |
+| `char_start`, `char_end` | integer |
+| `evidence_spans` | array of [`EvidenceSpan`](#evidencespan) |
+| `source_locators` | JSON, nullable |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) |
+| `served_version` | boolean, default `true`: whether `version_id` is the document's served version |
 
 ### EvidenceSpan
 
@@ -12070,6 +13483,18 @@ One source passage.
 | `source_kind` | string | |
 | `source_modified_at` | UTC date-time, nullable | |
 | `published_at` | UTC date-time, nullable | |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The version's in-force intervals, when its document has declared effective periods. |
+| `served_version` | boolean | Whether `version_id` is the document's served version (its newest processed one). Default `true`. |
+
+### EffectiveInterval
+
+One interval during which a version is in force.
+
+| Field | Type | Contents |
+|---|---|---|
+| `from` | date-time, nullable | Start, included. `null` is unbounded. |
+| `until` | date-time, nullable | End, excluded. `null` is open. |
+| `until_declared` | boolean | `true` when the end was declared; `false` when it is the next declared start, or open. Default `false`. |
 
 ### SourceRecord
 
@@ -12194,6 +13619,14 @@ A path is returned whole or not at all.
 | `p1_written_inline` | boolean | The search index is written in the same step as the database. Default `true`. |
 | `p1_believed_at_horizon` | UTC date-time, nullable | The oldest `believed_at` the search index can answer; `null` means unbounded. |
 | `k` | [`KFreshness`](#kfreshness), nullable | Present only when the answer used a compiled page. |
+| `scope_pending` | [`ScopePending`](#scopepending), nullable | Time-scoped text reads only: documents whose version in force for the scope is still being processed. |
+
+### ScopePending
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_ids` | array of UUID | At most 50 of the documents. |
+| `count` | integer ≥ 0 | How many there are. |
 
 ### KFreshness
 
@@ -12365,6 +13798,7 @@ Returned by `POST /ingest`.
 | `mime` | string, nullable | The MIME type recorded for these bytes, which conversion uses. Set by the first upload of the bytes, unless that type had no converter route and a later upload sent one that has. |
 | `title` | string, nullable | The document's title, set by its first ingest. |
 | `versioning_mode` | `snapshot` \| `living`, nullable | The document's versioning mode, set by its first ingest. |
+| `version_key` | string, nullable | The version's `version_key`, or `null` when it has none. Default `null`. |
 | `parked` | `"no_route"` or `null` | `"no_route"` when the upload's conversion is parked waiting for a conversion route for its MIME type: the bytes are stored, and conversion waits until an operator adds a route if needed and runs `remember ops resume-no-route`, or the same bytes are sent again with a MIME type that has a route. `null` means only that it is not parked for `no_route`; read processing state from `POST /readiness`. |
 
 This release's engine always sets `mime`, `title` and `versioning_mode`; they
@@ -12471,6 +13905,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `query` | string, nullable | no | | 1 to 4,096 characters. |
 | `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
 | `versions` | `current` \| `all` | no | `current` | |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current` | Which editions of a document with declared effective periods are candidates. |
 | `k` | integer | no | `20` | 1 to 200. |
 | `cursor` | string, nullable | no | | Only without `query`. |
 
@@ -12495,6 +13930,7 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `cursor` | string, nullable | The next page; always `null` with a query. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
+| `scope_pending` | [`ScopePending`](#scopepending), nullable | Examined documents whose edition in force for `time` is still being processed. |
 
 ### DocumentSearchResult
 
@@ -12508,7 +13944,11 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
+| `p3_path` | string, nullable | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. The path shows the served version, so it is `null` when `served_version` is `false`. |
+| `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
+| `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |
+| `matching_editions` | array of [`MatchingEdition`](#matchingedition) | Every candidate edition that matched, earliest period first, for a document with declared effective periods. |
 | `family` | string | The format family. |
 | `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
 | `language` | string, nullable | |
@@ -12519,6 +13959,16 @@ Body of [`POST /documents/search`](https://remember.dev/docs/reference/http-api/
 | `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
 | `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
 | `score` | number, nullable | The combined rank score with a query; `null` without one. |
+
+### MatchingEdition
+
+| Field | Type |
+|---|---|
+| `version_id` | UUID |
+| `version_no` | integer |
+| `version_key` | string, nullable |
+| `representation_id` | UUID, nullable |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) |
 
 ### DocumentPeopleMatch
 
@@ -12541,6 +13991,205 @@ changed. The counts describe this call only.
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+## Effective periods
+
+### EffectivePeriodInput
+
+One period in the body of
+[`PUT …/effective-periods`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_ideffective-periods)
+(`{"periods": [EffectivePeriodInput, …]}`, 0 to 1,000 items with distinct
+starts).
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `effective_from` | date-time | yes | UTC. Included. |
+| `effective_until` | date-time, nullable | no | UTC. Excluded; later than `effective_from`. `null`: until the next declared start. |
+
+### EffectivePeriodsSet
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `periods` | array of [`DeclaredEffectivePeriod`](#declaredeffectiveperiod) | The version's periods after the call, by start. |
+| `declared` | integer ≥ 0 | Periods this call added. |
+| `retracted` | integer ≥ 0 | Periods this call withdrew. |
+
+### DeclaredEffectivePeriod
+
+| Field | Type | Contents |
+|---|---|---|
+| `period_id` | UUID | |
+| `effective_from` | date-time | As declared. |
+| `effective_until` | date-time, nullable | As declared; `null` means until the next declared start. |
+| `declared_at` | date-time | When the declaration was made. |
+
+### EffectiveTimeCleared
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `retracted` | integer ≥ 0 | Periods withdrawn. |
+| `cleared_at` | date-time, nullable | When the document left effective time; `null` when it had none. |
+
+## Sections and references
+
+### ReferenceInput
+
+One line of the NDJSON body of
+[`PUT …/references`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `kind` | string | yes | | `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `from_section_key` | string, nullable | no | | Section key syntax: 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`. |
+| `target` | [`ReferenceTarget`](#referencetarget) | yes | | |
+| `binding` | `floating` \| `pinned` | no | `floating` | `pinned` requires `target.version_key`. |
+| `change_effective_from` | date-time, nullable | no | | UTC. Only for `amends` with `change_date_known: true`, where it is required. |
+| `change_date_known` | boolean, nullable | for `amends` | | Only for `amends`. |
+| `source_label` | string, nullable | no | | 1 to 200 characters. |
+| `context` | string, nullable | no | | 1 to 2,000 characters. |
+
+### ReferenceTarget
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `source_kind` | string | yes | 1 to 128 characters. |
+| `source_ref` | string | yes | 1 to 512 characters. |
+| `version_key` | string, nullable | no | 1 to 512 characters. |
+| `section_key` | string, nullable | no | Section key syntax. |
+
+### ReferencesSet
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `outcome` | `created` \| `unchanged` \| `pending_cancelled` | What the call did. |
+| `generation` | [`ReferenceGeneration`](#referencegeneration) | The generation the version's intent now names. |
+
+### ReferenceGenerations
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `generations` | array of [`ReferenceGeneration`](#referencegeneration) | Newest first, at most 100; an active generation is always included. |
+
+### ReferenceGeneration
+
+| Field | Type | Contents |
+|---|---|---|
+| `generation_id` | UUID | |
+| `doc_id`, `version_id` | UUID | |
+| `origin` | `supplied` \| `extracted` | |
+| `status` | `pending` \| `active` \| `rejected` \| `superseded` | |
+| `request_seq` | integer, nullable | Supplied sets: the order of the `PUT` calls for this version. |
+| `input_hash` | string | Identifies the set's content. |
+| `item_count` | integer, nullable | References in the set. |
+| `representation_id`, `crossref_version` | nullable | Extracted generations only. |
+| `errors` | array of `{item, field, reason}` | Why a `rejected` set was rejected; `item` is 1-based. At most 100. |
+| `created_at` | date-time | |
+| `activated_at` | date-time, nullable | |
+
+### SectionHistoryPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `section_key` | string | |
+| `periodised` | boolean | The document has declared effective periods; rows are then ordered by period start, otherwise by `version_no`. |
+| `rows` | array of [`SectionHistoryRow`](#sectionhistoryrow) | |
+| `amendments` | array of [`SectionAmendment`](#sectionamendment) | First page only. |
+| `cursor` | string, nullable | |
+| `evaluated_at`, `believed_at` | date-time | The instants the history was read at; a cursor keeps them. |
+
+### SectionHistoryRow
+
+| Field | Type | Contents |
+|---|---|---|
+| `version_id` | UUID | |
+| `version_no` | integer | |
+| `version_key` | string, nullable | |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | |
+| `status` | `present` \| `absent` \| `not_indexed` \| `processing` | |
+| `section` | [`SectionHistorySection`](#sectionhistorysection), nullable | Set when `status` is `present`. |
+
+### SectionHistorySection
+
+| Field | Type | Contents |
+|---|---|---|
+| `section_id` | UUID | |
+| `node_path` | string | The section's place in the version's section tree. |
+| `title` | string, nullable | The heading, without its `{#key}`. |
+| `own_content_hash` | string | Hash of the section's own text, subsections excluded. |
+| `subtree_content_hash` | string | Hash of the section with its subsections. |
+| `changed` | boolean, nullable | `subtree_content_hash` differs from the previous row that held the key; `null` on the first. |
+| `own_changed` | boolean, nullable | The same for `own_content_hash`. |
+| `first_chunk_ids` | array of UUID | Passages holding the section's first block. |
+
+### SectionAmendment
+
+| Field | Type |
+|---|---|
+| `crossref_id` | UUID |
+| `from_doc_id`, `from_version_id` | UUID |
+| `from_section_key` | string, nullable |
+| `source_label` | string, nullable |
+| `binding` | `floating` \| `pinned` |
+| `to_version_key` | string, nullable |
+| `change_effective_from` | date-time, nullable |
+| `change_date_known` | boolean |
+
+### DocumentReferencesRequest
+
+Body of [`POST /documents/references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `chunk_id` | UUID, nullable | one of `chunk_id`, `doc_id` | | |
+| `doc_id` | UUID, nullable | one of `chunk_id`, `doc_id` | | |
+| `section_key` | string, nullable | no | | Only with `doc_id`. |
+| `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
+| `kinds` | array of strings, nullable | no | | 1 to 7 reference kinds. |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current`; with `chunk_id`, the chunk's version's in-force time up to now | |
+| `k` | integer | no | `50` | 1 to 200. |
+| `cursor` | string, nullable | no | | |
+
+### DocumentReferencesPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `rows` | array of [`DocumentReference`](#documentreference) | |
+| `cursor` | string, nullable | A short page can still carry a cursor. |
+| `evaluated_at`, `believed_at` | date-time | |
+| `too_broad` | object, nullable | `{reason: "too_broad", descendant_keys, limit, explanation}` when the section has more than `limit` (1,000) keyed subsections; `rows` is then empty. |
+
+### DocumentReference
+
+| Field | Type | Contents |
+|---|---|---|
+| `direction` | `outgoing` \| `incoming` | |
+| `crossref_id` | UUID | |
+| `kind` | string | A reference kind. |
+| `origin` | `supplied` \| `extracted` | |
+| `binding` | `floating` \| `pinned` | |
+| `source_label`, `context` | string, nullable | As supplied. |
+| `change_effective_from` | date-time, nullable | `amends` only. |
+| `change_date_known` | boolean, nullable | `amends` only. |
+| `source` | object | `doc_id`, `version_id`, `version_key`, `section_key`, `section_title`, `window` (a [`ReferenceWindow`](#referencewindow)). |
+| `named_target` | object | `source_kind`, `source_ref`, `version_key`, `section_key`, exactly as the source names them. |
+| `status` | string | `resolved`, `target_processing`, `target_unavailable`, `target_not_in_force`, `section_not_in_version`, `section_not_indexed`, `pinned_version_unavailable`. |
+| `target` | object, nullable | `doc_id`, `version_id`, `version_key`, `representation_id`, `section_key`, `section_title`, `first_chunk_ids`, `effective`, `applies_during` (a `ReferenceWindow`), `concurrent`. Only what the status allows is set; `null` for `target_unavailable`. |
+
+### ReferenceWindow
+
+| Field | Type | Contents |
+|---|---|---|
+| `from` | date-time, nullable | Included; `null` is unbounded. |
+| `until` | date-time, nullable | Excluded unless `until_inclusive`; `null` is unbounded. |
+| `until_inclusive` | boolean | `true` for a closed window, such as an instant. Default `false`. |
 
 ## ToolDescriptor
 
@@ -12580,6 +14229,20 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
 | `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only results found in matching document versions; returned claims still cite their origin. |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current` | Only text in force for the scope. |
+
+### ReadTime
+
+The time scope of a text read, chosen by `mode`.
+
+| `mode` | Other fields |
+|---|---|
+| `current` | none |
+| `at` | `at`: date-time with a time zone |
+| `overlap` | `from`, `to`: date-times with a time zone, both included; `to` not before `from` |
+| `history` | none |
+
+No other fields are accepted.
 
 ### AdjacentChunksRequest
 
@@ -12610,7 +14273,7 @@ see what the memory itself would return.
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
 follow](#what-a-statement-may-contain), [limits](#limits), the
-[12 functions](#functions), the [25 views](#views) and the
+[15 functions](#functions), the [27 views](#views) and the
 [18 shipped saved queries](#shipped-saved-queries). The routes that run
 statements are in [SQL queries](https://remember.dev/docs/reference/http-api/query); a walkthrough is in
 [Explore memory with SQL](https://remember.dev/docs/guides/sql).
@@ -12632,7 +14295,7 @@ RememberStack has two deliberately separate truth layers. Claims are immutable s
 | Schema | `memory_v1` |
 | Schema major version | `1` |
 | Manifest contract | `memory_v1.manifest/2` |
-| Surface manifest hash (this release) | `d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2` |
+| Surface manifest hash (this release) | `327694a447119ba34e5386b2886311a2350cd59b0fcaa501efc261932e42a78b` |
 | PostgreSQL major | 19 |
 
 The query space is described by a manifest checked into the engine. Its hash
@@ -12666,13 +14329,13 @@ error code.
 
 ### Relations
 
-A statement may read only the 25 views below, unqualified or as
+A statement may read only the 27 views below, unqualified or as
 `memory_v1.<view>`, and its own CTEs. Any other table, view or schema is
 `relation_not_allowed`.
 
 ### Built-in functions
 
-Besides the [12 public functions](#functions), these built-in functions are
+Besides the [15 public functions](#functions), these built-in functions are
 allowed (`function_not_allowed` otherwise). A `pg_catalog.` prefix is allowed;
 any other schema prefix is not.
 
@@ -12747,7 +14410,7 @@ SELECT DISTINCT entity_id FROM reach
 
 ### Public function placement
 
-The 12 public functions return rows, and they have extra rules
+The 14 set-returning public functions have extra rules
 (`function_placement_not_allowed` otherwise):
 
 - a call must be a `FROM` item of the top-level statement, or of a top-level
@@ -12757,7 +14420,12 @@ The 12 public functions return rows, and they have extra rules
 - every argument is a literal or a parameter (`$1`), optionally cast;
 - at most 3 calls per category per statement (`quota_exceeded`): nomination
   (`semantic_*`, `lexical_*`), body fetch (`fetch_chunk_bodies`), bitemporal
-  (`facts_as_of`), temporal (`canonical_bounds`), graph (`graph_*`).
+  (`facts_as_of`), temporal (`canonical_bounds`), graph (`graph_*`), time
+  scope (`versions_in_scope`, `effective_intervals`).
+
+The one scalar public function, `fact_in_scope_support`, is called like a
+built-in function: in a select list or a `WHERE` clause, with columns as
+arguments.
 
 ## Limits
 
@@ -12811,8 +14479,9 @@ Per-function caps, in addition:
 
 ## Functions
 
-The 12 public functions are set-returning: call them in `FROM`, following the
-[placement rules](#public-function-placement). The search functions nominate
+Fourteen public functions are set-returning: call them in `FROM`, following the
+[placement rules](#public-function-placement). One, `fact_in_scope_support`,
+returns a single boolean and goes in a select list or a `WHERE` clause. The search functions nominate
 candidates from the search index and then confirm each one against the
 database inside the same transaction, so a result never includes something the
 views would hide. What they did is reported in the result's
@@ -13141,22 +14810,114 @@ FROM graph_neighborhood($1::uuid, $2::uuid, 2)
 ORDER BY hops, relation_ids
 ```
 
+The three graph functions, `facts_as_of` and the fact views do not apply the
+evidence gate for [effective periods](https://remember.dev/docs/concepts/time#when-a-version-is-in-force):
+they can return a fact whose only support is text that is not in force.
+Filter with [`fact_in_scope_support`](#fact_in_scope_support) when that
+matters. The HTTP graph routes and the assured operations apply the gate
+themselves.
+
+### versions_in_scope
+
+```sql
+versions_in_scope(deployment_id uuid, mode text [, at timestamptz
+  [, range_start timestamptz [, range_end timestamptz [, evaluated_at timestamptz
+  [, believed_at timestamptz [, doc_ids uuid[]]]]]]])
+```
+
+The document versions a time scope selects: the rule every time-scoped read
+uses, in SQL. `mode` is `current`, `at` (needs `at`), `overlap` (needs
+`range_start` and `range_end`, both included) or `history` (every interval
+that started by `evaluated_at`). `evaluated_at` defaults to the time the
+statement runs. Category: time scope.
+
+For a document with declared effective periods, a version is returned once
+for each of its in-force intervals that meets the scope. For every other
+document, the served version is returned with null bounds. Only versions that
+are not deleted and are fully processed are returned.
+
+Without `believed_at` the function reads the periods as known now and may
+cover the whole deployment. With `believed_at` it reads them as they were
+known at that instant, and `doc_ids` is required.
+
+| Column | Type |
+|---|---|
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `representation_id` | uuid |
+| `effective_from` | timestamptz |
+| `effective_until` | timestamptz |
+
+```sql
+SELECT doc_id, version_id, effective_from, effective_until
+FROM versions_in_scope($1::uuid, 'at', $2::timestamptz)
+ORDER BY doc_id, effective_from
+```
+
+Join `version_id` to [`chunks_all_versions_live`](#chunks_all_versions_live)
+to read the passages of the selected versions.
+
+### effective_intervals
+
+```sql
+effective_intervals(deployment_id uuid, doc_ids uuid[] [, believed_at timestamptz])
+```
+
+Every declared effective period of the given documents, with the end it
+works out to: the declared end, or else the next declared start in the
+document, or open. Periods of deleted versions are left out; processing
+status does not matter. `believed_at` (default: now) reads the periods as
+they were known at that instant. Category: time scope.
+
+| Column | Type |
+|---|---|
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `period_id` | uuid |
+| `effective_from` | timestamptz |
+| `effective_until` | timestamptz |
+| `until_declared` | boolean |
+
+### fact_in_scope_support
+
+```sql
+fact_in_scope_support(deployment_id uuid, fact_kind text, fact_id uuid, mode text
+  [, at timestamptz [, range_start timestamptz [, range_end timestamptz
+  [, evaluated_at timestamptz [, believed_at timestamptz]]]]]) → boolean
+```
+
+The evidence gate as a predicate. It is `true` when a claim that supports the
+fact occurs in a version the time scope selects, or in a document without
+declared effective periods. It is `false` when no supporting claim occurs in
+a live version at all. `fact_kind` is `relation` or `observation`; the
+scope arguments are those of `versions_in_scope`. It is a scalar function:
+call it in a select list or a `WHERE` clause.
+
+```sql
+SELECT fact_kind, fact_id, statement
+FROM facts_current AS f
+WHERE fact_in_scope_support(f.deployment_id, f.fact_kind, f.fact_id, 'current')
+LIMIT 50
+```
+
 ## Views
 
-The 25 views, with every column. Descriptions are the comments in the
+The 27 views, with every column. Descriptions are the comments in the
 manifest, as `GET /query/space` returns them. Every view has a
 `deployment_id` column; a deployment only ever sees its own rows.
 
 | View | Grain | Row key |
 |---|---|---|
 | [`changes_visible`](#changes_visible) | one externally visible change event | `object_kind`, `event_id` |
+| [`chunks_all_versions_live`](#chunks_all_versions_live) | one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage | `chunk_id` |
 | [`chunks_live`](#chunks_live) | one chunk coordinate in a current ready representation | `chunk_id` |
 | [`claim_occurrences_live`](#claim_occurrences_live) | one current claim occurrence | `claim_id`, `chunk_id`, `derivation_kind` |
 | [`claims_canonical`](#claims_canonical) | one historically visible claim with surviving lineage and its half-open canonical window | `claim_id` |
 | [`claims_live`](#claims_live) | one current-testimony claim | `claim_id` |
 | [`claims_visible_history`](#claims_visible_history) | one historically visible claim with surviving lineage | `claim_id` |
 | [`contradiction_members_current`](#contradiction_members_current) | one current contradiction-group member | `contradiction_group`, `fact_kind`, `fact_id` |
-| [`document_crossrefs_live`](#document_crossrefs_live) | one live document cross-reference | `crossref_id` |
+| [`document_crossrefs_live`](#document_crossrefs_live) | one live, resolved reference made by a live source version | `crossref_id` |
+| [`document_effective_periods_live`](#document_effective_periods_live) | one currently known declared effective period | `period_id` |
 | [`document_versions_visible`](#document_versions_visible) | one visible version of a live lineage | `version_id` |
 | [`documents_live`](#documents_live) | one live document lineage | `doc_id` |
 | [`entities_current`](#entities_current) | one externally visible survivor entity | `entity_id` |
@@ -13193,6 +14954,42 @@ One row per externally visible change event, keyed by the synthetic pair (deploy
 | `occurred_at` | timestamp with time zone | no | When the change occurred, which is a transaction-time instant and never world validity. |
 | `label` | text | no | Short human-readable label for the changed object, drawn only from objects that are themselves visible. |
 
+### chunks_all_versions_live
+
+One row per chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage, keyed by (deployment_id, chunk_id) and joined to document_versions_visible on (deployment_id, version_id). It is the relation time-scoped reads select from through versions_in_scope, so it includes versions that are no longer, or not yet, the lineage's served version; chunks_live keeps meaning served-version chunks. Like chunks_live it is metadata only and carries no authoritative body column. Chunks of deleted versions, of non-ready readings and of forgotten lineages are absent, and a section_id is exposed only when that section belongs to the reading's current structure generation. The view carries no counts and no validity clocks.
+
+- **Grain:** one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage (`chunk_any_ready_version`)
+- **Row key:** `deployment_id`, `chunk_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the chunk. |
+| `chunk_id` | uuid | no | Stable identity of this retrieval unit within its version's current reading. |
+| `doc_id` | uuid | no | The live lineage the chunk belongs to. |
+| `version_id` | uuid | no | The non-deleted ready version the chunk was cut from, which need not be the lineage's served version. |
+| `representation_id` | uuid | no | The version's current ready reading whose block grid and offsets the chunk uses. |
+| `section_id` | uuid | yes | The section containing the chunk, null when the chunk has no section in the reading's current structure generation. |
+| `ordinal` | integer | no | Position of the chunk within its version. |
+| `block_start` | integer | no | First block ordinal packed into the chunk. |
+| `block_end` | integer | no | Last block ordinal packed into the chunk, inclusive. |
+| `char_start` | integer | no | Start character offset of the chunk within this representation's markdown. |
+| `char_end` | integer | no | End character offset of the chunk within this representation's markdown. |
+| `token_count` | integer | yes | Token length of the chunk, null when it was never measured. |
+| `chunk_content_hash` | text | no | Hash of the chunk's ordered block hashes, which is its content identity. |
+| `extraction_input_hash` | text | no | Hash of the stable extraction inputs, which is the reuse key that avoids re-extracting unchanged content. |
+| `embedding_text_hash` | text | yes | Hash of the exact text that was embedded under the D80 policy, null when the chunk has not been embedded. |
+| `location_facts` | jsonb | yes | The deterministic D80 location facts as structured data, null when no policy generation has stamped the chunk. |
+| `location_header` | text | yes | The deterministic D80 location header prepended to the embedded text; it is generated orientation text and is never asserted evidence. |
+| `embedding_input_policy_version` | text | yes | The D80 embedding-input policy in force for this chunk, null when unstamped. |
+| `policy_generation` | text | yes | The generation label of that policy application, null when unstamped. |
+| `embedder_generation` | text | yes | The embedder generation that produced the chunk vector, null when the chunk has not been embedded. |
+| `chunker_version` | text | yes | The chunker configuration that produced this cut, null on rows written before the stamp existed. |
+| `prefixer_version` | text | yes | The context-prefixer generation for this chunk, null when no prefix was generated. |
+| `created_at` | timestamp with time zone | no | When the chunk row was written, which is a processing instant rather than a world-time clock. |
+| `text_origin_at` | timestamp with time zone | yes | When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date. |
+
 ### chunks_live
 
 One row per chunk coordinate in the current ready representation of a live lineage, keyed by (deployment_id, chunk_id) and joined to documents_live on (deployment_id, doc_id) and to sections_live on (deployment_id, section_id). This relation is metadata only and deliberately carries no authoritative body column: chunk text is returned solely by the confirmed body-fetch path, which re-verifies the coordinate and the content and embedding hashes before any bytes leave the system. Chunks of superseded versions, non-ready readings, and forgotten lineages are absent, and a section_id is exposed only when that section belongs to the representation's current structure generation. The location header is generated orientation text, never evidence; the view carries no counts and no validity clocks.
@@ -13227,6 +15024,7 @@ One row per chunk coordinate in the current ready representation of a live linea
 | `chunker_version` | text | yes | The chunker configuration that produced this cut, null on rows written before the stamp existed. |
 | `prefixer_version` | text | yes | The context-prefixer generation for this chunk, null when no prefix was generated. |
 | `created_at` | timestamp with time zone | no | When the chunk row was written, which is a processing instant rather than a world-time clock. |
+| `text_origin_at` | timestamp with time zone | yes | When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date. |
 
 ### claim_occurrences_live
 
@@ -13390,22 +15188,50 @@ One row per current member of a contradiction group, keyed by (deployment_id, co
 
 ### document_crossrefs_live
 
-One row per resolved cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). An unresolved reference, a reference whose target was never ingested, or one whose source or target lineage has been forgotten is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.
+One row per resolved reference made by a live source version to a live target lineage, keyed by (deployment_id, crossref_id) and joined to document_versions_visible on (deployment_id, from_version_id) and to documents_live on (deployment_id, to_doc_id). Only references of the active generation of their source version and origin appear, so a replaced reference set never shows through. An unresolved reference, a reference whose target was never ingested, and one whose source version or either lineage has been deleted or forgotten are absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text and the target as named by the source are deliberately not exposed, because they are retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.
 
-- **Grain:** one live document cross-reference (`document_crossref_live`)
+- **Grain:** one live, resolved reference made by a live source version (`document_crossref_live`)
 - **Row key:** `deployment_id`, `crossref_id`
 - **Clock semantics:** `none`
-- **Joins to:** `documents_live` on `deployment_id`, `from_doc_id`; `documents_live` on `deployment_id`, `to_doc_id`
+- **Joins to:** `documents_live` on `deployment_id`, `from_doc_id`; `document_versions_visible` on `deployment_id`, `from_version_id`; `documents_live` on `deployment_id`, `to_doc_id`
 
 | Column | Type | Null | Meaning |
 |---|---|---|---|
-| `deployment_id` | uuid | no | The deployment that owns both endpoint lineages. |
-| `crossref_id` | uuid | no | Stable identity of this cross-reference. |
-| `from_doc_id` | uuid | no | The live lineage that makes the reference. |
-| `to_doc_id` | uuid | no | The live lineage that is referenced. |
-| `kind` | text | no | What kind of reference this is, one of cites, links_to, attaches, or replies_to. Values: `cites`, `links_to`, `attaches`, `replies_to`. |
-| `context` | text | yes | Bounded surrounding context of the reference, truncated to 500 characters and null when none was captured. |
-| `created_at` | timestamp with time zone | no | When the reference was extracted, which is a processing instant. |
+| `deployment_id` | uuid | no | The deployment that owns the reference. |
+| `crossref_id` | uuid | no | Stable identity of this reference made by one source version. |
+| `from_doc_id` | uuid | no | The live lineage whose version makes the reference. |
+| `to_doc_id` | uuid | no | The live lineage the reference resolves to. |
+| `kind` | text | no | What the reference does, such as cites, links_to, refers_to, amends, or implements. Values: `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `context` | text | yes | Bounded surrounding text of the reference, truncated to 500 characters. |
+| `created_at` | timestamp with time zone | no | When the reference row was written, which is a processing instant rather than a world-time clock. |
+| `from_version_id` | uuid | no | The non-deleted version that makes the reference. |
+| `from_section_key` | text | yes | The section key of the source section, null when the reference is not attributed to a keyed section. |
+| `to_section_key` | text | yes | The section key the reference names in the target, null when it names the whole document. |
+| `binding` | text | no | Either floating, meaning whichever target versions are in force when read, or pinned, meaning one named target version. Values: `floating`, `pinned`. |
+| `origin` | text | no | Either extracted by the engine or supplied by a caller. Values: `extracted`, `supplied`. |
+| `source_label` | text | yes | The caller's own opaque type code for the reference, returned verbatim and null when none was supplied. |
+| `change_effective_from` | timestamp with time zone | yes | For an amends reference with a known date, when the change takes effect; null otherwise. |
+| `change_date_known` | boolean | yes | For an amends reference, whether the source states when the change takes effect; null for every other kind. |
+
+### document_effective_periods_live
+
+One row per currently known declared effective period, keyed by (deployment_id, period_id) and joined to document_versions_visible on (deployment_id, version_id). A period says when the publisher holds the version's text to be in force; it is declared by a caller and never inferred. The end is derived from the next declared start of a non-deleted version of the lineage when no end was declared, so declaring a new edition shortens its predecessor without a write to it. Retracted declarations, declarations of deleted versions and every declaration of a forgotten lineage are absent. The view carries no counts; fact validity windows are a separate clock.
+
+- **Grain:** one currently known declared effective period (`document_effective_period_live`)
+- **Row key:** `deployment_id`, `period_id`
+- **Clock semantics:** `declared_effective_periods`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the declaration. |
+| `period_id` | uuid | no | Stable identity of this declared effective period. |
+| `doc_id` | uuid | no | The live lineage whose version the period belongs to. |
+| `version_id` | uuid | no | The non-deleted version declared in force, of any processing status. |
+| `effective_from` | timestamp with time zone | no | Inclusive start of the period, as declared by the caller. |
+| `effective_until` | timestamp with time zone | yes | Exclusive end of the period: the declared end, else the next declared start in the lineage, null when the period is open. |
+| `until_declared` | boolean | no | True when effective_until was declared rather than derived from the next declared start. |
+| `declared_at` | timestamp with time zone | no | When the declaration became known, which is a belief-axis instant rather than a world-time clock. |
 
 ### document_versions_visible
 
@@ -13821,6 +15647,9 @@ One row per section of the current ready representation of a live lineage, keyed
 | `page_start` | integer | yes | First source page of the section, null when the source is not paginated. |
 | `page_end` | integer | yes | Last source page of the section, null when the source is not paginated. |
 | `summary` | text | yes | Section summary generated for navigation and context; it is labeled orientation text and is never asserted evidence. |
+| `section_key` | text | yes | Stable source-chosen key of the section from a trailing heading attribute, unique within the structure generation, null when the heading declares none. |
+| `own_content_hash` | text | yes | Hash of the section's own ordered block hashes with its children excluded, null until the section has been indexed. |
+| `subtree_content_hash` | text | yes | Hash of every block hash in the section span including its children, null until the section has been indexed. |
 
 ### testimony_currency_events_visible
 
@@ -13945,20 +15774,52 @@ The client is synchronous. There is no async client yet
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
+| `ClaimOccurrence` | model | [Models](#models) |
 | `ClaimValidPrecision` | enum | [Models](#models) |
 | `ConnectorCreate` | model | [Models](#models) |
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
+| `DeclaredEffectivePeriod` | model | [Models](#models) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
+| `DocumentReference` | model | [Models](#models) |
+| `DocumentReferenceSource` | model | [Models](#models) |
+| `DocumentReferencesPage` | model | [Models](#models) |
+| `DocumentReferencesRequest` | model | [Models](#models) |
+| `DocumentReferencesTooBroad` | model | [Models](#models) |
+| `DocumentReferenceTarget` | model | [Models](#models) |
+| `DocumentSearchFilters` | model | [Models](#models) |
+| `DocumentSearchPage` | model | [Models](#models) |
+| `DocumentSearchRequest` | model | [Models](#models) |
+| `DocumentSearchResult` | model | [Models](#models) |
 | `DocumentSummary` | model | [Models](#models) |
 | `DocumentVersionSummary` | model | [Models](#models) |
+| `EffectiveInterval` | model | [Models](#models) |
+| `EffectivePeriodInput` | model | [Models](#models) |
+| `EffectivePeriodsSet` | model | [Models](#models) |
+| `EffectiveTimeCleared` | model | [Models](#models) |
 | `Envelope` | model | [Models](#models) |
 | `IngestedVersion` | model | [Models](#models) |
+| `MatchingEdition` | model | [Models](#models) |
+| `NamedReferenceTarget` | model | [Models](#models) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
 | `ReadinessRequirements` | model | [Models](#models) |
+| `ReadTime` | type alias | [Models](#models) |
+| `ReferenceGeneration` | model | [Models](#models) |
+| `ReferenceGenerations` | model | [Models](#models) |
+| `ReferenceInput` | model | [Models](#models) |
+| `ReferenceItemError` | model | [Models](#models) |
+| `ReferencesSet` | model | [Models](#models) |
+| `ReferenceTarget` | model | [Models](#models) |
+| `ReferenceWindow` | model | [Models](#models) |
+| `ScopePending` | model | [Models](#models) |
+| `SectionAmendment` | model | [Models](#models) |
+| `SectionHistoryPage` | model | [Models](#models) |
+| `SectionHistoryRequest` | model | [Models](#models) |
+| `SectionHistoryRow` | model | [Models](#models) |
+| `SectionHistorySection` | model | [Models](#models) |
 | `TemporalMatch` | enum | [Models](#models) |
 | `ToolDescriptor` | model | [Models](#models) |
 | `VersionPipelineReadiness` | model | [Models](#models) |
@@ -14080,6 +15941,9 @@ Client.ingest_file(
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
     source_path: str | None = None,
+    version_key: str | None = None,
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> IngestedVersion
 ```
 
@@ -14123,6 +15987,12 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
+| [`set_effective_periods`](#set_effective_periods) | `PUT /documents/{doc_id}/versions/{version_id}/effective-periods` | `EffectivePeriodsSet` |
+| [`clear_effective_time`](#clear_effective_time) | `DELETE /documents/{doc_id}/effective-periods` | `EffectiveTimeCleared` |
+| [`set_references`](#set_references) | `PUT /documents/{doc_id}/versions/{version_id}/references` | `ReferencesSet` |
+| [`reference_generations`](#reference_generations) | `GET /documents/{doc_id}/versions/{version_id}/references` | `ReferenceGenerations` |
+| [`section_history`](#section_history) | `GET /documents/{doc_id}/sections/{section_key}/history` | `SectionHistoryPage` |
+| [`document_references`](#document_references) | `POST /documents/references` | `DocumentReferencesPage` |
 | [`list_operations`](#list_operations) | `GET /operations` | `tuple[ToolDescriptor, ...]` |
 | [`run_operation`](#run_operation) | `POST /operations/{name}` | `Envelope` or `ContextBundleV2` |
 | [`facts_context`](#facts_context) | `POST /operations/facts_context` | `Envelope` |
@@ -14178,6 +16048,9 @@ MemoryClient.ingest(
     versioning_mode: Literal["snapshot", "living"] = "snapshot",
     source_version_ref: str | None = None,
     source_path: str | None = None,
+    version_key: str | None = None,
+    effective_from: datetime | None = None,
+    effective_until: datetime | None = None,
 ) -> IngestedVersion
 ```
 
@@ -14198,13 +16071,20 @@ results.
 | `versioning_mode` | `"snapshot"` (default) or `"living"`. `"living"` requires `source_kind`/`source_ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `source_version_ref` | The source system's own revision label. Requires `source_kind`/`source_ref`. |
 | `source_path` | Where the file lives at its source, such as a folder path or a URL. Recorded with the version's names; sending the same bytes again with a different `filename`, `title` or `source_path` records the new name without creating a version. See [File names, titles and paths](https://remember.dev/docs/reference/http-api/ingest#file-names-titles-and-paths). |
+| `version_key` | Your permanent name for this version, unique within the document (1 to 512 characters). A key new to the document always creates a version; the latest version's key is accepted again only with the same bytes. Requires `source_kind`/`source_ref`. See [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). |
+| `effective_from` | Start (included) of the period this version's text is in force. Timezone-aware UTC. Requires `source_kind`/`source_ref` and `versioning_mode="snapshot"`. |
+| `effective_until` | End (excluded) of that period, later than `effective_from`. Timezone-aware UTC. Omitted: the period lasts until the next declared start. |
 
 Raises `ValueError` when:
 
 - only one of `source_kind` and `source_ref` is given;
-- `source_modified_at`, `source_version_ref` or `versioning_mode="living"` is
-  given without `source_kind`/`source_ref`;
-- `source_modified_at` is naive or not UTC;
+- `source_modified_at`, `source_version_ref`, `versioning_mode="living"`,
+  `version_key`, `effective_from` or `effective_until` is given without
+  `source_kind`/`source_ref`;
+- `source_modified_at`, `effective_from` or `effective_until` is naive or not
+  UTC;
+- `effective_until` is given without `effective_from`, or is not later than
+  it, or a period is given with `versioning_mode="living"`;
 - a `str` path is not a file (`MemoryClient` only);
 - neither `source` nor `content` is given;
 - bytes are given without `filename`.
@@ -14212,7 +16092,10 @@ Raises `ValueError` when:
 Reading a path can raise `OSError`.
 
 Returns [`IngestedVersion`](#models). `created` is `False` when these exact
-bytes were already stored for this document; no new processing starts.
+bytes were already stored for this document; no new processing starts. A
+`version_key` that names another version, or a start that another version
+already declares, raises `MemoryApiError` with `status_code` 409; a period
+on a `living` document raises it with 422.
 
 ```python
 from datetime import UTC, datetime
@@ -14347,6 +16230,7 @@ MemoryClient.search_documents(
     versions: Literal["current", "all"] = "current",
     k: int = 20,
     cursor: str | None = None,
+    time: ReadTime | None = None,
 ) -> DocumentSearchPage
 ```
 
@@ -14361,7 +16245,10 @@ and `doc_ids`. With a `query` the results are ranked and not paged; without
 one they are newest ingested first and `cursor` pages them. Passing `cursor` with a
 `query`, a date without a timezone, or `k` outside 1 to 200 raises
 `pydantic.ValidationError` before any request. A malformed cursor raises
-`MemoryApiError` with `status_code` 400. What matches, and how, is in
+`MemoryApiError` with `status_code` 400. `time` decides which editions of a
+document with declared effective periods are candidates (default: the ones
+in force now); it takes the same values as in [`search_chunks`](#search_chunks).
+What matches, and how, is in
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
 
 ```python
@@ -14403,6 +16290,134 @@ try:
 except MemoryApiError as error:
     if error.status_code != 404:
         raise
+```
+
+### Versions in force, sections and references
+
+What these methods are for, with a worked example:
+[Read a document as of a date](https://remember.dev/docs/guides/versions-in-force).
+
+#### `set_effective_periods`
+
+```python
+MemoryClient.set_effective_periods(
+    *,
+    doc_id: UUID | str,
+    version_id: UUID | str,
+    periods: Sequence[EffectivePeriodInput],
+) -> EffectivePeriodsSet
+```
+
+Replaces the periods during which one version's text is in force.
+`periods` is the version's complete set: each `EffectivePeriodInput` has
+`effective_from` and an optional `effective_until`, both timezone-aware UTC
+`datetime` values (or ISO 8601 strings with a zero offset). Periods not
+listed are withdrawn and new ones declared, in one step. An empty sequence
+leaves the version with no period while the document keeps reading by
+period. Needs a `write` credential. Raises `pydantic.ValidationError`
+before any request for an end not after its start, two periods with the
+same start, or more than 1,000 periods; `MemoryApiError` with
+`status_code` 409 when another version declares the same start, 422 for a
+`living` document, 404 for an unknown document or version. See
+[`PUT …/effective-periods`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_ideffective-periods).
+
+#### `clear_effective_time`
+
+```python
+MemoryClient.clear_effective_time(*, doc_id: UUID | str) -> EffectiveTimeCleared
+```
+
+Withdraws every declared period of a document and returns it to "the newest
+processed version is current". `cleared_at` is `None` when the document had
+no declared periods. Needs a `write` credential. Raises `MemoryApiError`
+with `status_code` 404 for an unknown or deleted document.
+
+#### `set_references`
+
+```python
+MemoryClient.set_references(
+    *,
+    doc_id: UUID | str,
+    version_id: UUID | str,
+    references: Sequence[ReferenceInput],
+) -> ReferencesSet
+```
+
+Replaces one version's supplied references, sent as NDJSON. `ReferenceInput`
+has `kind`, `from_section_key`, `target` (a `ReferenceTarget` with
+`source_kind`, `source_ref`, `version_key`, `section_key`), `binding`,
+`change_effective_from`, `change_date_known`, `source_label` and `context`;
+its rules are checked when you build it. `outcome` is `created`,
+`unchanged` or `pending_cancelled`. Needs a `write` credential. Raises
+`MemoryApiError` with `status_code` 404, 413 (over 64 MiB) or 422. See
+[`PUT …/references`](https://remember.dev/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+
+#### `reference_generations`
+
+```python
+MemoryClient.reference_generations(
+    *, doc_id: UUID | str, version_id: UUID | str
+) -> ReferenceGenerations
+```
+
+Returns the version's reference generations, newest first, each with its
+`status` (`pending`, `active`, `rejected`, `superseded`) and `errors`.
+
+#### `section_history`
+
+```python
+MemoryClient.section_history(
+    *,
+    doc_id: UUID | str,
+    section_key: str,
+    time: ReadTime | None = None,
+    k: int = 50,
+    cursor: str | None = None,
+) -> SectionHistoryPage
+```
+
+Follows one keyed section across the document's versions. `time` defaults
+to `{"mode": "history"}`. Each row is a version with its `effective`
+intervals and a `status` of `present`, `absent`, `not_indexed` or
+`processing`. Raises `pydantic.ValidationError` for a malformed key or `k`
+outside 1 to 200, and `MemoryApiError` with `status_code` 404 for an
+unknown or deleted document. `section_history_request(request=…)` sends a
+prepared `SectionHistoryRequest`. See
+[`GET …/sections/{section_key}/history`](https://remember.dev/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
+
+```python
+page = memory.section_history(doc_id=doc_id, section_key="per-diem")
+```
+
+#### `document_references`
+
+```python
+MemoryClient.document_references(
+    *,
+    chunk_id: UUID | str | None = None,
+    doc_id: UUID | str | None = None,
+    section_key: str | None = None,
+    direction: Literal["outgoing", "incoming", "both"] = "both",
+    kinds: Sequence[ReferenceKind] | None = None,
+    time: ReadTime | None = None,
+    k: int = 50,
+    cursor: str | None = None,
+) -> DocumentReferencesPage
+```
+
+Lists what a passage (`chunk_id`) or a document or section (`doc_id`, with
+an optional `section_key`) references, and what references it, each
+reference resolved against the target versions in force during its source
+window. Give exactly one of `chunk_id` and `doc_id`; `pydantic.ValidationError`
+otherwise. Raises `MemoryApiError` with `status_code` 404 for an unknown
+document or passage. `document_references_request(request=…)` sends a
+prepared `DocumentReferencesRequest`. See
+[`POST /documents/references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+```python
+page = memory.document_references(doc_id=doc_id, section_key="approvals", direction="outgoing")
+for row in page.rows:
+    print(row.kind, row.status, row.named_target.source_ref)
 ```
 
 ### Assured operations
@@ -14486,11 +16501,16 @@ for fact in facts.facts:
 #### `claims_and_sources_context`
 
 ```python
-MemoryClient.claims_and_sources_context(query: str) -> Envelope
+MemoryClient.claims_and_sources_context(
+    query: str, *, time: Mapping[str, object] | None = None
+) -> Envelope
 ```
 
 Returns what sources said about `query` (claims) and the matching source
-passages (chunks). `query` is 1 to 8,192 characters.
+passages (chunks). `query` is 1 to 8,192 characters. `time` takes the same
+values as in `facts_context`; for documents with declared effective periods
+it reads only the text in force for that scope (default: now). See
+[Assured operations](https://remember.dev/docs/reference/assured-operations#claims_and_sources_context).
 
 ```python
 said = memory.claims_and_sources_context("Why was the cutover date moved?")
@@ -14508,7 +16528,7 @@ MemoryClient.combined_context(
 
 Runs `claims_and_sources_context` and `facts_context` together and returns
 both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
-`time` takes the same values as in `facts_context`.
+`time` takes the same values as in `facts_context` and applies to both.
 
 ```python
 bundle = memory.combined_context("What did Ravi decide about invoicing?")
@@ -14620,6 +16640,7 @@ MemoryClient.search_claims(
     k: int = 10,
     channel: Literal["semantic", "bm25"] = "semantic",
     documents: DocumentSearchFilters | None = None,
+    time: ReadTime | None = None,
 ) -> Envelope
 ```
 
@@ -14628,8 +16649,10 @@ result is evidence, not facts. The engine accepts `k` from 1 to 400.
 `documents` keeps only claims found in matching document versions (each still
 cites the passage it was first extracted from), with the same fields
 as [`search_documents`](#search_documents); a filtered search is sent as
-`POST /search/claims`. See
-[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents).
+`POST /search/claims`. `time` reads only text in force for the scope; a
+search with `time` is sent as `POST` too. See
+[Limiting search to certain documents](https://remember.dev/docs/reference/http-api/search#limiting-search-to-certain-documents)
+and [Reading text as of a date](https://remember.dev/docs/reference/http-api/search#reading-text-as-of-a-date).
 
 ```python
 from remember import Client, DocumentSearchFilters
@@ -14651,11 +16674,19 @@ MemoryClient.search_chunks(
     k: int = 10,
     channel: Literal["semantic", "bm25"] = "semantic",
     documents: DocumentSearchFilters | None = None,
+    time: ReadTime | None = None,
 ) -> Envelope
 ```
 
 Searches source passages. Same arguments and bounds as `search_claims`;
-`documents` keeps passages whose document matches.
+`documents` keeps passages whose document matches, and `time` passages of
+versions in force for the scope.
+
+`time` is a `ReadTime`: a dict or model with `mode` `current`, `at` (with
+`at`), `overlap` (with `from` and `to`) or `history`, for example
+`{"mode": "at", "at": "2026-02-01T00:00:00Z"}`. Omitted, it is `current`. A
+document without declared effective periods reads its served version under
+every mode.
 
 ```python
 hits = memory.search_chunks(query="invoice numbering", k=5, channel="bm25")
@@ -14975,7 +17006,7 @@ models below are Pydantic models (frozen) unless noted.
 |---|---|
 | `Envelope` | The result of every retrieval call: `grain`, `temporal_scope`, `entities`, `facts`, `evidence`, `chunks`, `sources`, graph fields, `truncation`, `negative`, `freshness` and more. |
 | `ContextBundleV2` | The result of `combined_context`: `contract` (`"ContextBundle/v2"`), `claims_and_sources` (an evidence `Envelope`) and `facts` (a fact `Envelope`). |
-| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`). |
+| `IngestedVersion` | The result of `ingest`: `deployment_id`, `doc_id`, `version_id` (UUIDs), `content_hash` (str), `created` (bool), and the settings in force: `mime` (str), `title` (str or `None`), `versioning_mode` (`"snapshot"` or `"living"`), `version_key` (str or `None`). |
 | `DocumentPage` | The result of `list_documents`: `documents` (tuple of `DocumentSummary`) and `cursor`. |
 | `DocumentSummary` | One document: `doc_id`, `title`, `source_kind`, `source_uri`, `first_seen_at`, `latest` (a `DocumentVersionSummary`), `serving`. |
 | `DocumentVersionSummary` | `version_id`, `version_no`, `status`, `ingested_at`, `error`. |
@@ -14989,6 +17020,13 @@ models below are Pydantic models (frozen) unless noted.
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |
 | `ClaimValidPrecision` | String enum: how narrow a stated validity window is. `unknown`, `instant`, `day`, `month`, `quarter`, `year`, `open`. |
 | `TemporalMatch` | String enum: whether a fact `confirmed` or only `possible` overlapped the query window. |
+| `ReadTime` | The time scope of a text read: `CurrentReadTime`, `AtReadTime`, `OverlapReadTime` or `HistoryReadTime` (in `remember.models`), chosen by `mode`. A dict such as `{"mode": "at", "at": "2026-02-01T00:00:00Z"}` is accepted wherever a `ReadTime` is. |
+| `EffectivePeriodInput`, `EffectivePeriodsSet`, `DeclaredEffectivePeriod`, `EffectiveTimeCleared` | Declaring effective periods and the results of `set_effective_periods` and `clear_effective_time`. |
+| `EffectiveInterval` | One in-force interval: `from_` (sent as `from`), `until`, `until_declared`. |
+| `MatchingEdition`, `ScopePending`, `ClaimOccurrence` | Parts of time-scoped results: an edition that matched `search_documents`, the documents whose edition in force is still processing, and where a claim occurs in a selected version. |
+| `ReferenceInput`, `ReferenceTarget`, `ReferencesSet`, `ReferenceGeneration`, `ReferenceGenerations`, `ReferenceItemError` | Supplying references and reading their generations. |
+| `SectionHistoryRequest`, `SectionHistoryPage`, `SectionHistoryRow`, `SectionHistorySection`, `SectionAmendment` | `section_history`. |
+| `DocumentReferencesRequest`, `DocumentReferencesPage`, `DocumentReference`, `DocumentReferenceSource`, `DocumentReferenceTarget`, `NamedReferenceTarget`, `ReferenceWindow`, `DocumentReferencesTooBroad` | `document_references`. |
 | `ConnectorCreate`, `ConnectorDescriptor` | Connector configuration models. No deployment serves connectors today. `ConnectorCreate` refuses a `configuration` key that looks like a secret (`token`, `password`, `api_key` …) and asks for `credential_ref` instead. |
 
 **Note:**
@@ -15094,13 +17132,15 @@ remember ingest FILE [--mime MIME] [--title TITLE]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
                      [--source-version-ref REF]
+                     [--version-key KEY]
+                     [--effective-from ISO8601 [--effective-until ISO8601]]
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Uploads one file and prints the new version as JSON:
 
 ```json
-{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot"}
+{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot","parked":null,"version_key":null}
 ```
 
 `created` is `false` when these exact bytes are already stored for the same
@@ -15115,14 +17155,25 @@ document; nothing is processed again.
 | `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
 | `--versioning-mode` | `snapshot` | `snapshot` or `living`; `living` needs `--source-kind`/`--source-ref`. See [Updating a source](https://remember.dev/docs/concepts/updating-sources). |
 | `--source-version-ref` | none | The source system's revision label. Needs `--source-kind`/`--source-ref`. |
+| `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
+| `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
+| `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 
-Exit status 2 when the source arguments break these rules or the timestamp is
-not UTC; 1 when the file cannot be read or the upload fails.
+What a key and a period do: [Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force).
+
+Exit status 2 when the source arguments break these rules, a timestamp is
+not UTC, or a period is malformed; 1 when the file cannot be read or the
+upload fails, including a `409` for a key or period start already used by
+another version.
 
 ```bash
 remember ingest notes/2026-09-18-billing-sync.md \
   --title "Billing sync, 18 September" \
   --source-kind meeting-notes --source-ref billing-sync/2026-09-18
+
+remember ingest travel-policy-2026.md \
+  --source-kind intranet --source-ref policy/travel \
+  --version-key edition-2 --effective-from 2026-01-01T00:00:00+00:00
 ```
 
 It prints the `IngestedVersion` as one JSON line. When the file's
@@ -15576,8 +17627,9 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
-   (only `pipeline_readiness` and `search_documents` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
+   `section_history` and `document_references` (all but `ingest` and
+   `delete_document` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -15587,7 +17639,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 16 tools: 4 + 4 + 1 + 7.
+lists 18 tools: 6 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -15672,8 +17724,12 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `versioning_mode` | `"snapshot"` or `"living"` | no | Default `"snapshot"`. `"living"` needs `source_kind`/`source_ref`. |
 | `source_modified_at` | string | no | ISO 8601 timestamp in UTC (`Z` or `+00:00`). Needs `source_kind`/`source_ref`. |
 | `source_version_ref` | string | no | 1–512 characters. Needs `source_kind`/`source_ref`. |
+| `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
+| `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
+| `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
 
-Unknown keys are refused. The input schema enforces the one-body rule with
+Unknown keys are refused. What a key and a period do:
+[Versions in force](https://remember.dev/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
 
 Success result:
@@ -15689,6 +17745,7 @@ Success result:
   "title": "…",
   "versioning_mode": "snapshot",
   "parked": null,
+  "version_key": null,
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
@@ -15802,19 +17859,66 @@ Alice") rather than asking about its content.
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | 1–200; default 20. |
 | `cursor` | string | no | The previous page's `cursor`; only without `query`. |
 
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](https://remember.dev/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
-`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
-`overview`),
-`cursor`, `as_of` and `people_matched`. When a people filter matches several
+`family`, `status`, `authors`, `recipients`, dates, `p3_path`,
+`served_version`, `effective`, `matching_editions` and `overview`),
+`cursor`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
 [`POST /documents/search`](https://remember.dev/docs/reference/http-api/ingest#post-documentssearch).
+
+### `section_history`
+
+Follows one section of a document across its versions. A section key is the
+stable id a heading carries in the source: `per-diem` in
+`## 4. Per-diem allowance {#per-diem}`.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `section_key` | string | yes | 1–200 characters from `A–Z a–z 0–9 _ . : / -`, without the `#`. |
+| `time` | object | no | Default `{"mode": "history"}`; the forms are under [`facts_context`](#facts_context). |
+| `k` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `cursor`. |
+
+The result is a [`SectionHistoryPage`](https://remember.dev/docs/reference/result-types#sectionhistorypage):
+one row per version with `status` `present`, `absent`, `not_indexed` or
+`processing`, and on the first page the `amends` references aimed at the
+section. An unknown or deleted document is `document_not_found`. The token
+needs `read` scope. See
+[`GET …/sections/{section_key}/history`](https://remember.dev/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
+
+### `document_references`
+
+Lists what a passage, section or document references and what references
+it, each reference resolved against the target versions in force during its
+source window.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `chunk_id` | string | one of `chunk_id`, `doc_id` | A passage's chunk id: its version and section are the source. |
+| `doc_id` | string | one of `chunk_id`, `doc_id` | A document's UUID. |
+| `section_key` | string | no | With `doc_id`: the section and its subsections. |
+| `direction` | `"outgoing"`, `"incoming"` or `"both"` | no | Default `"both"`. |
+| `kinds` | array of strings | no | 1–7 of `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `time` | object | no | Default `{"mode": "current"}`; with `chunk_id`, the chunk's version's in-force time up to now. |
+| `k` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `cursor`. A short page with a cursor means keep paging. |
+
+The result is a [`DocumentReferencesPage`](https://remember.dev/docs/reference/result-types#documentreferencespage).
+An unknown document is `document_not_found`, an unknown passage
+`chunk_not_found`. The token needs `read` scope. See
+[`POST /documents/references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+Apart from the period arguments of `ingest`, no MCP tool changes effective
+periods or supplies references; use the HTTP API or the SDK for those.
 
 ### Assured operations
 
@@ -15840,6 +17944,7 @@ What sources said: current claims and the source passages that confirm them.
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
 | `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+| `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
 
@@ -15866,6 +17971,8 @@ with a bounded look at the entities' neighbourhood.
 ```
 
 Timestamps are ISO 8601 date-times. What each mode means: [Time](https://remember.dev/docs/concepts/time).
+For documents with declared effective periods, `time` also decides which
+versions count as evidence: [Text in force](https://remember.dev/docs/reference/assured-operations#text-in-force).
 
 #### `combined_context`
 
@@ -15877,7 +17984,7 @@ Both of the above in one call, returned as `ContextBundle/v2`.
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
-| `time` | object | no | As in `facts_context`. |
+| `time` | object | no | As in `facts_context`; applies to both halves. |
 
 For every operation, unknown keys are refused, and integers must be whole
 numbers.
@@ -15959,7 +18066,8 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. |
+| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`: no such document, or it is deleted. |
+| `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
 | `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |
 | `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |
@@ -16210,7 +18318,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_POSTGRES_USER` | required | string | PostgreSQL user; also used to build `REMEMBERSTACK_DATABASE_URL`. |
 | `REMEMBERSTACK_POSTGRES_PASSWORD` | required | string | PostgreSQL password. `.env.example` ships none; generate it at install. |
 | `REMEMBERSTACK_POSTGRES_DB` | required | string | PostgreSQL database name. |
-| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 215 connections; see [Database connections](https://remember.dev/docs/self-hosting/scaling#database-connections). |
+| `REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS` | `300` | int | Read by Compose only. PostgreSQL `max_connections`. The default stack's ceiling is 231 connections; see [Database connections](https://remember.dev/docs/self-hosting/scaling#database-connections). |
 | `REMEMBERSTACK_BUILD_REVISION` | empty | string | Build argument when Compose builds the app image; stamped into it and reported by `GET /deployment` as `build_revision`. |
 
 ## Deployment and API
@@ -16444,26 +18552,35 @@ seconds. `wait_for_readiness` raises
 | Status | `detail` | Meaning | What to do |
 |---|---|---|---|
 | `400` | `cursor is malformed` | `GET /documents` got a cursor it cannot read. | Restart paging without a cursor. |
+| `400` | the cursor problem | `section_history` or `document_references` got a cursor that is malformed or belongs to another call. | Restart paging without a cursor, with the same arguments. |
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token. |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |
 | `403` | `credential may not perform this operation` | The credential's scope does not cover the route (for example a `read` credential on `POST /ingest` or `DELETE /documents/{doc_id}`, or an `ingest` credential on `GET /deployment`). | Use a `write` credential. See [Scopes](https://remember.dev/docs/reference/http-api#scopes). |
 | `404` | `Not Found` | No such route (includes `/connectors*` and `/openapi.json`, which a stock deployment does not serve). | Check the path. |
-| `404` | `document_not_found` | `DELETE /documents/{doc_id}` for a document that does not exist or is already deleted. | Do not retry; check the id with `GET /documents`. |
+| `404` | `document_not_found` | `DELETE /documents/{doc_id}`, or a period, reference or section route, for a document that does not exist or is deleted. | Do not retry; check the id with `GET /documents`. |
+| `404` | `version_not_found` | A period or reference route for a version that is not a live version of the document. | Check the `version_id`. |
+| `404` | `chunk_not_found` | `POST /documents/references` with a `chunk_id` that does not exist or whose document is deleted. | Check the id. |
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
+| `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
+| `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
 | `409` | `{"code": "saved_query_…", …}` | A saved query cannot run. See [SQL query codes](#sql-query-codes). | See the code. |
 | `411` | `length_required` | `POST /ingest` without `Content-Length` on a deployment that caps bodies. | Send the length (curl and the `remember` client do). |
+| `413` | `{"code": "reference_set_too_large", "limit_bytes": 67108864}` | A `PUT …/references` body over 64 MiB. | Send a smaller set: the limit applies to one version's complete set. |
 | `413` | `body_too_large` | The ingest body is over the cap. | Split the document. |
 | `422` | validation list | A parameter or body field is missing, of the wrong type, out of range, or not declared. Includes a `valid_at` or `believed_at` without a zero UTC offset, and an unknown `status` on `GET /query/saved`. | Fix the request; `loc` names the field. |
 | `422` | `content_type_mismatch` | The ingest MIME hint contradicts the detected byte class. Nothing was stored. | Send the correct file and a compatible MIME hint. |
 | `422` | `ambiguous_office_format` | A legacy Office container needs a Word, Excel or PowerPoint subtype. | Supply the matching legacy Office MIME. |
 | `422` | `{"code": "invalid_parameter", …}` | An operation argument or SQL-query argument was refused. | Fix the argument named in `message`. |
 | `422` | `source_kind and source_ref must be supplied together` | Ingest with half a source identity. | Send both or neither. |
-| `422` | `source timestamps, revisions, and living mode require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
-| `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. | Send it with `Z`. |
+| `422` | `source timestamps, revisions, living mode, version keys and effective periods require source_kind/source_ref` | Ingest lineage options without a source identity. | Add `source_kind` and `source_ref`. |
+| `422` | `source_modified_at must be timezone-aware UTC` | Ingest timestamp without an offset or with a non-zero one. The same message names `effective_from` or `effective_until`. | Send it with `Z`. |
+| `422` | `effective_until requires an earlier effective_from` | Ingest with an end but no start, or an end not after the start. | Send a start, and an end after it. |
+| `422` | `{"code": "effective_time_requires_snapshot", …}` | An effective period for a `living` document. | Periods apply to `snapshot` documents only. |
+| `422` | `{"code": "invalid_reference_set", "line": …, "message": …}` | A line of a `PUT …/references` body is not a valid reference. Nothing was recorded. | Fix the named line. |
 | `422` | `X-Ingest-Principal-Kind and X-Ingest-Principal-Ref must be supplied together` | Trusted attribution with one header. | Send both or neither. |
 | `422` | `invalid_ingest_principal` | Trusted attribution with an unknown kind or bad reference. | Kind is `user`, `api_credential` or `service`; reference is 1–255 printable ASCII characters. |
 | `429` | `{"code": "rate_limited", …}` | The credential or the deployment has used its request rate ([admission limits](https://remember.dev/docs/reference/http-api#admission-limits), off unless configured). | Wait the `Retry-After` seconds, then retry. |
@@ -16563,6 +18680,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_unreadable` | `null` | no | Pass a regular filesystem file path. / Check path on the machine running the MCP server (not the remote engine host). |
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
+| `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
@@ -17091,6 +19209,18 @@ absent from the current release; nothing here has a date.
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other
   formats give none.
+- **References found in the text.** RememberStack does not yet find
+  references itself (links, citations, "see section 4.2"); every reference
+  `document_references` returns is one you supplied with
+  `PUT /documents/{doc_id}/versions/{version_id}/references`.
+- **Fact dates from effective periods.** Declaring when a version is in
+  force decides which text and evidence a time-scoped read uses, but does
+  not yet inform the validity window of the facts that text supports.
+- **Periods, references and section history from the CLI and MCP.** The CLI
+  declares periods only at `remember ingest`, and the MCP server only through
+  `ingest`; neither can change periods later or supply references. The CLI
+  has no section history or references command; the MCP server has the
+  `section_history` and `document_references` tools.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.
@@ -17177,6 +19307,11 @@ has a field or value in the API, it is shown in code.
 : A part of a document found from its structure, such as its headings, with
   a role. Chunks and claims know which section they belong to.
 
+**Section key** (`section_key`)
+: A stable name for a section, written in the source as a trailing `{#key}`
+  on its heading. It names the same section in every version. See
+  [Section keys](https://remember.dev/docs/concepts/documents-and-sources#section-keys).
+
 **Chunk** (`chunk_id`)
 : A passage of a document's converted text: a run of whole blocks, not
   overlapping any other chunk. Chunks are what claims are extracted from and
@@ -17190,7 +19325,35 @@ has a field or value in the API, it is shown in code.
 
 **`source_modified_at`**
 : When the source says the content was written or last changed. It becomes
-  the said-on time of every claim from that version.
+  the said-on time of the claims first read from that version.
+
+**Text origin time** (`text_origin_at`)
+: When a passage's words were first written in a document, as far as the
+  engine can tell: an unchanged passage of a new version keeps the date of
+  the earlier version that first had it. See
+  [Unchanged passages keep their date](https://remember.dev/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date).
+
+**Version key** (`version_key`)
+: Your own permanent name for one version, unique within its document, such
+  as `edition-2`. A pinned reference names a version by it.
+
+**Effective period** (`effective_from`, `effective_until`)
+: When, according to its publisher, a version's text is in force. Declared
+  by you, never inferred. Not the same as the claim valid kind
+  `effective_period`. See
+  [Time](https://remember.dev/docs/concepts/time#when-a-version-is-in-force).
+
+**Served version**
+: A document's newest version that has finished processing and is not
+  deleted. Reads without a time scope, and documents without declared
+  effective periods, use it.
+
+**Reference** (`crossref_id`)
+: A pointer from a version of one document, optionally from one of its
+  sections, to another document or one of its sections, with a kind such as
+  `refers_to` or `amends`. `floating` references follow whichever target
+  version is in force; `pinned` ones name one version. See
+  [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references).
 
 **`source_version_ref`**
 : An optional revision marker from the source system, such as an ETag or
@@ -17353,8 +19516,15 @@ has a field or value in the API, it is shown in code.
   `measurement_period` or `proposition_validity`.
 
 **Time mode** (`current`, `at`, `overlap`, `history`)
-: Which facts a query selects by world time. See
+: Which facts a query selects by world time, and which versions of a
+  document with effective periods count as text. See
   [Time](https://remember.dev/docs/concepts/time#asking-about-time).
+
+**Evidence gate**
+: The rule that a fact read under a time scope is returned only when a claim
+  supporting it occurs in a version in force for that scope, or in a document
+  without effective periods. See
+  [Text in force](https://remember.dev/docs/reference/assured-operations#text-in-force).
 
 **Temporal match** (`confirmed`, `possible`)
 : Whether a fact's window establishes that it matches the query's time, or

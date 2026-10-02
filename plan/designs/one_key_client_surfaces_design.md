@@ -121,7 +121,10 @@ over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `resolve_entity`, `facts_context`, `claims_and_sources_context`,
 `combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
-`describe_saved_query`, `run_saved_query`. (`adjacent_chunks` is D130/D137's
+`describe_saved_query`, `run_saved_query`, `search_documents` (D134), and D140's
+`document_references` and `section_history` (reading cross-references and a section's
+versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
+(`adjacent_chunks` is D130/D137's
 tool, for neighbouring chunk retrieval; `delete_document` is D135's tool,
 PR #456; `source_open` is D115's, [media_design.md §4a](media_design.md), and
 returns MCP content blocks — text, image or audio — rather than one JSON text
@@ -674,7 +677,7 @@ stored-key origin rule below, not a refusal to read the file.
 | Issuer | `--issuer` | `REMEMBER_ISSUER` | `issuer` | key claim `iss` | `https://remember.dev` (login/setup only) |
 | Config directory | — | `REMEMBER_CONFIG_DIR` | — | `$XDG_CONFIG_HOME/remember` | `~/.config/remember` |
 
-**D140 Windows exception.** Automatic stored-file access is refused when owner-only
+**D141 Windows exception.** Automatic stored-file access is refused when owner-only
 access cannot be proved. Argument or environment key and URL bypass the file. A signed key
 supplied by argument or REMEMBER_API_KEY without a URL routes through its issuer
 without reading a stored file, whether present or absent. Stored URL/project/issuer
@@ -721,7 +724,7 @@ and resolves the target:
    body is not the engine's error envelope. The client then re-resolves: if
    the `api_url` changed it retries an eligible read once there; otherwise, or if
    resolution fails, it surfaces the original error. One retry, never a loop.
-   D140: retries apply only to source-classified reads, including body-carrying
+   D141: retries apply only to source-classified reads, including body-carrying
    POST reads. A write is never replayed after connection failure or 421;
    refresh its host for the next call and surface the original failure.
    Timeout/abort never triggers retry. This is a safety contract, not a
@@ -934,7 +937,7 @@ Client:
 
 ## TypeScript application of the client contract
 
-[D140](typescript_client_design.md) owns package identity, complete Python parity,
+[D141](typescript_client_design.md) owns package identity, complete Python parity,
 language adaptations, provider-consumed schemas and SDK drift gates. It adds no
 engine memory semantics. Shared D136 routing applies except the explicitly
-listed TypeScript adaptations; D140 safety amendments apply to Python too.
+listed TypeScript adaptations; D141 safety amendments apply to Python too.

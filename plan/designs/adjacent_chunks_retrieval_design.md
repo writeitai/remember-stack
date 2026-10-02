@@ -10,7 +10,7 @@
 ## 1. Principles (Binding)
 
 1. **Chunk Neighborhood Determinism:**
-   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_live`.
+   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
    * Expanding context around a chunk must never cross document or version boundaries.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
@@ -23,7 +23,7 @@
    * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.KNOWN_EMPTY)`.
 4. **Simplicity Over Complex Grammar:**
    * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and benchmark harness.
-   * No database migrations are required; the PostgreSQL table `chunks` is indexed by `ix_chunks_doc (deployment_id, doc_id)` and per-document chunk counts are bounded.
+   * No database migrations are required beyond D140's `chunks_all_versions_live` view; the PostgreSQL table `chunks` is indexed by `ix_chunks_doc (deployment_id, doc_id)` and per-document chunk counts are bounded.
 
 ---
 
@@ -46,17 +46,17 @@ def adjacent_chunks(
 
 **Implementation Steps:**
 1. Validate `ADJACENT_CHUNKS_MIN_WINDOW <= window <= ADJACENT_CHUNKS_MAX_WINDOW`; raise `ValueError` if out of bounds.
-2. Execute target lookup over `memory_v1.chunks_live`:
+2. Execute target lookup over `memory_v1.chunks_all_versions_live` (D140; before D140 this read `chunks_live`, which holds only the newest version):
    ```sql
    SELECT doc_id, version_id, ordinal
-   FROM memory_v1.chunks_live
+   FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
    ```
    If no row matches, return an empty `Envelope` with `NegativeKind.KNOWN_EMPTY`.
 3. Query surrounding chunk identifiers:
    ```sql
    SELECT chunk_id
-   FROM memory_v1.chunks_live
+   FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id
      AND doc_id = :doc_id
      AND version_id = :version_id

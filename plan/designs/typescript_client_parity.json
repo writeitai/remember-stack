@@ -1,5 +1,5 @@
 {
-  "pythonSourceRevision": "1dc23f21f24ec5f22ec4e51c751363b3658df7a6",
+  "pythonSourceRevision": "2cde3baf7a820164170f2e4b91065056309f68e8",
   "publishedBaseline": {
     "version": "0.17.2",
     "revision": "dd0c78015099cdd84ab5f3501744d6e225125989"
@@ -8,32 +8,60 @@
     "AccountApi",
     "AccountApiUnavailable",
     "CapabilityReadiness",
+    "ClaimOccurrence",
     "ClaimValidPrecision",
     "Client",
     "ConnectorCreate",
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "ContextBundleV2",
+    "DeclaredEffectivePeriod",
     "DocumentDeletion",
     "DocumentPage",
+    "DocumentReference",
+    "DocumentReferenceSource",
+    "DocumentReferenceTarget",
+    "DocumentReferencesPage",
+    "DocumentReferencesRequest",
+    "DocumentReferencesTooBroad",
     "DocumentSearchFilters",
     "DocumentSearchPage",
     "DocumentSearchRequest",
     "DocumentSearchResult",
     "DocumentSummary",
     "DocumentVersionSummary",
+    "EffectiveInterval",
+    "EffectivePeriodInput",
+    "EffectivePeriodsSet",
+    "EffectiveTimeCleared",
     "Envelope",
     "IngestedVersion",
+    "MatchingEdition",
     "MemoryApiError",
     "MemoryClient",
+    "NamedReferenceTarget",
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",
+    "ReadTime",
     "ReadinessRequirements",
+    "ReferenceGeneration",
+    "ReferenceGenerations",
+    "ReferenceInput",
+    "ReferenceItemError",
+    "ReferenceTarget",
+    "ReferenceWindow",
+    "ReferencesSet",
     "RememberClient",
+    "ScopePending",
+    "SectionAmendment",
+    "SectionHistoryPage",
+    "SectionHistoryRequest",
+    "SectionHistoryRow",
+    "SectionHistorySection",
     "StoredKeyRefused",
     "TemporalMatch",
     "ToolDescriptor",
@@ -90,7 +118,7 @@
         "property": false
       },
       "claims_and_sources_context": {
-        "arguments": "self, query: str",
+        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
         "returns": "Envelope",
         "property": false
       },
@@ -155,12 +183,12 @@
         "property": false
       },
       "search_claims": {
-        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None, time: ReadTime | None=None",
         "returns": "Envelope",
         "property": false
       },
       "search_chunks": {
-        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None",
+        "arguments": "self, *, query: str, k: int=10, channel: Literal['semantic', 'bm25']='semantic', documents: DocumentSearchFilters | None=None, time: ReadTime | None=None",
         "returns": "Envelope",
         "property": false
       },
@@ -205,7 +233,7 @@
         "property": false
       },
       "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
         "returns": "IngestedVersion",
         "property": false
       },
@@ -215,7 +243,7 @@
         "property": false
       },
       "search_documents": {
-        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None",
+        "arguments": "self, query: str | None=None, *, filters: DocumentSearchFilters | None=None, versions: Literal['current', 'all']='current', k: int=20, cursor: str | None=None, time: ReadTime | None=None",
         "returns": "DocumentSearchPage",
         "property": false
       },
@@ -224,9 +252,49 @@
         "returns": "DocumentSearchPage",
         "property": false
       },
+      "section_history": {
+        "arguments": "self, *, doc_id: UUID | str, section_key: str, time: ReadTime | None=None, k: int=SECTION_HISTORY_DEFAULT_K, cursor: str | None=None",
+        "returns": "SectionHistoryPage",
+        "property": false
+      },
+      "section_history_request": {
+        "arguments": "self, *, request: SectionHistoryRequest",
+        "returns": "SectionHistoryPage",
+        "property": false
+      },
+      "set_references": {
+        "arguments": "self, *, doc_id: UUID | str, version_id: UUID | str, references: Sequence[ReferenceInput]",
+        "returns": "ReferencesSet",
+        "property": false
+      },
+      "reference_generations": {
+        "arguments": "self, *, doc_id: UUID | str, version_id: UUID | str",
+        "returns": "ReferenceGenerations",
+        "property": false
+      },
+      "document_references": {
+        "arguments": "self, *, chunk_id: UUID | str | None=None, doc_id: UUID | str | None=None, section_key: str | None=None, direction: Literal['outgoing', 'incoming', 'both']='both', kinds: Sequence[ReferenceKind] | None=None, time: ReadTime | None=None, k: int=DOCUMENT_REFERENCES_DEFAULT_K, cursor: str | None=None",
+        "returns": "DocumentReferencesPage",
+        "property": false
+      },
+      "document_references_request": {
+        "arguments": "self, *, request: DocumentReferencesRequest",
+        "returns": "DocumentReferencesPage",
+        "property": false
+      },
       "delete_document": {
         "arguments": "self, *, doc_id: UUID | str",
         "returns": "DocumentDeletion",
+        "property": false
+      },
+      "set_effective_periods": {
+        "arguments": "self, *, doc_id: UUID | str, version_id: UUID | str, periods: Sequence[EffectivePeriodInput]",
+        "returns": "EffectivePeriodsSet",
+        "property": false
+      },
+      "clear_effective_time": {
+        "arguments": "self, *, doc_id: UUID | str",
+        "returns": "EffectiveTimeCleared",
         "property": false
       },
       "connectors": {
@@ -262,12 +330,12 @@
         "property": true
       },
       "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
         "returns": "IngestedVersion",
         "property": false
       },
       "ingest_file": {
-        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None",
+        "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
         "returns": "IngestedVersion",
         "property": false
       }
@@ -830,6 +898,26 @@
         "validate_saved_query_identifier": {
           "typescript": "validateSavedQueryIdentifier",
           "disposition": "public client support export"
+        },
+        "DOCUMENT_REFERENCES_TOOL_NAME": {
+          "typescript": "DOCUMENT_REFERENCES_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "DocumentReferencesBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "SECTION_HISTORY_TOOL_NAME": {
+          "typescript": "SECTION_HISTORY_TOOL_NAME",
+          "disposition": "public client support export"
+        },
+        "SectionHistoryBackend": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_document_references_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
+        },
+        "handle_section_history_tool": {
+          "disposition": "separate MCP library: host/backend execution contract; no base-client export"
         }
       },
       "definitionFields": "remember.mcp_tools._definitions.ToolDefinition",
