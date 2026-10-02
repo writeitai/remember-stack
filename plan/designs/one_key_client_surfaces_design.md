@@ -675,14 +675,15 @@ stored-key origin rule below, not a refusal to read the file.
 | Config directory | — | `REMEMBER_CONFIG_DIR` | — | `$XDG_CONFIG_HOME/remember` | `~/.config/remember` |
 
 **D140 Windows exception.** Automatic stored-file access is refused when owner-only
-access cannot be proved. An explicit key and URL bypass the file. A signed key
+access cannot be proved. Argument or environment key and URL bypass the file. A signed key
 supplied by argument or REMEMBER_API_KEY without a URL routes through its issuer
-without reading a stored file, whether present or absent. Stored URL/project
+without reading a stored file, whether present or absent. Stored URL/project/issuer
 values are therefore unavailable in that case; explicit/environment project
 settings still apply. Unsigned keys without a URL refuse a present file and use
 the localhost default if no file exists. POSIX keeps the table's independent
-setting precedence. Connection environment names are case-insensitive; config
-directory names are read exactly as shown.
+setting precedence. Connection and config-directory environment names are case-insensitive,
+matching Python settings. If differently cased spellings coexist, the last
+process-environment entry wins; empty connection values then fall through.
 
 A key may be given bare or as `Bearer <key>`. The earlier names
 (`REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION`,
