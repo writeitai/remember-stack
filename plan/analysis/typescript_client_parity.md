@@ -138,10 +138,10 @@ Re-resolve a moved key-routed host and retry reads once only when its URL
 changed; the pinned project identity must not follow a changed default. A
 421 refusal can safely retry once after a changed resolved URL.
 
-**Superseded exploration:** that last 421 conclusion is replaced by D140: only
+**Superseded exploration:** that last 421 conclusion is replaced by D141: only
 classified reads may retry; writes never replay, including a 421 refusal.
 
-**Superseded exploration (D140 keeps Python's GET/POST split):**
+**Superseded exploration (D141 keeps Python's GET/POST split):**
 Public search uses POST bodies, including unfiltered search: Python's unfiltered
 GET behavior is not a reason to put customer terms into URLs. This explicit
 wire difference preserves search semantics and the current privacy authority.
