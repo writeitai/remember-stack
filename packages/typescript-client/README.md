@@ -10,7 +10,7 @@ This source package has not been published to npm. Build and install its local
 tarball to try it:
 
 ```bash
-uv sync --extra dev
+uv sync --group dev
 cd packages/typescript-client
 npm ci
 npm run build

@@ -40,7 +40,9 @@ export function environmentIssuer():string|null { return environment().issuer ??
 export interface ConnectionOptions { apiKey?:string|null; apiUrl?:string|null; project?:string|null; issuer?:string|null; mcpUrl?:string|null; env?:ConnectionEnvironment; }
 /** Resolve explicit, environment and shared-file settings without making network calls. */
 export function resolveConnection({apiKey,apiUrl,project,issuer,mcpUrl,env=environment()}:ConnectionOptions={}):Connection {
-  const stored=((apiKey==null && !env.apiKey)||(apiUrl==null && !env.apiUrl)) ? loadCredentials({env}) : null;
+  const suppliedKey=apiKey||env.apiKey;
+  const windowsRouted=process.platform==='win32'&&!!suppliedKey&&signedKeyClaims({key:normalizeKey({value:suppliedKey})})!==null;
+  const stored=((apiKey==null && !env.apiKey)||(!windowsRouted&&apiUrl==null && !env.apiUrl)) ? loadCredentials({env}) : null;
   let key:SecretString|null=null; let keySource:Source|null=null;
   const keys:ReadonlyArray<readonly [string|null|undefined,Source]>=[[apiKey,'explicit'],[env.apiKey,'environment'],[stored?.key?.getSecretValue(),'file']];
   for (const [candidate,source] of keys) if(candidate) {key=new SecretString({value:normalizeKey({value:candidate})});keySource=source;break;}
@@ -62,7 +64,9 @@ let pendingHosts=new WeakMap<HttpTransport,Map<string,Promise<ResolvedProject>>>
 export function clearHostCache():void {hostCache.clear();pendingHosts=new WeakMap();}
 /** Ask the issuer for a covered project; shared discovery never uses the key id alone. */
 export async function resolveProject({key,claims,project,http,clock=monotonic,refresh=false,signal,timeoutMs=30000}:{key:string;claims:KeyClaims;project:string|null;http:HttpTransport;clock?:Clock;refresh?:boolean;signal?:AbortSignal;timeoutMs?:number}):Promise<ResolvedProject> {
-  const cacheKey=JSON.stringify([normalizeIssuer({issuer:claims.iss}),createHash('sha256').update(key).digest('hex'),project]);
+  let issuer:string;
+  try{issuer=normalizeIssuer({issuer:claims.iss});}catch{throw new ProjectResolutionError({detail:'issuer returned an unavailable or unusable project resolution'});}
+  const cacheKey=JSON.stringify([issuer,createHash('sha256').update(key).digest('hex'),project]);
   const cached=hostCache.get(cacheKey);
   if(!refresh && cached && clock()-cached.created < HOST_CACHE_TTL_SECONDS) return waitShared({promise:Promise.resolve(cached.value),signal});
   let requests=pendingHosts.get(http);
@@ -107,9 +111,9 @@ export class EngineRoute {
     return {url:DEFAULT_API_URL,authorization:c.authorization};
   }
   /** Refresh after apparent movement, keeping the original request error on resolution failure. */
-  async reResolve({signal}:{signal?:AbortSignal}={}):Promise<boolean> {
+  async reResolve({signal,previousUrl}:{signal?:AbortSignal;previousUrl?:string}={}):Promise<boolean> {
     if(!this.keyRouted) return false;
-    const previous=(await this.#resolve({signal})).api_url;
+    const previous=previousUrl??(await this.#resolve({signal})).api_url;
     try {const next=await this.#resolve({refresh:true,signal});return previous.replace(/\/+$/,'')!==next.api_url.replace(/\/+$/,'');}
     catch(error) {if(error instanceof AbortError || error instanceof RequestTimeoutError) throw error;return false;}
   }

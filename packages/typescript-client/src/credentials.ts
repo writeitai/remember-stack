@@ -34,13 +34,13 @@ export function environment(): ConnectionEnvironment {
   return {
     apiKey: process.env.REMEMBER_API_KEY || undefined, apiUrl: process.env.REMEMBER_API_URL || undefined,
     project: process.env.REMEMBER_PROJECT || undefined, issuer: process.env.REMEMBER_ISSUER || undefined,
-    mcpUrl: process.env.REMEMBER_MCP_URL || undefined, configDir: process.env.REMEMBER_CONFIG_DIR || undefined,
-    xdgConfigHome: process.env.XDG_CONFIG_HOME || undefined,
+    mcpUrl: process.env.REMEMBER_MCP_URL || undefined, configDir: process.env.REMEMBER_CONFIG_DIR ?? undefined,
+    xdgConfigHome: process.env.XDG_CONFIG_HOME ?? undefined,
   };
 }
 /** Return the shared Python/CLI configuration directory. */
 export function configDir({ env = environment() }: { env?: ConnectionEnvironment } = {}): string {
-  return env.configDir ?? (env.xdgConfigHome ? join(env.xdgConfigHome, 'remember') : join(homedir(), '.config', 'remember'));
+  return (env.configDir===''?'.':env.configDir) ?? (env.xdgConfigHome!==undefined ? join(env.xdgConfigHome, 'remember') : join(homedir(), '.config', 'remember'));
 }
 /** Return the existing version-2 credential file location, never a second TS store. */
 export function credentialsPath({ env = environment() }: { env?: ConnectionEnvironment } = {}): string {

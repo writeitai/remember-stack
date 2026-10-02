@@ -27,7 +27,13 @@ ajv.addKeyword({ keyword: 'x-extra', schemaType: 'string' });
 ajv.addKeyword({ keyword: 'x-utc', schemaType: 'boolean', validate: utcKeyword });
 ajv.addSchema({ ...schemas, $id: 'urn:remember-client:schemas' });
 const cache = new Map<string, ValidateFunction>();
-const variantCache = new WeakMap<Schema, ValidateFunction>();
+const variantCache = new WeakMap<object, ValidateFunction>();
+/** Compile each stable schema once; Ajv retains compiled object identities. */
+function validator({schema,model=false}:{schema:object;model?:boolean}):ValidateFunction {
+  let result=variantCache.get(schema);
+  if(!result){result=ajv.compile(model?{$defs:schemas.$defs,...schema}:schema);variantCache.set(schema,result);}
+  return result;
+}
 const semanticValidators = {
   DocumentSearchRequest: ['cursor_pages_filters_only'], ConnectorCreate: ['_credentials_are_references'],
   OverlapTemporalScope: ['_ordered'], EvidenceSpan: ['_end_after_start'],
@@ -65,8 +71,7 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
     for (const variant of variants) {
       try {
         const candidate = normalize({ value, schema: variant });
-        let validate = variantCache.get(variant);
-        if (!validate) { validate = ajv.compile({ $defs: schemas.$defs, ...variant }); variantCache.set(variant, validate); }
+        const validate = validator({schema:variant,model:true});
         if (validate(candidate)) return candidate;
       } catch (error) { if (!(error instanceof InputValidationError)) throw error; }
     }
@@ -130,7 +135,7 @@ function hasSecret({ value }: { value: unknown }): boolean {
 /** Validate and default one named schema; response failures stay HTTP-shaped errors. */
 export function validateModel<T>({ name, value, response = false }: { name: string; value: unknown; response?: boolean }): T {
   try {
-    assertJson({ value });
+    assertJson({ value, response });
     const schema = definitions[name];
     if (!schema) throw new Error(`missing SDK schema ${name}`);
     const result = normalize({ value, schema, name });
@@ -151,7 +156,7 @@ export function validateModel<T>({ name, value, response = false }: { name: stri
 /** Check a closed schema-owned tool object without applying model coercions. */
 export function validateSchema({ schema, value }: { schema: object; value: unknown }): void {
   assertJson({ value });
-  const validate = ajv.compile(schema);
+  const validate = validator({schema});
   if (!validate(value)) fail({ detail: 'tool arguments do not match the catalogue schema' });
 }
 
@@ -171,7 +176,7 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
   const variants=schema.anyOf??schema.oneOf;
   if(variants) {
     for(const variant of variants) {
-      const validate=ajv.compile({$defs:schemas.$defs,...variant});
+      const validate=validator({schema:variant,model:true});
       if(validate(value))return dump({value,schema:variant,excludeNone,excludeDefaults});
     }
   }

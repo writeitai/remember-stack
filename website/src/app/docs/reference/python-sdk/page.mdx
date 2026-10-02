@@ -1195,3 +1195,9 @@ arrives as a list of values. Pair it with `columns` to get names:
 `[dict(zip([c["name"] for c in res.columns], row)) for row in res.rows]`.
 
 </Callout>
+
+### Windows credential files
+
+Automatic credential-file reads are refused on Windows because the SDK cannot
+prove owner-only access with its current file reader. Supply an explicit API key
+and engine URL instead; no stored file is read when both are supplied.

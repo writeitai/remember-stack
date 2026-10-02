@@ -118,6 +118,7 @@ async function main() {
       let content=await readFile(join(temporary,name),'utf8');
       const modelName=name.replace(/^models[/\\]/,'').replace(/\.ts$/,'');
       if(name.startsWith('models/')) content=exactNulls({content,schema:input.components.schemas[modelName],name:modelName});
+      content=content.replaceAll('\r\n','\n');
       const destination=join(generated,name);
       if(check) {
         const committed=await readFile(destination,'utf8').catch(()=>null);

@@ -11,5 +11,5 @@ export {ToolDefinition,memoryTools,tool,renderToolsList,validateArguments,valida
 export type {Permission,PathBodyResolver} from './catalogue';
 export * from './tool-errors';
 export * from './client';
-export type {HttpClient,HttpTransport,HttpRequest,RelativeHttpRequest,AbsoluteHttpRequest,ClientAgents} from './http';
+export type {HttpHeaders,HttpClient,HttpTransport,HttpRequest,RelativeHttpRequest,AbsoluteHttpRequest,ClientAgents} from './http';
 export {version,pythonCompatibility} from './version.generated';

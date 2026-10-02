@@ -153,3 +153,30 @@ test('readiness deadline retains last report, but an earlier HTTP timeout remain
   try{await assert.rejects(early.waitForReadiness({versionIds:[id],timeoutMs:1000}),RequestTimeoutError);}
   finally{early.close();}
 });
+
+test('account discovery outages retain IssuerError',async()=>{
+  clearMetadataCache();
+  const issuer=await server({handler:({response})=>json({response,value:{detail:'synthetic unavailable'},status:503})});
+  const {IssuerError}=await import('../dist/index.js');
+  const client=new Client({apiKey:signedKey({issuer:issuer.url})});
+  try{await assert.rejects(client.account.whoami(),IssuerError);}finally{client.close();await issuer.close();}
+});
+
+test('a delayed read retries at the new host when another request already repinned',async()=>{
+  clearMetadataCache();clearHostCache();let moved=false,release,arrived;
+  const held=new Promise(resolve=>{release=resolve;});const started=new Promise(resolve=>{arrived=resolve;});
+  const next=await server({handler:({response})=>json({response,value:[]})});
+  const first=await server({handler:async({recorded,response})=>{
+    if(recorded.method==='GET'){arrived();await held;}
+    else moved=true;
+    json({response,value:{message:'moved'},status:421});
+  }});
+  let issuer;issuer=await server({handler:({recorded,response})=>json({response,value:recorded.url.startsWith('/.well-known')?{issuer:issuer.url,remember_project_endpoint:issuer.url+'/project'}:{project:'p1',name:'fixture',api_url:moved?next.url:first.url}})});
+  const client=new Client({apiKey:signedKey({issuer:issuer.url})});
+  try{
+    const read=client.listOperations();await started;
+    await assert.rejects(client.ingest({content:Buffer.from('fixture'),filename:'note.md'}),error=>error.statusCode===421);
+    release();assert.deepEqual(await read,[]);
+    assert.equal(first.requests.length,2);assert.equal(next.requests.length,1);assert.equal(next.requests[0].method,'GET');
+  }finally{release();client.close();await Promise.all([issuer.close(),first.close(),next.close()]);}
+});

@@ -1,5 +1,7 @@
 /** Verify D140 precision, strictness, recursive defaults and cross-field rules. */
 import {test} from 'node:test';
+import {readFileSync} from 'node:fs';
+const fixtures=JSON.parse(readFileSync(new URL('./fixtures/python-methods.json',import.meta.url))).responses;
 import assert from 'node:assert/strict';
 import {parseJson,assertJson,validateModel,modelDump,InputValidationError,MemoryApiError,NumericPrecisionError} from '../.test-build/internal.js';
 import {project} from '../scripts/generate.mjs';
@@ -65,4 +67,14 @@ test('temporal ordering retains source microseconds and accepts every zero UTC o
   assert.doesNotThrow(()=>validateModel({name:'OverlapTemporalScope',value}));
   value.from='2026-01-01T00:00:00.0000019Z';
   assert.equal(modelDump({name:'OverlapTemporalScope',value}).from,'2026-01-01T00:00:00.000001Z');
+});
+
+test('response float lexemes retain Python behavior while integer inputs remain safe',()=>{
+  for(const text of ['1e+20','1.152921504606847e+18','9007199254740992.0']) {
+    const value=parseJson({text});
+    assert.equal(value,Number(text));
+    assert.doesNotThrow(()=>validateModel({name:'QueryResult',value:{...fixtures.query,rows:[[value]]},response:true}));
+    assert.throws(()=>assertJson({value}),InputValidationError);
+  }
+  assert.throws(()=>parseJson({text:'9007199254740992'}),NumericPrecisionError);
 });

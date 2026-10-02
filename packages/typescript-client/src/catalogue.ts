@@ -87,10 +87,11 @@ export function utcTimestamp({value,field}:{value:string|Date;field:string}):str
 }
 /** Parse all catalogue tools; path resolution is the sole explicit host-I/O injection. */
 export async function validateArguments({name,arguments:args,pathResolver,maxBodyBytes}:{name:string;arguments:Record<string,unknown>;pathResolver?:PathBodyResolver;maxBodyBytes?:number}):Promise<Record<string,unknown>> {
-  const definition=tool({name});
+  const definition=catalogue.tools.find(item=>item.name===name);
+  if(!definition)throw new InputValidationError({detail:'not a memory tool'});
   const query=OPEN_QUERY_TOOL_NAMES.includes(name);
   if(args===null||typeof args!=='object'||Array.isArray(args)) {if(query)throw queryArgumentError({error:new InputValidationError({detail:'arguments must be a JSON object'})});refuse({detail:'arguments must be a JSON object'});}
-  const properties=definition.inputSchema.properties as Record<string,unknown>;
+  const properties=definition.input_schema.properties as Record<string,unknown>;
   const allowed=new Set(Object.keys(properties));if(name===INGEST_TOOL_NAME&&!pathResolver)allowed.delete('path');
   const unknown=Object.keys(args).filter(key=>!allowed.has(key)).sort();
   if(unknown.length) {if(query)throw queryArgumentError({error:new InputValidationError({detail:'unknown argument keys'})});refuse({detail:`Unknown argument keys: ${unknown.join(', ')}.`});}
@@ -98,7 +99,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
   if(name===INGEST_TOOL_NAME)return parseIngest({args,pathResolver,maxBodyBytes});
   if(query) {
     try {
-    validateSchema({schema:definition.inputSchema,value:args});const result={...args};
+    validateSchema({schema:definition.input_schema,value:args});const result={...args};
     if(name==='query_sql'||name==='explain_sql'||name==='run_saved_query')result.parameters??=[];
     if(name==='describe_query_space'){result.pattern??=null;result.include_examples??=false;}
     if(name==='search_query_space')result.k??=10;
@@ -110,7 +111,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
   }
   try {
     if(name==='pipeline_readiness') {
-      validateSchema({schema:definition.inputSchema,value:args});
+      validateSchema({schema:definition.input_schema,value:args});
       return {version_ids:(args.version_ids as unknown[]).map(value=>uuid({value,field:'version_id'})),require:validateModel({name:'ReadinessRequirements',value:args.require})};
     }
     if(name==='delete_document')return {doc_id:uuid({value:args.doc_id,field:'doc_id'})};
@@ -123,7 +124,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       for(const [key,value]of Object.entries(args)) if(top.has(key))payload[key]=value;else (payload.filters as Record<string,unknown>)[key]=value;
       return {request:validateModel({name:'DocumentSearchRequest',value:payload})};
     }
-    const required=definition.inputSchema.required as string[]|undefined;
+    const required=definition.input_schema.required as string[]|undefined;
     const missing=(required??[]).filter(key=>!(key in args)).sort();if(missing.length)refuse({detail:`Missing required arguments: ${missing.join(', ')}.`});
     assertJson({value:args});return {...args};
   }catch(error) {if(error instanceof ToolArgumentError)throw error;if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}

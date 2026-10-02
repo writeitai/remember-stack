@@ -11,7 +11,7 @@ export function parseJson({ text, statusCode = 200 }: { text: string; statusCode
       const source = context?.source;
       if (!source) throw new Error('Node runtime lacks JSON source access');
       const literalInteger = /^-?\d+$/.test(source) ? BigInt(source) : undefined;
-      if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))
+      if (!Number.isFinite(value)
         || (literalInteger !== undefined && (literalInteger > BigInt(Number.MAX_SAFE_INTEGER)
           || literalInteger < BigInt(Number.MIN_SAFE_INTEGER)))) {
         throw new NumericPrecisionError({ statusCode, detail: 'response contains an unsafe JSON number', code: 'numeric.precision' });
@@ -23,10 +23,10 @@ export function parseJson({ text, statusCode = 200 }: { text: string; statusCode
 }
 
 /** Refuse non-JSON values and unsafe input integers without serializing customer data. */
-export function assertJson({ value, seen = new WeakSet<object>() }: { value: unknown; seen?: WeakSet<object> }): void {
+export function assertJson({ value, response = false, seen = new WeakSet<object>() }: { value: unknown; response?: boolean; seen?: WeakSet<object> }): void {
   if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
   if (typeof value === 'number') {
-    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
+    if (!Number.isFinite(value) || (!response && Number.isInteger(value) && !Number.isSafeInteger(value))) {
       throw new InputValidationError({ detail: 'input contains an unsafe JSON number; use an explicit SQL string/cast', code: 'numeric.precision' });
     }
     return;
@@ -35,7 +35,7 @@ export function assertJson({ value, seen = new WeakSet<object>() }: { value: unk
     || Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)) {
     if (seen.has(value)) throw new InputValidationError({ detail: 'input contains a JSON cycle' });
     seen.add(value);
-    for (const item of (Array.isArray(value) ? value : Object.values(value))) assertJson({ value: item, seen });
+    for (const item of (Array.isArray(value) ? value : Object.values(value))) assertJson({ value: item, response, seen });
     seen.delete(value);
     return;
   }

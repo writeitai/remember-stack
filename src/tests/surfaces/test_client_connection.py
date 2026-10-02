@@ -637,3 +637,24 @@ def test_malformed_signed_key_is_not_treated_as_a_shared_secret() -> None:
 def test_clear_host_cache_is_idempotent() -> None:
     clear_host_cache()
     clear_host_cache()
+
+
+def test_windows_explicit_signed_key_bypasses_unusable_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issuer routing works with an explicit signed key even without a base URL."""
+    from types import SimpleNamespace
+
+    from remember import connection as connection_module
+    from tests.surfaces.fake_issuer import make_key
+
+    def refused() -> None:
+        """Fail if resolution attempts the unavailable Windows file reader."""
+        raise AssertionError("explicit signed key must not read the store")
+
+    monkeypatch.setattr(connection_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(connection_module, "load_credentials", refused)
+    result = resolve_connection(api_key=make_key())
+    assert result.key_source == "explicit"
+    assert result.api_url is None
+    assert result.claims is not None

@@ -1026,14 +1026,14 @@ class MemoryClient:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.NetworkError as error:
                 if attempt == 1:
-                    changed = self._route.re_resolve()
+                    changed = self._route.re_resolve(previous_url=base)
                     if read and changed:
                         continue
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             if attempt == 1 and _looks_moved(response) and self._route.key_routed:
-                changed = self._route.re_resolve()
+                changed = self._route.re_resolve(previous_url=base)
                 if read and changed:
                     response.close()
                     continue

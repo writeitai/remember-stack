@@ -50,7 +50,7 @@ void inputTypes;
 `;
     writeFileSync(join(directory,'consumer.mts'),`import * as sdk from '@rememberdev/client';\n${checks}`);
     writeFileSync(join(directory,'consumer.cts'),`import sdk = require('@rememberdev/client');\n${checks}`);
-    execFileSync(process.execPath,[join(directory,'node_modules/typescript/bin/tsc'),'--strict','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--lib','ES2024,DOM,ESNext.Disposable','consumer.mts','consumer.cts'],{cwd:directory,stdio:'inherit'});
+    execFileSync(process.execPath,[join(directory,'node_modules/typescript/bin/tsc'),'--strict','--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--lib','ES2022,ESNext.Disposable','consumer.mts','consumer.cts'],{cwd:directory,stdio:'inherit'});
     for(const consumer of ['consumer.mjs','consumer.cjs'])execFileSync(process.execPath,[join(directory,consumer)],{cwd:directory,stdio:'inherit'});
     console.log(`Tarball verified: ${packed.filename}; ESM/CommonJS runtime and declarations pass`);
   }finally{rmSync(directory,{recursive:true,force:true});}

@@ -1,5 +1,6 @@
 /** Exercise every served client method against the actual released/candidate engine. */
 import assert from 'node:assert/strict';
+import {Agent} from 'node:http';
 import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -11,7 +12,18 @@ const routes=JSON.parse(readFileSync(new URL('../contracts/routes.json',import.m
 const directory=mkdtempSync(join(tmpdir(),'remember-live-'));const file=join(directory,'probe.md');writeFileSync(file,'# SDK probe\nLocal compatibility fixture.\n');
 process.env.REMEMBER_CONFIG_DIR=directory;
 for(const name of ['REMEMBER_API_URL','REMEMBER_API_KEY','REMEMBER_PROJECT','REMEMBER_ISSUER'])delete process.env[name];
-const client=Client.fromEnv({apiKey:'test-compatibility-key',baseUrl:'http://127.0.0.1:8000',timeoutMs:30000});
+const observed=[];
+/** Observe the SDK's actual native requests without substituting its transport. */
+class RecordingAgent extends Agent {
+  /** Record the method and path before Node sends the request; never record credentials.
+   * @param {import('node:http').ClientRequest} request
+   * @param {import('node:http').RequestOptions} options
+   * @returns {void}
+   */
+  addRequest(request,options){observed.push({method:request.method,path:request.path.split('?')[0]});super.addRequest(request,options);}
+}
+const agent=new RecordingAgent({keepAlive:true});
+const client=Client.fromEnv({agents:{http:agent},apiKey:'test-compatibility-key',baseUrl:'http://127.0.0.1:8000',timeoutMs:30000});
 /** Match the exact route template and HTTP method in the composed profile. */
 function served({request}) {
   return Object.entries(profile.paths).some(([path,methods])=>new RegExp('^'+path.replace(/[.*+?^${}()|[\]\\]/g,'\\$&').replace(/\\\{[^}]+\\\}/g,'[^/]+')+'$').test(request.path)&&methods[request.method.toLowerCase()]);
@@ -33,6 +45,7 @@ try {
     if(options.versionIds)options.versionIds=[ingest.version_id];
     if(scenario.typescriptMethod==='pipelineReadiness')options.require={pipeline:true,p1:false,live_graph:false,p3:false};
     if(scenario.typescriptMethod==='waitForReadiness'){options.timeoutMs=500;options.pollIntervalMs=50;}
+    const start=observed.length;
     const exists=scenario.wire.every(request=>served({request}));
     try {
       await client[scenario.typescriptMethod](options);
@@ -46,6 +59,9 @@ try {
       assert(error instanceof MemoryApiError&&[400,404,409,422].includes(error.statusCode),`${scenario.typescriptMethod} unexpected failure: ${error.stack}`);
       if(scenario.wire[0].path.startsWith('/query/'))assert(error.code,`query refusal lacks its bound structured code: ${error.detail}`);
       outcomes.push({method:scenario.typescriptMethod,outcome:`served-business-refusal-${error.statusCode}`});
+    }finally {
+      const actual=observed.slice(start);assert(actual.length>0,`${scenario.typescriptMethod} sent no real request`);
+      for(const request of actual)assert(scenario.wire.some(expected=>request.method===expected.method&&request.path===expected.path),`${scenario.typescriptMethod} sent an unexpected ${request.method} ${request.path}`);
     }
   }
   const covered=new Set(fixtures.cases.map(item=>item.typescriptMethod));
@@ -53,4 +69,4 @@ try {
   const deletionRoute={method:'DELETE',path:`/documents/${ingest.doc_id}`};
   if(served({request:deletionRoute}))await client.deleteDocument({docId:ingest.doc_id});
   console.log(JSON.stringify({engine:version,outcomes},null,2));
-}finally{client.close();rmSync(directory,{recursive:true,force:true});}
+}finally{client.close();agent.destroy();rmSync(directory,{recursive:true,force:true});}

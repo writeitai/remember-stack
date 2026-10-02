@@ -100,3 +100,33 @@ test('stored shared keys cannot leave their recorded origin',async()=>{
   await assert.rejects(route.target(),StoredKeyRefused);
   assert(!JSON.stringify(connection).includes('shared-fixture'));assert(!inspect(connection).includes('shared-fixture'));
 });
+
+test('insecure project issuers are project errors and validation lists remain readable',async()=>{
+  const claims=signedKeyClaims({key:key({issuer:'http://public.example'})});
+  const {resolveProject,ProjectResolutionError}=await import('../.test-build/internal.js');
+  await assert.rejects(resolveProject({key:'fixture',claims,project:null,http:{request:async()=>{throw new Error('must not send');}}}),ProjectResolutionError);
+  await assert.rejects(checkedResponse({path:'/ingest',response:Response.json({detail:[{loc:['query','filename'],msg:'Field required'}]},{status:422})}),error=>error.detail.includes('filename')&&error.detail.includes('Field required')&&!error.detail.includes('[object Object]'));
+});
+
+test('readiness timeouts map to retryable transport errors and causes survive network normalization',async()=>{
+  const {mapError,TimeoutError,transportError}=await import('../.test-build/internal.js');
+  const mapped=mapError({error:new TimeoutError()});assert.equal(mapped.code,'transport_error');assert.equal(mapped.retryable,true);assert.equal(mapped.status_code,null);
+  const cause=new Error('synthetic connection failure');assert.equal(transportError({error:cause}).cause,cause);
+});
+
+test('empty configuration-directory values retain Python current-directory semantics',async()=>{
+  const {configDir,credentialsPath}=await import('../.test-build/internal.js');
+  assert.equal(configDir({env:{configDir:''}}),'.');
+  assert.equal(credentialsPath({env:{configDir:''}}),'credentials.json');
+  assert.equal(configDir({env:{xdgConfigHome:''}}),'remember');
+});
+
+
+test('Windows explicit signed keys need no inaccessible credential file or engine URL',{skip:process.platform!=='win32'},()=>{
+  const dir=mkdtempSync(join(tmpdir(),'remember-windows-signed-'));
+  try{
+    writeFileSync(join(dir,'credentials.json'),'invalid old file');
+    const connection=resolveConnection({apiKey:key(),env:{configDir:dir}});
+    assert.equal(connection.keySource,'explicit');assert.equal(connection.apiUrl,null);assert.equal(connection.claims.iss,'https://issuer.example');
+  }finally{rmSync(dir,{recursive:true,force:true});}
+});

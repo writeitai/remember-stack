@@ -55,7 +55,7 @@ export class NumericPrecisionError extends MemoryApiError {}
 /** The request deadline expired; no host refresh or replay is allowed. */
 export class RequestTimeoutError extends MemoryApiError {
   /** Keep timeout distinct from caller cancellation and readiness deadlines. */
-  constructor() { super({ detail: 'request timed out', statusCode: 0 }); }
+  constructor({cause}:{cause?:unknown}={}) { super({ detail: 'request timed out', statusCode: 0, cause }); }
 }
 /** A named input failed validation before HTTP. */
 export class InputValidationError extends TypeError {

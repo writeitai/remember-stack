@@ -32,21 +32,18 @@ jobs:
           enable-cache: true
       - name: Install Python dependencies
         run: uv sync --locked --python 3.13
-      - name: Prefer the selected Node installation over stale Windows npm shims
-        if: runner.os == 'Windows'
-        run: node -e "console.log(require('node:path').dirname(process.execPath))" >> $env:GITHUB_PATH
       - name: Install locked SDK dependencies
         working-directory: packages/typescript-client
-        run: npm ci
+        run: node scripts/npm.mjs ci
       - name: Check offline API, inventory, schemas and generated artifacts
         working-directory: packages/typescript-client
-        run: npm run check:generated
+        run: node scripts/npm.mjs run check:generated
       - name: Check executable Python behavior recordings
         working-directory: packages/typescript-client
-        run: npm run check:parity
+        run: node scripts/npm.mjs run check:parity
       - name: Typecheck and run API/wire/security/HTTP/HTTPS tests
         working-directory: packages/typescript-client
-        run: npm run typecheck && npm test
+        run: node scripts/npm.mjs run typecheck && node scripts/npm.mjs test
       - name: Verify packed ESM and CommonJS consumers
         working-directory: packages/typescript-client
-        run: npm run check:package
+        run: node scripts/npm.mjs run check:package

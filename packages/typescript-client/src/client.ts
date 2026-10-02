@@ -24,6 +24,12 @@ function clientIdentifier({value,field}:{value:unknown;field:string}):string {
   try{return validateSavedQueryIdentifier({value,field});}
   catch(error){if(error instanceof InputValidationError)throw new InputValidationError({detail:error.message});throw error;}
 }
+/** Preserve aware ISO timestamps in the general API, including nonzero offsets. */
+function apiTimestamp({value,field}:{value:string|Date;field:string}):string {
+  if(value instanceof Date){if(!Number.isFinite(value.getTime()))throw new InputValidationError({detail:`${field} must be a valid timestamp`});return value.toISOString();}
+  if(typeof value!=='string'||!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)||!Number.isFinite(Date.parse(value)))throw new InputValidationError({detail:`${field} must be timezone-aware`});
+  return value;
+}
 /** Require a JSON object in discovery/account APIs with intentionally open response fields. */
 function objectResponse({value}:{value:unknown}):Record<string,Models.JsonValue> {
   if(value===null||typeof value!=='object'||Array.isArray(value))throw new MemoryApiError({statusCode:200,detail:'response must be a JSON object'});
@@ -94,13 +100,13 @@ export class MemoryClient {
           const original=transportError({error});
           if(original instanceof AbortError||original instanceof RequestTimeoutError)throw original;
           if(attempt===0&&original.statusCode===0&&this.#route?.keyRouted) {
-            const changed=await this.#route.reResolve({signal:activeSignal});
+            const changed=await this.#route.reResolve({signal:activeSignal,previousUrl:target!.url});
             if(read&&changed)continue;
           }
           throw original;
         }
         if(attempt===0&&this.#route?.keyRouted&&await looksMoved({response})) {
-          const changed=await this.#route.reResolve({signal:activeSignal});
+          const changed=await this.#route.reResolve({signal:activeSignal,previousUrl:target!.url});
           if(read&&changed) {await response.body?.cancel();continue;}
         }
         return checkedResponse({response,path});
@@ -177,7 +183,7 @@ export class MemoryClient {
   /** Resolve a name with optional repeated focal-entity query parameters. */
   async resolve({name,contextEntityIds=[],signal}:{name:string;contextEntityIds?:string[];signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/resolve',params:[['name',name],...contextEntityIds.map(value=>['context_entity_ids',value] as const)],signal}),response:true});}
   /** Read matching current or valid-time relations. */
-  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,k=50,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;k?:number;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{k,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:utcTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
+  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,k=50,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;k?:number;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{k,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:apiTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
   /** Read the bounded decision transcript for a relation. */
   async transcriptRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/transcript/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read live property observations for an entity. */
@@ -200,11 +206,11 @@ export class MemoryClient {
   async hydrateRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/hydrate/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read a bounded current or bitemporal graph neighborhood. */
   async graphNeighborhood({entityId,hops=2,predicates=[],validAt,believedAt,limit=500,continuation=null,includePaths=false,signal}:{entityId:string;hops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;limit?:number;continuation?:string|null;includePaths?:boolean;signal?:AbortSignal}):Promise<Envelope> {
-    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:utcTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:utcTimestamp({value:believedAt,field:'believedAt'}),limit,continuation,include_paths:includePaths},signal}),response:true});
+    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/neighborhood',body:{entity_id:entityId,hops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'}),limit,continuation,include_paths:includePaths},signal}),response:true});
   }
   /** Read bounded shortest paths between two entities. */
   async graphPath({fromEntityId,toEntityId,maxHops=4,predicates=[],validAt,believedAt,signal}:{fromEntityId:string;toEntityId:string;maxHops?:number;predicates?:string[];validAt?:string|Date|null;believedAt?:string|Date|null;signal?:AbortSignal}):Promise<Envelope> {
-    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/path',body:{from_entity_id:fromEntityId,to_entity_id:toEntityId,max_hops:maxHops,predicates,valid_at:validAt==null?null:utcTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:utcTimestamp({value:believedAt,field:'believedAt'})},signal}),response:true});
+    return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/path',body:{from_entity_id:fromEntityId,to_entity_id:toEntityId,max_hops:maxHops,predicates,valid_at:validAt==null?null:apiTimestamp({value:validAt,field:'validAt'}),believed_at:believedAt==null?null:apiTimestamp({value:believedAt,field:'believedAt'})},signal}),response:true});
   }
   /** Read directed citation paths between documents. */
   async graphCitationPath({fromDocId,toDocId,maxHops=6,signal}:{fromDocId:string;toDocId:string;maxHops?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/citation-path',body:{from_doc_id:fromDocId,to_doc_id:toDocId,max_hops:maxHops},signal}),response:true});}
@@ -302,7 +308,8 @@ export class AccountApi {
     if(!c?.claims||!c.authorization)throw new AccountApiUnavailable({detail:'connection has no issuer account API'});
     return bounded({signal,timeoutMs:this.#timeoutMs,controllers:this.#controllers,work:async activeSignal=>{
       let endpoint:string;
-      try {endpoint=(await fetchIssuerMetadata({issuer:c.claims!.iss,http:this.#http,signal:activeSignal,timeoutMs:this.#timeoutMs})).endpoint({name:'remember_account_endpoint'});}
+      const metadata=await fetchIssuerMetadata({issuer:c.claims!.iss,http:this.#http,signal:activeSignal,timeoutMs:this.#timeoutMs});
+      try {endpoint=metadata.endpoint({name:'remember_account_endpoint'});}
       catch(error) {if(error instanceof AbortError||error instanceof RequestTimeoutError)throw error;throw new AccountApiUnavailable({detail:'issuer has no usable account API'});}
       if(!sameOrigin({left:c.claims!.iss,right:endpoint}))throw new AccountApiUnavailable({detail:'account endpoint must share the issuer origin'});
       const response=await sendSameOrigin({http:this.#http,request:{method:'GET',url:endpoint.replace(/\/+$/,'')+'/'+path.replace(/^\/+/,''),query:queryParams({params}),headers:{Authorization:c.authorization!,Accept:'application/json'},signal:activeSignal}});

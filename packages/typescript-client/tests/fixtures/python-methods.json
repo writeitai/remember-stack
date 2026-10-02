@@ -2863,7 +2863,7 @@
         "object_entity_id": "10000000-0000-0000-0000-000000000002",
         "predicate": "works_at",
         "subject_entity_id": "10000000-0000-0000-0000-000000000001",
-        "valid_at": "2026-10-02T12:00:00+00:00"
+        "valid_at": "2026-10-02T12:00:00+02:00"
       },
       "responses": [
         {
@@ -2941,7 +2941,7 @@
         "objectEntityId": "10000000-0000-0000-0000-000000000002",
         "predicate": "works_at",
         "subjectEntityId": "10000000-0000-0000-0000-000000000001",
-        "validAt": "2026-10-02T12:00:00+00:00"
+        "validAt": "2026-10-02T12:00:00+02:00"
       },
       "variant": "supplied",
       "wire": [
@@ -2970,7 +2970,7 @@
             ],
             [
               "valid_at",
-              "2026-10-02T12:00:00+00:00"
+              "2026-10-02T12:00:00+02:00"
             ]
           ]
         }
@@ -4298,7 +4298,7 @@
     {
       "method": "graph_neighborhood",
       "options": {
-        "believed_at": "2026-10-02T12:00:00+00:00",
+        "believed_at": "2026-10-02T12:00:00+02:00",
         "continuation": "fixture-cursor",
         "entity_id": "10000000-0000-0000-0000-000000000001",
         "hops": 3,
@@ -4307,7 +4307,7 @@
         "predicates": [
           "works_at"
         ],
-        "valid_at": "2026-10-02T12:00:00+00:00"
+        "valid_at": "2026-10-02T12:00:00+02:00"
       },
       "responses": [
         {
@@ -4381,7 +4381,7 @@
       },
       "typescriptMethod": "graphNeighborhood",
       "typescriptOptions": {
-        "believedAt": "2026-10-02T12:00:00+00:00",
+        "believedAt": "2026-10-02T12:00:00+02:00",
         "continuation": "fixture-cursor",
         "entityId": "10000000-0000-0000-0000-000000000001",
         "hops": 3,
@@ -4390,13 +4390,13 @@
         "predicates": [
           "works_at"
         ],
-        "validAt": "2026-10-02T12:00:00+00:00"
+        "validAt": "2026-10-02T12:00:00+02:00"
       },
       "variant": "supplied",
       "wire": [
         {
           "body": {
-            "believed_at": "2026-10-02T12:00:00+00:00",
+            "believed_at": "2026-10-02T12:00:00+02:00",
             "continuation": "fixture-cursor",
             "entity_id": "10000000-0000-0000-0000-000000000001",
             "hops": 3,
@@ -4405,7 +4405,7 @@
             "predicates": [
               "works_at"
             ],
-            "valid_at": "2026-10-02T12:00:00+00:00"
+            "valid_at": "2026-10-02T12:00:00+02:00"
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -4518,14 +4518,14 @@
     {
       "method": "graph_path",
       "options": {
-        "believed_at": "2026-10-02T12:00:00+00:00",
+        "believed_at": "2026-10-02T12:00:00+02:00",
         "from_entity_id": "10000000-0000-0000-0000-000000000001",
         "max_hops": 3,
         "predicates": [
           "works_at"
         ],
         "to_entity_id": "10000000-0000-0000-0000-000000000002",
-        "valid_at": "2026-10-02T12:00:00+00:00"
+        "valid_at": "2026-10-02T12:00:00+02:00"
       },
       "responses": [
         {
@@ -4599,27 +4599,27 @@
       },
       "typescriptMethod": "graphPath",
       "typescriptOptions": {
-        "believedAt": "2026-10-02T12:00:00+00:00",
+        "believedAt": "2026-10-02T12:00:00+02:00",
         "fromEntityId": "10000000-0000-0000-0000-000000000001",
         "maxHops": 3,
         "predicates": [
           "works_at"
         ],
         "toEntityId": "10000000-0000-0000-0000-000000000002",
-        "validAt": "2026-10-02T12:00:00+00:00"
+        "validAt": "2026-10-02T12:00:00+02:00"
       },
       "variant": "supplied",
       "wire": [
         {
           "body": {
-            "believed_at": "2026-10-02T12:00:00+00:00",
+            "believed_at": "2026-10-02T12:00:00+02:00",
             "from_entity_id": "10000000-0000-0000-0000-000000000001",
             "max_hops": 3,
             "predicates": [
               "works_at"
             ],
             "to_entity_id": "10000000-0000-0000-0000-000000000002",
-            "valid_at": "2026-10-02T12:00:00+00:00"
+            "valid_at": "2026-10-02T12:00:00+02:00"
           },
           "contentBase64": null,
           "contentType": "application/json",

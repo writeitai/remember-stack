@@ -37,10 +37,10 @@
   },
   "scripts": {
     "generate": "uv run --project ../.. python ../../scripts/export_typescript_contracts.py && node scripts/generate.mjs",
-    "check:generated": "uv run --project ../.. python ../../scripts/export_typescript_contracts.py --check && node scripts/generate.mjs --check",
+    "check:generated": "uv run --project ../.. python ../../scripts/export_typescript_contracts.py --check && node scripts/generate.mjs --check && node scripts/check-surface.mjs",
     "typecheck": "tsc --noEmit",
     "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
-    "test": "npm run build && npm run build:tests && node --test tests/*.test.mjs",
+    "test": "npm run build && npm run build:tests && node scripts/test.mjs",
     "build:tests": "tsup tests/internal.ts --format esm --out-dir .test-build --clean",
     "check:parity": "uv run --project ../.. python ../../scripts/export_typescript_parity.py --check",
     "check:package": "npm run build && node scripts/check-package.mjs"

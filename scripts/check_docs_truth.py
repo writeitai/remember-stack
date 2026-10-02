@@ -21,7 +21,8 @@ from pathlib import Path
 import re
 import sys
 
-from generate_docs_llms import NAVIGATION, select_variant
+from generate_docs_llms import NAVIGATION
+from generate_docs_llms import select_variant
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DOCS_DIR = REPO_ROOT / "website" / "src" / "app" / "docs"
@@ -91,9 +92,7 @@ def check_typescript_reference(*, docs_dir: Path) -> list[str]:
             camel = re.sub(r"_([a-z])", lambda match: match[1].upper(), name)
             if not re.search(r"\b" + re.escape(camel) + r"\b", text):
                 errors.append(f"typescript-sdk: missing documented method {camel}")
-    for name in schemas:
-        if name.startswith("$"):
-            continue
+    for name in schemas["$defs"]:
         if name.startswith("Output"):
             name = name[6:]
         if not re.search(r"\b" + re.escape(name) + r"\b", text):

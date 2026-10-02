@@ -5,7 +5,8 @@ import { parseJson } from './json';
 import constants from './constants.generated';
 
 /** Fields of one request; every adapter must send once and honor cancellation. */
-export interface RequestFields { method:string; query?:URLSearchParams; headers?:HeadersInit; body?:string|Uint8Array; signal?:AbortSignal; }
+export type HttpHeaders = Headers | Record<string,string> | [string,string][];
+export interface RequestFields { method:string; query?:URLSearchParams; headers?:HttpHeaders; body?:string|Uint8Array; signal?:AbortSignal; }
 /** Caller-owned relative-path adapter with its own base URL and headers. */
 export interface HttpClient { request(options:RelativeHttpRequest):Promise<Response>; }
 /** Caller-owned absolute-URL transport retaining SDK headers and routing. */
@@ -78,8 +79,8 @@ export function transportError({ error }: { error: unknown }): MemoryApiError | 
   if(error instanceof MemoryApiError || error instanceof AbortError)return error;
   const code=(error as {cause?:{code?:string};code?:string})?.cause?.code ?? (error as {code?:string})?.code;
   if(['ETIMEDOUT','ESOCKETTIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(code??'')
-    ||(error instanceof Error && error.name==='TimeoutError'))return new RequestTimeoutError();
-  return new MemoryApiError({statusCode:0,detail:'network request failed'});
+    ||(error instanceof Error && error.name==='TimeoutError'))return new RequestTimeoutError({cause:error});
+  return new MemoryApiError({statusCode:0,detail:'network request failed',cause:error});
 }
 
 /** Bound routing, network and body reads; a caller abort keeps its own identity. */
@@ -149,7 +150,7 @@ export async function checkedResponse({ response, path }: { response: Response; 
     const hint = response.headers.get('retry-after');
     const retryAfter = hint !== null && hint.trim() !== '' && Number.isFinite(Number(hint)) ? Number(hint) : undefined;
     const code = typeof detailObject?.code === 'string' ? detailObject.code : undefined;
-    const detail = typeof detailObject?.message === 'string' ? detailObject.message : typeof envelope?.detail === 'string' ? envelope.detail : 'request rate limited';
+    const detail = typeof detailObject?.message === 'string' ? detailObject.message : typeof envelope?.detail === 'string' ? envelope.detail : 'rate limited';
     throw new RateLimited({ detail, code, retryAfter });
   }
   let detail = text;
@@ -171,7 +172,7 @@ export async function checkedResponse({ response, path }: { response: Response; 
           retryable = detailObject.retryable as boolean | undefined; requestId = detailObject.request_id as string | undefined;
         } else detail = 'deployment API returned a malformed structured error';
       } else detail = JSON.stringify(detailObject);
-    } else detail = String(envelope.detail);
+    } else detail = typeof envelope.detail==='object' ? JSON.stringify(envelope.detail) : String(envelope.detail);
   }
   throw new MemoryApiError({ statusCode: response.status, detail, code, retryable, requestId, response });
 }
