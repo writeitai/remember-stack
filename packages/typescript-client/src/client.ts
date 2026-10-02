@@ -28,7 +28,7 @@ function clientIdentifier({value,field}:{value:unknown;field:string}):string {
 function apiTimestamp({value,field}:{value:string|Date;field:string}):string {
   if(value instanceof Date){if(!Number.isFinite(value.getTime()))throw new InputValidationError({detail:`${field} must be a valid timestamp`});return value.toISOString();}
   if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/i.test(value))throw new InputValidationError({detail:`${field} must be an ISO datetime`});
-  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/).map(Number) as [number,number,number,number,number,number];
+  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/i).map(Number) as [number,number,number,number,number,number];
   const zone=/(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
   if(!zone)throw new InputValidationError({detail:`${field} must be timezone-aware`});
   const days=new Date(Date.UTC(year,month,0)).getUTCDate();
