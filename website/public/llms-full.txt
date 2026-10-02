@@ -14998,6 +14998,12 @@ models below are Pydantic models (frozen) unless noted.
 arrives as a list of values. Pair it with `columns` to get names:
 `[dict(zip([c["name"] for c in res.columns], row)) for row in res.rows]`.
 
+### Windows credential files
+
+Automatic credential-file reads are refused on Windows because the SDK cannot
+prove owner-only access with its current file reader. Supply an explicit API key
+and engine URL instead; no stored file is read when both are supplied.
+
 ---
 
 Source: https://remember.dev/docs/reference/typescript-sdk
@@ -15006,7 +15012,7 @@ Source: https://remember.dev/docs/reference/typescript-sdk
 
 `@rememberdev/client` is the asynchronous Node.js memory client. It stores
 and searches documents, queries facts and sources, reads graphs, checks pipeline
-readiness, and manages deployment-side connector configuration. It supports
+readiness, and includes methods for optional deployment-side connector configuration. It supports
 Node.js 22 or newer, ESM and CommonJS. Use it in an application backend.
 
 ## Build and install
@@ -15017,7 +15023,7 @@ been published to npm. Build a local tarball:
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-uv sync --extra dev
+uv sync --group dev
 cd packages/typescript-client
 npm ci
 npm run build
@@ -15069,7 +15075,8 @@ Explicit `apiKey`, `baseUrl`, and `project` take precedence over
 REMEMBER_API_KEY, REMEMBER_API_URL and REMEMBER_PROJECT, then the existing
 version-2 credential file. `resolveConnection` additionally accepts `issuer`
 and `mcpUrl` with REMEMBER_ISSUER/REMEMBER_MCP_URL precedence. Empty environment
-values are unset. Bare keys and Bearer-prefixed keys are accepted.
+connection values are unset. Empty configuration-directory values retain Python's
+current-directory behavior. Bare keys and Bearer-prefixed keys are accepted.
 
 Signed-key claims are decoded for routing only; the server verifies signatures.
 The issuer supplies secure metadata and a covered project's engine URL. The
@@ -15086,6 +15093,10 @@ key is sent only to its recorded, issuer or resolved deployment origin.
 `SecretString`, `StoredCredentials` and `Connection` redact credential display;
 `getSecretValue()` and `connection.authorization` deliberately access a secret.
 
+Connector-management methods require an engine composition that serves those
+optional routes. None of the released or candidate profiles checked by this PR
+serves them; calling them there returns an explicit unsupported HTTP error.
+
 ## Method reference
 
 Every method takes one named options object and returns a Promise. Optional
@@ -15097,7 +15108,7 @@ objects and arrays, with validated defaults.
 | Method | Corresponding result |
 | --- | --- |
 | `listOperations` | `tuple[ToolDescriptor, ...]` |
-| `runOperation` | `Envelope | ContextBundleV2` |
+| `runOperation` | `Envelope \| ContextBundleV2` |
 | `querySql` | `dict[str, object]` |
 | `openQuery` | `QueryResultDict` |
 | `explainQuery` | `QueryResultDict` |
@@ -15140,8 +15151,12 @@ objects and arrays, with validated defaults.
 Synchronous and asynchronous disposal are supported. An injected caller-owned
 transport is never closed by the SDK.
 
-Public model names include `CapabilityReadiness`, `ClaimValidPrecision`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `DocumentDeletion`, `DocumentPage`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentSummary`, `DocumentVersionSummary`, `Envelope`, `IngestedVersion`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ReadinessRequirements`, `TemporalMatch`, `ToolDescriptor`, `VersionPipelineReadiness`.
-Their `Input` variants describe schema-owned inputs.
+The complete schema-derived model and support-type vocabulary is:
+
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+Schema-owned public models have `Input` variants for inputs; connection and issuer
+types expose the SDK support contracts. CLI credential-response types are data
+contracts only and do not add login or key-writing operations to this package.
 
 ### Ingest and readiness
 
@@ -17393,8 +17408,9 @@ absent from the current release; nothing here has a date.
 ## Clients
 
 - **Async Python client.** The `remember` package is synchronous only.
-- **Other languages.** There is no TypeScript, JavaScript, Go or other
-  client library; use the [HTTP API](https://remember.dev/docs/reference/http-api).
+- **Other languages.** A Node.js [TypeScript/JavaScript client](https://remember.dev/docs/reference/typescript-sdk)
+  is available as repository source. There is no Go client; use the
+  [HTTP API](https://remember.dev/docs/reference/http-api).
 
 ## Running the engine
 
