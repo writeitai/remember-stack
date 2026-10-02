@@ -36,6 +36,7 @@ from remember.errors import AccountApiUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
+from remember.http_routes import is_read_route
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import IssuerError
 from remember.issuer import send_same_origin
@@ -987,14 +988,11 @@ class MemoryClient:
         content: bytes | None = None,
         headers: dict[str, str] | None = None,
     ) -> httpx.Response:
-        """Send one engine request, re-resolving a moved deployment once.
+        """Send once; only classified reads may replay after a changed host.
 
-        Only a key-routed client re-resolves (D136 §8.3), and retries once when
-        the deployment URL changed. A read (``GET``/``HEAD``) retries after any
-        network failure, a ``421``, or a ``404`` that is not the engine's error
-        envelope. Any other request retries only after a failure that happens
-        before the request reaches the server — a connect error, a connect
-        timeout, or a ``421`` — so a write is never sent twice.
+        Writes surface their original failure even for connection errors or
+        421. Movement refreshes their mapping only for the next operation.
+        Timeouts never trigger discovery or replay.
         """
         merged: dict[str, str] = dict(headers or {})
         if self._route is None:
@@ -1009,7 +1007,7 @@ class MemoryClient:
                 )
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
-        read = method in ("GET", "HEAD")
+        read = is_read_route(method=method, path=path)
         for attempt in (1, 2):
             base, authorization = self._route.target()
             if authorization is not None:
@@ -1024,21 +1022,21 @@ class MemoryClient:
                     content=content,
                     headers=merged,
                 )
-            except (httpx.NetworkError, httpx.ConnectTimeout) as error:
-                unsent = isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
-                if attempt == 1 and (read or unsent) and self._route.re_resolve():
-                    continue
+            except httpx.TimeoutException as error:
+                raise MemoryApiError(status_code=0, detail=str(error)) from error
+            except httpx.NetworkError as error:
+                if attempt == 1:
+                    changed = self._route.re_resolve()
+                    if read and changed:
+                        continue
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
             except httpx.HTTPError as error:
                 raise MemoryApiError(status_code=0, detail=str(error)) from error
-            if (
-                attempt == 1
-                and (response.status_code == 421 or (read and _looks_moved(response)))
-                and self._route.key_routed
-                and self._route.re_resolve()
-            ):
-                response.close()
-                continue
+            if attempt == 1 and _looks_moved(response) and self._route.key_routed:
+                changed = self._route.re_resolve()
+                if read and changed:
+                    response.close()
+                    continue
             return response
         raise AssertionError("unreachable")  # pragma: no cover
 
@@ -1066,6 +1064,8 @@ class MemoryClient:
         if not response.is_success:
             detail = response.text
             code: str | None = None
+            retryable: bool | None = None
+            request_id: str | None = None
             try:
                 body = response.json()
             except ValueError:
@@ -1081,7 +1081,7 @@ class MemoryClient:
                         else None
                     )
                     if structured is not None:
-                        code, detail = structured
+                        code, detail, retryable, request_id = structured
                     elif path.startswith("/query/"):
                         detail = "deployment API returned a malformed structured error"
                     else:
@@ -1091,7 +1091,11 @@ class MemoryClient:
             elif isinstance(body, dict) and "detail" in body:
                 detail = "deployment API returned a malformed error envelope"
             raise MemoryApiError(
-                status_code=response.status_code, detail=detail, code=code
+                status_code=response.status_code,
+                detail=detail,
+                code=code,
+                retryable=retryable,
+                request_id=request_id,
             )
         try:
             return response.json()
@@ -1135,9 +1139,13 @@ def _saved_query_path_segment(*, value: str, field: str) -> str:
 
 def _structured_query_error(
     *, detail: dict[object, object], status_code: int
-) -> tuple[str, str] | None:
-    """Accept only the complete public query-error shape at its bound HTTP status."""
-    if set(detail) != {"code", "message"}:
+) -> tuple[str, str, bool | None, str | None] | None:
+    """Accept public query errors and correctly typed optional diagnostics."""
+    if (
+        not {"code", "message"}
+        <= set(detail)
+        <= {"code", "message", "retryable", "request_id"}
+    ):
         return None
     code = detail.get("code")
     message = detail.get("message")
@@ -1145,7 +1153,18 @@ def _structured_query_error(
         return None
     if _QUERY_ERROR_HTTP_STATUS.get(code) != status_code:
         return None
-    return code, message
+    retryable = detail.get("retryable")
+    request_id = detail.get("request_id")
+    if "retryable" in detail and not isinstance(retryable, bool):
+        return None
+    if "request_id" in detail and not isinstance(request_id, str):
+        return None
+    return (
+        code,
+        message,
+        retryable if isinstance(retryable, bool) else None,
+        request_id if isinstance(request_id, str) else None,
+    )
 
 
 def _validated_list(

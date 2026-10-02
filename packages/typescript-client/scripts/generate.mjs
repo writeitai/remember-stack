@@ -47,7 +47,8 @@ function exactNulls({content,schema,name}) {
   if (!schema) return content;
   const nullProperties=new Set(Object.entries(schema.properties ?? {}).filter(([,value])=>value.type==='null').map(([key])=>key));
   const recursive=JSON.stringify(schema).includes('#/components/schemas/'+name);
-  if(schema.type!=='null' && nullProperties.size===0 && !recursive) return content;
+  const hasAny = /\bany\b/.test(content);
+  if(schema.type!=='null' && nullProperties.size===0 && !recursive && !hasAny) return content;
   const source=ts.createSourceFile(name+'.ts',content,ts.ScriptTarget.Latest,true);
   const result=ts.transform(source,[context=>{
     /** Visit the named model's source-owned exact-null/recursive properties.
@@ -55,6 +56,7 @@ function exactNulls({content,schema,name}) {
      * @returns {import("typescript").VisitResult<import("typescript").Node>}
      */
     function visit(node) {
+      if(node.kind===ts.SyntaxKind.AnyKeyword) return ts.factory.createTypeReferenceNode('JsonValue');
       if(ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName) && node.typeName.text==='Record'
         && node.typeArguments?.length===2 && ts.isTypeReferenceNode(node.typeArguments[1])
         && node.typeArguments[1].typeName.getText(source)===name) {
@@ -71,7 +73,7 @@ function exactNulls({content,schema,name}) {
           if(ts.isPropertySignature(member) && nullProperties.has(member.name.getText(source).replace(/^['"]|['"]$/g,''))) {
             return ts.factory.updatePropertySignature(member,member.modifiers,member.name,member.questionToken,ts.factory.createLiteralTypeNode(ts.factory.createNull()));
           }
-          return member;
+          return ts.visitEachChild(member,visit,context);
         });
         return ts.factory.updateTypeAliasDeclaration(node,node.modifiers,node.name,node.typeParameters,ts.factory.updateTypeLiteralNode(node.type,members));
       }
@@ -79,7 +81,10 @@ function exactNulls({content,schema,name}) {
     }
     return node=>ts.visitNode(node,visit);
   }]);
-  try {return ts.createPrinter().printFile(result.transformed[0]);}
+  try {
+    const printed=ts.createPrinter().printFile(result.transformed[0]);
+    return hasAny && !/^import type \{ JsonValue \}/m.test(printed) && name!=='JsonValue' ? "import type { JsonValue } from './JsonValue';\n"+printed : printed;
+  }
   finally {result.dispose();}
 }
 

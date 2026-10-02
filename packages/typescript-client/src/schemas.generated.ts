@@ -2592,7 +2592,8 @@ export default {
             "pending"
           ],
           "title": "Processing Admission",
-          "type": "string"
+          "type": "string",
+          "x-exclude": true
         },
         "title": {
           "anyOf": [

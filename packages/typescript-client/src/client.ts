@@ -114,7 +114,7 @@ export class MemoryClient {
   /** Convenience alias for explainSql. */
   async explainQuery(options:Parameters<MemoryClient['explainSql']>[0]):Promise<QueryResultDict> {return this.explainSql(options);}
   /** Discover manifest-backed schema objects and optional examples. */
-  async describeQuerySpace({pattern,includeExamples=false,signal}:{pattern?:string|null;includeExamples?:boolean;signal?:AbortSignal}={}):Promise<Record<string,Models.JsonValue>> {return objectResponse({value:await this.json({method:'GET',path:'/query/space',params:{pattern,include_examples:includeExamples},signal})});}
+  async describeQuerySpace({pattern,includeExamples=false,signal}:{pattern?:string|null;includeExamples?:boolean;signal?:AbortSignal}={}):Promise<Record<string,Models.JsonValue>> {return objectResponse({value:await this.json({method:'GET',path:'/query/space',params:{include_examples:includeExamples,pattern},signal})});}
   /** Search manifest text with atomic typed result validation. */
   async searchQuerySpace({query,k=10,signal}:{query:string;k?:number;signal?:AbortSignal}):Promise<Models.OutputDiscoveryHit[]> {return listResponse({name:'DiscoveryHit',value:await this.json({method:'GET',path:'/query/space/search',params:{query,k},signal})});}
   /** List saved-query registry metadata. */
@@ -163,11 +163,11 @@ export class MemoryClient {
   /** Resolve a name with optional repeated focal-entity query parameters. */
   async resolve({name,contextEntityIds=[],signal}:{name:string;contextEntityIds?:string[];signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/resolve',params:[['name',name],...contextEntityIds.map(value=>['context_entity_ids',value] as const)],signal}),response:true});}
   /** Read matching current or valid-time relations. */
-  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,k=50,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;k?:number;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:utcTimestamp({value:validAt,field:'validAt'}),k},signal}),response:true});}
+  async lookupRelations({subjectEntityId,predicate,objectEntityId,validAt,k=50,signal}:{subjectEntityId?:string|null;predicate?:string|null;objectEntityId?:string|null;validAt?:string|Date|null;k?:number;signal?:AbortSignal}={}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/relations',params:{k,subject_entity_id:subjectEntityId,predicate,object_entity_id:objectEntityId,valid_at:validAt==null?undefined:utcTimestamp({value:validAt,field:'validAt'})},signal}),response:true});}
   /** Read the bounded decision transcript for a relation. */
   async transcriptRelation({relationId,signal}:{relationId:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:`/transcript/relation/${segment({value:relationId})}`,signal}),response:true});}
   /** Read live property observations for an entity. */
-  async lookupObservations({entityId,propertyQuery,k=10,signal}:{entityId:string;propertyQuery?:string|null;k?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/observations',params:{entity_id:entityId,property_query:propertyQuery,k},signal}),response:true});}
+  async lookupObservations({entityId,propertyQuery,k=10,signal}:{entityId:string;propertyQuery?:string|null;k?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'GET',path:'/lookup/observations',params:{entity_id:entityId,k,property_query:propertyQuery},signal}),response:true});}
   /** Search source claims; filters switch the wire request from GET to POST. */
   async searchClaims(options:SearchOptions):Promise<Envelope> {return this.search({...options,path:'/search/claims'});}
   /** Search live passages; filters switch the wire request from GET to POST. */

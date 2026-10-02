@@ -1,0 +1,534 @@
+#!/usr/bin/env python3
+"""Record every Python memory facade method for executable TypeScript conformance.
+
+Fixtures contain only synthetic identifiers and keys. --check executes the
+current Python source and compares committed observations without editing them.
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+from datetime import datetime
+import inspect
+import json
+from pathlib import Path
+import tempfile
+from typing import Any
+from uuid import UUID
+
+import httpx
+from pydantic import BaseModel
+
+from remember import models
+from remember.client import Client
+from remember.query_sandbox.result import QueryResult
+from remember.query_sandbox.result import ResultLimits
+
+ROOT = Path(__file__).resolve().parents[1]
+TARGET = ROOT / "packages/typescript-client/tests/fixtures/python-methods.json"
+ID = "10000000-0000-0000-0000-000000000001"
+OTHER_ID = "10000000-0000-0000-0000-000000000002"
+STAMP = "2026-10-02T12:00:00+00:00"
+REQUIRE = {"pipeline": True, "p1": True, "live_graph": True, "p3": False}
+
+
+def scenarios() -> list[dict[str, Any]]:
+    """Cover each method's defaults and supplied optional arguments explicitly."""
+    pairs = [
+        ("list_operations", {}, {}),
+        (
+            "run_operation",
+            {"name": "facts_context"},
+            {
+                "name": "facts_context",
+                "arguments": {"query": "fixture", "entity_ids": [ID]},
+            },
+        ),
+        (
+            "query_sql",
+            {"sql": "SELECT 1"},
+            {"sql": "SELECT $1", "parameters": [1, "text", None], "max_rows": 0},
+        ),
+        (
+            "open_query",
+            {"sql": "SELECT 1"},
+            {"sql": "SELECT $1", "parameters": [1], "max_rows": 7},
+        ),
+        ("explain_sql", {"sql": "SELECT 1"}, {"sql": "SELECT $1", "parameters": [1]}),
+        ("explain_query", {"sql": "SELECT 1"}, {"sql": "SELECT $1", "parameters": [1]}),
+        (
+            "facts_context",
+            {"query": "fixture"},
+            {
+                "query": "fixture",
+                "time": {"mode": "current"},
+                "hops": 3,
+                "predicate": "works_at",
+                "entity_ids": [ID],
+            },
+        ),
+        (
+            "combined_context",
+            {"query": "fixture"},
+            {"query": "fixture", "time": {"mode": "current"}},
+        ),
+        ("claims_and_sources_context", {"query": "fixture"}, {"query": "other"}),
+        ("resolve_entity", {"name": "fixture"}, {"name": "other"}),
+        ("describe_query_space", {}, {"pattern": "memory_*", "include_examples": True}),
+        ("search_query_space", {"query": "fixture"}, {"query": "fixture", "k": 25}),
+        ("list_saved_queries", {}, {"namespace": "examples", "status": "active"}),
+        (
+            "describe_saved_query",
+            {"namespace": "examples", "name": "safe"},
+            {"namespace": "examples", "name": "safe", "version": 2},
+        ),
+        (
+            "run_saved_query",
+            {"namespace": "examples", "name": "safe"},
+            {
+                "namespace": "examples",
+                "name": "safe",
+                "version": 2,
+                "parameters": [1],
+                "max_rows": 9,
+            },
+        ),
+        (
+            "resolve",
+            {"name": "fixture"},
+            {"name": "fixture", "context_entity_ids": [ID, OTHER_ID]},
+        ),
+        (
+            "lookup_relations",
+            {},
+            {
+                "subject_entity_id": ID,
+                "predicate": "works_at",
+                "object_entity_id": OTHER_ID,
+                "valid_at": STAMP,
+                "k": 3,
+            },
+        ),
+        ("transcript_relation", {"relation_id": ID}, {"relation_id": OTHER_ID}),
+        (
+            "lookup_observations",
+            {"entity_id": ID},
+            {"entity_id": ID, "property_query": "salary", "k": 3},
+        ),
+        (
+            "search_claims",
+            {"query": "fixture"},
+            {
+                "query": "fixture",
+                "k": 3,
+                "channel": "bm25",
+                "documents": {"language": "en", "authors": ["alice"]},
+            },
+        ),
+        (
+            "search_chunks",
+            {"query": "fixture"},
+            {
+                "query": "fixture",
+                "k": 3,
+                "channel": "bm25",
+                "documents": {"family": ["email"], "doc_ids": [ID]},
+            },
+        ),
+        ("adjacent_chunks", {"chunk_id": ID}, {"chunk_id": ID, "window": 2}),
+        ("hydrate_relation", {"relation_id": ID}, {"relation_id": OTHER_ID}),
+        (
+            "graph_neighborhood",
+            {"entity_id": ID},
+            {
+                "entity_id": ID,
+                "hops": 3,
+                "predicates": ["works_at"],
+                "valid_at": STAMP,
+                "believed_at": STAMP,
+                "limit": 7,
+                "continuation": "fixture-cursor",
+                "include_paths": True,
+            },
+        ),
+        (
+            "graph_path",
+            {"from_entity_id": ID, "to_entity_id": OTHER_ID},
+            {
+                "from_entity_id": ID,
+                "to_entity_id": OTHER_ID,
+                "max_hops": 3,
+                "predicates": ["works_at"],
+                "valid_at": STAMP,
+                "believed_at": STAMP,
+            },
+        ),
+        (
+            "graph_citation_path",
+            {"from_doc_id": ID, "to_doc_id": OTHER_ID},
+            {"from_doc_id": ID, "to_doc_id": OTHER_ID, "max_hops": 3},
+        ),
+        ("deployment_build_info", {}, {}),
+        (
+            "pipeline_readiness",
+            {"version_ids": [ID], "require": REQUIRE},
+            {"version_ids": [ID, OTHER_ID], "require": {**REQUIRE, "p3": True}},
+        ),
+        (
+            "wait_for_readiness",
+            {"version_ids": [ID]},
+            {
+                "version_ids": [ID],
+                "timeout": 1.0,
+                "poll_interval": 0.01,
+                "require_p3": True,
+            },
+        ),
+        (
+            "ingest",
+            {"content": {"base64": "bm90ZQ=="}, "filename": "fixture.md"},
+            {
+                "content": {"base64": "bm90ZQ=="},
+                "filename": "fixture.md",
+                "mime": "text/plain",
+                "title": "fixture title",
+                "source_kind": "agent",
+                "source_ref": "stable/ref",
+                "source_modified_at": STAMP,
+                "versioning_mode": "living",
+                "source_version_ref": "etag-2",
+                "source_path": "/upstream/fixture.md",
+            },
+        ),
+        (
+            "list_documents",
+            {},
+            {"limit": 7, "cursor": "fixture-cursor", "status": "failed"},
+        ),
+        (
+            "search_documents",
+            {},
+            {
+                "query": "fixture",
+                "filters": {"authors": ["alice"], "modified_from": STAMP},
+                "versions": "all",
+                "k": 3,
+            },
+        ),
+        (
+            "search_documents_request",
+            {"request": {}},
+            {
+                "request": {
+                    "filters": {"language": "en", "authors": ["alice"]},
+                    "cursor": "next",
+                    "versions": "all",
+                    "k": 3,
+                }
+            },
+        ),
+        ("delete_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
+        ("connectors", {}, {}),
+        (
+            "add_connector",
+            {"connector": {"kind": "custom", "name": "fixture"}},
+            {
+                "connector": {
+                    "kind": "custom",
+                    "name": "fixture",
+                    "configuration": {"directory": "/sources"},
+                    "credential_ref": "operator-secret-reference",
+                }
+            },
+        ),
+        ("pause_connector", {"connector_id": ID}, {"connector_id": OTHER_ID}),
+        ("connector_status", {"connector_id": ID}, {"connector_id": OTHER_ID}),
+    ]
+    result = [
+        {"method": name, "variant": variant, "options": options}
+        for name, omitted, supplied in pairs
+        for variant, options in [("defaults", omitted), ("supplied", supplied)]
+    ]
+    query_args = {
+        "query_sql": {"sql": "SELECT 1"},
+        "explain_sql": {"sql": "SELECT 1"},
+        "describe_query_space": {},
+        "search_query_space": {"query": "fixture"},
+        "list_saved_queries": {},
+        "describe_saved_query": {"namespace": "examples", "name": "safe"},
+        "run_saved_query": {"namespace": "examples", "name": "safe"},
+    }
+    result.extend(
+        {
+            "method": "call_open_query",
+            "variant": name,
+            "options": {"name": name, "arguments": arguments},
+        }
+        for name, arguments in query_args.items()
+    )
+    result.extend(
+        [
+            {
+                "method": "ingest",
+                "variant": "file-mime-before-display-name",
+                "options": {"source": "$FILE", "filename": "display.png"},
+            },
+            {
+                "method": "ingest_file",
+                "variant": "file-mime-before-display-name",
+                "options": {"file_path": "$FILE", "filename": "display.png"},
+            },
+        ]
+    )
+    inventory = json.loads(
+        (ROOT / "plan/designs/typescript_client_parity.json").read_text()
+    )
+    wanted = set(inventory["classes"]["MemoryClient"]) - {"__init__", "close"}
+    observed = {case["method"] for case in result}
+    assert wanted <= observed, f"missing Python method scenarios: {wanted - observed}"
+    assert observed - wanted == {"ingest_file"}
+    for case in result:
+        case["typescriptMethod"] = camel(value=case["method"])
+        case["typescriptOptions"] = {
+            camel(value=key): value for key, value in case["options"].items()
+        }
+        for seconds, milliseconds in [
+            ("timeout", "timeoutMs"),
+            ("poll_interval", "pollIntervalMs"),
+        ]:
+            if seconds in case["options"]:
+                del case["typescriptOptions"][camel(value=seconds)]
+                case["typescriptOptions"][milliseconds] = (
+                    case["options"][seconds] * 1000
+                )
+    return result
+
+
+def camel(*, value: str) -> str:
+    """Translate only top-level method/options names; nested wire keys stay snake_case."""
+    head, *tail = value.split("_")
+    return head + "".join(part.title() for part in tail)
+
+
+def responses() -> dict[str, Any]:
+    """Build source-validated complete responses, including recursive default values."""
+    now = datetime.fromisoformat(STAMP)
+    evidence = models.Envelope(
+        grain=models.Grain.EVIDENCE,
+        temporal_scope=models.CurrentTemporalScope(evaluated_at=now, believed_at=now),
+        freshness=models.Freshness(pg_live_ts=now),
+    )
+    fact = evidence.model_copy(update={"grain": models.Grain.FACT})
+    return {
+        "envelope": evidence.model_dump(mode="json"),
+        "fact": fact.model_dump(mode="json"),
+        "bundle": models.ContextBundleV2(
+            claims_and_sources=evidence, facts=fact
+        ).model_dump(mode="json"),
+        "query": QueryResult(
+            request_id=UUID(ID),
+            deployment_id=UUID(ID),
+            surface_manifest_hash="fixture",
+            query_hash="fixture",
+            limits=ResultLimits(
+                row_cap=10,
+                byte_cap=1000,
+                statement_timeout_ms=100,
+                analytical_tier=False,
+            ),
+            execution_started_at=now,
+            elapsed_ms=0,
+        ).model_dump(mode="json"),
+        "readiness": models.PipelineReadinessReport(
+            ready=True, versions=(), capabilities={}
+        ).model_dump(mode="json"),
+        "ingest": models.IngestedVersion(
+            deployment_id=UUID(ID),
+            doc_id=UUID(ID),
+            version_id=UUID(OTHER_ID),
+            content_hash="fixture",
+            created=False,
+        ).model_dump(mode="json"),
+        "document_page": models.DocumentPage(documents=()).model_dump(mode="json"),
+        "search_page": models.DocumentSearchPage(documents=(), as_of=now).model_dump(
+            mode="json"
+        ),
+        "deletion": models.DocumentDeletion(
+            doc_id=UUID(ID),
+            deleted_at=now,
+            claims_retired=0,
+            relations_closed=0,
+            observations_closed=0,
+        ).model_dump(mode="json"),
+        "deployment": models.DeploymentBuildInfo().model_dump(mode="json"),
+        "connector": models.ConnectorDescriptor(
+            connector_id=UUID(ID), kind="custom", name="fixture", status="active"
+        ).model_dump(mode="json"),
+    }
+
+
+def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
+    """Select a valid response by the actual request, not by the method under test."""
+    path = request.url.path
+    if path == "/operations":
+        return []
+    if path == "/operations/combined_context":
+        return fixtures["bundle"]
+    if path == "/operations/facts_context":
+        return fixtures["fact"]
+    if path.startswith("/query/"):
+        if path in {"/query/space/search", "/query/saved"}:
+            return []
+        if path in {"/query/space", "/query/saved/examples/safe"}:
+            return {}
+        return fixtures["query"]
+    mapping = {
+        "/readiness": "readiness",
+        "/ingest": "ingest",
+        "/deployment": "deployment",
+        "/documents": "document_page",
+        "/documents/search": "search_page",
+    }
+    if path in mapping:
+        return fixtures[mapping[path]]
+    if path.startswith("/documents/") and request.method == "DELETE":
+        return fixtures["deletion"]
+    if path == "/connectors" and request.method == "GET":
+        return []
+    if path.startswith("/connectors"):
+        return fixtures["connector"]
+    return fixtures["envelope"]
+
+
+def python_options(*, options: dict[str, Any], file_path: Path) -> dict[str, Any]:
+    """Construct the same typed model/datetime/bytes inputs used by Python callers."""
+    result = dict(options)
+    for key in ("source", "file_path"):
+        if result.get(key) == "$FILE":
+            result[key] = file_path
+    if isinstance(result.get("content"), dict):
+        result["content"] = base64.b64decode(result["content"]["base64"])
+    for key in ("valid_at", "believed_at", "source_modified_at"):
+        if key in result:
+            result[key] = datetime.fromisoformat(result[key])
+    for key, model in {
+        "documents": models.DocumentSearchFilters,
+        "filters": models.DocumentSearchFilters,
+        "request": models.DocumentSearchRequest,
+        "require": models.ReadinessRequirements,
+        "connector": models.ConnectorCreate,
+    }.items():
+        if key in result:
+            result[key] = model.model_validate(result[key])
+    for key in ("version_ids", "context_entity_ids"):
+        if key in result:
+            result[key] = tuple(UUID(value) for value in result[key])
+    return result
+
+
+def json_result(*, value: Any) -> Any:
+    """Render Python model, tuple and dictionary responses into canonical JSON."""
+    if isinstance(value, BaseModel):
+        result = value.model_dump(mode="json")
+        # Python model attributes exist even for serialization-excluded fields.
+        # The JS public result is the full typed object, not Pydantic JSON output.
+        for name, field in type(value).model_fields.items():
+            if field.exclude:
+                result[field.alias or name] = json_result(value=getattr(value, name))
+        return result
+    if isinstance(value, (tuple, list)):
+        return [json_result(value=item) for item in value]
+    if isinstance(value, dict):
+        return {key: json_result(value=item) for key, item in value.items()}
+    return value
+
+
+def record() -> dict[str, Any]:
+    """Execute the current Python facade against a recording transport."""
+    fixtures = responses()
+    cases = scenarios()
+    with tempfile.TemporaryDirectory(prefix="remember-ts-parity-") as directory:
+        path = Path(directory) / "fixture.md"
+        path.write_bytes(b"note")
+        for case in cases:
+            wire: list[dict[str, Any]] = []
+            replies: list[Any] = []
+
+            def answer(
+                request: httpx.Request,
+                *,
+                wire: list[dict[str, Any]] = wire,
+                replies: list[Any] = replies,
+            ) -> httpx.Response:
+                """Record one request and return an independently source-validated response."""
+                content_type = request.headers.get("content-type")
+                body = request.content
+                wire.append(
+                    {
+                        "method": request.method,
+                        "path": request.url.path,
+                        "query": list(request.url.params.multi_items()),
+                        "contentType": content_type,
+                        "body": json.loads(body)
+                        if content_type == "application/json"
+                        else None,
+                        "contentBase64": base64.b64encode(body).decode()
+                        if body and content_type != "application/json"
+                        else None,
+                    }
+                )
+                response = select_response(request=request, fixtures=fixtures)
+                replies.append(response)
+                return httpx.Response(200, json=response)
+
+            with Client(
+                client=httpx.Client(
+                    transport=httpx.MockTransport(answer),
+                    base_url="http://fixture.test",
+                )
+            ) as client:
+                method = getattr(client, case["method"])
+                inspect.signature(method).bind(
+                    **python_options(options=case["options"], file_path=path)
+                )
+                result = method(
+                    **python_options(options=case["options"], file_path=path)
+                )
+            case["wire"] = wire
+            case["responses"] = replies
+            case["result"] = json_result(value=result)
+    return {
+        "responses": fixtures,
+        "cases": cases,
+        "lifecycleDispositions": {
+            "MemoryClient.__init__": "constructor/injection tests",
+            "MemoryClient.close": "close/disposal tests",
+            "Client.from_env": "constructor precedence tests",
+            "Client.account": "issuer/account loopback HTTP tests",
+            "AccountApi.__init__": "issuer/account loopback HTTP tests",
+            "AccountApi.get": "issuer/account loopback HTTP tests",
+            "AccountApi.whoami": "issuer/account loopback HTTP tests",
+        },
+    }
+
+
+def main() -> int:
+    """Write or check source-executed fixtures; generation never runs in check mode."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true")
+    arguments = parser.parse_args()
+    content = json.dumps(record(), indent=2, sort_keys=True) + "\n"
+    if arguments.check:
+        if not TARGET.exists() or TARGET.read_text() != content:
+            raise SystemExit(
+                "Python method conformance fixture drift; regenerate and review"
+            )
+    else:
+        TARGET.parent.mkdir(parents=True, exist_ok=True)
+        TARGET.write_text(content)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

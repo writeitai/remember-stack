@@ -400,8 +400,8 @@ def _moved(issuer: FakeIssuer, first_outcome: int | Exception) -> None:
 
 @pytest.mark.parametrize(
     "first_outcome",
-    [421, 404, httpx.ConnectError("refused"), httpx.ConnectTimeout("slow")],
-    ids=["421", "non-engine-404", "connection-error", "connect-timeout"],
+    [421, 404, httpx.ConnectError("refused")],
+    ids=["421", "non-engine-404", "connection-error"],
 )
 def test_moved_deployment_is_re_resolved_and_retried_once(
     issuer: FakeIssuer, first_outcome: int | Exception
@@ -445,14 +445,14 @@ def test_a_write_that_may_have_arrived_is_never_repeated(
     [httpx.ConnectError("refused"), httpx.ConnectTimeout("slow"), 421],
     ids=["connect-error", "connect-timeout", "421"],
 )
-def test_a_write_that_never_arrived_moves_with_the_deployment(
+def test_writes_are_never_replayed_even_for_connect_errors_or_421(
     issuer: FakeIssuer, write: str, failure: int | Exception
 ) -> None:
     _moved(issuer, failure)
     with Client(api_key=make_key(), transport=issuer.transport()) as client:
-        with pytest.raises(MemoryApiError):  # the fake engine 404s the write
+        with pytest.raises(MemoryApiError):  # D140 never replays writes
             _write(client, write)
-    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-b.test"]
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"]
 
 
 def test_reads_retry_after_any_network_error(issuer: FakeIssuer) -> None:
@@ -527,8 +527,13 @@ def test_concurrent_first_requests_share_one_resolution(issuer: FakeIssuer) -> N
     assert client._route._pinned == ("p-docs", DEPLOYMENT_A)
 
 
-def test_read_timeout_is_not_a_moved_deployment(issuer: FakeIssuer) -> None:
-    _moved(issuer, httpx.ReadTimeout("slow"))
+@pytest.mark.parametrize(
+    "failure", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("slow")]
+)
+def test_read_timeout_is_not_a_moved_deployment(
+    issuer: FakeIssuer, failure: Exception
+) -> None:
+    _moved(issuer, failure)
     with Client(api_key=make_key(), transport=issuer.transport()) as client:
         with pytest.raises(MemoryApiError):
             client.list_operations()

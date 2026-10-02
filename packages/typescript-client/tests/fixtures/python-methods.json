@@ -1,0 +1,6811 @@
+{
+  "cases": [
+    {
+      "method": "list_operations",
+      "options": {},
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/operations",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "list_operations",
+      "options": {},
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/operations",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "run_operation",
+      "options": {
+        "name": "facts_context"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "runOperation",
+      "typescriptOptions": {
+        "name": "facts_context"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {},
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/facts_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "run_operation",
+      "options": {
+        "arguments": {
+          "entity_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "query": "fixture"
+        },
+        "name": "facts_context"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "runOperation",
+      "typescriptOptions": {
+        "arguments": {
+          "entity_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "query": "fixture"
+        },
+        "name": "facts_context"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "entity_ids": [
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/facts_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "query_sql",
+      "options": {
+        "max_rows": 0,
+        "parameters": [
+          1,
+          "text",
+          null
+        ],
+        "sql": "SELECT $1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "maxRows": 0,
+        "parameters": [
+          1,
+          "text",
+          null
+        ],
+        "sql": "SELECT $1"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "max_rows": 0,
+            "parameters": [
+              1,
+              "text",
+              null
+            ],
+            "sql": "SELECT $1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "open_query",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "openQuery",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "open_query",
+      "options": {
+        "max_rows": 7,
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "openQuery",
+      "typescriptOptions": {
+        "maxRows": 7,
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "max_rows": 7,
+            "parameters": [
+              1
+            ],
+            "sql": "SELECT $1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "explain_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "explainSql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "explain_sql",
+      "options": {
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "explainSql",
+      "typescriptOptions": {
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "parameters": [
+              1
+            ],
+            "sql": "SELECT $1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "explain_query",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "explainQuery",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "explain_query",
+      "options": {
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "explainQuery",
+      "typescriptOptions": {
+        "parameters": [
+          1
+        ],
+        "sql": "SELECT $1"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "parameters": [
+              1
+            ],
+            "sql": "SELECT $1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "facts_context",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "factsContext",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/facts_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "facts_context",
+      "options": {
+        "entity_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "hops": 3,
+        "predicate": "works_at",
+        "query": "fixture",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "factsContext",
+      "typescriptOptions": {
+        "entityIds": [
+          "10000000-0000-0000-0000-000000000001"
+        ],
+        "hops": 3,
+        "predicate": "works_at",
+        "query": "fixture",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "entity_ids": [
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            "hops": 3,
+            "predicate": "works_at",
+            "query": "fixture",
+            "time": {
+              "mode": "current"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/facts_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "combined_context",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "claims_and_sources": {
+            "aggregate": null,
+            "changes": [],
+            "chunks": [],
+            "dropped_by_hydration": 0,
+            "edges": [],
+            "entities": [],
+            "evidence": [],
+            "evidence_totals": [],
+            "excluded_unstamped": 0,
+            "fact_evidence": [],
+            "facts": [],
+            "freshness": {
+              "k": null,
+              "p1_believed_at_horizon": null,
+              "p1_written_inline": true,
+              "pg_live_ts": "2026-10-02T12:00:00Z"
+            },
+            "grain": "evidence",
+            "negative": null,
+            "nodes": [],
+            "pages": [],
+            "paths": [],
+            "ranking": [],
+            "sources": [],
+            "temporal_scope": {
+              "believed_at": "2026-10-02T12:00:00Z",
+              "evaluated_at": "2026-10-02T12:00:00Z",
+              "identity_regime": "current",
+              "mode": "current"
+            },
+            "transcript": [],
+            "truncation": null
+          },
+          "contract": "ContextBundle/v2",
+          "facts": {
+            "aggregate": null,
+            "changes": [],
+            "chunks": [],
+            "dropped_by_hydration": 0,
+            "edges": [],
+            "entities": [],
+            "evidence": [],
+            "evidence_totals": [],
+            "excluded_unstamped": 0,
+            "fact_evidence": [],
+            "facts": [],
+            "freshness": {
+              "k": null,
+              "p1_believed_at_horizon": null,
+              "p1_written_inline": true,
+              "pg_live_ts": "2026-10-02T12:00:00Z"
+            },
+            "grain": "fact",
+            "negative": null,
+            "nodes": [],
+            "pages": [],
+            "paths": [],
+            "ranking": [],
+            "sources": [],
+            "temporal_scope": {
+              "believed_at": "2026-10-02T12:00:00Z",
+              "evaluated_at": "2026-10-02T12:00:00Z",
+              "identity_regime": "current",
+              "mode": "current"
+            },
+            "transcript": [],
+            "truncation": null
+          }
+        }
+      ],
+      "result": {
+        "claims_and_sources": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        },
+        "contract": "ContextBundle/v2",
+        "facts": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      },
+      "typescriptMethod": "combinedContext",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/combined_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "combined_context",
+      "options": {
+        "query": "fixture",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "responses": [
+        {
+          "claims_and_sources": {
+            "aggregate": null,
+            "changes": [],
+            "chunks": [],
+            "dropped_by_hydration": 0,
+            "edges": [],
+            "entities": [],
+            "evidence": [],
+            "evidence_totals": [],
+            "excluded_unstamped": 0,
+            "fact_evidence": [],
+            "facts": [],
+            "freshness": {
+              "k": null,
+              "p1_believed_at_horizon": null,
+              "p1_written_inline": true,
+              "pg_live_ts": "2026-10-02T12:00:00Z"
+            },
+            "grain": "evidence",
+            "negative": null,
+            "nodes": [],
+            "pages": [],
+            "paths": [],
+            "ranking": [],
+            "sources": [],
+            "temporal_scope": {
+              "believed_at": "2026-10-02T12:00:00Z",
+              "evaluated_at": "2026-10-02T12:00:00Z",
+              "identity_regime": "current",
+              "mode": "current"
+            },
+            "transcript": [],
+            "truncation": null
+          },
+          "contract": "ContextBundle/v2",
+          "facts": {
+            "aggregate": null,
+            "changes": [],
+            "chunks": [],
+            "dropped_by_hydration": 0,
+            "edges": [],
+            "entities": [],
+            "evidence": [],
+            "evidence_totals": [],
+            "excluded_unstamped": 0,
+            "fact_evidence": [],
+            "facts": [],
+            "freshness": {
+              "k": null,
+              "p1_believed_at_horizon": null,
+              "p1_written_inline": true,
+              "pg_live_ts": "2026-10-02T12:00:00Z"
+            },
+            "grain": "fact",
+            "negative": null,
+            "nodes": [],
+            "pages": [],
+            "paths": [],
+            "ranking": [],
+            "sources": [],
+            "temporal_scope": {
+              "believed_at": "2026-10-02T12:00:00Z",
+              "evaluated_at": "2026-10-02T12:00:00Z",
+              "identity_regime": "current",
+              "mode": "current"
+            },
+            "transcript": [],
+            "truncation": null
+          }
+        }
+      ],
+      "result": {
+        "claims_and_sources": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        },
+        "contract": "ContextBundle/v2",
+        "facts": {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "fact",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      },
+      "typescriptMethod": "combinedContext",
+      "typescriptOptions": {
+        "query": "fixture",
+        "time": {
+          "mode": "current"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "query": "fixture",
+            "time": {
+              "mode": "current"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/combined_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "claims_and_sources_context",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "claimsAndSourcesContext",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/claims_and_sources_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "claims_and_sources_context",
+      "options": {
+        "query": "other"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "claimsAndSourcesContext",
+      "typescriptOptions": {
+        "query": "other"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "query": "other"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/claims_and_sources_context",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "resolve_entity",
+      "options": {
+        "name": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "resolveEntity",
+      "typescriptOptions": {
+        "name": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "name": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/resolve_entity",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "resolve_entity",
+      "options": {
+        "name": "other"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "resolveEntity",
+      "typescriptOptions": {
+        "name": "other"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "name": "other"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/operations/resolve_entity",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "describe_query_space",
+      "options": {},
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "describeQuerySpace",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space",
+          "query": [
+            [
+              "include_examples",
+              "false"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "describe_query_space",
+      "options": {
+        "include_examples": true,
+        "pattern": "memory_*"
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "describeQuerySpace",
+      "typescriptOptions": {
+        "includeExamples": true,
+        "pattern": "memory_*"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space",
+          "query": [
+            [
+              "include_examples",
+              "true"
+            ],
+            [
+              "pattern",
+              "memory_*"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_query_space",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "searchQuerySpace",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space/search",
+          "query": [
+            [
+              "query",
+              "fixture"
+            ],
+            [
+              "k",
+              "10"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_query_space",
+      "options": {
+        "k": 25,
+        "query": "fixture"
+      },
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "searchQuerySpace",
+      "typescriptOptions": {
+        "k": 25,
+        "query": "fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space/search",
+          "query": [
+            [
+              "query",
+              "fixture"
+            ],
+            [
+              "k",
+              "25"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "list_saved_queries",
+      "options": {},
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "listSavedQueries",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "list_saved_queries",
+      "options": {
+        "namespace": "examples",
+        "status": "active"
+      },
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "listSavedQueries",
+      "typescriptOptions": {
+        "namespace": "examples",
+        "status": "active"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved",
+          "query": [
+            [
+              "namespace",
+              "examples"
+            ],
+            [
+              "status",
+              "active"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "describe_saved_query",
+      "options": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "describeSavedQuery",
+      "typescriptOptions": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved/examples/safe",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "describe_saved_query",
+      "options": {
+        "name": "safe",
+        "namespace": "examples",
+        "version": 2
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "describeSavedQuery",
+      "typescriptOptions": {
+        "name": "safe",
+        "namespace": "examples",
+        "version": 2
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved/examples/safe",
+          "query": [
+            [
+              "version",
+              "2"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "run_saved_query",
+      "options": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "runSavedQuery",
+      "typescriptOptions": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "parameters": []
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/saved/examples/safe/run",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "run_saved_query",
+      "options": {
+        "max_rows": 9,
+        "name": "safe",
+        "namespace": "examples",
+        "parameters": [
+          1
+        ],
+        "version": 2
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "runSavedQuery",
+      "typescriptOptions": {
+        "maxRows": 9,
+        "name": "safe",
+        "namespace": "examples",
+        "parameters": [
+          1
+        ],
+        "version": 2
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "max_rows": 9,
+            "parameters": [
+              1
+            ],
+            "version": 2
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/saved/examples/safe/run",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "resolve",
+      "options": {
+        "name": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "resolve",
+      "typescriptOptions": {
+        "name": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/resolve",
+          "query": [
+            [
+              "name",
+              "fixture"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "resolve",
+      "options": {
+        "context_entity_ids": [
+          "10000000-0000-0000-0000-000000000001",
+          "10000000-0000-0000-0000-000000000002"
+        ],
+        "name": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "resolve",
+      "typescriptOptions": {
+        "contextEntityIds": [
+          "10000000-0000-0000-0000-000000000001",
+          "10000000-0000-0000-0000-000000000002"
+        ],
+        "name": "fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/resolve",
+          "query": [
+            [
+              "name",
+              "fixture"
+            ],
+            [
+              "context_entity_ids",
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            [
+              "context_entity_ids",
+              "10000000-0000-0000-0000-000000000002"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "lookup_relations",
+      "options": {},
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "lookupRelations",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/lookup/relations",
+          "query": [
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "lookup_relations",
+      "options": {
+        "k": 3,
+        "object_entity_id": "10000000-0000-0000-0000-000000000002",
+        "predicate": "works_at",
+        "subject_entity_id": "10000000-0000-0000-0000-000000000001",
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "lookupRelations",
+      "typescriptOptions": {
+        "k": 3,
+        "objectEntityId": "10000000-0000-0000-0000-000000000002",
+        "predicate": "works_at",
+        "subjectEntityId": "10000000-0000-0000-0000-000000000001",
+        "validAt": "2026-10-02T12:00:00+00:00"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/lookup/relations",
+          "query": [
+            [
+              "k",
+              "3"
+            ],
+            [
+              "subject_entity_id",
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            [
+              "predicate",
+              "works_at"
+            ],
+            [
+              "object_entity_id",
+              "10000000-0000-0000-0000-000000000002"
+            ],
+            [
+              "valid_at",
+              "2026-10-02T12:00:00+00:00"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "transcript_relation",
+      "options": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "transcriptRelation",
+      "typescriptOptions": {
+        "relationId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/transcript/relation/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "transcript_relation",
+      "options": {
+        "relation_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "transcriptRelation",
+      "typescriptOptions": {
+        "relationId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/transcript/relation/10000000-0000-0000-0000-000000000002",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "lookup_observations",
+      "options": {
+        "entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "lookupObservations",
+      "typescriptOptions": {
+        "entityId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/lookup/observations",
+          "query": [
+            [
+              "entity_id",
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            [
+              "k",
+              "10"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "lookup_observations",
+      "options": {
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "property_query": "salary"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "lookupObservations",
+      "typescriptOptions": {
+        "entityId": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "propertyQuery": "salary"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/lookup/observations",
+          "query": [
+            [
+              "entity_id",
+              "10000000-0000-0000-0000-000000000001"
+            ],
+            [
+              "k",
+              "3"
+            ],
+            [
+              "property_query",
+              "salary"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_claims",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchClaims",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/search/claims",
+          "query": [
+            [
+              "query",
+              "fixture"
+            ],
+            [
+              "k",
+              "10"
+            ],
+            [
+              "channel",
+              "semantic"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_claims",
+      "options": {
+        "channel": "bm25",
+        "documents": {
+          "authors": [
+            "alice"
+          ],
+          "language": "en"
+        },
+        "k": 3,
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchClaims",
+      "typescriptOptions": {
+        "channel": "bm25",
+        "documents": {
+          "authors": [
+            "alice"
+          ],
+          "language": "en"
+        },
+        "k": 3,
+        "query": "fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "channel": "bm25",
+            "documents": {
+              "authors": [
+                "alice"
+              ],
+              "doc_ids": [],
+              "family": [],
+              "language": "en",
+              "recipients": []
+            },
+            "k": 3,
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/claims",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_chunks",
+      "options": {
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchChunks",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/search/chunks",
+          "query": [
+            [
+              "query",
+              "fixture"
+            ],
+            [
+              "k",
+              "10"
+            ],
+            [
+              "channel",
+              "semantic"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_chunks",
+      "options": {
+        "channel": "bm25",
+        "documents": {
+          "doc_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "family": [
+            "email"
+          ]
+        },
+        "k": 3,
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchChunks",
+      "typescriptOptions": {
+        "channel": "bm25",
+        "documents": {
+          "doc_ids": [
+            "10000000-0000-0000-0000-000000000001"
+          ],
+          "family": [
+            "email"
+          ]
+        },
+        "k": 3,
+        "query": "fixture"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "channel": "bm25",
+            "documents": {
+              "authors": [],
+              "doc_ids": [
+                "10000000-0000-0000-0000-000000000001"
+              ],
+              "family": [
+                "email"
+              ],
+              "recipients": []
+            },
+            "k": 3,
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/chunks",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "adjacent_chunks",
+      "options": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "adjacentChunks",
+      "typescriptOptions": {
+        "chunkId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/chunks/10000000-0000-0000-0000-000000000001/adjacent",
+          "query": [
+            [
+              "window",
+              "1"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "adjacent_chunks",
+      "options": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001",
+        "window": 2
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "adjacentChunks",
+      "typescriptOptions": {
+        "chunkId": "10000000-0000-0000-0000-000000000001",
+        "window": 2
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/chunks/10000000-0000-0000-0000-000000000001/adjacent",
+          "query": [
+            [
+              "window",
+              "2"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "hydrate_relation",
+      "options": {
+        "relation_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "hydrateRelation",
+      "typescriptOptions": {
+        "relationId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/hydrate/relation/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "hydrate_relation",
+      "options": {
+        "relation_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "hydrateRelation",
+      "typescriptOptions": {
+        "relationId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/hydrate/relation/10000000-0000-0000-0000-000000000002",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_neighborhood",
+      "options": {
+        "entity_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphNeighborhood",
+      "typescriptOptions": {
+        "entityId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "believed_at": null,
+            "continuation": null,
+            "entity_id": "10000000-0000-0000-0000-000000000001",
+            "hops": 2,
+            "include_paths": false,
+            "limit": 500,
+            "predicates": [],
+            "valid_at": null
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/neighborhood",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_neighborhood",
+      "options": {
+        "believed_at": "2026-10-02T12:00:00+00:00",
+        "continuation": "fixture-cursor",
+        "entity_id": "10000000-0000-0000-0000-000000000001",
+        "hops": 3,
+        "include_paths": true,
+        "limit": 7,
+        "predicates": [
+          "works_at"
+        ],
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphNeighborhood",
+      "typescriptOptions": {
+        "believedAt": "2026-10-02T12:00:00+00:00",
+        "continuation": "fixture-cursor",
+        "entityId": "10000000-0000-0000-0000-000000000001",
+        "hops": 3,
+        "includePaths": true,
+        "limit": 7,
+        "predicates": [
+          "works_at"
+        ],
+        "validAt": "2026-10-02T12:00:00+00:00"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "believed_at": "2026-10-02T12:00:00+00:00",
+            "continuation": "fixture-cursor",
+            "entity_id": "10000000-0000-0000-0000-000000000001",
+            "hops": 3,
+            "include_paths": true,
+            "limit": 7,
+            "predicates": [
+              "works_at"
+            ],
+            "valid_at": "2026-10-02T12:00:00+00:00"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/neighborhood",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_path",
+      "options": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "to_entity_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphPath",
+      "typescriptOptions": {
+        "fromEntityId": "10000000-0000-0000-0000-000000000001",
+        "toEntityId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "believed_at": null,
+            "from_entity_id": "10000000-0000-0000-0000-000000000001",
+            "max_hops": 4,
+            "predicates": [],
+            "to_entity_id": "10000000-0000-0000-0000-000000000002",
+            "valid_at": null
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/path",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_path",
+      "options": {
+        "believed_at": "2026-10-02T12:00:00+00:00",
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "max_hops": 3,
+        "predicates": [
+          "works_at"
+        ],
+        "to_entity_id": "10000000-0000-0000-0000-000000000002",
+        "valid_at": "2026-10-02T12:00:00+00:00"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphPath",
+      "typescriptOptions": {
+        "believedAt": "2026-10-02T12:00:00+00:00",
+        "fromEntityId": "10000000-0000-0000-0000-000000000001",
+        "maxHops": 3,
+        "predicates": [
+          "works_at"
+        ],
+        "toEntityId": "10000000-0000-0000-0000-000000000002",
+        "validAt": "2026-10-02T12:00:00+00:00"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "believed_at": "2026-10-02T12:00:00+00:00",
+            "from_entity_id": "10000000-0000-0000-0000-000000000001",
+            "max_hops": 3,
+            "predicates": [
+              "works_at"
+            ],
+            "to_entity_id": "10000000-0000-0000-0000-000000000002",
+            "valid_at": "2026-10-02T12:00:00+00:00"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/path",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_citation_path",
+      "options": {
+        "from_doc_id": "10000000-0000-0000-0000-000000000001",
+        "to_doc_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphCitationPath",
+      "typescriptOptions": {
+        "fromDocId": "10000000-0000-0000-0000-000000000001",
+        "toDocId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "from_doc_id": "10000000-0000-0000-0000-000000000001",
+            "max_hops": 6,
+            "to_doc_id": "10000000-0000-0000-0000-000000000002"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/citation-path",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "graph_citation_path",
+      "options": {
+        "from_doc_id": "10000000-0000-0000-0000-000000000001",
+        "max_hops": 3,
+        "to_doc_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z"
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "graphCitationPath",
+      "typescriptOptions": {
+        "fromDocId": "10000000-0000-0000-0000-000000000001",
+        "maxHops": 3,
+        "toDocId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "from_doc_id": "10000000-0000-0000-0000-000000000001",
+            "max_hops": 3,
+            "to_doc_id": "10000000-0000-0000-0000-000000000002"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/graph/citation-path",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "deployment_build_info",
+      "options": {},
+      "responses": [
+        {
+          "build_revision": "",
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "tools": {}
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "tools": {}
+      },
+      "typescriptMethod": "deploymentBuildInfo",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/deployment",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "deployment_build_info",
+      "options": {},
+      "responses": [
+        {
+          "build_revision": "",
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "tools": {}
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "tools": {}
+      },
+      "typescriptMethod": "deploymentBuildInfo",
+      "typescriptOptions": {},
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/deployment",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "pipeline_readiness",
+      "options": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "responses": [
+        {
+          "build_revision": "",
+          "capabilities": {},
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "ready": true,
+          "versions": []
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "capabilities": {},
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "ready": true,
+        "versions": []
+      },
+      "typescriptMethod": "pipelineReadiness",
+      "typescriptOptions": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "versionIds": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "require": {
+              "live_graph": true,
+              "p1": true,
+              "p3": false,
+              "pipeline": true
+            },
+            "version_ids": [
+              "10000000-0000-0000-0000-000000000001"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/readiness",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "pipeline_readiness",
+      "options": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": true,
+          "pipeline": true
+        },
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001",
+          "10000000-0000-0000-0000-000000000002"
+        ]
+      },
+      "responses": [
+        {
+          "build_revision": "",
+          "capabilities": {},
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "ready": true,
+          "versions": []
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "capabilities": {},
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "ready": true,
+        "versions": []
+      },
+      "typescriptMethod": "pipelineReadiness",
+      "typescriptOptions": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": true,
+          "pipeline": true
+        },
+        "versionIds": [
+          "10000000-0000-0000-0000-000000000001",
+          "10000000-0000-0000-0000-000000000002"
+        ]
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "require": {
+              "live_graph": true,
+              "p1": true,
+              "p3": true,
+              "pipeline": true
+            },
+            "version_ids": [
+              "10000000-0000-0000-0000-000000000001",
+              "10000000-0000-0000-0000-000000000002"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/readiness",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "wait_for_readiness",
+      "options": {
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "responses": [
+        {
+          "build_revision": "",
+          "capabilities": {},
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "ready": true,
+          "versions": []
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "capabilities": {},
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "ready": true,
+        "versions": []
+      },
+      "typescriptMethod": "waitForReadiness",
+      "typescriptOptions": {
+        "versionIds": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "require": {
+              "live_graph": true,
+              "p1": true,
+              "p3": false,
+              "pipeline": true
+            },
+            "version_ids": [
+              "10000000-0000-0000-0000-000000000001"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/readiness",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "wait_for_readiness",
+      "options": {
+        "poll_interval": 0.01,
+        "require_p3": true,
+        "timeout": 1.0,
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "responses": [
+        {
+          "build_revision": "",
+          "capabilities": {},
+          "document_binding_generation": null,
+          "model_bindings": {},
+          "ready": true,
+          "versions": []
+        }
+      ],
+      "result": {
+        "build_revision": "",
+        "capabilities": {},
+        "document_binding_generation": null,
+        "model_bindings": {},
+        "ready": true,
+        "versions": []
+      },
+      "typescriptMethod": "waitForReadiness",
+      "typescriptOptions": {
+        "pollIntervalMs": 10.0,
+        "requireP3": true,
+        "timeoutMs": 1000.0,
+        "versionIds": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "require": {
+              "live_graph": true,
+              "p1": true,
+              "p3": true,
+              "pipeline": true
+            },
+            "version_ids": [
+              "10000000-0000-0000-0000-000000000001"
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/readiness",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md"
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "fixture.md"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "mime": "text/plain",
+        "source_kind": "agent",
+        "source_modified_at": "2026-10-02T12:00:00+00:00",
+        "source_path": "/upstream/fixture.md",
+        "source_ref": "stable/ref",
+        "source_version_ref": "etag-2",
+        "title": "fixture title",
+        "versioning_mode": "living"
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md",
+        "mime": "text/plain",
+        "sourceKind": "agent",
+        "sourceModifiedAt": "2026-10-02T12:00:00+00:00",
+        "sourcePath": "/upstream/fixture.md",
+        "sourceRef": "stable/ref",
+        "sourceVersionRef": "etag-2",
+        "title": "fixture title",
+        "versioningMode": "living"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "fixture.md"
+            ],
+            [
+              "mime",
+              "text/plain"
+            ],
+            [
+              "versioning_mode",
+              "living"
+            ],
+            [
+              "title",
+              "fixture title"
+            ],
+            [
+              "source_kind",
+              "agent"
+            ],
+            [
+              "source_ref",
+              "stable/ref"
+            ],
+            [
+              "source_modified_at",
+              "2026-10-02T12:00:00+00:00"
+            ],
+            [
+              "source_version_ref",
+              "etag-2"
+            ],
+            [
+              "source_path",
+              "/upstream/fixture.md"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "list_documents",
+      "options": {},
+      "responses": [
+        {
+          "cursor": null,
+          "documents": []
+        }
+      ],
+      "result": {
+        "cursor": null,
+        "documents": []
+      },
+      "typescriptMethod": "listDocuments",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents",
+          "query": [
+            [
+              "limit",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "list_documents",
+      "options": {
+        "cursor": "fixture-cursor",
+        "limit": 7,
+        "status": "failed"
+      },
+      "responses": [
+        {
+          "cursor": null,
+          "documents": []
+        }
+      ],
+      "result": {
+        "cursor": null,
+        "documents": []
+      },
+      "typescriptMethod": "listDocuments",
+      "typescriptOptions": {
+        "cursor": "fixture-cursor",
+        "limit": 7,
+        "status": "failed"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents",
+          "query": [
+            [
+              "limit",
+              "7"
+            ],
+            [
+              "cursor",
+              "fixture-cursor"
+            ],
+            [
+              "status",
+              "failed"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {},
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": []
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": []
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {},
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {
+        "filters": {
+          "authors": [
+            "alice"
+          ],
+          "modified_from": "2026-10-02T12:00:00+00:00"
+        },
+        "k": 3,
+        "query": "fixture",
+        "versions": "all"
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": []
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": []
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "filters": {
+          "authors": [
+            "alice"
+          ],
+          "modified_from": "2026-10-02T12:00:00+00:00"
+        },
+        "k": 3,
+        "query": "fixture",
+        "versions": "all"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "filters": {
+              "authors": [
+                "alice"
+              ],
+              "modified_from": "2026-10-02T12:00:00Z"
+            },
+            "k": 3,
+            "query": "fixture",
+            "versions": "all"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {}
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": []
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": []
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {}
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {},
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {
+          "cursor": "next",
+          "filters": {
+            "authors": [
+              "alice"
+            ],
+            "language": "en"
+          },
+          "k": 3,
+          "versions": "all"
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": []
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": []
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {
+          "cursor": "next",
+          "filters": {
+            "authors": [
+              "alice"
+            ],
+            "language": "en"
+          },
+          "k": 3,
+          "versions": "all"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "cursor": "next",
+            "filters": {
+              "authors": [
+                "alice"
+              ],
+              "language": "en"
+            },
+            "k": 3,
+            "versions": "all"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "delete_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "claims_retired": 0,
+          "deleted_at": "2026-10-02T12:00:00Z",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "observations_closed": 0,
+          "relations_closed": 0
+        }
+      ],
+      "result": {
+        "claims_retired": 0,
+        "deleted_at": "2026-10-02T12:00:00Z",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "observations_closed": 0,
+        "relations_closed": 0
+      },
+      "typescriptMethod": "deleteDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/documents/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "delete_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "claims_retired": 0,
+          "deleted_at": "2026-10-02T12:00:00Z",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "observations_closed": 0,
+          "relations_closed": 0
+        }
+      ],
+      "result": {
+        "claims_retired": 0,
+        "deleted_at": "2026-10-02T12:00:00Z",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "observations_closed": 0,
+        "relations_closed": 0
+      },
+      "typescriptMethod": "deleteDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/documents/10000000-0000-0000-0000-000000000002",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "connectors",
+      "options": {},
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "connectors",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/connectors",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "connectors",
+      "options": {},
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "connectors",
+      "typescriptOptions": {},
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/connectors",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "add_connector",
+      "options": {
+        "connector": {
+          "kind": "custom",
+          "name": "fixture"
+        }
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "addConnector",
+      "typescriptOptions": {
+        "connector": {
+          "kind": "custom",
+          "name": "fixture"
+        }
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "configuration": {},
+            "credential_ref": null,
+            "kind": "custom",
+            "name": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/connectors",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "add_connector",
+      "options": {
+        "connector": {
+          "configuration": {
+            "directory": "/sources"
+          },
+          "credential_ref": "operator-secret-reference",
+          "kind": "custom",
+          "name": "fixture"
+        }
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "addConnector",
+      "typescriptOptions": {
+        "connector": {
+          "configuration": {
+            "directory": "/sources"
+          },
+          "credential_ref": "operator-secret-reference",
+          "kind": "custom",
+          "name": "fixture"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "configuration": {
+              "directory": "/sources"
+            },
+            "credential_ref": "operator-secret-reference",
+            "kind": "custom",
+            "name": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/connectors",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "pause_connector",
+      "options": {
+        "connector_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "pauseConnector",
+      "typescriptOptions": {
+        "connectorId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "POST",
+          "path": "/connectors/10000000-0000-0000-0000-000000000001/pause",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "pause_connector",
+      "options": {
+        "connector_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "pauseConnector",
+      "typescriptOptions": {
+        "connectorId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "POST",
+          "path": "/connectors/10000000-0000-0000-0000-000000000002/pause",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "connector_status",
+      "options": {
+        "connector_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "connectorStatus",
+      "typescriptOptions": {
+        "connectorId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/connectors/10000000-0000-0000-0000-000000000001",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "connector_status",
+      "options": {
+        "connector_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "configuration": {},
+          "connector_id": "10000000-0000-0000-0000-000000000001",
+          "credential_ref": null,
+          "kind": "custom",
+          "message": null,
+          "name": "fixture",
+          "status": "active"
+        }
+      ],
+      "result": {
+        "configuration": {},
+        "connector_id": "10000000-0000-0000-0000-000000000001",
+        "credential_ref": null,
+        "kind": "custom",
+        "message": null,
+        "name": "fixture",
+        "status": "active"
+      },
+      "typescriptMethod": "connectorStatus",
+      "typescriptOptions": {
+        "connectorId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/connectors/10000000-0000-0000-0000-000000000002",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "name": "query_sql"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "name": "query_sql"
+      },
+      "variant": "query_sql",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "name": "explain_sql"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "name": "explain_sql"
+      },
+      "variant": "explain_sql",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {},
+        "name": "describe_query_space"
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {},
+        "name": "describe_query_space"
+      },
+      "variant": "describe_query_space",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space",
+          "query": [
+            [
+              "include_examples",
+              "false"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "query": "fixture"
+        },
+        "name": "search_query_space"
+      },
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "query": "fixture"
+        },
+        "name": "search_query_space"
+      },
+      "variant": "search_query_space",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space/search",
+          "query": [
+            [
+              "query",
+              "fixture"
+            ],
+            [
+              "k",
+              "10"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {},
+        "name": "list_saved_queries"
+      },
+      "responses": [
+        []
+      ],
+      "result": [],
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {},
+        "name": "list_saved_queries"
+      },
+      "variant": "list_saved_queries",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "name": "describe_saved_query"
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "name": "describe_saved_query"
+      },
+      "variant": "describe_saved_query",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/saved/examples/safe",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "name": "run_saved_query"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "name": "run_saved_query"
+      },
+      "variant": "run_saved_query",
+      "wire": [
+        {
+          "body": {
+            "parameters": []
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/saved/examples/safe/run",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "ingest",
+      "options": {
+        "filename": "display.png",
+        "source": "$FILE"
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "filename": "display.png",
+        "source": "$FILE"
+      },
+      "variant": "file-mime-before-display-name",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "display.png"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "ingest_file",
+      "options": {
+        "file_path": "$FILE",
+        "filename": "display.png"
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingestFile",
+      "typescriptOptions": {
+        "filePath": "$FILE",
+        "filename": "display.png"
+      },
+      "variant": "file-mime-before-display-name",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "display.png"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "lifecycleDispositions": {
+    "AccountApi.__init__": "issuer/account loopback HTTP tests",
+    "AccountApi.get": "issuer/account loopback HTTP tests",
+    "AccountApi.whoami": "issuer/account loopback HTTP tests",
+    "Client.account": "issuer/account loopback HTTP tests",
+    "Client.from_env": "constructor precedence tests",
+    "MemoryClient.__init__": "constructor/injection tests",
+    "MemoryClient.close": "close/disposal tests"
+  },
+  "responses": {
+    "bundle": {
+      "claims_and_sources": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "contract": "ContextBundle/v2",
+      "facts": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z"
+        },
+        "grain": "fact",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      }
+    },
+    "connector": {
+      "configuration": {},
+      "connector_id": "10000000-0000-0000-0000-000000000001",
+      "credential_ref": null,
+      "kind": "custom",
+      "message": null,
+      "name": "fixture",
+      "status": "active"
+    },
+    "deletion": {
+      "claims_retired": 0,
+      "deleted_at": "2026-10-02T12:00:00Z",
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "observations_closed": 0,
+      "relations_closed": 0
+    },
+    "deployment": {
+      "build_revision": "",
+      "document_binding_generation": null,
+      "model_bindings": {},
+      "tools": {}
+    },
+    "document_page": {
+      "cursor": null,
+      "documents": []
+    },
+    "envelope": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [],
+      "evidence": [],
+      "evidence_totals": [],
+      "excluded_unstamped": 0,
+      "fact_evidence": [],
+      "facts": [],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "2026-10-02T12:00:00Z"
+      },
+      "grain": "evidence",
+      "negative": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": null
+    },
+    "fact": {
+      "aggregate": null,
+      "changes": [],
+      "chunks": [],
+      "dropped_by_hydration": 0,
+      "edges": [],
+      "entities": [],
+      "evidence": [],
+      "evidence_totals": [],
+      "excluded_unstamped": 0,
+      "fact_evidence": [],
+      "facts": [],
+      "freshness": {
+        "k": null,
+        "p1_believed_at_horizon": null,
+        "p1_written_inline": true,
+        "pg_live_ts": "2026-10-02T12:00:00Z"
+      },
+      "grain": "fact",
+      "negative": null,
+      "nodes": [],
+      "pages": [],
+      "paths": [],
+      "ranking": [],
+      "sources": [],
+      "temporal_scope": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "identity_regime": "current",
+        "mode": "current"
+      },
+      "transcript": [],
+      "truncation": null
+    },
+    "ingest": {
+      "content_hash": "fixture",
+      "created": false,
+      "deployment_id": "10000000-0000-0000-0000-000000000001",
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "mime": null,
+      "parked": null,
+      "title": null,
+      "version_id": "10000000-0000-0000-0000-000000000002",
+      "versioning_mode": null
+    },
+    "query": {
+      "columns": [],
+      "contract": "QueryResult/v1",
+      "deployment_id": "10000000-0000-0000-0000-000000000001",
+      "elapsed_ms": 0.0,
+      "empty_result": false,
+      "error_code": null,
+      "error_message": null,
+      "evaluated_at": null,
+      "exact_total": null,
+      "exact_total_known": false,
+      "execution_started_at": "2026-10-02T12:00:00Z",
+      "grade": "exploratory_tabular",
+      "graph_invocations": [],
+      "limits": {
+        "analytical_tier": false,
+        "byte_cap": 1000,
+        "row_cap": 10,
+        "statement_timeout_ms": 100
+      },
+      "negative_kind": null,
+      "ordered_result": false,
+      "pg_snapshot_at": null,
+      "query_hash": "fixture",
+      "query_language": "sql",
+      "query_space_schema": "memory_v1",
+      "referenced_functions": [],
+      "referenced_views": [],
+      "request_id": "10000000-0000-0000-0000-000000000001",
+      "returned_byte_count": 0,
+      "returned_row_count": 0,
+      "rows": [],
+      "saved_query": null,
+      "semantic_invocations": [],
+      "source_grain_tags": [],
+      "surface_manifest_hash": "fixture",
+      "termination_reason": "completed",
+      "truncated": false,
+      "truncation_reason": null,
+      "warnings": []
+    },
+    "readiness": {
+      "build_revision": "",
+      "capabilities": {},
+      "document_binding_generation": null,
+      "model_bindings": {},
+      "ready": true,
+      "versions": []
+    },
+    "search_page": {
+      "as_of": "2026-10-02T12:00:00Z",
+      "cursor": null,
+      "documents": [],
+      "people_matched": []
+    }
+  }
+}

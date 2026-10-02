@@ -1,3 +1,4 @@
+import type { JsonValue } from './JsonValue';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
@@ -36,7 +37,7 @@ export type QueryResult = {
     request_id: string;
     returned_byte_count?: number;
     returned_row_count?: number;
-    rows?: Array<Array<any>>;
+    rows?: Array<Array<JsonValue>>;
     saved_query?: Record<string, string> | null;
     semantic_invocations?: Array<SemanticInvocation>;
     source_grain_tags?: Array<string>;

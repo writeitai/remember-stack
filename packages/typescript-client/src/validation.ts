@@ -17,6 +17,8 @@ interface Schema {
   oneOf?: Schema[];
   default?: unknown;
   'x-extra'?: string;
+  'x-exclude'?: boolean;
+  format?:string;
 }
 const definitions = schemas.$defs as unknown as Record<string, Schema>;
 const ajv = new Ajv2020({ strict: false, allErrors: true, validateFormats: true });
@@ -170,11 +172,16 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
     const result:Record<string,unknown>={};
     for(const [key,item]of Object.entries(value)) {
       const field=schema.properties?.[key]??{};
+      if(field['x-exclude'])continue;
       if(excludeNone&&item===null)continue;
       if(excludeDefaults&&'default'in field&&equalJson({left:item,right:normalize({value:field.default,schema:field})}))continue;
       Object.defineProperty(result,key,{value:dump({value:item,schema:field,excludeNone,excludeDefaults}),enumerable:true});
     }
     return result;
+  }
+  if(typeof value==='string'&&schema.format==='date-time') {
+    // Pydantic renders zero offsets as Z and nonzero fractions at microsecond precision.
+    return value.replace(/([+]00:00|-00:00)$/,'Z').replace(/\.(\d{1,6})(?=Z|[+-]\d{2}:\d{2}$)/,(_match,fraction:string)=>Number(fraction)===0?'':'.'+fraction.padEnd(6,'0'));
   }
   return value;
 }

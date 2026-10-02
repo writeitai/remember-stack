@@ -1,3 +1,4 @@
+import type { JsonValue } from './JsonValue';
 /* generated using openapi-typescript-codegen -- do not edit */
 /* istanbul ignore file */
 /* tslint:disable */
@@ -23,4 +24,3 @@ export type DocumentSearchFilters = {
     recipients?: Array<string>;
     thread_ref?: string | null;
 };
-

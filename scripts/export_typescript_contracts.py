@@ -205,6 +205,8 @@ def client_models() -> dict[str, Any]:
     for name, model in classes.items():
         models[name]["x-extra"] = model.model_config.get("extra", "ignore")
         for field_name, field in model.model_fields.items():
+            if field.exclude:
+                models[name]["properties"][field.alias or field_name]["x-exclude"] = True
             if not field.is_required():
                 models[name]["properties"][field.alias or field_name]["default"] = (
                     to_jsonable_python(field.get_default(call_default_factory=True))
@@ -223,8 +225,8 @@ def client_models() -> dict[str, Any]:
                         "x-utc"
                     ] = True
     from remember.models import ClaimValidPrecision
-    from remember.models import TemporalMatch
     from remember.models import DocumentStatusFilter
+    from remember.models import TemporalMatch
 
     for name, model in {
         "ClaimValidPrecision": ClaimValidPrecision,
