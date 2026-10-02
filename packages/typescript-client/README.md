@@ -139,7 +139,7 @@ separate owner instruction and verified namespace/publisher configuration.
 Timeouts and poll intervals must be finite, greater than zero and at most
 2,147,483,647 milliseconds (Node's timer limit). Invalid values raise
 `InputValidationError` before HTTP. Use `pipelineReadiness` for a single poll.
-Connection environment names are case-insensitive, matching Python. On Windows,
+Connection and configuration-directory environment names are case-insensitive, matching Python. On Windows,
 argument or environment signed keys without a URL use issuer routing without
 reading an unavailable credential file. Unsigned keys without a URL refuse a
 present file and use the localhost default if the file is absent.
