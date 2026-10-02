@@ -47,7 +47,7 @@ The manifest calls `validateArguments` a pure base-client export with "no host I
   - caller cancellation → `AbortError`, with the signal reason as its cause;
   - request deadline → `RequestTimeoutError` (`MemoryApiError`, status 0);
   - readiness deadline → `TimeoutError` with the last report.
-  
+
   They stay distinct even when the signal reason is a `DOMException` named `TimeoutError`.
 - **Diagnostics only on query routes:** `:191-193` limits `retryable`/`requestId` to query errors.
 
