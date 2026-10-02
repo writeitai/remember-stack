@@ -4,14 +4,6 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    paths:
-      - "src/remember/**"
-      - "packages/typescript-client/**"
-      - "contracts/issuer-provider.json"
-      - "scripts/export_typescript_*.py"
-      - "src/tests/surfaces/**"
-      - "src/tests/packaging/**"
-      - ".github/workflows/compatibility-matrix.yml"
   workflow_dispatch:
 
 permissions:
@@ -194,7 +186,7 @@ jobs:
           docker cp .github/ci/temporal-boundary.py remember-engine:/tmp/temporal-boundary.py
           docker exec --detach remember-engine python /tmp/temporal-boundary.py
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8001/openapi.json >/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:8001/fixture/recordings >/dev/null; then break; fi
             if [ "$attempt" = 30 ]; then docker logs remember-engine; exit 1; fi
             sleep 1
           done
