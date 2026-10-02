@@ -30,12 +30,13 @@ export interface ConnectionEnvironment {
 }
 
 /** Read only documented environment names, treating empty connection values as unset. */
-export function environment(): ConnectionEnvironment {
+export function environment({variables=process.env}:{variables?:NodeJS.ProcessEnv}={}): ConnectionEnvironment {
+  const settings=Object.fromEntries(Object.entries(variables).map(([name,value])=>[name.toLowerCase(),value]));
   return {
-    apiKey: process.env.REMEMBER_API_KEY || undefined, apiUrl: process.env.REMEMBER_API_URL || undefined,
-    project: process.env.REMEMBER_PROJECT || undefined, issuer: process.env.REMEMBER_ISSUER || undefined,
-    mcpUrl: process.env.REMEMBER_MCP_URL || undefined, configDir: process.env.REMEMBER_CONFIG_DIR ?? undefined,
-    xdgConfigHome: process.env.XDG_CONFIG_HOME ?? undefined,
+    apiKey: settings.remember_api_key || undefined, apiUrl: settings.remember_api_url || undefined,
+    project: settings.remember_project || undefined, issuer: settings.remember_issuer || undefined,
+    mcpUrl: settings.remember_mcp_url || undefined, configDir: settings.remember_config_dir ?? undefined,
+    xdgConfigHome: settings.xdg_config_home ?? undefined,
   };
 }
 /** Return the shared Python/CLI configuration directory. */

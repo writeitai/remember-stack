@@ -43,8 +43,18 @@ for(const scenario of fixture.failures)test(`${scenario.typescriptMethod}: share
   try{
     await assert.rejects(client[scenario.typescriptMethod](options),error=>{
       assert.equal(error.name,scenario.error.class);assert.equal(error.statusCode,scenario.error.statusCode);
+      if(scenario.variant.startsWith('admission'))assert.equal(error.detail,scenario.error.detail);
       for(const key of ['code','retryable','requestId','retryAfter'])assert.equal(error[key]??null,scenario.error[key]??null);
       return true;
     });assert.equal(calls,1);
   }finally{client.close();}
+});
+
+
+for(const scenario of fixture.accountErrors)test(`account ${scenario.status}/${scenario.path}: Python error decoder parity`,async()=>{
+  const client=new Client({apiKey:scenario.key,baseUrl:'https://engine-fixture.invalid',transport:{request:async request=>request.url.includes('/.well-known')?Response.json({issuer:scenario.issuer,remember_account_endpoint:scenario.issuer+'/account'}):Response.json(scenario.body,{status:scenario.status})}});
+  try{await assert.rejects(client.account.get({path:scenario.path}),error=>{
+    for(const key of ['name','detail','statusCode','code'])assert.equal(error[key]??null,scenario.error[key==='name'?'class':key]??null);
+    return true;
+  });}finally{client.close();}
 });

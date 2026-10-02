@@ -2,7 +2,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {validateArguments,MemoryApiError,RateLimited,mapError,ToolArgumentError} from '../dist/index.js';
+import {validateArguments,MemoryApiError,RateLimited,TimeoutError,mapError,ToolArgumentError} from '../dist/index.js';
 const fixture=JSON.parse(readFileSync(new URL('./fixtures/python-methods.json',import.meta.url)));
 
 /** Render parsed binary bodies into the fixture's deliberate base64 representation. */
@@ -27,6 +27,6 @@ for(const scenario of fixture.tools)test(`${scenario.name}: source validator ${s
 });
 for(const scenario of fixture.errorMappings)test(`source error mapping ${scenario.options.statusCode}/${scenario.options.code??scenario.options.detail}`,()=>{
   const options=Object.fromEntries(Object.entries(scenario.options).filter(([,value])=>value!==null));
-  const error=scenario.class==='RateLimited'?new RateLimited(options):new MemoryApiError(options);
+  const error=scenario.class==='TimeoutError'?new TimeoutError():scenario.class==='RateLimited'?new RateLimited(options):new MemoryApiError(options);
   assert.deepEqual(mapError({error}).asDict(),scenario.result);
 });

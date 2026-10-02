@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type * as Models from './generated';
 import { resolveConnection, EngineRoute, type Connection } from './connection';
-import { nodeHttp, discoveryTransport, bounded, checkedResponse, looksMoved, readRoute, transportError, type HttpClient, type HttpTransport, type ClientAgents } from './http';
+import { nodeHttp, discoveryTransport, bounded, checkedResponse, checkedAccountResponse, looksMoved, readRoute, transportError, type HttpClient, type HttpTransport, type ClientAgents } from './http';
 import { AbortError, InputValidationError, MemoryApiError, RequestTimeoutError, TimeoutError, PipelineDeadLettered, AccountApiUnavailable } from './errors';
 import { assertJson } from './json';
 import { validateModel, modelDump } from './validation';
@@ -24,10 +24,15 @@ function clientIdentifier({value,field}:{value:unknown;field:string}):string {
   try{return validateSavedQueryIdentifier({value,field});}
   catch(error){if(error instanceof InputValidationError)throw new InputValidationError({detail:error.message});throw error;}
 }
-/** Preserve aware ISO timestamps in the general API, including nonzero offsets. */
+/** Preserve general-API ISO timestamps, including nonzero offsets. */
 function apiTimestamp({value,field}:{value:string|Date;field:string}):string {
   if(value instanceof Date){if(!Number.isFinite(value.getTime()))throw new InputValidationError({detail:`${field} must be a valid timestamp`});return value.toISOString();}
-  if(typeof value!=='string'||!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)||!Number.isFinite(Date.parse(value)))throw new InputValidationError({detail:`${field} must be timezone-aware`});
+  if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/i.test(value))throw new InputValidationError({detail:`${field} must be an ISO datetime`});
+  const [year,month,day,hour,minute,second]=value.slice(0,19).split(/[-T:]/).map(Number) as [number,number,number,number,number,number];
+  const zone=/(?:Z|[+-]\d{2}:\d{2})$/i.test(value);
+  if(!zone)throw new InputValidationError({detail:`${field} must be timezone-aware`});
+  const days=new Date(Date.UTC(year,month,0)).getUTCDate();
+  if(year<1||month<1||month>12||day<1||day>days||hour>23||minute>59||second>59||!Number.isFinite(Date.parse(zone?value:value+'Z')))throw new InputValidationError({detail:`${field} must be a valid ISO datetime`});
   return value;
 }
 /** Require a JSON object in discovery/account APIs with intentionally open response fields. */
@@ -45,7 +50,7 @@ function queryParams({params}:{params?:Params}):URLSearchParams|undefined {
   if(!params)return undefined;
   const result=new URLSearchParams();
   const entries=Array.isArray(params)?params:Object.entries(params);
-  for(const [name,value]of entries)if(value!=null)result.append(name,String(value));
+  for(const [name,value]of entries)if(value!=null){if(typeof value==='number')assertJson({value});result.append(name,String(value));}
   return result;
 }
 /** Typed asynchronous memory HTTP client; construction performs no network I/O. */
@@ -55,7 +60,7 @@ export class MemoryClient {
   readonly #route:EngineRoute|null; #closed=false;
   /** Resolve settings or accept a caller-owned adapter unchanged. */
   constructor({apiKey,baseUrl,project,timeoutMs=30000,client,transport,agents}:ClientOptions={}) {
-    if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw new InputValidationError({detail:'timeoutMs must be positive and finite'});
+    if(!Number.isFinite(timeoutMs)||timeoutMs<=0||timeoutMs>2147483647)throw new InputValidationError({detail:'timeoutMs must be positive, finite and at most 2147483647'});
     this.timeoutMs=timeoutMs;
     if(client) {
       if([apiKey,baseUrl,project,transport,agents].some(value=>value!=null))throw new InputValidationError({detail:'an injected client cannot be combined with client settings'});
@@ -223,7 +228,7 @@ export class MemoryClient {
   }
   /** Poll immediately, stop on dead letters, and bound HTTP/routing/sleep by the readiness deadline. */
   async waitForReadiness({versionIds,timeoutMs=1800000,pollIntervalMs=15000,requireP3=false,signal}:{versionIds:string[];timeoutMs?:number;pollIntervalMs?:number;requireP3?:boolean;signal?:AbortSignal}):Promise<Models.OutputPipelineReadinessReport> {
-    if(!Number.isFinite(pollIntervalMs)||pollIntervalMs<=0)throw new InputValidationError({detail:'pollIntervalMs must be positive and finite'});
+    if(!Number.isFinite(pollIntervalMs)||pollIntervalMs<=0||pollIntervalMs>2147483647)throw new InputValidationError({detail:'pollIntervalMs must be positive, finite and at most 2147483647'});
     let report:Models.OutputPipelineReadinessReport|undefined;
     let readinessSignal:AbortSignal|undefined;
     try {return await bounded({signal,timeoutMs,controllers:this.controllers,work:async activeSignal=>{
@@ -312,8 +317,10 @@ export class AccountApi {
       try {endpoint=metadata.endpoint({name:'remember_account_endpoint'});}
       catch(error) {if(error instanceof AbortError||error instanceof RequestTimeoutError)throw error;throw new AccountApiUnavailable({detail:'issuer has no usable account API'});}
       if(!sameOrigin({left:c.claims!.iss,right:endpoint}))throw new AccountApiUnavailable({detail:'account endpoint must share the issuer origin'});
-      const response=await sendSameOrigin({http:this.#http,request:{method:'GET',url:endpoint.replace(/\/+$/,'')+'/'+path.replace(/^\/+/,''),query:queryParams({params}),headers:{Authorization:c.authorization!,Accept:'application/json'},signal:activeSignal}});
-      return await checkedResponse({response,path}) as Models.JsonValue;
+      let response:Response;
+      try{response=await sendSameOrigin({http:this.#http,request:{method:'GET',url:endpoint.replace(/\/+$/,'')+'/'+path.replace(/^\/+/,''),query:queryParams({params}),headers:{Authorization:c.authorization!,Accept:'application/json'},signal:activeSignal}});}
+      catch(error){if(activeSignal.aborted)throw activeSignal.reason;throw transportError({error});}
+      return await checkedAccountResponse({response}) as Models.JsonValue;
     }});
   }
 }

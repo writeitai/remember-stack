@@ -183,7 +183,7 @@ test('a delayed read retries at the new host when another request already repinn
 
 test('finite positive request/readiness deadlines refuse before sending',async()=>{
   let calls=0;const adapter={request:async()=>{calls++;return Response.json(fixtures.readiness);}};
-  for(const invalid of [0,-1,NaN,Infinity]){
+  for(const invalid of [0,-1,NaN,Infinity,2147483648]){
     assert.throws(()=>new Client({client:adapter,timeoutMs:invalid}),InputValidationError);
     const client=new Client({client:adapter});
     try{
@@ -192,4 +192,36 @@ test('finite positive request/readiness deadlines refuse before sending',async()
     }finally{client.close();}
   }
   assert.equal(calls,0);
+});
+
+
+test('maximum Node timer is accepted for request and readiness deadlines',async()=>{
+  let calls=0;const client=new Client({timeoutMs:2147483647,client:{request:async()=>{calls++;return Response.json(fixtures.readiness);}}});
+  try{assert((await client.waitForReadiness({versionIds:[id],timeoutMs:2147483647,pollIntervalMs:2147483647})).ready);assert.equal(calls,1);}
+  finally{client.close();}
+});
+
+test('borrowed account transport failures preserve API status zero and original cause',async()=>{
+  clearMetadataCache();const issuer='https://account-network-fixture.invalid';const cause=new Error('synthetic refusal');
+  const client=new Client({apiKey:signedKey({issuer}),baseUrl:'https://engine-fixture.invalid',transport:{request:async request=>{
+    if(request.url.includes('/.well-known'))return Response.json({issuer,remember_account_endpoint:issuer+'/account'});
+    throw cause;
+  }}});
+  try{await assert.rejects(client.account.whoami(),error=>error instanceof MemoryApiError&&error.statusCode===0&&error.cause===cause);}finally{client.close();}
+});
+
+test('general API timestamps require offsets before HTTP while UTC-only fields retain their policy',async()=>{
+  let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
+  try{
+    const validAt='2026-10-02T12:00:00';
+    await assert.rejects(client.lookupRelations({validAt}),InputValidationError);
+    await assert.rejects(client.graphNeighborhood({entityId:id,validAt}),InputValidationError);
+    await assert.rejects(client.graphPath({fromEntityId:id,toEntityId:id,validAt}),InputValidationError);
+    assert.equal(calls,0);
+  }finally{client.close();}
+});
+
+test('unsafe integer query parameters refuse before HTTP',async()=>{
+  let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
+  try{await assert.rejects(client.lookupRelations({k:2**53}),error=>error instanceof InputValidationError&&error.code==='numeric.precision');assert.equal(calls,0);}finally{client.close();}
 });

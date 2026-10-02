@@ -1,4 +1,125 @@
 {
+  "accountErrors": [
+    {
+      "body": {
+        "detail": {
+          "code": "forbidden",
+          "message": "Key revoked"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "Key revoked",
+        "statusCode": 403
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 403
+    },
+    {
+      "body": {
+        "detail": "x",
+        "extra": 1
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "x",
+        "statusCode": 403
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 403
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "bad_argument",
+          "message": "Fix argument"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "Fix argument",
+        "statusCode": 400
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/query/foo",
+      "status": 400
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "concurrency_limited"
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "concurrency_limited",
+        "detail": "concurrency_limited",
+        "statusCode": 429
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 429
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "x",
+          "message": ""
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "x",
+        "detail": "x",
+        "statusCode": 429
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 429
+    },
+    {
+      "body": {
+        "detail": {
+          "message": 42
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": null,
+        "detail": "42",
+        "statusCode": 429
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 429
+    },
+    {
+      "body": {
+        "detail": null
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "{\"detail\":null}",
+        "statusCode": 403
+      },
+      "issuer": "https://account-fixture.invalid",
+      "key": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiAiaHR0cHM6Ly9hY2NvdW50LWZpeHR1cmUuaW52YWxpZCIsICJwcm9qZWN0cyI6IFsiZml4dHVyZSJdfQ.fixture",
+      "path": "/v1/keys/self",
+      "status": 403
+    }
+  ],
   "cases": [
     {
       "method": "list_operations",
@@ -6818,6 +6939,21 @@
           "status_code": 422
         }
       }
+    },
+    {
+      "class": "TimeoutError",
+      "options": {
+        "detail": "timed out waiting for pipeline readiness"
+      },
+      "result": {
+        "error": {
+          "agent_action": "Retry with back-off; check the deployment URL and network.",
+          "code": "transport_error",
+          "detail": "timed out waiting for pipeline readiness",
+          "retryable": true,
+          "status_code": 0
+        }
+      }
     }
   ],
   "failures": [
@@ -6826,6 +6962,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /operations did not return a list",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6845,6 +6982,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "POST /query/sql returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6876,6 +7014,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /query/space/search returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6900,6 +7039,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /query/saved returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6916,6 +7056,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "POST /graph/path returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6940,6 +7081,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "POST /readiness returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -6978,6 +7120,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "POST /ingest returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7004,6 +7147,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /documents returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7020,6 +7164,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "POST /documents/search returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7036,6 +7181,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "DELETE /documents/{doc_id} returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7058,6 +7204,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /connectors returned an invalid response body",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7074,6 +7221,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "GET /query/space did not return an object",
         "requestId": null,
         "retryable": null,
         "statusCode": 200
@@ -7095,6 +7243,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": "pg_unavailable",
+        "detail": "offline",
         "requestId": null,
         "retryable": null,
         "statusCode": 503
@@ -7122,6 +7271,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": "pg_unavailable",
+        "detail": "offline",
         "requestId": "fixture-request",
         "retryable": true,
         "statusCode": 503
@@ -7148,6 +7298,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "deployment API returned a malformed structured error",
         "requestId": null,
         "retryable": null,
         "statusCode": 503
@@ -7173,6 +7324,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "deployment API returned a malformed structured error",
         "requestId": null,
         "retryable": null,
         "statusCode": 422
@@ -7198,6 +7350,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "deployment API returned a malformed structured error",
         "requestId": null,
         "retryable": null,
         "statusCode": 422
@@ -7223,6 +7376,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "deployment API returned a malformed structured error",
         "requestId": null,
         "retryable": null,
         "statusCode": 422
@@ -7245,6 +7399,7 @@
       "error": {
         "class": "MemoryApiError",
         "code": null,
+        "detail": "not found",
         "requestId": null,
         "retryable": null,
         "statusCode": 404
@@ -7270,6 +7425,7 @@
       "error": {
         "class": "RateLimited",
         "code": "concurrency_limited",
+        "detail": "limited",
         "requestId": null,
         "retryAfter": 7.0,
         "retryable": null,
@@ -7284,6 +7440,118 @@
       "typescriptMethod": "listOperations",
       "typescriptOptions": {},
       "variant": "admission"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "concurrency_limited"
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "concurrency_limited",
+        "detail": "concurrency_limited",
+        "requestId": null,
+        "retryAfter": null,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission-message-fallback"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "x",
+          "message": ""
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "x",
+        "detail": "x",
+        "requestId": null,
+        "retryAfter": null,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission-message-fallback"
+    },
+    {
+      "body": {
+        "detail": {
+          "message": 42
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": null,
+        "detail": "42",
+        "requestId": null,
+        "retryAfter": null,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission-message-fallback"
+    },
+    {
+      "body": {
+        "detail": {
+          "message": true
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": null,
+        "detail": "True",
+        "requestId": null,
+        "retryAfter": null,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission-message-fallback"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "x",
+          "message": []
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "x",
+        "detail": "x",
+        "requestId": null,
+        "retryAfter": null,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission-message-fallback"
     }
   ],
   "lifecycleDispositions": {

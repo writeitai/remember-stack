@@ -1200,4 +1200,6 @@ arrives as a list of values. Pair it with `columns` to get names:
 
 Automatic credential-file reads are refused on Windows because the SDK cannot
 prove owner-only access with its current file reader. Supply an explicit API key
-and engine URL instead; no stored file is read when both are supplied.
+and engine URL instead; no stored file is read when both are supplied. An argument
+or environment signed key without a URL also works: it bypasses the unavailable
+store and discovers its engine through its own issuer.

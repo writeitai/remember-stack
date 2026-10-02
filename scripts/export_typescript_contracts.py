@@ -267,6 +267,43 @@ def client_models() -> dict[str, Any]:
     return models
 
 
+def require_schema_only_provider(*, model: type[BaseModel]) -> None:
+    """Reject provider parser/serializer semantics that JSON Schema cannot express."""
+    for field in model.model_fields.values():
+        for annotation in field.metadata:
+            if type(annotation).__module__ != "annotated_types" or type(
+                annotation
+            ).__name__ not in {"MinLen", "MaxLen"}:
+                raise ValueError(
+                    f"{model.__name__}: custom provider field metadata requires review"
+                )
+    decorators = model.__pydantic_decorators__
+    for category in (
+        "validators",
+        "field_validators",
+        "root_validators",
+        "model_validators",
+        "field_serializers",
+        "model_serializers",
+        "computed_fields",
+    ):
+        if getattr(decorators, category):
+            raise ValueError(
+                f"{model.__name__}: provider {category} requires reviewed contract support"
+            )
+    if model.__pydantic_custom_init__ or model.__pydantic_post_init__:
+        raise ValueError(
+            f"{model.__name__}: custom provider initialization requires review"
+        )
+    for hook in ("__get_pydantic_core_schema__", "__get_pydantic_json_schema__"):
+        if getattr(getattr(model, hook), "__func__", None) is not getattr(
+            getattr(BaseModel, hook), "__func__", None
+        ):
+            raise ValueError(
+                f"{model.__name__}: custom provider schema hooks require review"
+            )
+
+
 def read_routes() -> list[dict[str, str]]:
     """Export the route-scope authority, not the separate spend gate table."""
     from rememberstack.surfaces.route_scope import _READ_ROUTES
@@ -345,6 +382,11 @@ def artifacts() -> dict[Path, str]:
             "path": path,
             "optionalProfile": "connectors",
         }
+    from remember.connection import ResolvedProject
+    from remember.issuer import IssuerMetadata
+
+    for provider_model in (IssuerMetadata, ResolvedProject):
+        require_schema_only_provider(model=provider_model)
     provider_names = {"IssuerMetadata", "ResolvedProject"}
     provider = {
         "$schema": runtime["$schema"],

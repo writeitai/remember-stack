@@ -110,7 +110,7 @@ test('insecure project issuers are project errors and validation lists remain re
 
 test('readiness timeouts map to retryable transport errors and causes survive network normalization',async()=>{
   const {mapError,TimeoutError,transportError}=await import('../.test-build/internal.js');
-  const mapped=mapError({error:new TimeoutError()});assert.equal(mapped.code,'transport_error');assert.equal(mapped.retryable,true);assert.equal(mapped.status_code,null);
+  const mapped=mapError({error:new TimeoutError()});assert.equal(mapped.code,'transport_error');assert.equal(mapped.retryable,true);assert.equal(mapped.status_code,0);
   const cause=new Error('synthetic connection failure');assert.equal(transportError({error:cause}).cause,cause);
 });
 
@@ -122,11 +122,29 @@ test('empty configuration-directory values retain Python current-directory seman
 });
 
 
-test('Windows explicit signed keys need no inaccessible credential file or engine URL',{skip:process.platform!=='win32'},()=>{
-  const dir=mkdtempSync(join(tmpdir(),'remember-windows-signed-'));
+test('connection environment names match Python case insensitivity',async()=>{
+  const {environment}=await import('../.test-build/internal.js');
+  const variables={remember_api_key:'fixture',Remember_Api_Url:'https://api.invalid',remember_project:'project',remember_issuer:'https://issuer.invalid',remember_mcp_url:'https://mcp.invalid',remember_config_dir:'',xdg_config_home:'fixture-config'};
+  assert.deepEqual(environment({variables}),{apiKey:'fixture',apiUrl:'https://api.invalid',project:'project',issuer:'https://issuer.invalid',mcpUrl:'https://mcp.invalid',configDir:'',xdgConfigHome:'fixture-config'});
+  assert.equal(environment({variables:{REMEMBER_API_URL:'https://first.invalid',remember_api_url:''}}).apiUrl,undefined);
+  assert.equal(environment({variables:{remember_api_url:'',REMEMBER_API_URL:'https://last.invalid'}}).apiUrl,'https://last.invalid');
+});
+
+for(const source of ['explicit','environment'])for(const present of [false,true])for(const signed of [false,true])test(`Windows ${source} ${signed?'signed':'unsigned'} key with ${present?'present':'absent'} store`,{skip:process.platform!=='win32'},async()=>{
+  const dir=mkdtempSync(join(tmpdir(),'remember-windows-key-'));
   try{
-    writeFileSync(join(dir,'credentials.json'),'invalid old file');
-    const connection=resolveConnection({apiKey:key(),env:{configDir:dir}});
-    assert.equal(connection.keySource,'explicit');assert.equal(connection.apiUrl,null);assert.equal(connection.claims.iss,'https://issuer.example');
+    if(present)writeFileSync(join(dir,'credentials.json'),'invalid old file');
+    const apiKey=signed?key():'shared-fixture';const env={configDir:dir,...(source==='environment'?{apiKey}:{})};
+    const options={env,...(source==='explicit'?{apiKey}:{})};
+    if(present&&!signed){assert.throws(()=>resolveConnection(options),CredentialError);return;}
+    const connection=resolveConnection(options);assert.equal(connection.keySource,source);assert.equal(connection.apiUrl,null);
+    if(signed)assert.equal(connection.claims.iss,'https://issuer.example');
+    else {const route=new EngineRoute({connection,http:{request:async()=>{throw new Error('unexpected discovery');}}});assert.equal((await route.target()).url,'http://127.0.0.1:8000');}
   }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('issuer 3xx without Location returns the ordinary response and readable body',async()=>{
+  const {sendSameOrigin}=await import('../.test-build/internal.js');let calls=0;
+  const response=await sendSameOrigin({request:{url:'https://issuer-fixture.invalid/account',method:'GET'},http:{request:async()=>{calls++;return new Response('original body',{status:307});}}});
+  assert.equal(response.status,307);assert.equal(await response.text(),'original body');assert.equal(calls,1);
 });

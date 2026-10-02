@@ -38,7 +38,7 @@ export function mapError({error}:{error:unknown}):ToolError {
     if(isQueryArgumentError({error}))return new ToolError({code:error.code,detail:error.message,status_code:null,retryable:false,agent_action:'Read the detail and fix the query or its arguments.'});
     return invalidArguments({detail:error.message});
   }
-  if(error instanceof TimeoutError)return new ToolError({code:'transport_error',detail:error.message,status_code:null,retryable:true,agent_action:'Retry with back-off; check the deployment URL and network.'});
+  if(error instanceof TimeoutError)return new ToolError({code:'transport_error',detail:error.message,status_code:0,retryable:true,agent_action:'Retry with back-off; check the deployment URL and network.'});
   if(error instanceof MemoryApiError) {
     const status=error.statusCode;const detail=error.detail;const separator=detail.indexOf(':');
     const head=separator<0?detail:detail.slice(0,separator);

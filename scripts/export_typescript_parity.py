@@ -611,6 +611,22 @@ def failure_fixtures() -> list[dict[str, Any]]:
             "variant": "admission",
         }
     )
+    for detail in [
+        {"code": "concurrency_limited"},
+        {"code": "x", "message": ""},
+        {"message": 42},
+        {"message": True},
+        {"code": "x", "message": []},
+    ]:
+        cases.append(
+            {
+                "method": "list_operations",
+                "options": {},
+                "status": 429,
+                "body": {"detail": detail},
+                "variant": "admission-message-fallback",
+            }
+        )
     with tempfile.TemporaryDirectory(prefix="remember-ts-bad-response-") as directory:
         for case in cases:
 
@@ -639,6 +655,7 @@ def failure_fixtures() -> list[dict[str, Any]]:
                     case["error"] = {
                         "class": type(error).__name__,
                         "statusCode": error.status_code,
+                        "detail": error.detail,
                         "code": error.code,
                         "retryable": error.retryable,
                         "requestId": error.request_id,
@@ -765,6 +782,86 @@ def error_mapping_fixtures() -> list[dict[str, Any]]:
                 "result": map_error(error).as_dict(),
             }
         )
+    timeout = TimeoutError("timed out waiting for pipeline readiness")
+    cases.append(
+        {
+            "options": {"detail": str(timeout)},
+            "class": "TimeoutError",
+            "result": map_error(timeout).as_dict(),
+        }
+    )
+    return cases
+
+
+def account_error_fixtures() -> list[dict[str, Any]]:
+    """Execute the issuer account decoder separately from the deployment decoder."""
+    issuer = "https://account-fixture.invalid"
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps({"iss": issuer, "projects": ["fixture"]}).encode()
+        )
+        .rstrip(b"=")
+        .decode()
+    )
+    key = "eyJhbGciOiJFUzI1NiJ9." + payload + ".fixture"
+    cases = []
+    for path, status, body in [
+        (
+            "/v1/keys/self",
+            403,
+            {"detail": {"code": "forbidden", "message": "Key revoked"}},
+        ),
+        ("/v1/keys/self", 403, {"detail": "x", "extra": 1}),
+        (
+            "/query/foo",
+            400,
+            {"detail": {"code": "bad_argument", "message": "Fix argument"}},
+        ),
+        ("/v1/keys/self", 429, {"detail": {"code": "concurrency_limited"}}),
+        ("/v1/keys/self", 429, {"detail": {"code": "x", "message": ""}}),
+        ("/v1/keys/self", 429, {"detail": {"message": 42}}),
+        ("/v1/keys/self", 403, {"detail": None}),
+    ]:
+
+        def answer(
+            request: httpx.Request, *, status: int = status, body: dict[str, Any] = body
+        ) -> httpx.Response:
+            """Serve synthetic issuer discovery and the selected account refusal."""
+            if request.url.path.startswith("/.well-known"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "issuer": issuer,
+                        "remember_account_endpoint": issuer + "/account",
+                    },
+                )
+            return httpx.Response(status, json=body)
+
+        with Client(
+            api_key=key,
+            base_url="https://engine-fixture.invalid",
+            transport=httpx.MockTransport(answer),
+        ) as client:
+            try:
+                client.account.get(path)
+            except MemoryApiError as error:
+                cases.append(
+                    {
+                        "issuer": issuer,
+                        "key": key,
+                        "path": path,
+                        "status": status,
+                        "body": body,
+                        "error": {
+                            "class": type(error).__name__,
+                            "detail": error.detail,
+                            "statusCode": error.status_code,
+                            "code": error.code,
+                        },
+                    }
+                )
+            else:
+                raise AssertionError("account error fixture unexpectedly succeeded")
     return cases
 
 
@@ -777,6 +874,7 @@ def main() -> int:
     result["failures"] = failure_fixtures()
     result["tools"] = tool_fixtures()
     result["errorMappings"] = error_mapping_fixtures()
+    result["accountErrors"] = account_error_fixtures()
     content = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if arguments.check:
         if not TARGET.exists() or TARGET.read_text() != content:

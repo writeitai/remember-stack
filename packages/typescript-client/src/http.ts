@@ -90,7 +90,7 @@ export async function bounded<T>({ work, signal, timeoutMs = 30000, controllers 
   timeoutMs?: number;
   controllers?: Set<AbortController>;
 }): Promise<T> {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new InputValidationError({ detail: 'timeoutMs must be positive and finite' });
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2147483647) throw new InputValidationError({ detail: 'timeoutMs must be positive, finite and at most 2147483647' });
   if (signal?.aborted) throw new AbortError({ cause: signal.reason });
   const controller = new AbortController();
   controllers?.add(controller);
@@ -136,6 +136,33 @@ export async function responseJson({ response }: { response: Response }): Promis
   }
 }
 
+/** Match Python truthiness for optional JSON diagnostic message/code fields. */
+function diagnosticValue({value}:{value:unknown}):boolean {
+  if(Array.isArray(value))return value.length>0;
+  if(value!==null&&typeof value==='object')return Object.keys(value).length>0;
+  return !!value;
+}
+/** Keep primitive error messages readable, including non-string legacy diagnostics. */
+function diagnosticText({value}:{value:unknown}):string {
+  if(typeof value==='string')return value;
+  if(value===true)return 'True';if(value===false)return 'False';
+  return value!==null&&typeof value==='object'?JSON.stringify(value):String(value);
+}
+/** Decode issuer-account errors independently of engine-specific query envelopes. */
+export async function checkedAccountResponse({response}:{response:Response}):Promise<unknown> {
+  if(response.ok)return responseJson({response});
+  if(response.status===429)return checkedResponse({response,path:''});
+  const text=await response.text();let payload:unknown;
+  try{payload=parseJson({text,statusCode:response.status});}catch{payload=undefined;}
+  const envelope=payload!==null&&typeof payload==='object'&&!Array.isArray(payload)?(payload as Record<string,unknown>).detail:undefined;
+  let detail=text;
+  if(envelope!==null&&typeof envelope==='object'&&!Array.isArray(envelope)) {
+    const fields=envelope as Record<string,unknown>;
+    detail=diagnosticText({value:diagnosticValue({value:fields.message})?fields.message:diagnosticValue({value:fields.code})?fields.code:envelope});
+  }else if(envelope!=null)detail=diagnosticText({value:envelope});
+  throw new MemoryApiError({statusCode:response.status,detail});
+}
+
 /** Decode exact public errors at their bound status, without generic retry policy. */
 export async function checkedResponse({ response, path }: { response: Response; path: string }): Promise<unknown> {
   if (response.ok) return responseJson({ response });
@@ -150,7 +177,7 @@ export async function checkedResponse({ response, path }: { response: Response; 
     const hint = response.headers.get('retry-after');
     const retryAfter = hint !== null && hint.trim() !== '' && Number.isFinite(Number(hint)) ? Number(hint) : undefined;
     const code = typeof detailObject?.code === 'string' ? detailObject.code : undefined;
-    const detail = typeof detailObject?.message === 'string' ? detailObject.message : typeof envelope?.detail === 'string' ? envelope.detail : 'rate limited';
+    const detail = detailObject ? diagnosticText({value:diagnosticValue({value:detailObject.message})?detailObject.message:code||'rate limited'}) : typeof envelope?.detail==='string'?envelope.detail:'rate limited';
     throw new RateLimited({ detail, code, retryAfter });
   }
   let detail = text;
