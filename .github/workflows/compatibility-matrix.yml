@@ -4,11 +4,6 @@ on:
   push:
     branches: ["main"]
   pull_request:
-    paths:
-      - "src/remember/**"
-      - "src/tests/surfaces/**"
-      - "src/tests/packaging/**"
-      - ".github/workflows/compatibility-matrix.yml"
   workflow_dispatch:
 
 permissions:
@@ -31,6 +26,15 @@ jobs:
         with:
           version: "0.12.6"
           enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.0.0'
+          cache: npm
+          cache-dependency-path: packages/typescript-client/package-lock.json
+      - name: Build candidate TypeScript client
+        working-directory: packages/typescript-client
+        run: npm ci && npm run build
 
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -91,6 +95,16 @@ jobs:
             echo "image=$image" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start deterministic loopback model provider for API compatibility
+        run: |
+          node .github/ci/model-provider-fixture.mjs > /tmp/remember-model-fixture.log 2>&1 &
+          echo "$!" > /tmp/remember-model-fixture.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18882/healthz >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then cat /tmp/remember-model-fixture.log; exit 1; fi
+            sleep 1
+          done
+
       - name: Run engine setup and migrations (${{ matrix.engine-version }})
         run: |
           docker run --rm --network host \
@@ -99,6 +113,7 @@ jobs:
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_OPENROUTER_BASE_URL="http://127.0.0.1:18882" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
@@ -112,6 +127,7 @@ jobs:
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_OPENROUTER_BASE_URL="http://127.0.0.1:18882" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
@@ -157,4 +173,26 @@ jobs:
               raise AssertionError('expected nonexistent_operation to raise MemoryApiError')
           "
 
+      - name: Export actual composed profile and exercise every TypeScript method
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          docker exec remember-engine python -c 'import json; from rememberstack.profiles.selfhost import create_api; print(json.dumps(create_api().openapi()))' > /tmp/remember-engine-profile.json
+          node packages/typescript-client/scripts/live-engine.mjs /tmp/remember-engine-profile.json
+      - name: Check actual released/candidate HTTP timestamp validators
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          docker cp .github/ci/temporal-boundary.py remember-engine:/tmp/temporal-boundary.py
+          docker exec --detach remember-engine python /tmp/temporal-boundary.py
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8001/fixture/recordings >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then docker logs remember-engine; exit 1; fi
+            sleep 1
+          done
+          node packages/typescript-client/scripts/temporal-boundary.mjs
+      - name: Clean up live engine and object store
+        if: always()
+        run: |
           docker rm --force remember-engine remember-object-store >/dev/null 2>&1 || true
+          if [ -f /tmp/remember-model-fixture.pid ]; then kill "$(cat /tmp/remember-model-fixture.pid)" || true; fi

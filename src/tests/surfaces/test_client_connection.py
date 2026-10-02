@@ -400,8 +400,8 @@ def _moved(issuer: FakeIssuer, first_outcome: int | Exception) -> None:
 
 @pytest.mark.parametrize(
     "first_outcome",
-    [421, 404, httpx.ConnectError("refused"), httpx.ConnectTimeout("slow")],
-    ids=["421", "non-engine-404", "connection-error", "connect-timeout"],
+    [421, 404, httpx.ConnectError("refused")],
+    ids=["421", "non-engine-404", "connection-error"],
 )
 def test_moved_deployment_is_re_resolved_and_retried_once(
     issuer: FakeIssuer, first_outcome: int | Exception
@@ -445,14 +445,14 @@ def test_a_write_that_may_have_arrived_is_never_repeated(
     [httpx.ConnectError("refused"), httpx.ConnectTimeout("slow"), 421],
     ids=["connect-error", "connect-timeout", "421"],
 )
-def test_a_write_that_never_arrived_moves_with_the_deployment(
+def test_writes_are_never_replayed_even_for_connect_errors_or_421(
     issuer: FakeIssuer, write: str, failure: int | Exception
 ) -> None:
     _moved(issuer, failure)
     with Client(api_key=make_key(), transport=issuer.transport()) as client:
-        with pytest.raises(MemoryApiError):  # the fake engine 404s the write
+        with pytest.raises(MemoryApiError):  # D140 never replays writes
             _write(client, write)
-    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test", "dp-b.test"]
+    assert [r.url.host for r in issuer.engine_requests()] == ["dp-a.test"]
 
 
 def test_reads_retry_after_any_network_error(issuer: FakeIssuer) -> None:
@@ -527,8 +527,13 @@ def test_concurrent_first_requests_share_one_resolution(issuer: FakeIssuer) -> N
     assert client._route._pinned == ("p-docs", DEPLOYMENT_A)
 
 
-def test_read_timeout_is_not_a_moved_deployment(issuer: FakeIssuer) -> None:
-    _moved(issuer, httpx.ReadTimeout("slow"))
+@pytest.mark.parametrize(
+    "failure", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("slow")]
+)
+def test_read_timeout_is_not_a_moved_deployment(
+    issuer: FakeIssuer, failure: Exception
+) -> None:
+    _moved(issuer, failure)
     with Client(api_key=make_key(), transport=issuer.transport()) as client:
         with pytest.raises(MemoryApiError):
             client.list_operations()
@@ -632,3 +637,50 @@ def test_malformed_signed_key_is_not_treated_as_a_shared_secret() -> None:
 def test_clear_host_cache_is_idempotent() -> None:
     clear_host_cache()
     clear_host_cache()
+
+
+def test_windows_explicit_signed_key_bypasses_unusable_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Issuer routing works with an explicit signed key even without a base URL."""
+    from types import SimpleNamespace
+
+    from remember import connection as connection_module
+    from tests.surfaces.fake_issuer import make_key
+
+    def refused() -> None:
+        """Fail if resolution attempts the unavailable Windows file reader."""
+        raise AssertionError("explicit signed key must not read the store")
+
+    monkeypatch.setattr(connection_module, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(connection_module, "load_credentials", refused)
+    result = resolve_connection(api_key=make_key())
+    assert result.key_source == "explicit"
+    assert result.api_url is None
+    assert result.claims is not None
+
+
+def test_read_retries_when_another_request_already_repinned(issuer: FakeIssuer) -> None:
+    """Compare the refreshed host with this read's attempted host, not a newer pin."""
+    original = issuer.handle
+    client: Client
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        """Repin through a write while the old-host read is still awaiting its 421."""
+        if request.url.host == "dp-a.test" and request.method == "GET":
+            original(request)
+            issuer.engines[DEPLOYMENT_A] = [421]
+            for name in (None, "p-docs", "docs"):
+                issuer.projects[name] = ("p-docs", "docs", DEPLOYMENT_B)
+            with pytest.raises(MemoryApiError) as failure:
+                client.ingest(content=b"fixture", filename="note.md")
+            assert failure.value.status_code == 421
+            return httpx.Response(421, json={"message": "moved"})
+        return original(request)
+
+    issuer.handle = handle  # type: ignore[method-assign]
+    with Client(api_key=make_key(), transport=issuer.transport()) as client:
+        assert client.list_operations() == ()
+    assert [
+        (request.url.host, request.method) for request in issuer.engine_requests()
+    ] == [("dp-a.test", "GET"), ("dp-a.test", "POST"), ("dp-b.test", "GET")]

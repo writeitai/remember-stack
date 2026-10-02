@@ -65,6 +65,7 @@ src/tests/model/test_fallback_structure_schema.py
 src/tests/model/test_forget.py
 src/tests/model/test_resolution.py
 src/tests/packaging/test_client_wheel.py
+src/tests/packaging/test_typescript_provider_export.py
 src/tests/packaging/test_release_contract.py
 src/tests/packaging/test_pypi_release_cli.py
 src/tests/spine/test_catalog_lanes.py
@@ -82,6 +83,7 @@ src/tests/surfaces/test_cli_platform.py
 src/tests/surfaces/test_setup_entries.py
 src/tests/surfaces/test_client_first_run.py
 src/tests/surfaces/test_client_sdk.py
+src/tests/surfaces/test_client_credential_safety.py
 src/tests/surfaces/test_cost_export_contract.py
 src/tests/surfaces/test_document_deletion_clients.py
 src/tests/surfaces/test_document_search_clients.py

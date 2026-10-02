@@ -29,7 +29,10 @@ class MemoryApiError(RuntimeError):
         detail: str | None = None,
         code: str | None = None,
         response: object | None = None,
+        retryable: bool | None = None,
+        request_id: str | None = None,
     ) -> None:
+        """Retain structured diagnostics without authorizing automatic retries."""
         eff_detail = detail if detail is not None else (message or "")
         msg = (
             f"API {status_code}: {eff_detail}"
@@ -41,6 +44,8 @@ class MemoryApiError(RuntimeError):
         self.detail = eff_detail
         self.code = code
         self.response = response
+        self.retryable = retryable
+        self.request_id = request_id
 
 
 class RateLimited(MemoryApiError):

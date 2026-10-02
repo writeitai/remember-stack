@@ -27,12 +27,17 @@ from remember import MemoryClient
 from remember.cli import main as cli_main
 from remember.mcp_engine import EngineMcpServer
 from remember.mcp_tools import tool
+from remember.models import AtReadTime
 from remember.models import current_temporal_scope
+from remember.models import CurrentReadTime
 from remember.models import DeploymentBuildInfo
 from remember.models import DocumentSearchResult
 from remember.models import Envelope
 from remember.models import Freshness
 from remember.models import Grain
+from remember.models import HistoryReadTime
+from remember.models import OverlapReadTime
+from remember.models import ReadTime
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.spine.document_search import _decode_cursor
 from rememberstack.spine.document_search import _encode_cursor
@@ -351,3 +356,47 @@ def test_search_documents_filter_passes_through_sdk_and_http() -> None:
     assert engine.calls[1][0] == "chunks"
     assert engine.calls[1][1]["documents"] == filters
     assert "documents" not in engine.calls[2][1]
+
+
+@pytest.mark.parametrize(
+    "time",
+    [
+        CurrentReadTime(),
+        HistoryReadTime(),
+        AtReadTime(at=_AT),
+        OverlapReadTime.model_validate({"from": _AT, "to": _AT}),
+    ],
+)
+@pytest.mark.parametrize("prepared", [False, True])
+def test_sdk_preserves_time_discriminator_through_real_route(
+    surface: tuple[MemoryClient, _Search], time: ReadTime, prepared: bool
+) -> None:
+    """Every scope reaches the backend instead of failing union_tag_not_found."""
+    client, search = surface
+    if prepared:
+        page = client.search_documents_request(request=DocumentSearchRequest(time=time))
+    else:
+        page = client.search_documents(time=time)
+    assert page.documents[0].doc_id == _DOC
+    assert search.requests[-1].time == time
+
+
+@pytest.mark.parametrize(
+    "time",
+    [
+        {"mode": "current"},
+        {"mode": "history"},
+        {"mode": "at", "at": _AT.isoformat()},
+        {"mode": "overlap", "from": _AT.isoformat(), "to": _AT.isoformat()},
+    ],
+)
+def test_remote_mcp_preserves_search_time_discriminator(
+    surface: tuple[MemoryClient, _Search], time: dict[str, str]
+) -> None:
+    """Catalogue output crosses the same actual HTTP validator successfully."""
+    client, search = surface
+    server = EngineMcpServer(client=client, read_only=True, path_ingest=False)
+    result = server.call_tool(name="search_documents", arguments={"time": time})
+    assert result["isError"] is False
+    assert search.requests[-1].time is not None
+    assert search.requests[-1].time.mode == time["mode"]

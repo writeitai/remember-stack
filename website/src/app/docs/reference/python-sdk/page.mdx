@@ -164,11 +164,12 @@ client asks remember.dev which address serves the project, checks that the
 key covers it and that the address is `https`, and then talks to that
 address directly; memory traffic never passes through remember.dev's
 console. The answer is reused for 10 minutes. If the address stops answering,
-the client asks again for the same project and retries the request once when
-the address changed. A read retries after a connection failure, a `421`, or a
-`404` that is not the engine's; a write (ingest, delete, connectors) retries
-only when it never reached the server: a connection error, a connect
-timeout, or a `421`.
+the client asks again for the same project. Only a classified read retries
+once when the address changed, after a network failure, `421`, or a `404` that
+is not the engine's error envelope. This includes read-only POST requests such
+as SQL queries, graphs and readiness. Writes are never repeated, including
+connect errors and `421`; movement refreshes their mapping for the next call.
+Timeouts never cause re-resolution or replay.
 When the project cannot be resolved it raises `ProjectResolutionError`; it
 never falls back to a local engine.
 
@@ -1283,6 +1284,7 @@ Raised by every memory-client method when a request fails.
 
 | Attribute | Meaning |
 |---|---|
+| `retryable`, `request_id` | Optional typed server diagnostics; they do not authorize automatic replay. |
 | `status_code` | HTTP status. `0` means the request never got an answer (connection refused, timeout, DNS). `200` means the answer did not match the expected shape. |
 | `detail` | The error text from the deployment. |
 | `code` | A machine code, set for SQL and saved-query routes (for example `parse_error`, `quota_exceeded`, `saved_query_not_found`) and for a `429` (`rate_limited` or `concurrency_limited`); otherwise `None`. |
@@ -1402,3 +1404,11 @@ arrives as a list of values. Pair it with `columns` to get names:
 `[dict(zip([c["name"] for c in res.columns], row)) for row in res.rows]`.
 
 </Callout>
+
+### Windows credential files
+
+Automatic credential-file reads are refused on Windows because the SDK cannot
+prove owner-only access with its current file reader. Supply an explicit API key
+and engine URL instead; no stored file is read when both are supplied. An argument
+or environment signed key without a URL also works: it bypasses the unavailable
+store and discovers its engine through its own issuer.
