@@ -1,7 +1,6 @@
 /** Generate models through the pinned type-only OpenAPI projection. */
 import {readFile,writeFile,mkdir,mkdtemp,readdir,rm} from 'node:fs/promises';
 import {dirname,join,resolve} from 'node:path';
-import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {generate} from 'openapi-typescript-codegen';
 import ts from 'typescript';
@@ -108,7 +107,7 @@ async function files({directory,prefix=''}) {
  */
 async function main() {
   const check=process.argv.includes('--check');
-  const temporary=await mkdtemp(join(tmpdir(),'remember-ts-generation-'));
+  const temporary=await mkdtemp(join(root,'.generation-'));
   try {
     const input=JSON.parse(await readFile(join(root,'contracts/openapi-types.json'),'utf8'));
     const projected=project({value:input});projected.openapi='3.0.3';
