@@ -419,7 +419,7 @@ def measure(*, engine: Engine, queries: int, repeats: int) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--conversations", type=int, default=200)
     parser.add_argument("--turns", type=int, default=60)
     parser.add_argument("--claims-per-turn", type=int, default=3)

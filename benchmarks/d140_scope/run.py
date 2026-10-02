@@ -480,7 +480,7 @@ def measure_rewrite(*, engine: Engine, versions: int) -> dict[str, float]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     parser.add_argument("--lineages", type=int, default=10_000)
     parser.add_argument("--versions", type=int, default=5)
     parser.add_argument("--chunks", type=int, default=10)
