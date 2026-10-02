@@ -115,14 +115,19 @@ D136 retry/error acceptance for both clients to prevent ambiguous writes.
 Constructing a client performs no network I/O. Resolve each setting with the
 Python precedence: explicit options, `REMEMBER_API_KEY/PROJECT/API_URL/ISSUER`,
 then version-2 stored credentials. Include REMEMBER_MCP_URL/mcpUrl for
-resolveConnection consumers; empty environment values are unset. Normalize
+resolveConnection consumers; empty connection environment values are unset.
+Empty REMEMBER_CONFIG_DIR or XDG_CONFIG_HOME retains Python current-directory
+path semantics. Normalize
 bare or Bearer-prefixed keys and refuse line breaks. No retired aliases.
 Use `REMEMBER_CONFIG_DIR`, otherwise `$XDG_CONFIG_HOME/remember`, otherwise
 `~/.config/remember`, and the same `credentials.json` shape as Python. Read
 only when required by precedence; explicit key and URL bypass a stale file.
 Refuse symlinks, non-regular files, and files readable by other users on POSIX;
 on Windows refuse automatic stored-file reads, as current Python does; explicit
-keys remain usable. A future ACL-aware implementation requires a separate design. Read through
+keys remain usable: explicit key plus URL bypasses the store, and an explicit
+signed key on Windows routes through its issuer without reading an unavailable
+store when no URL is supplied. Apply the signed-key exception to Python too;
+POSIX keeps ordinary independent-setting precedence. A future ACL-aware implementation requires a separate design. Read through
 an opened handle with no-follow and nonblocking flags and inspect that handle to avoid a check/read
 race. Malformed files fail with a useful error without including secret data.
 
@@ -335,7 +340,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | Pin never refreshes merely on TTL expiry | Refresh pinned project mapping every 600 seconds; never changed default | Expiry and concurrency |
 | Secure cross-origin metadata endpoints allowed | Issuer-origin authenticated endpoints required | Hostile metadata |
 | Arbitrary account path strings | Relative paths without traversal/absolute origin | Encoded/double-encoded traversal |
-| Wait deadline checked between polls | Deadline also bounds in-flight calls/sleep, TimeoutError retains last report | Slow HTTP and cancellation |
+| Wait deadline checked between polls, including one poll for zero timeout | Positive finite request/readiness timeouts and poll intervals; deadline also bounds in-flight calls/sleep, TimeoutError retains last report | Zero/nonfinite refusal, slow HTTP and cancellation |
 | MCP validate_arguments path_ingest/settings implicitly reads host files/environment | validateArguments uses an explicit injected PathBodyResolver; no resolver refuses path; separate MCP package owns settings and Python-equivalent root/regular-file/size checks | Resolver opt-in, disabled path, empty/oversize body; host security fixtures required before MCP release |
 | TypeScript-only cancellation/precision errors | mapError reports AbortError as cancelled (no HTTP status, not retryable), NumericPrecisionError as local_backend_error (not retryable), reusing published codes | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
