@@ -43,7 +43,9 @@ EXPECTED_ENUMS: Final = (
     "claim_temporal_class",
     "claim_valid_kind",
     "claim_valid_precision",
+    "crossref_binding",
     "crossref_kind",
+    "crossref_origin",
     "currency_reason",
     "decision_actor",
     "deployment_status",
@@ -118,14 +120,18 @@ EXPECTED_TABLES: Final = (
     "deployment_extension_packs",
     "deployments",
     "document_crossrefs",
+    "document_effective_periods",
+    "document_effective_time_events",
     "document_entity_bindings",
     "document_metadata",
     "document_names",
     "document_people",
+    "document_reference_generations",
     "document_representations",
     "document_skeleton_checks",
     "document_sections",
     "document_structure_generations",
+    "document_version_scope",
     "document_versions",
     "documents",
     "entities",
@@ -196,6 +202,7 @@ EXPECTED_INDEXES: Final = (
     "ix_chunk_search_embedding_hnsw",
     "ix_chunks_doc",
     "ix_chunks_reuse",
+    "ix_chunks_reuse_identity",
     "ix_chunks_section",
     "ix_chunks_version",
     "ix_claims_audit",
@@ -209,7 +216,8 @@ EXPECTED_INDEXES: Final = (
     "ix_cost_budget_window",
     "ix_cost_export",
     "ix_crossrefs_from",
-    "ix_crossrefs_to",
+    "ix_crossrefs_incoming",
+    "ix_crossrefs_pending",
     "ix_currency_claim",
     "ix_currency_doc",
     "ix_cxd_chunk",
@@ -226,6 +234,7 @@ EXPECTED_INDEXES: Final = (
     "ix_docversions_doc",
     "ix_docversions_hash",
     "ix_docversions_status",
+    "ix_effective_periods_lineage",
     "ix_entities_name_trgm",
     "ix_entities_embedding_hnsw",
     "ix_entities_redirect",
@@ -278,6 +287,7 @@ EXPECTED_INDEXES: Final = (
     "ix_resdec_mention",
     "ix_review_pending",
     "ix_sections_doc",
+    "ix_sections_doc_key",
     "ix_sections_parent",
     "ix_sections_role",
     "ix_selection_results_representation",
@@ -285,9 +295,15 @@ EXPECTED_INDEXES: Final = (
     "ix_skeleton_checks_representation",
     "ix_structure_generations_representation",
     "ix_surface_cost_export",
+    "ix_version_scope_in_force",
+    "ix_version_scope_lineage",
+    "ux_docversions_version_key",
+    "ux_effective_periods_live_start",
     "ux_kae_link",
     "ux_kquarantine_open_artifact",
     "ux_kwatch",
+    "ux_reference_generations_active",
+    "ux_sections_key",
     "ux_snapshot_latest",
 )
 EXPECTED_RANGE_PARENTS: Final = {
@@ -353,7 +369,14 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # PostgreSQL 19 represents NOT NULL declarations as first-class `n` rows in
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
-EXPECTED_CONSTRAINT_COUNTS: Final = {"c": 99, "f": 137, "n": 598, "p": 78, "u": 39}
+EXPECTED_CONSTRAINT_COUNTS: Final = {
+    "c": 113,
+    "f": 146,
+    "n": 627,
+    "p": 82,
+    "t": 7,
+    "u": 41,
+}
 DECISION_OBJECTS: Final = {
     "D1": ("pipeline_component_versions",),
     "D2": ("claims", "relations", "relation_evidence"),
@@ -402,6 +425,16 @@ DECISION_OBJECTS: Final = {
         "ix_document_names_bm25",
     ),
     "D136": ("perimeter_state",),
+    "D140": (
+        "document_effective_periods",
+        "document_effective_time_events",
+        "document_version_scope",
+        "document_reference_generations",
+        "document_crossrefs",
+        "ux_docversions_version_key",
+        "ux_sections_key",
+        "ix_chunks_reuse_identity",
+    ),
 }
 
 

@@ -906,6 +906,13 @@ to the grain where junk is actually identifiable. (C4; D33.)
 
 ## D36. E0 is the document layer — a chain of idempotent sub-workers, not a renumber
 
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The `crossref` sub-worker's rows now belong to a
+> source *version*, may name source and target sections by key, bind their target
+> `floating` or `pinned`, and come either from extraction (`origin = extracted`, the
+> rungs designed here) or from a caller-supplied reference set that this sub-worker
+> materializes (`origin = supplied`). Kinds gain `refers_to`, `amends` and
+> `implements`. The sub-worker chain and its idempotency rule remain binding.
+
 **Decision.** E0 stays a single product layer (*files / structured document*) implemented as a short
 chain of separately-idempotent, separately-observable sub-workers: **ingest** (store raw + hash) →
 **convert** (raw → Markdown) → **structure** (PageIndex tree + roles + spans + summaries + placement
@@ -1795,6 +1802,17 @@ coordinate is persisted on occurrence records and currency transitions.
 
 ## D55. Document lineages and immutable versions — connector-native identity; snapshot vs living semantics
 
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** A `snapshot` lineage's versions may carry declared
+> **effective periods** (when the text is in force). An identical-byte observation that
+> declares a period adds it to the existing version: a period is neither snapshot
+> metadata nor extraction input, so the metadata no-op rule below is untouched.
+> `current_version_id` keeps its meaning (the served version: newest non-deleted version
+> whose processing completed); time-scoped reads select versions by period. `living`
+> lineages cannot declare periods. Versions may carry an immutable caller `version_key`
+> (pinned references address it); `source_version_ref` remains the mutable cursor. The
+> A→B→A case already creates a new version (migration `p3_01_0008` dropped per-lineage
+> content uniqueness); D140 relies on that.
+
 > **Refined by [D135](#d135-a-caller-can-delete-a-document-soft-lineage-grain-finish-or-refuse)
 > (2026-09-23).** Lineage deletion (operator or source-observed) now tombstones every version
 > with the lineage. The identical-byte no-op below therefore never matches a deleted version:
@@ -1863,6 +1881,16 @@ denormalized. Refines D37 (identity) and enriches D41 (per-version assertion tim
 identity rules per source kind are a named spike.
 
 ## D56. Content-addressed reuse — the cost of a new version is proportional to the edit
+
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The date among the "stable header facts" is the
+> chunk's **text origin time**, recorded once when the chunk is created: the text origin
+> time of the earliest chunk, dated no later than the new version, of a non-deleted version
+> of the lineage with the same
+> date-free reuse identity (own and neighbour block hashes, non-date header facts,
+> toolchain versions), else the new version's source time. It replaces both date header
+> facts in the key, is the date in the E2 header, and is the `asserted_at` of claims
+> freshly extracted from the chunk. Otherwise every dated version missed every key and
+> this decision's cost promise did not hold. Everything else here remains binding.
 
 **Decision.** Extraction and embedding work is keyed by **content, not by document version**:
 E2 idempotency keys on the **`extraction_input_hash`** — a fingerprint of **stable components
@@ -3257,6 +3285,12 @@ fingerprint. Any changed tool inventory, call budget, model, prompt, schema, jud
 ingestion mapping, or K mode is a separately named protocol.
 
 ## D79. Document structure is parsed deterministically; summaries are bottom-up, bounded, and orientation-only
+
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** The deterministic heading parser also reads a
+> trailing heading attribute block (`## Title {#key}`): the identifier becomes the
+> section's stable `section_key` and the block is removed from the title. Sections store
+> deterministic own-block and subtree content hashes. Model-anchored fallback sections get no
+> key.
 
 > **D98 amendment (2026-08-27).** The deterministic structure and summary
 > contract survives. Any downstream P2 graph generation/community consequence
@@ -6315,6 +6349,11 @@ event digest is a documented alternative with an adoption trigger.
 
 ## D134. General document metadata, document search, and self-references that name the document
 
+> **Refined by [D140](#d140-declared-effective-periods-section-keys-and-version-aware-references) (2026-09-30).** `search_documents`, like chunk and claim search,
+> gains the shared time scope: for lineages with declared effective periods the scope
+> chooses which versions are judged. Lineages without periods keep the
+> `versions: current | all` behaviour described here.
+
 **Status:** accepted. **Date:** 2026-09-24.
 
 **Context.** Agents ask for files ("find Q3_sales_2025.xlsx"), for files by
@@ -6441,7 +6480,7 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
-> **Amended by D140 (2026-10-02):** SDKs never replay writes after host movement,
+> **Amended by D141 (2026-10-02):** SDKs never replay writes after host movement,
 > including 421/connect errors; re-resolution can update the next independent
 > call. Read retry eligibility comes from the source-owned route classification,
 > not the HTTP method. Structured query errors accept optional validated
@@ -6695,8 +6734,109 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 [format framework](plan/designs/format_conversion_design.md),
 [analysis](plan/analysis/pdf_always_ocr.md).
 
+## D140. Declared effective periods, section keys, and version-aware references
 
-## D140. Full-parity TypeScript client, separate executable libraries, checked contracts
+**Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
+D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
+input.
+
+**Context.** Many sources publish successive versions of one document, each in force
+for a declared period (policies, price lists, standards editions, contract
+amendments, statutes), and point from one part of a document to a specific part of
+another. On `main` the engine reads only the newest served (ready) version of a
+lineage, has no notion of a version being in force, has no stable identity for a
+section across versions, and has designed but never built cross-references, at
+document grain only. Its D56 reuse key also contains the version's source date, so
+every dated new version is re-extracted in full. The Czech statute book (the LegalIt
+client's e-Sbírka snapshot) motivated the work; nothing in the decision is specific
+to it.
+
+**Decision.**
+1. **Effective periods.** A caller may declare, per version of a `snapshot` lineage,
+   zero or more periods `[effective_from, effective_until)` during which the version's
+   text is in force — at ingest or later. An undeclared end is derived: the next
+   declared start in the lineage known at the belief instant. Declarations are a ledger
+   (retraction for corrections); a duplicate start across versions is a conflict. A
+   lineage becomes periodised with its first declaration and stays so until the caller
+   explicitly clears effective time; both transitions are ledger events, so any past
+   belief instant is reconstructable. Periods are never inferred, never extraction input,
+   and not accepted on `living` lineages. A version may carry a caller `version_key`,
+   assigned only when the version is created: a new key always creates a version; an
+   existing key is accepted only as an idempotent retry of the latest version with the same
+   bytes, and any other observation carrying it is rejected. Current-belief selection reads a
+   per-lineage projection maintained in the writing transaction.
+2. **One time language for text.** Chunk search, claim search,
+   `claims_and_sources_context`, `search_documents` and the new reference operations
+   take the existing `current` / `at` / `overlap` / `history` scope. For periodised
+   lineages it selects the non-deleted ready versions in force; other lineages behave
+   exactly as today. Scoping is a predicate inside the ranked statement, never a filter
+   on finished top-k. Every scoped result addresses the selected version (version-level
+   handles; a P3 path only when it opens that version), and scoped claims are returned
+   through their occurrence in the selected version. `search_documents` keeps lineage
+   grain with a defined representative version and lists every matching edition.
+3. **Evidence gate for facts.** Fact reads under a time scope return a fact only if its
+   D118 window matches and at least one supporting claim occurs in a version the scope
+   selects (or in a lineage without declared periods). The gate is an eligibility
+   predicate applied before every relevance bound (D87). D118 remains the only fact-window
+   authority; declaration changes also enqueue ordinary re-adjudication, with the
+   in-force intervals as an adjudication input.
+4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
+   key; sections also store deterministic own-block and subtree hashes.
+   `section_history` lists a key across versions, including absences.
+5. **Text origin time.** One per-chunk date — the text origin time of the earliest
+   matching chunk (date-free reuse identity) in a non-deleted version of the lineage,
+   considering only matches dated no later than the new version, recorded once — replaces the version date in the reuse key, the E2 header and fresh
+   claims' `asserted_at`, so D56's cost-follows-the-edit promise holds for dated
+   versions.
+6. **References.** `document_crossrefs` rows belong to the source version, may name
+   source and target sections by key, bind the target `floating` (a temporal join with
+   the reading window, returning every target version in force and flagging
+   concurrency) or `pinned` (a target `version_key`), address targets by source
+   identity with late binding, and come from the D36 extractor (`extracted`) or from a
+   caller-supplied NDJSON reference set validated all-or-nothing and materialized by the
+   E0 crossref sub-worker (`supplied`). Every row belongs to one *generation* per source
+   version and origin; only the active generation is visible, and a new one replaces it
+   atomically — one identity rule for supplied sets, extracted rows and A→B→A versions. New general kinds: `refers_to`, `amends` (with a
+   known or explicitly unknown date), `implements`; callers keep their own type codes in
+   an opaque `source_label`. `document_references` reads them in both directions,
+   keyset-paged, with explicit resolution statuses that never reveal a deleted target.
+7. **Deletion.** Soft deletion (D135) is a visibility rule over the new rows; hard
+   forget (D74) deletes and unbinds explicitly.
+
+**Alternatives rejected.** One lineage per version with a caller-side date map
+(moves the core question out of the engine and breaks lineage anchoring);
+`source_modified_at` as the in-force date (a different fact, and immutable extraction
+input); one mutable window per version (cannot express a text in force twice, needs
+writes on succession); a separate `as_of_date` parameter (a second time language);
+model- or numbering-derived section identity (non-deterministic or unstable);
+`source_version_ref` or `content_hash` as the pinned address (a mutable cursor; not
+unique after A→B→A); falling back to the served version when the last period is
+retracted (resurrects withdrawn text); leaving fact eligibility to E3 alone (the default
+answer could rest on an edition not in force);
+dropping the date from the reuse key (wrong relative-date resolution) or a
+model-reported "date used" guard (model output deciding reuse); legal-specific kinds
+or flags.
+
+**Consequences.** New table `document_effective_periods`, functions
+`effective_intervals`, `versions_in_scope` and `fact_in_scope_support`;
+`document_effective_time_events` and the `document_version_scope` projection;
+`document_versions.version_key`;
+`document_sections.section_key`/`own_content_hash`/`subtree_content_hash`;
+`chunks.text_origin_at`/`reuse_identity_hash`; extended `document_crossrefs` and new
+`document_reference_generations`; two new read operations, three new write endpoints
+(periods, clear effective time, reference sets) and new ingest parameters; `time` on
+the text operations and the evidence gate on fact reads. The section-key parser is a new
+parser generation (one extraction-basis rollover per lineage). The D36 extraction rungs
+write the same reference table as extracted generations, and E3 adjudication receives the
+in-force intervals as input; build order is in the delivery plan. PR #486's belief-time rule applies unchanged because fact windows still change
+only through D118 adjudication.
+
+**Authority:** [design](plan/designs/effective_time_and_section_references_design.md),
+[analysis](plan/analysis/version_effective_time_and_section_references.md),
+[delivery](plan/plans/effective_time_and_section_references.md).
+
+
+## D141. Full-parity TypeScript client, separate executable libraries, checked contracts
 
 - **Status:** owner-selected, binding on approved design merge; implementation/publishing are not implied.
 - **Date:** 2026-10-02.

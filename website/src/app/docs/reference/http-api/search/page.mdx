@@ -65,6 +65,45 @@ where the claim was first extracted, which can be another version of the same
 document.
 Every result cites the document it came from.
 
+### Reading text as of a date
+
+The `POST` forms also accept `time`, the same scope the assured operations
+take: `{"mode": "current"}` (the default), `{"mode": "at", "at": …}`,
+`{"mode": "overlap", "from": …, "to": …}` (both ends included) or
+`{"mode": "history"}` (any point up to now). It matters for documents whose
+versions have declared [effective periods](/docs/concepts/time#when-a-version-is-in-force):
+for those, only versions in force for the scope are searched. A document
+without declared periods is searched in its served version, its newest
+processed one, whatever `time` says, so leaving `time` out changes nothing
+for such a corpus.
+
+Like the `documents` filter, the scope is applied while ranking, before the
+`k` best are chosen. What changes in the results for a document with
+declared periods:
+
+- **Every result names its version.** A chunk's `version_id`,
+  `representation_id` and offsets are those of the selected version, and
+  `effective` lists that version's in-force intervals. `served_version` is
+  `false` when the selected version is not the document's served version.
+- **A claim is shown where it is in force.** A claim that occurs in several
+  versions is returned once, with one entry in `occurrences` per selected
+  version, earliest period first. Its top-level `chunk_id`, offsets,
+  `evidence_spans`, `version_id`, `representation_id` and `effective` are
+  those of the first occurrence, not of the passage the claim was first
+  extracted from.
+- **Not in force, not returned.** Under `current`, an edition that is not in
+  force yet, or no longer, contributes nothing. When two editions are in
+  force at once, both are searched and each result says which it came from.
+- **Still processing.** While the version in force is still being processed,
+  its document contributes nothing; it never falls back to the version it
+  replaces. The envelope's `freshness.scope_pending` lists such documents
+  (at most 50 ids, with a `count`) among the documents the results name and
+  the `doc_ids` your `documents` filter names, so "nothing is in force" can
+  be told from "not ready yet".
+
+`temporal_scope` reports the mode applied. The `GET` forms take no `time`
+and always read `current`.
+
 ## GET /search/claims
 
 Search claims.
@@ -122,6 +161,7 @@ Search claims, with the query in the body.
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
 | `documents` | [`DocumentSearchFilters`](/docs/reference/result-types#documentsearchfilters) | no | | Only results found in matching document versions; see [Limiting search to certain documents](#limiting-search-to-certain-documents). |
+| `time` | object | no | `{"mode": "current"}` | Only text in force for the scope; see [Reading text as of a date](#reading-text-as-of-a-date). |
 
 Unknown fields are rejected.
 
@@ -131,8 +171,9 @@ As for [`GET /search/claims`](#get-searchclaims).
 
 ### Errors
 
-As for `GET /search/claims`, plus `422` for an empty or over-long `query`
-or an unknown field.
+As for `GET /search/claims`, plus `422` for an empty or over-long `query`,
+an unknown field, or a malformed `time` (an unknown mode, a missing instant,
+an instant without a time zone, or `to` before `from`).
 
 ### Example
 
@@ -144,7 +185,7 @@ curl -s -X POST "$REMEMBER_API_URL/search/claims" \
 ```
 
 The `remember` Python client's `search_claims` uses `GET`, and the `POST` form
-when you pass `documents`.
+when you pass `documents` or `time`.
 
 ## GET /search/chunks
 
@@ -210,8 +251,15 @@ curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
   -d '{"query": "rollback plan", "k": 10}'
 ```
 
+```bash
+curl -s -X POST "$REMEMBER_API_URL/search/chunks" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "daily allowance", "time": {"mode": "at", "at": "2026-02-01T00:00:00Z"}}'
+```
+
 The `remember` Python client's `search_chunks` uses `GET`, and the `POST` form
-when you pass `documents`.
+when you pass `documents` or `time`.
 
 ## GET /chunks/\{chunk_id\}/adjacent
 
@@ -226,7 +274,9 @@ read a search hit in context.
 | `window` | query | integer | no | `1` | 1 or 2. How many chunks on each side. |
 
 The neighbours come from the same version of the same document as the target
-chunk.
+chunk. The target may be a chunk of any version that is not deleted and is
+fully processed, not only the served one, so a passage returned for an older
+or future edition can be read in context.
 
 ### Response
 

@@ -33,6 +33,7 @@ from rememberstack.surfaces.query_sandbox.discovery import TWO_LAYER_HEADLINE_FU
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SCALAR_FUNCTION_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
@@ -524,7 +525,9 @@ def test_discovery_serves_manifest_and_headline() -> None:
     assert description.schema == "memory_v1"
     assert len(description.views) == len(VIEW_CONTRACTS)
     assert description.headline == TWO_LAYER_HEADLINE_FULL
-    assert set(description.functions) == PUBLIC_SRF_NAMES
+    assert set(description.functions) == (
+        PUBLIC_SRF_NAMES | PUBLIC_SCALAR_FUNCTION_NAMES
+    )
     assert description.limits == {
         tier.value: asdict(caps) for tier, caps in TIER_LIMITS.items()
     }

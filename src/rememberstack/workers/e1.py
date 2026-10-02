@@ -32,6 +32,8 @@ from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import (
     EXTRACTION_ELIGIBILITY_POLICY_VERSION,
 )
+from rememberstack.core.text_origin import resolve_text_origin
+from rememberstack.core.text_origin import reuse_identity_hash
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
@@ -154,6 +156,11 @@ class ChunkHandler:
                 if not is_eligible
             ),
         )
+        identities = tuple(
+            _reuse_identity_hash(source=source, packed=packed, index=index)
+            for index in range(len(packed))
+        )
+        origins = self._text_origins(source=source, identities=identities)
         self._catalog.record_chunks(
             records=tuple(
                 _chunk_record(
@@ -161,11 +168,39 @@ class ChunkHandler:
                     packed=packed,
                     index=index,
                     chunker_version=self._chunker_version,
+                    reuse_identity_hash=identities[index],
+                    text_origin_at=origins[index],
                 )
                 for index in range(len(packed))
             )
         )
         return _embed_follow_up(work=work, source=source)
+
+    def _text_origins(
+        self, *, source: ChunkSource, identities: tuple[str, ...]
+    ) -> tuple[datetime | None, ...]:
+        """Each new chunk's text origin time, looked up once at creation (D140 §5).
+
+        Recorded on the row and never recomputed: a retried chunk stage
+        replays the rows above instead of reaching this lookup again.
+        """
+        version_date = source.source_modified_at or source.published_at
+        matches = (
+            {}
+            if version_date is None
+            else self._catalog.text_origin_matches(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                reuse_identity_hashes=tuple(dict.fromkeys(identities)),
+                not_after=version_date,
+            )
+        )
+        return tuple(
+            resolve_text_origin(
+                matches=() if match is None else (match,), version_date=version_date
+            )
+            for match in (matches.get(identity) for identity in identities)
+        )
 
     def _derivation_ranges(self, *, source: ChunkSource) -> tuple[DerivationRange, ...]:
         """The converter's labelled ranges; a legacy row without a manifest has none."""
@@ -604,45 +639,44 @@ def _location_facts(
     )
 
 
+def _reuse_identity_hash(
+    *, source: ChunkSource, packed: tuple[PackedChunk, ...], index: int
+) -> str:
+    """The chunk's date-free identity: the D56 key inputs minus any date (D140 §5)."""
+    chunk = packed[index]
+    return reuse_identity_hash(
+        own_block_hashes=(chunk.chunk_content_hash,),
+        neighbor_block_hashes=_neighbor_hashes(packed=packed, index=index),
+        header_facts=_undated_header_facts(source=source, chunk=chunk),
+        blockizer_version=source.blockizer_version or "",
+        structurer_version=source.structurer_version,
+        extractor_version=E2_EXTRACTOR_VERSION,
+    )
+
+
 def _chunk_record(
     *,
     source: ChunkSource,
     packed: tuple[PackedChunk, ...],
     index: int,
     chunker_version: str,
+    reuse_identity_hash: str,
+    text_origin_at: datetime | None,
 ) -> ChunkRecord:
-    """Build one chunk row, deriving its D56 reuse key from stable inputs only."""
+    """Build one chunk row, deriving its D56 reuse key from stable inputs only.
+
+    The only date in the key is the chunk's text origin time (D140 §5): an
+    unchanged chunk of a newly dated version keeps the key of the chunk it
+    inherited its origin from, so E2 reuses that extraction.
+    """
     chunk = packed[index]
-    previous_hash = (
-        packed[index - 1].chunk_content_hash
-        if index > 0 and packed[index - 1].section_id == chunk.section_id
-        else ""
-    )
-    next_hash = (
-        packed[index + 1].chunk_content_hash
-        if index + 1 < len(packed) and packed[index + 1].section_id == chunk.section_id
-        else ""
-    )
-    neighbor_hashes = (previous_hash, next_hash)
-    # D134: the file name is a header fact — a self-referencing claim names
-    # the file, so a renamed version must never reuse claims naming the old one.
+    undated = _undated_header_facts(source=source, chunk=chunk)
+    # The single date sits where the version dates did: after title and kind.
     header_facts = (
-        source.header_title() or "",
-        source.source_kind,
-        _isoformat_or_empty(value=source.source_modified_at),
-        _isoformat_or_empty(value=source.published_at),
-        source.language or "",
-        source.file_name or "",
+        *undated[:2],
+        _isoformat_or_empty(value=text_origin_at),
+        *undated[2:],
     )
-    if not chunk.extraction_eligible:
-        # D133 §4.5: the policy version joins the reuse basis of ineligible
-        # chunks, so they never share a Selection result with an eligible
-        # chunk and a policy change re-keys exactly them. Eligible chunks keep
-        # their key, so the policy never re-extracts prose.
-        header_facts = (
-            *header_facts,
-            f"ineligible:{EXTRACTION_ELIGIBILITY_POLICY_VERSION}",
-        )
     return ChunkRecord(
         chunk_id=uuid4(),
         deployment_id=source.deployment_id,
@@ -656,7 +690,7 @@ def _chunk_record(
         chunk_content_hash=chunk.chunk_content_hash,
         extraction_input_hash=extraction_input_hash(
             own_block_hashes=(chunk.chunk_content_hash,),
-            neighbor_block_hashes=neighbor_hashes,
+            neighbor_block_hashes=_neighbor_hashes(packed=packed, index=index),
             header_facts=header_facts,
             extractor_version=E2_EXTRACTOR_VERSION,
             structurer_version=source.structurer_version,
@@ -667,7 +701,51 @@ def _chunk_record(
         chunker_version=chunker_version,
         extraction_eligible=chunk.extraction_eligible,
         extraction_eligibility_version=EXTRACTION_ELIGIBILITY_POLICY_VERSION,
+        reuse_identity_hash=reuse_identity_hash,
+        text_origin_at=text_origin_at,
     )
+
+
+def _neighbor_hashes(*, packed: tuple[PackedChunk, ...], index: int) -> tuple[str, str]:
+    """Previous and next same-section chunk hashes; "" where there is none."""
+    chunk = packed[index]
+    previous_hash = (
+        packed[index - 1].chunk_content_hash
+        if index > 0 and packed[index - 1].section_id == chunk.section_id
+        else ""
+    )
+    next_hash = (
+        packed[index + 1].chunk_content_hash
+        if index + 1 < len(packed) and packed[index + 1].section_id == chunk.section_id
+        else ""
+    )
+    return previous_hash, next_hash
+
+
+def _undated_header_facts(
+    *, source: ChunkSource, chunk: PackedChunk
+) -> tuple[str, ...]:
+    """The stable header facts without any date: title, kind, language, file name.
+
+    D134: the file name is a header fact — a self-referencing claim names
+    the file, so a renamed version must never reuse claims naming the old one.
+    """
+    header_facts = (
+        source.header_title() or "",
+        source.source_kind,
+        source.language or "",
+        source.file_name or "",
+    )
+    if not chunk.extraction_eligible:
+        # D133 §4.5: the policy version joins the reuse basis of ineligible
+        # chunks, so they never share a Selection result with an eligible
+        # chunk and a policy change re-keys exactly them. Eligible chunks keep
+        # their key, so the policy never re-extracts prose.
+        header_facts = (
+            *header_facts,
+            f"ineligible:{EXTRACTION_ELIGIBILITY_POLICY_VERSION}",
+        )
+    return header_facts
 
 
 def _embed_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:

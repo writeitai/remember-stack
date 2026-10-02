@@ -1,7 +1,7 @@
 # TypeScript Remember client
 
 **Status:** owner-selected direction; binding upon approved PR merge. No npm publication claim.
-**Date:** 2026-10-02. **Decision:** D140.
+**Date:** 2026-10-02. **Decision:** D141.
 **Analysis:** [full Python inventory and alternatives](../analysis/typescript_client_parity.md).
 
 ## 1. Problem, decision and ownership
@@ -32,7 +32,7 @@ the Python connector HTTP methods.
 ## 2. Full client parity contract
 
 The normative inventory is [typescript_client_parity.json](typescript_client_parity.json),
-extracted from Python source at `1dc23f21f24ec5f22ec4e51c751363b3658df7a6`.
+extracted from Python source at `2cde3baf`.
 It includes constructors, exact arguments/defaults, public methods, root exports,
 resolve_connection and QueryResultDict properties. The published 0.17.2 tag is
 `dd0c78015099cdd84ab5f3501744d6e225125989`; it is historical baseline evidence,
@@ -108,7 +108,7 @@ the process alive. Shared work has its own finite deadline.
 
 [D136 §8](one_key_client_surfaces_design.md#8-client-connection-and-issuer-protocol)
 is the shared issuer/credential/routing authority. This section makes its
-TypeScript application explicit; §7 identifies every adaptation. D140 amends
+TypeScript application explicit; §7 identifies every adaptation. D141 amends
 D136 retry/error acceptance for both clients to prevent ambiguous writes.
 
 
@@ -253,12 +253,12 @@ override; bytes infer it from their required filename. Reuse the Python known
 MIME mapping as generated data; unknown types use a deterministic portable
 mapping from the fixed mime-db version, then `application/octet-stream` when
 unknown, not a host-specific conversion promise.
-Validate paired source kind/ref, UTC modified time and lineage requirements
-for revision/living mode before sending. Never replay an upload to hide a
+Validate paired source kind/ref, UTC modified/effective times, ordered effective periods, snapshot-only periods,
+and lineage requirements for revisions, version keys and living mode before sending. Never replay an upload to hide a
 failed acknowledgement or progress uncertainty.
 
 Keep Python's GET for unfiltered claims/chunks searches and POST for document-
-filtered searches. A coordinated Python/TypeScript POST-only change is a
+filtered or time-scoped searches. A coordinated Python/TypeScript POST-only change is a
 separate API-client change, not hidden language drift. Names, property/query-
 space terms and ingest metadata also travel in query parameters in this API;
 this client does not claim to keep all customer content out of request URLs. Preserve repeated query parameters where
@@ -267,6 +267,16 @@ Validate saved-query identifier rules and open-query arguments against their
 source-owned definitions, including unknown fields and boolean-vs-integer
 distinctions. `callOpenQuery` covers all seven SDK dispatch names without
 shipping an MCP server.
+
+D140 added eight methods to the full client surface: `sectionHistory`,
+`sectionHistoryRequest`, `documentReferences`, `documentReferencesRequest`,
+`setReferences`, `referenceGenerations`, `setEffectivePeriods` and
+`clearEffectiveTime`. Match Python request validation, default time scopes,
+section-key encoding, NDJSON reference replacement, generation status and
+error behavior. All new request/response models and support constants are part
+of the same normative inventory. Ingest carries version keys and effective
+periods; claims/chunks/document searches and claims context carry time scopes.
+No writes gain retry permission from these additions.
 
 ## 6. Drift detection and validation gates
 
@@ -392,7 +402,7 @@ are carried, never interpreted as automatic-retry permission.
 Public client exports include redacting Connection/resolveConnection,
 StoredCredentials type and credential path/read helpers, issuer metadata/secure
 URL helpers, and the complete D136 memory-tool catalogue generated from
-`remember.mcp_tools`: all 16 current definitions, permissions, versions, routes,
+`remember.mcp_tools`: all 18 current definitions, permissions, versions, routes,
 annotations and input schemas, plus render/lookup, pure argument validators and
 error shapes/mapping. A future catalogue addition fails drift checks until
 covered. The seven open-query names are only the SDK dispatch subset; an MCP

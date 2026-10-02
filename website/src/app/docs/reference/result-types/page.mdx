@@ -21,6 +21,7 @@ The shapes group into five families:
 | Context bundle | [`ContextBundle/v2`](#contextbundlev2) | `combined_context`. |
 | Query result | [`QueryResult/v1`](#queryresultv1) | `POST /query/sql`, `POST /query/sql/explain`, `POST /query/saved/{namespace}/{name}/run`. |
 | Write and readiness | [`IngestedVersion`](#ingestedversion), [`PipelineReadinessReport`](#pipelinereadinessreport), [`DocumentPage`](#documentpage) | `POST /ingest`, `POST /readiness`, `GET /documents`. |
+| Documents | [Documents](#documents), [Effective periods](#effective-periods), [Sections and references](#sections-and-references) | `POST /documents/search`, `DELETE /documents/{doc_id}`, the effective-period and reference routes, `section_history`, `document_references`. |
 | Deployment | [`ToolDescriptor`](#tooldescriptor), [`DeploymentBuildInfo`](#deploymentbuildinfo) | `GET /operations`, `GET /deployment`. |
 
 ## Conventions
@@ -231,6 +232,30 @@ One claim with its provenance.
 | `source_kind` | string, nullable | |
 | `corroboration_count` | integer ≥ 1, nullable | Claims with identical text grouped under this one (`claims_and_sources_context`). |
 | `grouped_claim_ids` | array of UUID | The ids of the grouped claims. |
+| `version_id` | UUID, nullable | Set when the claim's document has declared effective periods and the read had a time scope: the selected version that `chunk_id` and the offsets above belong to. |
+| `representation_id` | UUID, nullable | The converted reading of that version. |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | That version's in-force intervals. Empty for documents without declared periods. |
+| `occurrences` | array of [`ClaimOccurrence`](#claimoccurrence) | One per selected version that carries the claim, earliest period first. The first is the one the fields above describe. Empty for documents without declared periods. |
+
+Without those fields set, `chunk_id` and the offsets are where the claim was
+first extracted. With them, they are where the claim occurs in a version in
+force for the scope; see
+[Reading text as of a date](/docs/reference/http-api/search#reading-text-as-of-a-date).
+
+### ClaimOccurrence
+
+Where a claim occurs in one selected version.
+
+| Field | Type |
+|---|---|
+| `chunk_id` | UUID |
+| `version_id` | UUID |
+| `representation_id` | UUID |
+| `char_start`, `char_end` | integer |
+| `evidence_spans` | array of [`EvidenceSpan`](#evidencespan) |
+| `source_locators` | JSON, nullable |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) |
+| `served_version` | boolean, default `true`: whether `version_id` is the document's served version |
 
 ### EvidenceSpan
 
@@ -277,6 +302,18 @@ One source passage.
 | `source_kind` | string | |
 | `source_modified_at` | UTC date-time, nullable | |
 | `published_at` | UTC date-time, nullable | |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The version's in-force intervals, when its document has declared effective periods. |
+| `served_version` | boolean | Whether `version_id` is the document's served version (its newest processed one). Default `true`. |
+
+### EffectiveInterval
+
+One interval during which a version is in force.
+
+| Field | Type | Contents |
+|---|---|---|
+| `from` | date-time, nullable | Start, included. `null` is unbounded. |
+| `until` | date-time, nullable | End, excluded. `null` is open. |
+| `until_declared` | boolean | `true` when the end was declared; `false` when it is the next declared start, or open. Default `false`. |
 
 ### SourceRecord
 
@@ -401,6 +438,14 @@ A path is returned whole or not at all.
 | `p1_written_inline` | boolean | The search index is written in the same step as the database. Default `true`. |
 | `p1_believed_at_horizon` | UTC date-time, nullable | The oldest `believed_at` the search index can answer; `null` means unbounded. |
 | `k` | [`KFreshness`](#kfreshness), nullable | Present only when the answer used a compiled page. |
+| `scope_pending` | [`ScopePending`](#scopepending), nullable | Time-scoped text reads only: documents whose version in force for the scope is still being processed. |
+
+### ScopePending
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_ids` | array of UUID | At most 50 of the documents. |
+| `count` | integer ≥ 0 | How many there are. |
 
 ### KFreshness
 
@@ -572,6 +617,7 @@ Returned by `POST /ingest`.
 | `mime` | string, nullable | The MIME type recorded for these bytes, which conversion uses. Set by the first upload of the bytes, unless that type had no converter route and a later upload sent one that has. |
 | `title` | string, nullable | The document's title, set by its first ingest. |
 | `versioning_mode` | `snapshot` \| `living`, nullable | The document's versioning mode, set by its first ingest. |
+| `version_key` | string, nullable | The version's `version_key`, or `null` when it has none. Default `null`. |
 | `parked` | `"no_route"` or `null` | `"no_route"` when the upload's conversion is parked waiting for a conversion route for its MIME type: the bytes are stored, and conversion waits until an operator adds a route if needed and runs `remember ops resume-no-route`, or the same bytes are sent again with a MIME type that has a route. `null` means only that it is not parked for `no_route`; read processing state from `POST /readiness`. |
 
 This release's engine always sets `mime`, `title` and `versioning_mode`; they
@@ -678,6 +724,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `query` | string, nullable | no | | 1 to 4,096 characters. |
 | `filters` | [`DocumentSearchFilters`](#documentsearchfilters) | no | `{}` | |
 | `versions` | `current` \| `all` | no | `current` | |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current` | Which editions of a document with declared effective periods are candidates. |
 | `k` | integer | no | `20` | 1 to 200. |
 | `cursor` | string, nullable | no | | Only without `query`. |
 
@@ -702,6 +749,7 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `cursor` | string, nullable | The next page; always `null` with a query. |
 | `as_of` | date-time | The instant this search judges documents at; every page of one search shares it. |
 | `people_matched` | array of [`DocumentPeopleMatch`](#documentpeoplematch) | Each distinct person an `authors` or `recipients` filter matched; empty without one. |
+| `scope_pending` | [`ScopePending`](#scopepending), nullable | Examined documents whose edition in force for `time` is still being processed. |
 
 ### DocumentSearchResult
 
@@ -715,7 +763,11 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `file_name` | string, nullable | The file name this version was ingested under. |
 | `title` | string, nullable | The title the caller declared for this version, or the title the file declares when none was. |
 | `source_path` | string, nullable | Where the file was at its source when this version was ingested. |
-| `p3_path` | string | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. |
+| `p3_path` | string, nullable | `documents/<doc_id>`: the document's stable path in the filesystem view, relative to its root. It exists there only when the deployment publishes the filesystem view. The path shows the served version, so it is `null` when `served_version` is `false`. |
+| `served_version` | boolean | Whether `version_id` is the document's served version. Default `true`. |
+| `representation_id` | UUID, nullable | The described version's converted reading; with `version_id` it opens exactly that version. |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | The described version's in-force intervals, for a document with declared effective periods. |
+| `matching_editions` | array of [`MatchingEdition`](#matchingedition) | Every candidate edition that matched, earliest period first, for a document with declared effective periods. |
 | `family` | string | The format family. |
 | `created_at`, `modified_at` | date-time, nullable | Dates the document declares. |
 | `language` | string, nullable | |
@@ -726,6 +778,16 @@ Body of [`POST /documents/search`](/docs/reference/http-api/ingest#post-document
 | `other_matching_version_ids` | array of UUIDs | With `versions: all`, the document's other versions that matched. |
 | `matched_by` | array of `name` \| `content` | Which part of the query matched. Empty without a query. |
 | `score` | number, nullable | The combined rank score with a query; `null` without one. |
+
+### MatchingEdition
+
+| Field | Type |
+|---|---|
+| `version_id` | UUID |
+| `version_no` | integer |
+| `version_key` | string, nullable |
+| `representation_id` | UUID, nullable |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) |
 
 ### DocumentPeopleMatch
 
@@ -748,6 +810,205 @@ changed. The counts describe this call only.
 | `claims_retired` | integer | Claims that stopped counting as evidence. |
 | `relations_closed` | integer | Relations closed because this document was their only support. |
 | `observations_closed` | integer | Observations closed because this document was their only support. |
+
+## Effective periods
+
+### EffectivePeriodInput
+
+One period in the body of
+[`PUT …/effective-periods`](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_ideffective-periods)
+(`{"periods": [EffectivePeriodInput, …]}`, 0 to 1,000 items with distinct
+starts).
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `effective_from` | date-time | yes | UTC. Included. |
+| `effective_until` | date-time, nullable | no | UTC. Excluded; later than `effective_from`. `null`: until the next declared start. |
+
+### EffectivePeriodsSet
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `periods` | array of [`DeclaredEffectivePeriod`](#declaredeffectiveperiod) | The version's periods after the call, by start. |
+| `declared` | integer ≥ 0 | Periods this call added. |
+| `retracted` | integer ≥ 0 | Periods this call withdrew. |
+
+### DeclaredEffectivePeriod
+
+| Field | Type | Contents |
+|---|---|---|
+| `period_id` | UUID | |
+| `effective_from` | date-time | As declared. |
+| `effective_until` | date-time, nullable | As declared; `null` means until the next declared start. |
+| `declared_at` | date-time | When the declaration was made. |
+
+### EffectiveTimeCleared
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `retracted` | integer ≥ 0 | Periods withdrawn. |
+| `cleared_at` | date-time, nullable | When the document left effective time; `null` when it had none. |
+
+## Sections and references
+
+### ReferenceInput
+
+One line of the NDJSON body of
+[`PUT …/references`](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `kind` | string | yes | | `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `from_section_key` | string, nullable | no | | Section key syntax: 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`. |
+| `target` | [`ReferenceTarget`](#referencetarget) | yes | | |
+| `binding` | `floating` \| `pinned` | no | `floating` | `pinned` requires `target.version_key`. |
+| `change_effective_from` | date-time, nullable | no | | UTC. Only for `amends` with `change_date_known: true`, where it is required. |
+| `change_date_known` | boolean, nullable | for `amends` | | Only for `amends`. |
+| `source_label` | string, nullable | no | | 1 to 200 characters. |
+| `context` | string, nullable | no | | 1 to 2,000 characters. |
+
+### ReferenceTarget
+
+| Field | Type | Required | Constraints |
+|---|---|---|---|
+| `source_kind` | string | yes | 1 to 128 characters. |
+| `source_ref` | string | yes | 1 to 512 characters. |
+| `version_key` | string, nullable | no | 1 to 512 characters. |
+| `section_key` | string, nullable | no | Section key syntax. |
+
+### ReferencesSet
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `outcome` | `created` \| `unchanged` \| `pending_cancelled` | What the call did. |
+| `generation` | [`ReferenceGeneration`](#referencegeneration) | The generation the version's intent now names. |
+
+### ReferenceGenerations
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `version_id` | UUID | |
+| `generations` | array of [`ReferenceGeneration`](#referencegeneration) | Newest first, at most 100; an active generation is always included. |
+
+### ReferenceGeneration
+
+| Field | Type | Contents |
+|---|---|---|
+| `generation_id` | UUID | |
+| `doc_id`, `version_id` | UUID | |
+| `origin` | `supplied` \| `extracted` | |
+| `status` | `pending` \| `active` \| `rejected` \| `superseded` | |
+| `request_seq` | integer, nullable | Supplied sets: the order of the `PUT` calls for this version. |
+| `input_hash` | string | Identifies the set's content. |
+| `item_count` | integer, nullable | References in the set. |
+| `representation_id`, `crossref_version` | nullable | Extracted generations only. |
+| `errors` | array of `{item, field, reason}` | Why a `rejected` set was rejected; `item` is 1-based. At most 100. |
+| `created_at` | date-time | |
+| `activated_at` | date-time, nullable | |
+
+### SectionHistoryPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `doc_id` | UUID | |
+| `section_key` | string | |
+| `periodised` | boolean | The document has declared effective periods; rows are then ordered by period start, otherwise by `version_no`. |
+| `rows` | array of [`SectionHistoryRow`](#sectionhistoryrow) | |
+| `amendments` | array of [`SectionAmendment`](#sectionamendment) | First page only. |
+| `cursor` | string, nullable | |
+| `evaluated_at`, `believed_at` | date-time | The instants the history was read at; a cursor keeps them. |
+
+### SectionHistoryRow
+
+| Field | Type | Contents |
+|---|---|---|
+| `version_id` | UUID | |
+| `version_no` | integer | |
+| `version_key` | string, nullable | |
+| `effective` | array of [`EffectiveInterval`](#effectiveinterval) | |
+| `status` | `present` \| `absent` \| `not_indexed` \| `processing` | |
+| `section` | [`SectionHistorySection`](#sectionhistorysection), nullable | Set when `status` is `present`. |
+
+### SectionHistorySection
+
+| Field | Type | Contents |
+|---|---|---|
+| `section_id` | UUID | |
+| `node_path` | string | The section's place in the version's section tree. |
+| `title` | string, nullable | The heading, without its `{#key}`. |
+| `own_content_hash` | string | Hash of the section's own text, subsections excluded. |
+| `subtree_content_hash` | string | Hash of the section with its subsections. |
+| `changed` | boolean, nullable | `subtree_content_hash` differs from the previous row that held the key; `null` on the first. |
+| `own_changed` | boolean, nullable | The same for `own_content_hash`. |
+| `first_chunk_ids` | array of UUID | Passages holding the section's first block. |
+
+### SectionAmendment
+
+| Field | Type |
+|---|---|
+| `crossref_id` | UUID |
+| `from_doc_id`, `from_version_id` | UUID |
+| `from_section_key` | string, nullable |
+| `source_label` | string, nullable |
+| `binding` | `floating` \| `pinned` |
+| `to_version_key` | string, nullable |
+| `change_effective_from` | date-time, nullable |
+| `change_date_known` | boolean |
+
+### DocumentReferencesRequest
+
+Body of [`POST /documents/references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `chunk_id` | UUID, nullable | one of `chunk_id`, `doc_id` | | |
+| `doc_id` | UUID, nullable | one of `chunk_id`, `doc_id` | | |
+| `section_key` | string, nullable | no | | Only with `doc_id`. |
+| `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
+| `kinds` | array of strings, nullable | no | | 1 to 7 reference kinds. |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current`; with `chunk_id`, the chunk's version's in-force time up to now | |
+| `k` | integer | no | `50` | 1 to 200. |
+| `cursor` | string, nullable | no | | |
+
+### DocumentReferencesPage
+
+| Field | Type | Contents |
+|---|---|---|
+| `rows` | array of [`DocumentReference`](#documentreference) | |
+| `cursor` | string, nullable | A short page can still carry a cursor. |
+| `evaluated_at`, `believed_at` | date-time | |
+| `too_broad` | object, nullable | `{reason: "too_broad", descendant_keys, limit, explanation}` when the section has more than `limit` (1,000) keyed subsections; `rows` is then empty. |
+
+### DocumentReference
+
+| Field | Type | Contents |
+|---|---|---|
+| `direction` | `outgoing` \| `incoming` | |
+| `crossref_id` | UUID | |
+| `kind` | string | A reference kind. |
+| `origin` | `supplied` \| `extracted` | |
+| `binding` | `floating` \| `pinned` | |
+| `source_label`, `context` | string, nullable | As supplied. |
+| `change_effective_from` | date-time, nullable | `amends` only. |
+| `change_date_known` | boolean, nullable | `amends` only. |
+| `source` | object | `doc_id`, `version_id`, `version_key`, `section_key`, `section_title`, `window` (a [`ReferenceWindow`](#referencewindow)). |
+| `named_target` | object | `source_kind`, `source_ref`, `version_key`, `section_key`, exactly as the source names them. |
+| `status` | string | `resolved`, `target_processing`, `target_unavailable`, `target_not_in_force`, `section_not_in_version`, `section_not_indexed`, `pinned_version_unavailable`. |
+| `target` | object, nullable | `doc_id`, `version_id`, `version_key`, `representation_id`, `section_key`, `section_title`, `first_chunk_ids`, `effective`, `applies_during` (a `ReferenceWindow`), `concurrent`. Only what the status allows is set; `null` for `target_unavailable`. |
+
+### ReferenceWindow
+
+| Field | Type | Contents |
+|---|---|---|
+| `from` | date-time, nullable | Included; `null` is unbounded. |
+| `until` | date-time, nullable | Excluded unless `until_inclusive`; `null` is unbounded. |
+| `until_inclusive` | boolean | `true` for a closed window, such as an instant. Default `false`. |
 
 ## ToolDescriptor
 
@@ -787,6 +1048,20 @@ Body of `POST /search/claims` and `POST /search/chunks`.
 | `k` | integer | no | `10` | 1 to 400. |
 | `channel` | `semantic` \| `bm25` | no | `semantic` | |
 | `documents` | [`DocumentSearchFilters`](#documentsearchfilters), nullable | no | | Only results found in matching document versions; returned claims still cite their origin. |
+| `time` | [`ReadTime`](#readtime), nullable | no | `current` | Only text in force for the scope. |
+
+### ReadTime
+
+The time scope of a text read, chosen by `mode`.
+
+| `mode` | Other fields |
+|---|---|
+| `current` | none |
+| `at` | `at`: date-time with a time zone |
+| `overlap` | `from`, `to`: date-times with a time zone, both included; `to` not before `from` |
+| `history` | none |
+
+No other fields are accepted.
 
 ### AdjacentChunksRequest
 

@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Protocol
 from typing import runtime_checkable
 
+from rememberstack.core.text_scope import TextScope
 from rememberstack.model import P1ChunkRow
 from rememberstack.model import P1ChunkText
 from rememberstack.model import P1ClaimRow
@@ -105,6 +106,7 @@ class P1SearchPort(Protocol):
         k: int,
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Ranked claim-id nominations from the claims channel.
 
@@ -121,6 +123,7 @@ class P1SearchPort(Protocol):
         k: int,
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Ranked claim-id nominations from the lexical claims channel."""
         ...
@@ -134,11 +137,14 @@ class P1SearchPort(Protocol):
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Ranked chunk-id nominations from the semantic source channel.
 
         ``documents`` (D134) keeps a chunk only when its document version
-        matches, applied before the top-k cut.
+        matches, applied before the top-k cut. ``time`` (D140) keeps a chunk
+        only when its version is in force for the scope; omitted, the
+        implementation applies the current scope.
         """
         ...
 
@@ -151,6 +157,7 @@ class P1SearchPort(Protocol):
         policy_generation: str | None = None,
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Ranked chunk-id nominations from the lexical source channel."""
         ...
@@ -214,6 +221,7 @@ class P1ScoredSearchPort(Protocol):
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the semantic channel."""
         ...
@@ -229,6 +237,7 @@ class P1ScoredSearchPort(Protocol):
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored claim nominations from the BM25 channel."""
         ...
@@ -245,6 +254,7 @@ class P1ScoredSearchPort(Protocol):
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the semantic channel.
 
@@ -266,6 +276,7 @@ class P1ScoredSearchPort(Protocol):
         candidate_ids: tuple[str, ...] | None = None,
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[P1Nomination, ...]:
         """Scored source-chunk nominations from the BM25 channel."""
         ...

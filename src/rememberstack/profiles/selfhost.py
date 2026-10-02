@@ -55,6 +55,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
@@ -84,6 +85,7 @@ if TYPE_CHECKING:
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
     PipelineStage.STRUCTURE,
+    PipelineStage.CROSSREF,
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
@@ -920,6 +922,19 @@ class SelfHostProfile:
             _logger.exception(
                 "document binding rebuild failed; exact document-local T0 remains disabled"
             )
+        from rememberstack.spine.section_index_backfill import (  # noqa: PLC0415
+            SectionIndexBackfill,
+        )
+
+        # D140 §4.2: sections that predate section keys get their key and
+        # content hashes from the stored block grids. Idempotent and model-free;
+        # until it finishes, section_history reports those versions not_indexed.
+        try:
+            SectionIndexBackfill(
+                engine=self._engine, artifact_store=self._artifact_store
+            ).run(deployment_id=self._settings.deployment_id)
+        except Exception:  # noqa: BLE001 — setup completes; readers see not_indexed
+            _logger.exception("section index backfill failed; rerun setup to resume")
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
         from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
@@ -1004,10 +1019,13 @@ class SelfHostProfile:
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
+        from rememberstack.spine import DocumentReferences
         from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine import ReferenceCatalog
+        from rememberstack.spine import SectionHistory
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
@@ -1144,11 +1162,17 @@ class SelfHostProfile:
             ),
             documents=DocumentInventory(engine=self._engine),
             document_search=DocumentSearch(engine=self._engine),
+            section_history=SectionHistory(engine=self._engine),
+            references=ReferenceCatalog(
+                engine=self._engine, artifact_store=self._artifact_store
+            ),
+            document_references=DocumentReferences(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,
                 embedding_model=embedding_model,
             ),
+            effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
@@ -1347,6 +1371,7 @@ class SelfHostProfile:
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
         from rememberstack.spine import ObservationSettings
+        from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
@@ -1354,6 +1379,7 @@ class SelfHostProfile:
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
         from rememberstack.workers import ConvertHandler
+        from rememberstack.workers import CrossrefHandler
         from rememberstack.workers import E1Settings
         from rememberstack.workers import E2Settings
         from rememberstack.workers import E3Settings
@@ -1415,6 +1441,12 @@ class SelfHostProfile:
                 check_settings=SkeletonCheckSettings.model_validate({}),
                 role_settings=RoleSettings.model_validate({}),
                 summary_settings=SummarySettings.model_validate({}),
+            )
+        if stage is PipelineStage.CROSSREF:
+            return CrossrefHandler(
+                references=ReferenceCatalog(
+                    engine=self._engine, artifact_store=self._artifact_store
+                )
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -1638,7 +1670,13 @@ def _psycopg_url() -> str:
 
 
 def _expected_components() -> dict[PipelineStage, str]:
-    """The exact eleven continuous generations composed by this profile."""
+    """The per-version continuous generations composed by this profile.
+
+    The ``crossref`` worker is composed but not listed: its work is one job per
+    supplied reference generation (D140 §6.3), not one per version, so a
+    version without references has none and pipeline readiness never waits
+    for it.
+    """
     from rememberstack.spine import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION
     from rememberstack.workers import E0_STRUCTURE_VERSION

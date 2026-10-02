@@ -50,18 +50,34 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeploymentBuildInfo
+from remember.models import DOCUMENT_REFERENCES_DEFAULT_K
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
+from remember.models import DocumentReferencesPage
+from remember.models import DocumentReferencesRequest
 from remember.models import DocumentSearchFilters
 from remember.models import DocumentSearchPage
 from remember.models import DocumentSearchRequest
 from remember.models import DocumentStatusFilter
+from remember.models import EffectivePeriodInput
+from remember.models import EffectivePeriodsRequest
+from remember.models import EffectivePeriodsSet
+from remember.models import EffectiveTimeCleared
 from remember.models import Envelope
+from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
+from remember.models import ReadTime
+from remember.models import ReferenceGenerations
+from remember.models import ReferenceInput
+from remember.models import ReferenceKind
+from remember.models import ReferencesSet
 from remember.models import SearchRequest
+from remember.models import SECTION_HISTORY_DEFAULT_K
+from remember.models import SectionHistoryPage
+from remember.models import SectionHistoryRequest
 from remember.models import ToolDescriptor
 from remember.query_sandbox.result import QueryResult
 
@@ -275,11 +291,18 @@ class MemoryClient:
         assert isinstance(res, ContextBundleV2)
         return res
 
-    def claims_and_sources_context(self, query: str) -> Envelope:
-        """Run the assured claims_and_sources_context operation."""
-        res = self.run_operation(
-            name="claims_and_sources_context", arguments={"query": query}
-        )
+    def claims_and_sources_context(
+        self, query: str, *, time: Mapping[str, object] | None = None
+    ) -> Envelope:
+        """Run the assured claims_and_sources_context operation.
+
+        ``time`` (D140) reads the text in force for the scope (default
+        current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
+        """
+        args: dict[str, object] = {"query": query}
+        if time is not None:
+            args["time"] = dict(time)
+        res = self.run_operation(name="claims_and_sources_context", arguments=args)
         assert isinstance(res, Envelope)
         return res
 
@@ -513,22 +536,29 @@ class MemoryClient:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Search source claims; the returned envelope remains evidence grain.
 
         ``documents`` (D134) keeps only claims found in a document version
         matching the filters ``search_documents`` takes; each returned claim
-        still cites its origin. The filter travels in a body,
-        so a filtered search uses ``POST /search/claims``.
+        still cites its origin. ``time`` (D140, default current) reads only
+        text in force for the scope; a claim of a document with declared
+        effective periods returns its occurrence in each selected version.
+        Either travels in a body, so such a search uses ``POST /search/claims``.
         """
-        if documents is not None:
+        if documents is not None or time is not None:
             return _validated(
                 Envelope,
                 self._json(
                     "POST",
                     "/search/claims",
                     json_body=SearchRequest(
-                        query=query, k=k, channel=channel, documents=documents
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
                     ).model_dump(mode="json", exclude_none=True),
                 ),
                 endpoint="POST /search/claims",
@@ -550,21 +580,27 @@ class MemoryClient:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Search live source passages as separately typed evidence.
 
         ``documents`` (D134) keeps only chunks whose document version matches
-        the filters ``search_documents`` takes. The filter travels in a body,
-        so a filtered search uses ``POST /search/chunks``.
+        the filters ``search_documents`` takes. ``time`` (D140, default
+        current) keeps only chunks of versions in force for the scope. Either
+        travels in a body, so such a search uses ``POST /search/chunks``.
         """
-        if documents is not None:
+        if documents is not None or time is not None:
             return _validated(
                 Envelope,
                 self._json(
                     "POST",
                     "/search/chunks",
                     json_body=SearchRequest(
-                        query=query, k=k, channel=channel, documents=documents
+                        query=query,
+                        k=k,
+                        channel=channel,
+                        documents=documents,
+                        time=time,
                     ).model_dump(mode="json", exclude_none=True),
                 ),
                 endpoint="POST /search/chunks",
@@ -774,6 +810,9 @@ class MemoryClient:
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Push bytes through E0, optionally as a stable document lineage.
 
@@ -782,6 +821,15 @@ class MemoryClient:
         ``source_path`` records where the file lives at its source (a folder
         path or URL) with the version's metadata; sending the same bytes
         again under a new name, title or path records that name too.
+
+        ``version_key`` is your immutable name for this version, unique within
+        the document: a new key always creates a version (even for bytes equal
+        to the latest), and an existing key is accepted only when re-sending
+        the latest version's bytes (``MemoryApiError`` 409 otherwise).
+        ``effective_from`` and optional ``effective_until`` declare when this
+        version's text is in force (UTC, half-open); without an end it lasts
+        until the next declared start. Both need ``source_kind``/``source_ref``
+        and periods need ``versioning_mode="snapshot"``.
         """
         if (source_kind is None) != (source_ref is None):
             raise ValueError("source_kind and source_ref must be supplied together")
@@ -789,16 +837,32 @@ class MemoryClient:
             source_modified_at is not None
             or source_version_ref is not None
             or versioning_mode != "snapshot"
+            or version_key is not None
+            or effective_from is not None
+            or effective_until is not None
         ):
             raise ValueError(
-                "source timestamps, revisions, and living mode require"
-                " source_kind/source_ref"
+                "source timestamps, revisions, living mode, version keys and"
+                " effective periods require source_kind/source_ref"
             )
-        if source_modified_at is not None and (
-            source_modified_at.tzinfo is None
-            or source_modified_at.utcoffset() != timedelta(0)
+        for name, instant in (
+            ("source_modified_at", source_modified_at),
+            ("effective_from", effective_from),
+            ("effective_until", effective_until),
         ):
-            raise ValueError("source_modified_at must be timezone-aware UTC")
+            if instant is not None and (
+                instant.tzinfo is None or instant.utcoffset() != timedelta(0)
+            ):
+                raise ValueError(f"{name} must be timezone-aware UTC")
+        if effective_until is not None and effective_from is None:
+            raise ValueError("effective_until requires effective_from")
+        if effective_from is not None:
+            if versioning_mode != "snapshot":
+                raise ValueError("effective periods require versioning_mode='snapshot'")
+            # the same validation the engine applies, before any request
+            EffectivePeriodInput(
+                effective_from=effective_from, effective_until=effective_until
+            )
 
         # An explicit mime always wins. Otherwise a file path's type comes
         # from the real path name (an overridden filename does not change
@@ -843,6 +907,12 @@ class MemoryClient:
             ),
             ("source_version_ref", source_version_ref),
             ("source_path", source_path),
+            ("version_key", version_key),
+            ("effective_from", effective_from.isoformat() if effective_from else None),
+            (
+                "effective_until",
+                effective_until.isoformat() if effective_until else None,
+            ),
         ):
             if value is not None:
                 params[key] = value
@@ -890,6 +960,7 @@ class MemoryClient:
         versions: Literal["current", "all"] = "current",
         k: int = 20,
         cursor: str | None = None,
+        time: ReadTime | None = None,
     ) -> DocumentSearchPage:
         """Find documents by name, general metadata and content (D134).
 
@@ -898,7 +969,9 @@ class MemoryClient:
         names too) and its text. ``filters`` narrow by family, authors,
         recipients, date ranges, language, thread and doc ids. Without a
         ``query`` results are newest first and ``cursor`` pages them; with one
-        they are ranked and not paged. Invalid combinations raise
+        they are ranked and not paged. ``time`` (D140) picks which editions of
+        a document with declared effective periods are candidates (default
+        current). Invalid combinations raise
         ``pydantic.ValidationError`` before any request is sent.
         """
         return self.search_documents_request(
@@ -906,6 +979,7 @@ class MemoryClient:
                 query=query,
                 filters=filters if filters is not None else DocumentSearchFilters(),
                 versions=versions,
+                time=time,
                 k=k,
                 cursor=cursor,
             )
@@ -925,6 +999,153 @@ class MemoryClient:
             endpoint="POST /documents/search",
         )
 
+    def section_history(
+        self,
+        *,
+        doc_id: UUID | str,
+        section_key: str,
+        time: ReadTime | None = None,
+        k: int = SECTION_HISTORY_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> SectionHistoryPage:
+        """Follow one keyed section across a document's versions (D140 §6.2).
+
+        ``time`` selects the versions (default: history). Each row is a
+        version with its in-force intervals and the section it holds under
+        ``section_key`` — or ``absent``, ``not_indexed`` or ``processing``.
+        An unknown or deleted ``doc_id`` raises ``MemoryApiError`` with
+        ``status_code`` 404.
+        """
+        return self.section_history_request(
+            request=SectionHistoryRequest(
+                doc_id=UUID(str(doc_id)),
+                section_key=section_key,
+                time=time if time is not None else HistoryReadTime(),
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def section_history_request(
+        self, *, request: SectionHistoryRequest
+    ) -> SectionHistoryPage:
+        """Send one prepared :class:`SectionHistoryRequest`."""
+        time = request.time
+        params: dict[str, str | int] = {"mode": time.mode, "k": request.k}
+        if time.mode == "at":
+            params["at"] = time.at.isoformat()
+        elif time.mode == "overlap":
+            params["from"] = time.from_.isoformat()
+            params["to"] = time.to.isoformat()
+        if request.cursor is not None:
+            params["cursor"] = request.cursor
+        key = quote(request.section_key, safe="")
+        return _validated(
+            SectionHistoryPage,
+            self._json(
+                "GET",
+                f"/documents/{request.doc_id}/sections/{key}/history",
+                params=params,
+            ),
+            endpoint="GET /documents/{doc_id}/sections/{section_key}/history",
+        )
+
+    def set_references(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        references: Sequence[ReferenceInput],
+    ) -> ReferencesSet:
+        """Replace one version's supplied references (D140 §6.3).
+
+        ``references`` is the version's complete set, sent as NDJSON (one
+        reference per line, at most 64 MiB). The latest call wins: an equal
+        set is a no-op retry, a set equal to the active one cancels a newer
+        pending one, and any other set becomes a new pending generation that
+        the pipeline validates and activates — see
+        :meth:`reference_generations`. An unknown ``from_section_key``
+        rejects the whole set and the active set stays. Raises
+        ``MemoryApiError`` 404 for an unknown document or version, 413 for
+        an oversized set and 422 for an invalid line.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = "".join(
+            reference.model_dump_json(exclude_none=True) + "\n"
+            for reference in references
+        ).encode("utf-8")
+        return _validated(
+            ReferencesSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/references",
+                content=body,
+                headers={"Content-Type": "application/x-ndjson"},
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def reference_generations(
+        self, *, doc_id: UUID | str, version_id: UUID | str
+    ) -> ReferenceGenerations:
+        """One version's reference generations with statuses and errors (D140)."""
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        return _validated(
+            ReferenceGenerations,
+            self._json("GET", f"/documents/{document}/versions/{version}/references"),
+            endpoint="GET /documents/{doc_id}/versions/{version_id}/references",
+        )
+
+    def document_references(
+        self,
+        *,
+        chunk_id: UUID | str | None = None,
+        doc_id: UUID | str | None = None,
+        section_key: str | None = None,
+        direction: Literal["outgoing", "incoming", "both"] = "both",
+        kinds: Sequence[ReferenceKind] | None = None,
+        time: ReadTime | None = None,
+        k: int = DOCUMENT_REFERENCES_DEFAULT_K,
+        cursor: str | None = None,
+    ) -> DocumentReferencesPage:
+        """What a passage, section or document references, and what references it.
+
+        Give ``chunk_id`` or ``doc_id`` (with an optional ``section_key``).
+        Rows resolve each reference against the target versions in force
+        during each source window (D140 §6.2). An unknown or deleted document
+        or chunk raises ``MemoryApiError`` 404.
+        """
+        return self.document_references_request(
+            request=DocumentReferencesRequest(
+                chunk_id=None if chunk_id is None else UUID(str(chunk_id)),
+                doc_id=None if doc_id is None else UUID(str(doc_id)),
+                section_key=section_key,
+                direction=direction,
+                kinds=None if kinds is None else tuple(kinds),
+                time=time,
+                k=k,
+                cursor=cursor,
+            )
+        )
+
+    def document_references_request(
+        self, *, request: DocumentReferencesRequest
+    ) -> DocumentReferencesPage:
+        """Send one prepared :class:`DocumentReferencesRequest`."""
+        return _validated(
+            DocumentReferencesPage,
+            self._json(
+                "POST",
+                "/documents/references",
+                json_body=request.model_dump(
+                    mode="json", by_alias=True, exclude_none=True
+                ),
+            ),
+            endpoint="POST /documents/references",
+        )
+
     def delete_document(self, *, doc_id: UUID | str) -> DocumentDeletion:
         """Remove one document from the live memory.
 
@@ -938,6 +1159,50 @@ class MemoryClient:
             DocumentDeletion,
             self._json("DELETE", f"/documents/{document}"),
             endpoint="DELETE /documents/{doc_id}",
+        )
+
+    def set_effective_periods(
+        self,
+        *,
+        doc_id: UUID | str,
+        version_id: UUID | str,
+        periods: Sequence[EffectivePeriodInput],
+    ) -> EffectivePeriodsSet:
+        """Replace the periods during which one version's text is in force (D140).
+
+        ``periods`` is the version's complete set: declarations not listed are
+        retracted and new ones declared, atomically. An empty sequence leaves
+        the version with no in-force period while the document keeps its
+        declared effective time; :meth:`clear_effective_time` leaves it. A
+        start already declared for another version of the document raises
+        ``MemoryApiError`` 409, a ``living`` document 422, an unknown document
+        or version 404.
+        """
+        document = UUID(str(doc_id))
+        version = UUID(str(version_id))
+        body = EffectivePeriodsRequest(periods=tuple(periods))
+        return _validated(
+            EffectivePeriodsSet,
+            self._json(
+                "PUT",
+                f"/documents/{document}/versions/{version}/effective-periods",
+                json_body=body.model_dump(mode="json"),
+            ),
+            endpoint="PUT /documents/{doc_id}/versions/{version_id}/effective-periods",
+        )
+
+    def clear_effective_time(self, *, doc_id: UUID | str) -> EffectiveTimeCleared:
+        """Return a document to "the newest processed version is current" (D140).
+
+        Retracts every declared period of the document and records the change,
+        so reads pinned to an earlier instant still see what they saw. An
+        unknown or deleted ``doc_id`` raises ``MemoryApiError`` 404.
+        """
+        document = UUID(str(doc_id))
+        return _validated(
+            EffectiveTimeCleared,
+            self._json("DELETE", f"/documents/{document}/effective-periods"),
+            endpoint="DELETE /documents/{doc_id}/effective-periods",
         )
 
     def connectors(self) -> tuple[ConnectorDescriptor, ...]:
@@ -1240,6 +1505,9 @@ class Client(MemoryClient):
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Ingest a document from a file path, string path, or raw bytes."""
         resolved_source = Path(source) if isinstance(source, str) else source
@@ -1255,6 +1523,9 @@ class Client(MemoryClient):
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
             source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def ingest_file(
@@ -1270,6 +1541,9 @@ class Client(MemoryClient):
         versioning_mode: Literal["snapshot", "living"] = "snapshot",
         source_version_ref: str | None = None,
         source_path: str | None = None,
+        version_key: str | None = None,
+        effective_from: datetime | None = None,
+        effective_until: datetime | None = None,
     ) -> IngestedVersion:
         """Alias for :meth:`ingest` accepting a string file path or :class:`pathlib.Path`."""
         return self.ingest(
@@ -1283,6 +1557,9 @@ class Client(MemoryClient):
             versioning_mode=versioning_mode,
             source_version_ref=source_version_ref,
             source_path=source_path,
+            version_key=version_key,
+            effective_from=effective_from,
+            effective_until=effective_until,
         )
 
     def __enter__(self) -> Self:

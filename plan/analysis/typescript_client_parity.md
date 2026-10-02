@@ -28,7 +28,7 @@ The following paths are relative to that repository, not this cloud repo:
 - `scripts/export_openapi.py`, `openapi.json`, `src/tests/surfaces/test_openapi_export.py`: offline served-profile specification and absent connector routes.
 - `src/tests/surfaces/test_client_sdk.py`, `test_client_connection.py`: wire and routing behavior.
 
-Cloud-side counterparts (private; the engine authority is D140/D136): D81 and `design/designs/canonical-remember-python-distribution.md`;
+Cloud-side counterparts (private; the engine authority is D141/D136): D81 and `design/designs/canonical-remember-python-distribution.md`;
 D90 and `design/designs/remember-dev-api-key-and-mcp.md` §9; D59's public-search
 privacy rule in `design/designs/data-plane-auth-perimeter.md`. The 2026-08
 `client-sdk-cli-mcp-packaging-remember-dev.md` is historical analysis and its
@@ -269,3 +269,17 @@ An alternative would permit naive values and add a separate source-runtime
 conformance disposition; it adds ambiguity and weakens the common assertion.
 UTC-only lineage/model fields stay UTC-only. This selects no further client
 UTC-only rule for the general methods.
+
+## Main integration on 2026-10-02
+
+While these PRs awaited contributor CLA acceptance, engine main merged PR #500
+at `2cde3baf`, implementing D140 effective time and section references. D141
+now identifies this TypeScript design. The refreshed normative inventory records
+all 48 MemoryClient methods (excluding its constructor), the 18 transport-neutral
+tools, all new public models and backend export dispositions. The earlier source
+table remains evidence of the original baseline; the normative JSON is the current
+implementation contract. Eight new methods cover section history, document
+references and generation replacement, and declared effective periods. Existing
+search/context and ingest signatures expanded. Regeneration must use the merged
+Python source, and recorded behavior tests must cover both the new methods and
+changed signatures before fresh implementation approval.

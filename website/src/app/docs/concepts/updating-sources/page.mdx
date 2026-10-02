@@ -53,8 +53,10 @@ would retract the facts it alone supported.
 
 In both modes a new version is processed the same way: it is converted,
 chunked and read. Passages that did not change keep their existing claims
-(same `claim_id`) without being extracted again; changed passages produce new
-claims. New claims go through ordinary fact adjudication, so a changed value
+(same `claim_id`) without being extracted again, even when the new version
+has a later `source_modified_at`: they keep the date their words were first
+written ([text origin time](/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date)).
+Changed passages produce new claims. New claims go through ordinary fact adjudication, so a changed value
 updates, supersedes or contradicts facts like any other new testimony.
 
 The modes differ in what happens to the **old** claims.
@@ -124,10 +126,24 @@ is RememberStack reading the same bytes differently, and it cannot tell
 whether the old reading or the new one is right. So a fact is taken back
 only when the source acts, or when its document is deleted. See [Facts](/docs/concepts/facts#support-withdrawn).
 
+## Editions that apply for a period
+
+`snapshot` says every version stays standing testimony; it does not say
+which version applies today. For documents whose editions each apply for a
+period (a policy, a price list, a contract), declare **effective periods**
+on a `snapshot` document. Reads with a `time` scope then select the edition
+in force, and facts are only returned when an edition in force supports
+them. Testimony is unaffected: every edition's claims stay current
+testimony and keep counting as evidence. Periods are refused on a `living`
+document, where the newest version is by definition the one that applies.
+See [Time](/docs/concepts/time#when-a-version-is-in-force) and
+[Read a document as of a date](/docs/guides/versions-in-force).
+
 ## Unchanged bytes and `source_version_ref`
 
 Sending bytes identical to the document's latest version creates nothing
-(`created=false`), in both modes. See
+(`created=false`), in both modes, unless you also send a `version_key` the
+document has not used yet: a new key always makes a new version. See
 [Documents, versions and sources](/docs/concepts/documents-and-sources#re-ingesting-the-same-bytes-createdfalse).
 
 `source_version_ref` is an optional revision marker from the source system:

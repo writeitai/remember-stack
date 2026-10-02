@@ -196,20 +196,99 @@ class _GraphCorpus:
                 ("Report", "Follow-up"),
                 ("Follow-up", "Original Spec"),
             ):
+                # D140: a reference is made by the citing document's served
+                # version, through its active reference generation
+                version_id = self._served_version(
+                    connection=connection, doc_id=self.docs[citing]
+                )
+                generation_id = uuid4()
+                connection.execute(
+                    text(
+                        "INSERT INTO document_reference_generations (generation_id,"
+                        " deployment_id, doc_id, version_id, origin, input_hash,"
+                        " request_seq, artifact_uri, status) VALUES (:generation,"
+                        " :deployment_id, :doc_id, :version_id, 'supplied', 'h', 1,"
+                        " 'refs.ndjson', 'active')"
+                    ),
+                    {
+                        "generation": generation_id,
+                        "deployment_id": _DEPLOYMENT_ID,
+                        "doc_id": self.docs[citing],
+                        "version_id": version_id,
+                    },
+                )
                 connection.execute(
                     text(
                         "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-                        " from_doc_id, to_doc_id, kind, resolved)"
+                        " from_doc_id, from_version_id, generation_id, to_doc_id,"
+                        " kind, origin, resolved)"
                         " VALUES (:crossref_id, :deployment_id, :from_doc_id,"
-                        " :to_doc_id, 'cites', true)"
+                        " :version_id, :generation, :to_doc_id, 'cites', 'supplied',"
+                        " true)"
                     ),
                     {
                         "crossref_id": uuid4(),
                         "deployment_id": _DEPLOYMENT_ID,
                         "from_doc_id": self.docs[citing],
+                        "version_id": version_id,
+                        "generation": generation_id,
                         "to_doc_id": self.docs[cited],
                     },
                 )
+
+    def _served_version(self, *, connection: Connection, doc_id: UUID) -> UUID:
+        """Give a document one ready, served version and return it."""
+        version_id, representation_id = uuid4(), uuid4()
+        content_hash = f"graph-citing-{doc_id}"
+        connection.execute(
+            text(
+                "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+                " raw_uri) VALUES (:deployment_id, :content_hash, 'text/plain',"
+                " 'raw')"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "content_hash": content_hash},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+                " content_hash, version_no, status) VALUES (:version_id,"
+                " :deployment_id, :doc_id, :content_hash, 1, 'ready')"
+            ),
+            {
+                "version_id": version_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "doc_id": doc_id,
+                "content_hash": content_hash,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO document_representations (representation_id,"
+                " deployment_id, version_id, route, status) VALUES"
+                " (:representation_id, :deployment_id, :version_id, 'passthrough',"
+                " 'ready')"
+            ),
+            {
+                "representation_id": representation_id,
+                "deployment_id": _DEPLOYMENT_ID,
+                "version_id": version_id,
+            },
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation_id WHERE version_id = :version_id"
+            ),
+            {"representation_id": representation_id, "version_id": version_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE documents SET current_version_id = :version_id"
+                " WHERE doc_id = :doc_id"
+            ),
+            {"version_id": version_id, "doc_id": doc_id},
+        )
+        return version_id
 
     def _seed_claim(self, *, connection: Connection) -> tuple[UUID, UUID]:
         """Create one complete live evidence coordinate for all relation facts."""
@@ -269,6 +348,15 @@ class _GraphCorpus:
                 "version_id": version_id,
             },
         )
+        # a ready version reads its current representation (D65), as the
+        # catalog records when the representation becomes ready
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation_id WHERE version_id = :version_id"
+            ),
+            {"representation_id": representation_id, "version_id": version_id},
+        )
         connection.execute(
             text(
                 "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
@@ -300,6 +388,16 @@ class _GraphCorpus:
                 "doc_id": doc_id,
                 "chunk_id": chunk_id,
             },
+        )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                " FROM claims WHERE claim_id = :origin_claim"
+            ),
+            {"origin_claim": claim_id},
         )
         return doc_id, claim_id
 

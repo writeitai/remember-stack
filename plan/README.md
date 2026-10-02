@@ -71,6 +71,14 @@ For deleting a document through the API, SDK, CLI or MCP, see D135 in the
 and the [analysis](analysis/public_document_deletion.md). Erasure remains
 [D74 hard-forget](designs/hard_forget_design.md).
 
-For the full TypeScript counterpart, see [D140 TypeScript client](designs/typescript_client_design.md),
+For documents whose versions are in force for declared periods (policies, price
+lists, standards editions, contract amendments, statutes), stable section keys,
+reading text as of a date, and section-level cross-references that are pinned or
+floating, start with [D140's design](designs/effective_time_and_section_references_design.md)
+and its [analysis](analysis/version_effective_time_and_section_references.md); the
+[delivery plan](plans/effective_time_and_section_references.md) says which parts ship
+together. It also makes D56's version reuse hold for dated versions (text origin time).
+
+For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.

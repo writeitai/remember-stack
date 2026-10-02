@@ -40,6 +40,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.models import HistoryReadTime
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
@@ -49,6 +50,14 @@ from rememberstack.core.ranking import reciprocal_rank_fusion
 from rememberstack.core.ranking import rerank_by_signal
 from rememberstack.core.ranking import rerank_by_weighted_signals
 from rememberstack.core.temporal import inclusive_request
+from rememberstack.core.text_scope import claim_in_scope
+from rememberstack.core.text_scope import claim_selected
+from rememberstack.core.text_scope import fact_in_scope
+from rememberstack.core.text_scope import fact_in_scope_by_kind
+from rememberstack.core.text_scope import lineage_periodised
+from rememberstack.core.text_scope import TextScope
+from rememberstack.core.text_scope import version_selected
+from rememberstack.core.text_scope import WINDOW_SQL
 from rememberstack.model import ADJACENT_CHUNKS_MAX_WINDOW
 from rememberstack.model import ADJACENT_CHUNKS_MIN_WINDOW
 from rememberstack.model import AggregateBucket
@@ -56,6 +65,7 @@ from rememberstack.model import AggregateReport
 from rememberstack.model import AtTemporalScope
 from rememberstack.model import ChangeRecord
 from rememberstack.model import ChunkEvidenceResult
+from rememberstack.model import ClaimOccurrence
 from rememberstack.model import CoMember
 from rememberstack.model import Contradiction
 from rememberstack.model import current_temporal_scope
@@ -81,6 +91,7 @@ from rememberstack.model import RankedItem
 from rememberstack.model import ResolutionThresholds
 from rememberstack.model import ResolverConfig
 from rememberstack.model import ScanRow
+from rememberstack.model import ScopePending
 from rememberstack.model import SourceRecord
 from rememberstack.model import TranscriptEntry
 from rememberstack.model import Truncation
@@ -90,7 +101,11 @@ from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.client import DocumentSearchFilters
+from rememberstack.model.client import EffectiveInterval
+from rememberstack.model.client import ReadTime
+from rememberstack.model.envelope import SCOPE_PENDING_MAX_DOC_IDS
 from rememberstack.model.fact_windows import FactWindow
 from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
@@ -371,6 +386,209 @@ class QueryEngine:
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             connection.exec_driver_sql("SELECT 1")
             yield connection
+
+    def _touched_pending(
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        query: str,
+        documents: DocumentSearchFilters | None,
+        probes: tuple[
+            tuple[Literal["chunk", "claim"], Literal["semantic", "bm25"], int], ...
+        ],
+        entity_ids: tuple[UUID, ...] = (),
+    ) -> tuple[UUID, ...]:
+        """Pending lineages the query reaches although their text is excluded (§3.7).
+
+        The scope drops a version that is in force but not ready before the
+        ranked cut, so an empty answer alone cannot tell "nothing is in force"
+        from "the in-force text is still processing". When (and only when)
+        some lineage has such a version for the window — a small set, read
+        through a partial index — each of the request's own nominations
+        (``probes``: grain, channel and k, exactly as the request ranked) is
+        run once more over just those lineages' readable editions. A pending
+        lineage is reported when its text would have made that nomination's
+        top k: its score is at least the k-th score of the real nomination
+        (any score when the real one returned fewer than k), and a lexical hit
+        is a real term match. Semantic probes reuse the request's query
+        embedding. The probe only names lineages; its hits never enter the
+        answer or its top-k.
+        """
+        index = self._search_index
+        methods = {
+            ("chunk", "semantic"): "search_chunks_scored",
+            ("chunk", "bm25"): "search_chunks_lexical_scored",
+            ("claim", "semantic"): "search_claims_scored",
+            ("claim", "bm25"): "search_claims_lexical_scored",
+        }
+        if not any(
+            callable(getattr(index, methods[(grain, channel)], None))
+            for grain, channel, _ in probes
+        ):
+            return ()  # an index without scores cannot rank a probe
+        with self._engine.connect() as connection:
+            candidates = tuple(
+                connection.execute(
+                    _PENDING_IN_FORCE,
+                    {
+                        "deployment_id": deployment_id,
+                        "limit": SCOPE_PENDING_PROBE_LINEAGES,
+                        **scope.parameters(),
+                    },
+                ).scalars()
+            )
+        if documents is not None and documents.doc_ids:
+            allowed = set(documents.doc_ids)
+            candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+        if not candidates:
+            return ()
+        testimony = getattr(index, "nominate_testimony_scored", None)
+        if entity_ids and callable(testimony):
+            return self._touched_by_testimony(
+                deployment_id=deployment_id,
+                scope=scope,
+                query=query,
+                probes=probes,
+                entity_ids=entity_ids,
+                candidates=candidates,
+                testimony=testimony,
+            )
+        restricted = (documents or DocumentSearchFilters()).model_copy(
+            update={"doc_ids": candidates}
+        )
+        readable = TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at)
+        touched: dict[UUID, None] = {}
+        for grain, channel, k in probes:
+            method = getattr(index, methods[(grain, channel)], None)
+            if not callable(method):
+                continue
+            arguments: dict[str, Any] = {
+                "deployment_id": str(deployment_id),
+                "k": k,
+                "entity_ids": tuple(str(entity) for entity in entity_ids),
+            }
+            if grain == "claim":
+                arguments["current_only"] = True
+            else:
+                arguments["policy_generation"] = self._policy_generation
+                arguments["embedder_generation"] = self._embedder_generation
+            if channel == "semantic":
+                arguments["vector"] = self._reuse_embedding(
+                    deployment_id=deployment_id, query=query
+                ) or self._embed(
+                    query=query,
+                    call_site=(
+                        SurfaceCallSite.SEARCH_CLAIMS
+                        if grain == "claim"
+                        else SurfaceCallSite.SEARCH_CHUNKS
+                    ),
+                    deployment_id=deployment_id,
+                )
+            else:
+                arguments["query"] = query
+            answered = cast(
+                tuple[P1Nomination, ...],
+                method(**arguments, documents=documents, time=scope),
+            )
+            floor = answered[-1].score if len(answered) >= k else None
+            hits = [
+                item.item_id
+                for item in cast(
+                    tuple[P1Nomination, ...],
+                    method(**arguments, documents=restricted, time=readable),
+                )
+                if (channel != "bm25" or item.score > 0)
+                and (floor is None or item.score >= floor)
+            ]
+            if not hits:
+                continue
+            with self._engine.connect() as connection:
+                for doc_id in connection.execute(
+                    _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
+                    {"deployment_id": deployment_id, "ids": hits},
+                ).scalars():
+                    touched[doc_id] = None
+        return tuple(touched)
+
+    def _touched_by_testimony(
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        query: str,
+        probes: tuple[
+            tuple[Literal["chunk", "claim"], Literal["semantic", "bm25"], int], ...
+        ],
+        entity_ids: tuple[UUID, ...],
+        candidates: tuple[UUID, ...],
+        testimony: Callable[..., object],
+    ) -> tuple[UUID, ...]:
+        """The entity-scoped form of the §3.7 probe: replay the real nomination.
+
+        An entity-filtered context nominates through
+        ``nominate_testimony_scored`` (mentions across versions, survivor
+        resolution, coverage-first ranking). The probe runs that same
+        nomination, at the same k and scope, with its candidate set widened
+        to the pending lineages' readable editions; any of their items in the
+        result would have made the real cut. One code path, so the probe
+        cannot drift from what the request ranked.
+        """
+        pending = tuple(str(doc_id) for doc_id in candidates)
+        touched: dict[UUID, None] = {}
+        for grain, channel, k in probes:
+            arguments: dict[str, Any] = {
+                "deployment_id": str(deployment_id),
+                "grain": grain,
+                "channel": channel,
+                "k": k,
+                "entity_ids": tuple(str(entity) for entity in entity_ids),
+                "time": scope,
+                "pending_doc_ids": pending,
+            }
+            if channel == "semantic":
+                arguments["vector"] = self._reuse_embedding(
+                    deployment_id=deployment_id, query=query
+                ) or self._embed(
+                    query=query,
+                    call_site=(
+                        SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS
+                        if grain == "claim"
+                        else SurfaceCallSite.CLAIMS_AND_SOURCES_CHUNKS
+                    ),
+                    deployment_id=deployment_id,
+                )
+            else:
+                arguments["query"] = query
+            hits = [
+                item.item_id
+                for item in cast(tuple[P1Nomination, ...], testimony(**arguments))
+            ]
+            if not hits:
+                continue
+            with self._engine.connect() as connection:
+                for doc_id in connection.execute(
+                    _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
+                    {"deployment_id": deployment_id, "ids": hits},
+                ).scalars():
+                    if doc_id in candidates:
+                        touched[doc_id] = None
+        return tuple(touched)
+
+    def _scoped_freshness(
+        self, *, deployment_id: UUID, scope: TextScope, doc_ids: Sequence[UUID]
+    ) -> Freshness:
+        """Freshness of a time-scoped read, with its pending lineages (§3.7)."""
+        if not doc_ids:
+            return _freshness()
+        with self._engine.connect() as connection:
+            pending = _scope_pending(
+                connection=connection,
+                deployment_id=deployment_id,
+                scope=scope,
+                doc_ids=doc_ids,
+            )
+        return _freshness(scope_pending=pending)
 
     @_with_surface(SurfaceCostKind.LOOKUP)
     def resolve(
@@ -717,6 +935,7 @@ class QueryEngine:
             raise ValueError("required fact-context anchors cannot be optional nodes")
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
+        gate_scope = TextScope.of(time=selected_time, evaluated_at=evaluation)
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
@@ -822,9 +1041,23 @@ class QueryEngine:
                     fact_rows=fact_rows,
                     evidence_per_fact=evidence_per_fact,
                     deadline=database_deadline,
+                    scope=gate_scope,
                 )
                 if fact_rows
                 else []
+            )
+            periodised_claims = tuple(
+                {row["claim_id"] for row in evidence_rows if row["periodised"]}
+            )
+            occurrences = (
+                _selected_occurrences(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    claim_ids=periodised_claims,
+                    scope=gate_scope,
+                )
+                if periodised_claims
+                else {}
             )
             for row in evidence_rows:
                 key = (str(row["kind"]), row["fact_id"], str(row["stance"]))
@@ -863,23 +1096,35 @@ class QueryEngine:
         evidence_by_id: dict[UUID, EvidenceResult] = {}
         for row in selected:
             claim_id = row["claim_id"]
-            evidence_by_id.setdefault(
-                claim_id,
-                EvidenceResult.model_validate(
+            values = {
+                key: value
+                for key, value in dict(row).items()
+                if key
+                not in {
+                    "fact_id",
+                    "kind",
+                    "stance",
+                    "evidence_total",
+                    "stance_rank",
+                    "periodised",
+                }
+            }
+            shown = occurrences.get(claim_id)
+            if shown:
+                # D140 §8.1: a periodised claim is shown where it is in force.
+                values.update(
                     {
-                        key: value
-                        for key, value in dict(row).items()
-                        if key
-                        not in {
-                            "fact_id",
-                            "kind",
-                            "stance",
-                            "evidence_total",
-                            "stance_rank",
-                        }
+                        "chunk_id": shown[0].chunk_id,
+                        "char_start": shown[0].char_start,
+                        "char_end": shown[0].char_end,
+                        "evidence_spans": shown[0].evidence_spans,
+                        "version_id": shown[0].version_id,
+                        "representation_id": shown[0].representation_id,
+                        "effective": shown[0].effective,
+                        "occurrences": tuple(shown),
                     }
-                ),
-            )
+                )
+            evidence_by_id.setdefault(claim_id, EvidenceResult.model_validate(values))
         exact_totals = tuple(
             EvidenceTotal(
                 fact_kind=cast(Literal["relation", "observation"], fact.kind),
@@ -1220,11 +1465,17 @@ class QueryEngine:
         k: int = 50,
         candidate_k: int = 200,
         evaluated_at: datetime | None = None,
+        time: ReadTime | FactTime | None = None,
     ) -> Envelope:
-        """Return current claims and source passages, never facts or entities."""
+        """Return current claims and source passages, never facts or entities.
+
+        ``time`` (D140 §3.1, default ``current``) selects the text in force
+        for the scope in every nomination channel and at confirmation.
+        """
         _validate_claims_and_sources_context_bounds(k=k, candidate_k=candidate_k)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         evaluation = evaluated_at or datetime.now(UTC)
+        scope = TextScope.of(time=time, evaluated_at=evaluation)
         if entity_ids:
             with self._engine.connect() as connection:
                 if not _context_entities_are_current(
@@ -1233,7 +1484,9 @@ class QueryEngine:
                     entity_ids=entity_ids,
                 ):
                     return _unknown_context_entity(
-                        grain=Grain.EVIDENCE, evaluated_at=evaluation
+                        grain=Grain.EVIDENCE,
+                        evaluated_at=evaluation,
+                        temporal_scope=_text_temporal_scope(scope=scope),
                     )
         answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
@@ -1241,12 +1494,39 @@ class QueryEngine:
             k=k,
             candidate_k=candidate_k,
             entity_ids=entity_ids,
+            scope=scope,
+            nominate_in_scope=time is not None,
+        )
+        touched = self._touched_pending(
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=None,
+            probes=(
+                ("claim", "semantic", candidate_k),
+                ("claim", "bm25", candidate_k),
+                ("chunk", "semantic", candidate_k),
+                ("chunk", "bm25", candidate_k),
+            ),
+            entity_ids=entity_ids,
+        )
+        scoped = self._scoped_freshness(
+            deployment_id=deployment_id,
+            scope=scope,
+            doc_ids=(
+                *(record.doc_id for record in answer.evidence),
+                *(record.doc_id for record in answer.chunks),
+                *touched,
+            ),
         )
         return answer.model_copy(
             update={
-                "temporal_scope": current_temporal_scope(evaluated_at=evaluation),
+                "temporal_scope": _text_temporal_scope(scope=scope),
                 "freshness": answer.freshness.model_copy(
-                    update={"pg_live_ts": evaluation}
+                    update={
+                        "pg_live_ts": evaluation,
+                        "scope_pending": scoped.scope_pending,
+                    }
                 ),
             }
         )
@@ -1286,6 +1566,9 @@ class QueryEngine:
                         "object_entity_id": object_entity_id,
                         "as_of": as_of,
                         "limit": k + 1,
+                        **_lookup_scope(
+                            valid_at=valid_at, evaluated_at=evaluated_at
+                        ).parameters(),
                     },
                 )
                 .mappings()
@@ -1353,6 +1636,9 @@ class QueryEngine:
                             "entity_id": entity_id,
                             "as_of": as_of,
                             "limit": k + 1,
+                            **_lookup_scope(
+                                valid_at=valid_at, evaluated_at=evaluated_at
+                            ).parameters(),
                         },
                     )
                     .mappings()
@@ -1415,6 +1701,7 @@ class QueryEngine:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Claim search — EVIDENCE grain, never a current-fact answer.
 
@@ -1426,8 +1713,13 @@ class QueryEngine:
         a matching document version — applied inside the ranked statement,
         before the top-k cut, and re-checked at hydration. It decides
         inclusion only: the evidence is the claim's origin occurrence.
+
+        ``time`` (D140 §3.4, default ``current``) selects claims inside the
+        ranked statement too. A claim of a document with declared effective
+        periods is returned through its occurrence in each selected version.
         """
         documents = None if documents is None or is_empty(documents) else documents
+        scope = TextScope.of(time=time, evaluated_at=datetime.now(UTC))
         nominated = self._nominate_claim_ids(
             deployment_id=deployment_id,
             query=query,
@@ -1435,16 +1727,34 @@ class QueryEngine:
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CLAIMS,
             documents=documents,
+            time=scope if time is not None else None,
         )
         evidence, dropped, _coverage = self._confirm_claims(
             deployment_id=deployment_id,
             claim_ids=tuple(UUID(item) for item in nominated),
             documents=documents,
+            scope=scope,
+        )
+        touched = self._touched_pending(
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=documents,
+            probes=(("claim", channel, k),),
         )
         return _envelope(
             grain=Grain.EVIDENCE,
+            temporal_scope=_text_temporal_scope(scope=scope),
             evidence=evidence,
-            freshness=_freshness(),
+            freshness=self._scoped_freshness(
+                deployment_id=deployment_id,
+                scope=scope,
+                doc_ids=(
+                    *(record.doc_id for record in evidence),
+                    *(documents.doc_ids if documents is not None else ()),
+                    *touched,
+                ),
+            ),
             dropped_by_hydration=dropped,
             negative=None
             if evidence
@@ -1463,6 +1773,7 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        time: TextScope | None = None,
     ) -> Envelope:
         """Rank claim IDs without returning unconfirmed claim content.
 
@@ -1476,6 +1787,7 @@ class QueryEngine:
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.NOMINATE_CLAIMS,
+            time=time,
         )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
@@ -1490,13 +1802,18 @@ class QueryEngine:
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
         documents: DocumentSearchFilters | None = None,
+        time: ReadTime | None = None,
     ) -> Envelope:
         """Search live source chunks without pretending they are claims.
 
         ``documents`` (D134) keeps a chunk only when its document version
-        matches, inside the ranked statement before the top-k cut.
+        matches, inside the ranked statement before the top-k cut. ``time``
+        (D140 §3.2, default ``current``) keeps a chunk only when its version
+        is in force for the scope, in the same statement; every result names
+        the version it came from.
         """
         documents = None if documents is None or is_empty(documents) else documents
+        scope = TextScope.of(time=time, evaluated_at=datetime.now(UTC))
         nominated = self._nominate_chunk_ids(
             deployment_id=deployment_id,
             query=query,
@@ -1504,16 +1821,34 @@ class QueryEngine:
             channel=channel,
             call_site=SurfaceCallSite.SEARCH_CHUNKS,
             documents=documents,
+            time=scope if time is not None else None,
         )
         chunks, dropped, _coverage = self._confirm_chunks(
             deployment_id=deployment_id,
             chunk_ids=tuple(UUID(item) for item in nominated),
             documents=documents,
+            scope=scope,
+        )
+        touched = self._touched_pending(
+            deployment_id=deployment_id,
+            scope=scope,
+            query=query,
+            documents=documents,
+            probes=(("chunk", channel, k),),
         )
         return _envelope(
             grain=Grain.EVIDENCE,
+            temporal_scope=_text_temporal_scope(scope=scope),
             chunks=chunks,
-            freshness=_freshness(),
+            freshness=self._scoped_freshness(
+                deployment_id=deployment_id,
+                scope=scope,
+                doc_ids=(
+                    *(record.doc_id for record in chunks),
+                    *(documents.doc_ids if documents is not None else ()),
+                    *touched,
+                ),
+            ),
             dropped_by_hydration=dropped,
             negative=None
             if chunks
@@ -1528,7 +1863,11 @@ class QueryEngine:
     def adjacent_chunks(
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
     ) -> Envelope:
-        """Fetch surrounding source chunks within a window around a target chunk in document order."""
+        """Fetch surrounding source chunks within a window around a target chunk in document order.
+
+        The target may be a chunk of any live ready version (D140 §3.3); its
+        neighbours are read from that same version and reading.
+        """
         if window < ADJACENT_CHUNKS_MIN_WINDOW or window > ADJACENT_CHUNKS_MAX_WINDOW:
             raise ValueError(
                 f"window must be between {ADJACENT_CHUNKS_MIN_WINDOW} and {ADJACENT_CHUNKS_MAX_WINDOW}"
@@ -1562,6 +1901,7 @@ class QueryEngine:
                         "deployment_id": deployment_id,
                         "doc_id": target["doc_id"],
                         "version_id": target["version_id"],
+                        "representation_id": target["representation_id"],
                         "ordinal_start": target["ordinal"] - window,
                         "ordinal_end": target["ordinal"] + window,
                     },
@@ -1595,6 +1935,7 @@ class QueryEngine:
         query: str,
         k: int = 10,
         channel: Literal["semantic", "bm25"] = "semantic",
+        time: TextScope | None = None,
     ) -> Envelope:
         """Rank source-chunk IDs without returning unconfirmed source text."""
         nominated = self._nominate_chunk_ids(
@@ -1603,6 +1944,7 @@ class QueryEngine:
             k=k,
             channel=channel,
             call_site=SurfaceCallSite.NOMINATE_CHUNKS,
+            time=time,
         )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
@@ -1617,12 +1959,14 @@ class QueryEngine:
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
-        # Passed only when present, so an index without document filters is
-        # never handed an argument it does not take.
-        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
+        # Passed only when present, so an index without document filters or
+        # time scopes is never handed an argument it does not take; the
+        # PostgreSQL index applies the current scope when none is given.
+        scope = _nomination_scope(documents=documents, time=time)
         if channel == "semantic":
             return self._search_index.search_claims(
                 deployment_id=str(deployment_id),
@@ -1650,10 +1994,11 @@ class QueryEngine:
         channel: Literal["semantic", "bm25"],
         call_site: SurfaceCallSite,
         documents: DocumentSearchFilters | None = None,
+        time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
-        scope: dict[str, Any] = {} if documents is None else {"documents": documents}
+        scope = _nomination_scope(documents=documents, time=time)
         if channel == "semantic":
             return self._search_index.search_chunks(
                 deployment_id=str(deployment_id),
@@ -1857,6 +2202,7 @@ class QueryEngine:
         limit: int | None = None,
         group_exact_text: bool = False,
         entity_ids: tuple[UUID, ...] = (),
+        time: TextScope | None = None,
     ) -> Envelope:
         """Confirm claim ids into evidence rows, keeping any prior ranking.
 
@@ -1873,7 +2219,10 @@ class QueryEngine:
             raise ValueError("hydrate_claims limit must be at least 1")
         ordered_ids = tuple(claim_ids)
         evidence, dropped, coverage = self._confirm_claims(
-            deployment_id=deployment_id, claim_ids=ordered_ids, entity_ids=entity_ids
+            deployment_id=deployment_id,
+            claim_ids=ordered_ids,
+            entity_ids=entity_ids,
+            scope=time,
         )
         positions = {claim_id: index for index, claim_id in enumerate(ordered_ids)}
         if entity_ids:
@@ -1920,6 +2269,7 @@ class QueryEngine:
         ranking: Sequence[RankedItem] = (),
         limit: int | None = None,
         entity_ids: tuple[UUID, ...] = (),
+        time: TextScope | None = None,
     ) -> Envelope:
         """Confirm chunk ids into live source evidence, preserving scores.
 
@@ -1931,7 +2281,10 @@ class QueryEngine:
             raise ValueError("hydrate_chunks limit must be at least 1")
         ordered_ids = tuple(chunk_ids)
         chunks, dropped, coverage = self._confirm_chunks(
-            deployment_id=deployment_id, chunk_ids=ordered_ids, entity_ids=entity_ids
+            deployment_id=deployment_id,
+            chunk_ids=ordered_ids,
+            entity_ids=entity_ids,
+            scope=time,
         )
         positions = {chunk_id: index for index, chunk_id in enumerate(ordered_ids)}
         if entity_ids:
@@ -2362,14 +2715,21 @@ class QueryEngine:
         k: int = CLAIMS_AND_SOURCES_CONTEXT_K,
         candidate_k: int = CLAIMS_AND_SOURCES_CONTEXT_CANDIDATE_K,
         entity_ids: tuple[UUID, ...] = (),
+        scope: TextScope | None = None,
+        nominate_in_scope: bool = False,
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
+
+        ``scope`` (D140) is applied at confirmation, and in every nomination
+        channel when ``nominate_in_scope`` (otherwise the PostgreSQL index
+        applies the current scope itself).
 
         This deliberately mirrors the registered operation's two independent
         semantic/BM25 nominations, RRF, one confirmation per grain, and typed
         claim/chunk union. Both the public testimony operation and the saved
         query examples reuse this private implementation.
         """
+        nomination_time = scope if nominate_in_scope else None
 
         def hydrate_claim_context() -> Envelope:
             semantic = self._nominate_claims_and_sources_claims(
@@ -2378,6 +2738,7 @@ class QueryEngine:
                 k=candidate_k,
                 channel="semantic",
                 entity_ids=entity_ids,
+                time=nomination_time,
             )
             lexical = self._nominate_claims_and_sources_claims(
                 deployment_id=deployment_id,
@@ -2385,6 +2746,7 @@ class QueryEngine:
                 k=candidate_k,
                 channel="bm25",
                 entity_ids=entity_ids,
+                time=nomination_time,
             )
             fused = self.fuse(
                 rankings=(
@@ -2400,6 +2762,7 @@ class QueryEngine:
                     ranking=fused.ranking,
                     group_exact_text=True,
                     entity_ids=entity_ids,
+                    time=scope,
                 ),
                 k=k,
                 nomination_exhausted=(
@@ -2415,6 +2778,7 @@ class QueryEngine:
                 k=candidate_k,
                 channel="semantic",
                 entity_ids=entity_ids,
+                time=nomination_time,
             )
             lexical = self._nominate_claims_and_sources_chunks(
                 deployment_id=deployment_id,
@@ -2422,6 +2786,7 @@ class QueryEngine:
                 k=candidate_k,
                 channel="bm25",
                 entity_ids=entity_ids,
+                time=nomination_time,
             )
             fused = self.fuse(
                 rankings=(
@@ -2436,6 +2801,7 @@ class QueryEngine:
                     chunk_ids=tuple(item.item_id for item in fused.ranking),
                     ranking=fused.ranking,
                     entity_ids=entity_ids,
+                    time=scope,
                 ),
                 k=k,
                 nomination_exhausted=(
@@ -2456,12 +2822,18 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         entity_ids: tuple[UUID, ...],
+        time: TextScope | None = None,
     ) -> Envelope:
         """Nominate claims globally or through one normalized entity join."""
         if not entity_ids:
             return self.nominate_claims(
-                deployment_id=deployment_id, query=query, k=k, channel=channel
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                time=time,
             )
+        in_scope: dict[str, Any] = {} if time is None else {"time": time}
         nomination_method = getattr(
             self._search_index, "nominate_testimony_scored", None
         )
@@ -2474,6 +2846,7 @@ class QueryEngine:
                     channel=channel,
                     k=k,
                     entity_ids=tuple(str(item) for item in entity_ids),
+                    **in_scope,
                     **(
                         {
                             "vector": self._embed(
@@ -2517,6 +2890,7 @@ class QueryEngine:
                 k=k,
                 current_only=True,
                 entity_ids=tuple(str(item) for item in entity_ids),
+                **in_scope,
             ),
         )
         return _scored_nomination_envelope(
@@ -2532,12 +2906,18 @@ class QueryEngine:
         k: int,
         channel: Literal["semantic", "bm25"],
         entity_ids: tuple[UUID, ...],
+        time: TextScope | None = None,
     ) -> Envelope:
         """Nominate passages globally or through one normalized entity join."""
         if not entity_ids:
             return self.nominate_chunks(
-                deployment_id=deployment_id, query=query, k=k, channel=channel
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                time=time,
             )
+        in_scope: dict[str, Any] = {} if time is None else {"time": time}
         nomination_method = getattr(
             self._search_index, "nominate_testimony_scored", None
         )
@@ -2550,6 +2930,7 @@ class QueryEngine:
                     channel=channel,
                     k=k,
                     entity_ids=tuple(str(item) for item in entity_ids),
+                    **in_scope,
                     policy_generation=self._policy_generation,
                     embedder_generation=self._embedder_generation,
                     **(
@@ -2596,6 +2977,7 @@ class QueryEngine:
                 policy_generation=self._policy_generation,
                 embedder_generation=self._embedder_generation,
                 entity_ids=tuple(str(item) for item in entity_ids),
+                **in_scope,
             ),
         )
         return _scored_nomination_envelope(
@@ -2986,12 +3368,19 @@ class QueryEngine:
         current_only: bool = True,
         entity_ids: tuple[UUID, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        scope: TextScope | None = None,
     ) -> tuple[tuple[EvidenceResult, ...], int, dict[UUID, int]]:
         """Confirm claim content and any entity scope in one PostgreSQL read.
 
         With ``documents`` (D134) each claim is re-checked for a live
         occurrence in a matching document version; the evidence is still the
         claim's origin occurrence.
+
+        With a D140 ``scope`` each claim is re-checked against the time scope
+        (§3.4): a claim of an undeclared lineage by today's currency rule and
+        returned at its origin, a claim of a periodised lineage through its
+        occurrences in the selected versions, which become the returned
+        evidence (one per selected version, by effective start).
         """
         if not claim_ids:
             return (), 0, {}
@@ -3001,23 +3390,32 @@ class QueryEngine:
             raise ValueError(
                 "document-filtered claim hydration is current and unscoped only"
             )
-        statement = (
-            _CONFIRM_CLAIMS_CURRENT_SCOPED
-            if entity_ids
-            else _CONFIRM_CLAIMS_CURRENT
-            if current_only
-            else _CONFIRM_CLAIMS_HISTORY
-        )
         extra: dict[str, Any] = {}
+        if scope is not None:
+            statement = _confirm_claims_in_scope_statement(
+                current_only=current_only, entity_scoped=bool(entity_ids)
+            )
+            extra.update(scope.parameters())
+        else:
+            statement = (
+                _CONFIRM_CLAIMS_CURRENT_SCOPED
+                if entity_ids
+                else _CONFIRM_CLAIMS_CURRENT
+                if current_only
+                else _CONFIRM_CLAIMS_HISTORY
+            )
         if documents is not None:
             # D134: the filter decides inclusion only. The claim is re-checked
             # for a live occurrence in a matching version, and the evidence is
             # its origin occurrence, exactly as without a filter.
-            occurrence_sql, extra = matching_occurrence_exists(
+            occurrence_sql, document_parameters = matching_occurrence_exists(
                 filters=documents, claim="c.claim_id", prefix="documents_"
             )
-            statement = text(f"{_CONFIRM_CLAIMS_CURRENT.text}  AND {occurrence_sql}\n")
+            extra.update(document_parameters)
+            base = statement if scope is not None else _CONFIRM_CLAIMS_CURRENT
+            statement = text(f"{base.text}  AND {occurrence_sql}\n")
         rows: list[RowMapping] = []
+        occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
         with self._engine.connect().execution_options(
@@ -3037,23 +3435,48 @@ class QueryEngine:
                     .mappings()
                     .all()
                 )
+            periodised = tuple(row["claim_id"] for row in rows if row.get("periodised"))
+            if scope is not None and periodised:
+                occurrences = _selected_occurrences(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    claim_ids=periodised,
+                    scope=scope,
+                )
         confirmed = {row["claim_id"]: row for row in rows}
         coverage = {
             claim_id: int(row.get("coverage") or 0)
             for claim_id, row in confirmed.items()
         }
-        results = tuple(
-            EvidenceResult.model_validate(
-                {
-                    key: value
-                    for key, value in dict(confirmed[claim_id]).items()
-                    if key != "coverage"
-                }
-            )
-            for claim_id in claim_ids
-            if claim_id in confirmed
-        )
-        return results, len(claim_ids) - len(results), coverage
+        results: list[EvidenceResult] = []
+        for claim_id in claim_ids:
+            row = confirmed.get(claim_id)
+            if row is None:
+                continue
+            values = {
+                key: value
+                for key, value in dict(row).items()
+                if key not in {"coverage", "periodised"}
+            }
+            if row.get("periodised") and scope is not None:
+                selected = occurrences.get(claim_id)
+                if not selected:
+                    continue  # its selected occurrence vanished after nomination
+                first = selected[0]
+                values.update(
+                    {
+                        "chunk_id": first.chunk_id,
+                        "char_start": first.char_start,
+                        "char_end": first.char_end,
+                        "evidence_spans": first.evidence_spans,
+                        "version_id": first.version_id,
+                        "representation_id": first.representation_id,
+                        "effective": first.effective,
+                        "occurrences": tuple(selected),
+                    }
+                )
+            results.append(EvidenceResult.model_validate(values))
+        return tuple(results), len(claim_ids) - len(results), coverage
 
     def _confirm_chunks(
         self,
@@ -3062,12 +3485,16 @@ class QueryEngine:
         chunk_ids: tuple[UUID, ...],
         entity_ids: tuple[UUID, ...] = (),
         documents: DocumentSearchFilters | None = None,
+        scope: TextScope | None = None,
     ) -> tuple[tuple[ChunkEvidenceResult, ...], int, dict[UUID, int]]:
         """Confirm chunk content and any entity scope, then hydrate P1 bodies.
 
-        With ``documents`` (D134) the document filter is re-checked at
-        confirmation, so metadata that changed after nomination drops the
-        chunk (counted in ``dropped_by_hydration``) instead of returning it.
+        A chunk of any live ready version confirms when it lies in that
+        version's current reading (D140 §3.3); a D140 ``scope`` additionally
+        requires its version to be in force for the scope. With ``documents``
+        (D134) the document filter is re-checked at confirmation, so metadata
+        that changed after nomination drops the chunk (counted in
+        ``dropped_by_hydration``) instead of returning it.
         """
         if not chunk_ids:
             return (), 0, {}
@@ -3075,12 +3502,22 @@ class QueryEngine:
             raise ValueError("document-filtered chunk hydration is unscoped only")
         statement = _CONFIRM_CHUNKS_SCOPED if entity_ids else _CONFIRM_CHUNKS
         extra: dict[str, Any] = {}
+        predicates: list[str] = []
         if documents is not None:
-            version_sql, extra = live_version_matches(
+            version_sql, document_parameters = live_version_matches(
                 filters=documents, version="ch.version_id", prefix="documents_"
             )
-            statement = text(f"{_CONFIRM_CHUNKS.text}  AND {version_sql}\n")
+            predicates.append(version_sql)
+            extra.update(document_parameters)
+        if scope is not None:
+            predicates.append(version_selected(version="ch.version_id"))
+            extra.update(scope.parameters())
+        if predicates:
+            statement = text(
+                statement.text + "".join(f"  AND {item}\n" for item in predicates)
+            )
         rows: list[RowMapping] = []
+        effective: dict[UUID, tuple[EffectiveInterval, ...]] = {}
         with self._engine.connect().execution_options(
             isolation_level="REPEATABLE READ"
         ) as connection:
@@ -3098,6 +3535,11 @@ class QueryEngine:
                     .mappings()
                     .all()
                 )
+            effective = _effective_by_version(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_ids=tuple({row["doc_id"] for row in rows}),
+            )
         confirmed = {row["chunk_id"]: row for row in rows}
         coverage = {
             chunk_id: int(row.get("coverage") or 0)
@@ -3134,6 +3576,8 @@ class QueryEngine:
                     source_kind=row["source_kind"],
                     source_modified_at=row["source_modified_at"],
                     published_at=row["published_at"],
+                    effective=effective.get(row["version_id"], ()),
+                    served_version=bool(row["served_version"]),
                 )
             )
         return tuple(results), len(chunk_ids) - len(results), coverage
@@ -3162,6 +3606,11 @@ class QueryEngine:
                             "entity_id": entity_id,
                             "observation_ids": list(batch),
                             "as_of": as_of,
+                            # "at" the confirmed instant; for a current
+                            # lookup that instant is the evaluation instant.
+                            **_lookup_scope(
+                                valid_at=as_of, evaluated_at=as_of
+                            ).parameters(),
                         },
                     )
                     .mappings()
@@ -3273,7 +3722,41 @@ class QueryEngine:
                 call_site=call_site,
                 deployment_id=deployment_id,
             )
+        self._last_embedding = ((deployment_id, query), response.vectors[0])
         return response.vectors[0]
+
+    def _reuse_embedding(
+        self, *, deployment_id: UUID, query: str
+    ) -> tuple[float, ...] | None:
+        """The vector this request already embedded for ``query``, if any.
+
+        Keyed by deployment and query text, so a concurrent request on another
+        thread can only ever supply the identical vector.
+        """
+        cached = getattr(self, "_last_embedding", None)
+        if cached is not None and cached[0] == (deployment_id, query):
+            return cached[1]
+        return None
+
+
+def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:
+    """The §8.1 gate scope of a lookup: ``at`` its valid instant, else current."""
+    return TextScope.of(
+        time=None if valid_at is None else AtFactTime(at=valid_at),
+        evaluated_at=evaluated_at,
+    )
+
+
+def _nomination_scope(
+    *, documents: DocumentSearchFilters | None, time: TextScope | None
+) -> dict[str, Any]:
+    """The optional nomination arguments, present only when they restrict."""
+    scope: dict[str, Any] = {}
+    if documents is not None:
+        scope["documents"] = documents
+    if time is not None:
+        scope["time"] = time
+    return scope
 
 
 def _validate_nomination_request(*, k: int, channel: str) -> None:
@@ -3427,13 +3910,18 @@ def _current_context_entity_ids(
 def _fact_time_parameters(
     *, time: FactTime, evaluated_at: datetime
 ) -> dict[str, object]:
-    """Render the discriminated time selector into fixed SQL parameters."""
+    """Render the discriminated time selector into fixed SQL parameters.
+
+    The same selector is the D140 §8.1 evidence-gate scope, so its window
+    parameters ride along.
+    """
     return {
         "time_mode": time.mode,
         "evaluated_at": evaluated_at,
         "at": time.at if isinstance(time, AtFactTime) else None,
         "from": time.from_ if isinstance(time, OverlapFactTime) else None,
         "to": time.to if isinstance(time, OverlapFactTime) else None,
+        **TextScope.of(time=time, evaluated_at=evaluated_at).parameters(),
     }
 
 
@@ -3491,8 +3979,9 @@ def _facts_context_evidence(
     fact_rows: tuple[RowMapping, ...],
     evidence_per_fact: int,
     deadline: float,
+    scope: TextScope,
 ) -> Sequence[RowMapping]:
-    """Read representative D54 evidence within the shared operation budget."""
+    """Read representative in-scope D54 evidence within the operation budget."""
     _configure_facts_context_connection(connection=connection, deadline=deadline)
     return (
         connection.execute(
@@ -3502,6 +3991,7 @@ def _facts_context_evidence(
                 "fact_ids": [row["fact_id"] for row in fact_rows],
                 "fact_kinds": [row["kind"] for row in fact_rows],
                 "per_stance_limit": evidence_per_fact,
+                **scope.parameters(),
             },
         )
         .mappings()
@@ -3751,7 +4241,9 @@ def _envelope(**values: object) -> Envelope:
     return Envelope.model_validate(values)
 
 
-def _freshness(*, at: datetime | None = None) -> Freshness:
+def _freshness(
+    *, at: datetime | None = None, scope_pending: ScopePending | None = None
+) -> Freshness:
     """The skeleton's freshness stamps: PG is live; P1 is written inline.
 
     The `believed_at` horizons are null (unbounded): Postgres holds full
@@ -3760,7 +4252,7 @@ def _freshness(*, at: datetime | None = None) -> Freshness:
     these in, and `believed_at_boundary` turns a query before it into a typed
     boundary.
     """
-    return Freshness(pg_live_ts=at or datetime.now(tz=UTC))
+    return Freshness(pg_live_ts=at or datetime.now(tz=UTC), scope_pending=scope_pending)
 
 
 def believed_at_boundary(
@@ -4192,7 +4684,7 @@ _RESOLVE_CONTEXT_HITS = text(
 )
 
 _LOOKUP_RELATIONS = text(
-    """
+    f"""
     SELECT relation_id AS fact_id,
            coalesce(fact_label, predicate) AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
@@ -4207,13 +4699,14 @@ _LOOKUP_RELATIONS = text(
       AND (CAST(:predicate AS text) IS NULL OR predicate = :predicate)
       AND (CAST(:object_entity_id AS uuid) IS NULL
            OR object_entity_id = :object_entity_id)
+      AND {fact_in_scope(fact_kind="relation", fact_id="relations.relation_id")}
     ORDER BY evidence_count DESC, ingested_at, relation_id
     LIMIT :limit
-    """
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 _LOOKUP_OBSERVATIONS = text(
-    """
+    f"""
     SELECT observation_id AS fact_id, statement AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
@@ -4223,9 +4716,10 @@ _LOOKUP_OBSERVATIONS = text(
       AND invalidated_at IS NULL
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id")}
     ORDER BY evidence_count DESC, ingested_at, observation_id
     LIMIT :limit
-    """
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 _FACTS_CONTEXT_TIME_PREDICATE = """
@@ -4289,6 +4783,7 @@ def _confirm_facts_context_statement(
       AND (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
       {_FACTS_CONTEXT_TIME_PREDICATE} {_FACTS_CONTEXT_ENTITY_PREDICATE}
+      AND {fact_in_scope(fact_kind=fact_kind, fact_id="fact.fact_id")}
     ORDER BY coverage DESC, requested.nomination_rank, kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragments are module constants
     )
@@ -4310,25 +4805,49 @@ _FACTS_CONTEXT_CONTRADICTION_MEMBERS = text(
     WHERE fact.deployment_id = :deployment_id
       AND fact.contradiction_group = ANY(CAST(:groups AS uuid[]))
       {_FACTS_CONTEXT_TIME_PREDICATE}
+      AND {fact_in_scope_by_kind(kind="fact.fact_kind", fact_id="fact.fact_id")}
     ORDER BY fact.contradiction_group, fact.ingested_at, fact.fact_kind, fact.fact_id
     """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
+# D140 §8.1: only evidence claims in scope for the read are shown, so each
+# lineage's representative is chosen among its in-scope claims; a claim of a
+# periodised lineage is then shown through its in-scope occurrence.
 _CURRENT_FACT_EVIDENCE = text(
-    """
+    f"""
     WITH requested AS (
         SELECT fact_id, kind, nomination_rank
         FROM unnest(
             CAST(:fact_ids AS uuid[]), CAST(:fact_kinds AS text[])
         ) WITH ORDINALITY AS confirmed(fact_id, kind, nomination_rank)
+    ), lineage AS MATERIALIZED (
+        -- Confirmation already proved these fact identities through
+        -- memory_v1.facts_visible_history in this REPEATABLE READ snapshot.
+        -- Hydrate their D54 lineage from the private authority helper so this
+        -- step does not expand the complete fact-visibility tree a second time.
+        SELECT requested.fact_id, requested.kind, requested.nomination_rank,
+               evidence.stance, evidence.doc_id,
+               (array_agg(evidence.claim_id
+                          ORDER BY evidence.asserted_at DESC NULLS LAST,
+                                   evidence.claim_id))[1] AS representative_claim_id,
+               max(evidence.asserted_at) AS asserted_to
+        FROM requested
+        JOIN v_memory_fact_claim_live AS evidence
+          ON evidence.deployment_id = :deployment_id
+         AND evidence.fact_kind = requested.kind
+         AND evidence.fact_id = requested.fact_id
+        WHERE {claim_in_scope(claim="evidence.claim_id")}
+        GROUP BY requested.fact_id, requested.kind, requested.nomination_rank,
+                 evidence.stance, evidence.doc_id, evidence.source_kind,
+                 evidence.source_handle
     ), representative AS MATERIALIZED (
-        SELECT requested.fact_id, requested.kind,
-               requested.nomination_rank, lineage.stance,
+        SELECT lineage.fact_id, lineage.kind,
+               lineage.nomination_rank, lineage.stance,
                count(*) OVER (
-                   PARTITION BY requested.kind, requested.fact_id, lineage.stance
+                   PARTITION BY lineage.kind, lineage.fact_id, lineage.stance
                )::bigint AS evidence_total,
                row_number() OVER (
-                   PARTITION BY requested.kind, requested.fact_id, lineage.stance
+                   PARTITION BY lineage.kind, lineage.fact_id, lineage.stance
                    ORDER BY lineage.asserted_to DESC NULLS LAST,
                             lineage.doc_id, lineage.representative_claim_id
                ) AS stance_rank,
@@ -4341,18 +4860,14 @@ _CURRENT_FACT_EVIDENCE = text(
                claim.claim_valid_precision::text AS claim_valid_precision,
                claim.claim_valid_kind::text AS claim_valid_kind,
                claim.ingested_at AS evidence_ingested_at,
-               document.title AS document_title, document.source_kind
-        FROM requested
-        -- Confirmation already proved these fact identities through
-        -- memory_v1.facts_visible_history in this REPEATABLE READ snapshot.
-        -- Hydrate their D54 lineage from the private authority helper so this
-        -- step does not expand the complete fact-visibility tree a second time.
-        JOIN v_memory_evidence_lineage_live AS lineage
-          ON lineage.deployment_id = :deployment_id
-         AND lineage.fact_kind = requested.kind
-         AND lineage.fact_id = requested.fact_id
-        JOIN memory_v1.claims_live AS claim
-          ON claim.deployment_id = lineage.deployment_id
+               document.title AS document_title, document.source_kind,
+               {lineage_periodised(doc="claim.doc_id")} AS periodised
+        FROM lineage
+        -- v_memory_fact_claim_live proved the claim live (by its origin, or for
+        -- a periodised lineage by a carrying version, D140 §3.4); only its
+        -- immutable fields are read here, so a deleted origin cannot hide it
+        JOIN claims AS claim
+          ON claim.deployment_id = :deployment_id
          AND claim.claim_id = lineage.representative_claim_id
          AND claim.doc_id = lineage.doc_id
         JOIN memory_v1.documents_live AS document
@@ -4372,18 +4887,19 @@ _CURRENT_FACT_EVIDENCE = text(
            claim_id, doc_id, chunk_id, claim_text, source_span,
            char_start, char_end, evidence_spans, is_attributed, is_current_testimony,
            asserted_at, claim_valid_from, claim_valid_until,
-           claim_valid_precision, claim_valid_kind, document_title, source_kind
+           claim_valid_precision, claim_valid_kind, document_title, source_kind,
+           periodised
     FROM representative
     WHERE stance_rank <= :per_stance_limit
     ORDER BY nomination_rank,
              CASE stance WHEN 'supports' THEN 0 ELSE 1 END,
              stance_rank, claim_id
-    """
+    """  # noqa: S608 -- interpolated fragments are module constants
 )
 
 
 _CONFIRM_OBSERVATIONS = text(
-    """
+    f"""
     SELECT observation_id AS fact_id, statement AS label,
            evidence_count, valid_from, valid_until, valid_precision, ingested_at, invalidated_at,
            contradiction_group
@@ -4394,7 +4910,8 @@ _CONFIRM_OBSERVATIONS = text(
       AND invalidated_at IS NULL
       AND (valid_from IS NULL OR valid_from <= :as_of)
       AND (valid_until IS NULL OR valid_until > :as_of)
-    """
+      AND {fact_in_scope(fact_kind="observation", fact_id="observations.observation_id")}
+    """  # noqa: S608 -- interpolated fragment is a module constant
 )
 
 _CONFIRM_CLAIMS_CURRENT = text(
@@ -4484,39 +5001,37 @@ _CONFIRM_CLAIMS_HISTORY = text(
     """
 )
 
-_CONFIRM_CHUNKS = text(
-    """
+_CONFIRM_CHUNK_COLUMNS = """
     SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
            ch.char_start, ch.char_end, NULL::text AS context_prefix,
            ch.location_header,
            ch.policy_generation, ch.embedding_input_policy_version,
            s.role::text AS section_role,
            d.title AS document_title, d.source_kind,
-           d.source_modified_at, d.published_at
-    FROM memory_v1.chunks_live ch
+           v.source_modified_at, v.published_at,
+           (ch.version_id = d.current_version_id) AS served_version"""
+
+# D140 §3.3: a chunk of any live ready version confirms in its version's
+# current reading; the version's own clocks describe it. For a served-version
+# chunk every column equals the former chunks_live/documents_live read.
+_CONFIRM_CHUNK_SOURCES = """
+    FROM memory_v1.chunks_all_versions_live ch
+    JOIN memory_v1.document_versions_visible v
+      ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
     JOIN memory_v1.documents_live d
       ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    LEFT JOIN memory_v1.sections_live s
-      ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
+    LEFT JOIN document_sections s
+      ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id"""
+
+_CONFIRM_CHUNKS = text(
+    f"""{_CONFIRM_CHUNK_COLUMNS}{_CONFIRM_CHUNK_SOURCES}
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
-    """
+    """  # noqa: S608 -- interpolated fragments are module constants
 )
 
 _CONFIRM_CHUNKS_SCOPED = text(
-    """
-    SELECT ch.chunk_id, ch.doc_id, ch.version_id, ch.representation_id,
-           ch.char_start, ch.char_end, NULL::text AS context_prefix,
-           ch.location_header,
-           ch.policy_generation, ch.embedding_input_policy_version,
-           s.role::text AS section_role,
-           d.title AS document_title, d.source_kind,
-           d.source_modified_at, d.published_at, scope.coverage
-    FROM memory_v1.chunks_live ch
-    JOIN memory_v1.documents_live d
-      ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
-    LEFT JOIN memory_v1.sections_live s
-      ON s.deployment_id = ch.deployment_id AND s.section_id = ch.section_id
+    f"""{_CONFIRM_CHUNK_COLUMNS}, scope.coverage{_CONFIRM_CHUNK_SOURCES}
     JOIN LATERAL (
         SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
         FROM memory_v1.mentions_live AS mention
@@ -4526,13 +5041,15 @@ _CONFIRM_CHUNKS_SCOPED = text(
     ) AS scope ON scope.coverage > 0
     WHERE ch.deployment_id = :deployment_id
       AND ch.chunk_id = ANY(:chunk_ids)
-    """
+    """  # noqa: S608 -- interpolated fragments are module constants
 )
 
+# D140 §3.3: adjacency is read inside the target chunk's own version and
+# reading, which may be any live ready version, never mixing versions.
 _TARGET_CHUNK_COORDINATES = text(
     """
-    SELECT doc_id, version_id, ordinal
-    FROM memory_v1.chunks_live
+    SELECT doc_id, version_id, representation_id, ordinal
+    FROM memory_v1.chunks_all_versions_live
     WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
     """
 )
@@ -4540,15 +5057,304 @@ _TARGET_CHUNK_COORDINATES = text(
 _ADJACENT_CHUNKS = text(
     """
     SELECT chunk_id
-    FROM memory_v1.chunks_live
+    FROM memory_v1.chunks_all_versions_live
     WHERE deployment_id = :deployment_id
       AND doc_id = :doc_id
       AND version_id = :version_id
+      AND representation_id = :representation_id
       AND ordinal >= :ordinal_start
       AND ordinal <= :ordinal_end
     ORDER BY ordinal ASC
     """
 )
+
+
+def _confirm_claims_in_scope_statement(
+    *, current_only: bool, entity_scoped: bool
+) -> TextClause:
+    """Confirm claims under a D140 time scope (§3.4).
+
+    The claim is read from the base table, so a claim of a periodised lineage
+    confirms through an occurrence in a selected version even when its origin
+    version was deleted. Undeclared lineages keep today's rule: membership of
+    the live (current-testimony) claim relation.
+    """
+    published = (
+        "memory_v1.claims_live" if current_only else "memory_v1.claims_visible_history"
+    )
+    selected = claim_selected(
+        claim="c.claim_id",
+        doc="c.doc_id",
+        current_testimony=(
+            f"EXISTS (SELECT 1 FROM {published} AS published"
+            " WHERE published.deployment_id = c.deployment_id"
+            " AND published.claim_id = c.claim_id)"
+        ),
+    )
+    coverage_column = ", scope.coverage" if entity_scoped else ""
+    coverage_join = (
+        """
+    JOIN LATERAL (
+        SELECT count(DISTINCT mention.resolved_entity_id)::integer AS coverage
+        FROM memory_v1.mentions_live AS mention
+        WHERE mention.deployment_id = c.deployment_id
+          AND mention.claim_id = c.claim_id
+          AND mention.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))
+    ) AS scope ON scope.coverage > 0"""
+        if entity_scoped
+        else ""
+    )
+    return text(
+        f"""
+    SELECT c.claim_id, c.doc_id, c.chunk_id, c.claim_text, c.source_span,
+           c.char_start, c.char_end,
+           COALESCE(occ.evidence_spans, '[]'::jsonb) AS evidence_spans,
+           c.is_attributed,
+           {"TRUE" if current_only else "c.is_current_testimony"} AS is_current_testimony,
+           c.asserted_at, c.claim_valid_from, c.claim_valid_until,
+           c.claim_valid_precision::text AS claim_valid_precision,
+           c.claim_valid_kind::text AS claim_valid_kind,
+           d.title AS document_title, d.source_kind,
+           {lineage_periodised(doc="c.doc_id")} AS periodised{coverage_column}
+    FROM claims c
+    JOIN memory_v1.documents_live d
+      ON d.deployment_id = c.deployment_id AND d.doc_id = c.doc_id
+    LEFT JOIN LATERAL (
+        SELECT cc.evidence_spans
+        FROM chunk_claims cc
+        WHERE cc.deployment_id = c.deployment_id
+          AND cc.claim_id = c.claim_id
+          AND cc.chunk_id = c.chunk_id
+        ORDER BY cc.created_at, cc.derivation_kind NULLS FIRST
+        LIMIT 1
+    ) AS occ ON true{coverage_join}
+    WHERE c.deployment_id = :deployment_id
+      AND c.claim_id = ANY(:claim_ids)
+      {"AND c.is_current_testimony" if current_only else ""}
+      AND {selected}
+    """  # noqa: S608 -- interpolated fragments are module constants
+    )
+
+
+# One occurrence per (claim, selected version): the earliest attachment in
+# that version's current reading.
+_SELECTED_OCCURRENCES = f"""
+    SELECT DISTINCT ON (cc.claim_id, ch.version_id)
+           cc.claim_id, ch.chunk_id, ch.doc_id, ch.version_id,
+           ch.representation_id, ch.char_start, ch.char_end,
+           cc.evidence_spans, cc.source_locators, v.version_no,
+           (ch.version_id = d.current_version_id) AS served_version
+    FROM chunk_claims cc
+    JOIN chunks ch
+      ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+    JOIN document_versions v
+      ON v.deployment_id = ch.deployment_id
+     AND v.version_id = ch.version_id
+     AND v.current_representation_id = ch.representation_id
+    JOIN documents d
+      ON d.deployment_id = ch.deployment_id AND d.doc_id = ch.doc_id
+    WHERE cc.deployment_id = :deployment_id
+      AND cc.claim_id = ANY(CAST(:claim_ids AS uuid[]))
+      AND {version_selected(version="ch.version_id")}
+    ORDER BY cc.claim_id, ch.version_id, cc.created_at,
+             cc.derivation_kind NULLS FIRST, ch.chunk_id
+"""  # noqa: S608 -- interpolated fragment is a module constant
+
+_EFFECTIVE_INTERVALS = text(
+    """
+    SELECT i.version_id, i.effective_from, i.effective_until, i.until_declared
+    FROM memory_v1.effective_intervals(
+        CAST(:deployment_id AS uuid), CAST(:doc_ids AS uuid[]),
+        coalesce(CAST(:believed_at AS timestamptz), 'infinity'::timestamptz)
+    ) AS i
+    ORDER BY i.version_id, i.effective_from
+    """
+)
+
+_SCOPE_PENDING = text(
+    f"""
+    SELECT DISTINCT s.doc_id
+    FROM document_version_scope s
+    WHERE s.deployment_id = :deployment_id
+      AND s.doc_id = ANY(CAST(:doc_ids AS uuid[]))
+      AND NOT s.selectable
+      AND s.in_force && {WINDOW_SQL}
+    ORDER BY s.doc_id
+    """  # noqa: S608 -- interpolated fragment is a module constant
+)
+
+
+def _selected_occurrences(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    claim_ids: tuple[UUID, ...],
+    scope: TextScope,
+) -> dict[UUID, list[ClaimOccurrence]]:
+    """Each claim's occurrences in the versions the scope selects, by effective start."""
+    rows = (
+        connection.execute(
+            text(_SELECTED_OCCURRENCES),
+            {
+                "deployment_id": deployment_id,
+                "claim_ids": [str(claim_id) for claim_id in claim_ids],
+                **scope.parameters(),
+            },
+        )
+        .mappings()
+        .all()
+    )
+    effective = _effective_by_version(
+        connection=connection,
+        deployment_id=deployment_id,
+        doc_ids=tuple({row["doc_id"] for row in rows}),
+        believed_at=scope.believed_at,
+    )
+    ordered: dict[UUID, list[tuple[tuple[object, ...], ClaimOccurrence]]] = {}
+    for row in rows:
+        intervals = effective.get(row["version_id"], ())
+        spans = tuple(
+            EvidenceSpan.model_validate(span) for span in (row["evidence_spans"] or [])
+        )
+        occurrence = ClaimOccurrence(
+            chunk_id=row["chunk_id"],
+            version_id=row["version_id"],
+            representation_id=row["representation_id"],
+            char_start=(
+                min(span.char_start for span in spans) if spans else row["char_start"]
+            ),
+            char_end=max(span.char_end for span in spans) if spans else row["char_end"],
+            evidence_spans=spans,
+            source_locators=row["source_locators"],
+            effective=intervals,
+            served_version=bool(row["served_version"]),
+        )
+        start = min(
+            (item.from_ for item in intervals if item.from_ is not None), default=None
+        )
+        key = (
+            start is not None,
+            start or datetime.min.replace(tzinfo=UTC),
+            int(row["version_no"]),
+        )
+        ordered.setdefault(row["claim_id"], []).append((key, occurrence))
+    return {
+        claim_id: [item for _, item in sorted(pairs, key=lambda pair: pair[0])]
+        for claim_id, pairs in ordered.items()
+    }
+
+
+def _effective_by_version(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    doc_ids: tuple[UUID, ...],
+    believed_at: datetime | None = None,
+) -> dict[UUID, tuple[EffectiveInterval, ...]]:
+    """The declared in-force intervals of every version of the given lineages."""
+    if not doc_ids:
+        return {}
+    by_version: dict[UUID, list[EffectiveInterval]] = {}
+    for row in connection.execute(
+        _EFFECTIVE_INTERVALS,
+        {
+            "deployment_id": deployment_id,
+            "doc_ids": [str(doc_id) for doc_id in doc_ids],
+            "believed_at": believed_at,
+        },
+    ).mappings():
+        by_version.setdefault(row["version_id"], []).append(
+            EffectiveInterval.model_validate(
+                {
+                    "from": row["effective_from"],
+                    "until": row["effective_until"],
+                    "until_declared": row["until_declared"],
+                }
+            )
+        )
+    return {version_id: tuple(items) for version_id, items in by_version.items()}
+
+
+SCOPE_PENDING_PROBE_LINEAGES: Final = 200
+"""Most pending lineages one §3.7 probe considers (a starting point to measure)."""
+
+_PENDING_IN_FORCE = text(
+    f"""
+    SELECT DISTINCT s.doc_id
+    FROM document_version_scope s
+    WHERE s.deployment_id = :deployment_id
+      AND NOT s.selectable
+      AND s.in_force && {WINDOW_SQL}
+    ORDER BY s.doc_id
+    LIMIT :limit
+    """  # noqa: S608 -- interpolated fragment is a module constant
+)
+
+_PENDING_CLAIM_DOCS = text(
+    """
+    SELECT DISTINCT doc_id FROM claims
+    WHERE deployment_id = :deployment_id
+      AND claim_id = ANY(CAST(:ids AS uuid[]))
+    """
+)
+
+_PENDING_ITEM_DOCS = text(
+    """
+    SELECT DISTINCT doc_id FROM chunks
+    WHERE deployment_id = :deployment_id
+      AND chunk_id = ANY(CAST(:ids AS uuid[]))
+    """
+)
+
+
+def _scope_pending(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    scope: TextScope,
+    doc_ids: Sequence[UUID],
+) -> ScopePending | None:
+    """Touched lineages whose in-force version for the scope is not ready (§3.7)."""
+    touched = tuple(dict.fromkeys(doc_ids))
+    if not touched:
+        return None
+    pending = tuple(
+        connection.execute(
+            _SCOPE_PENDING,
+            {
+                "deployment_id": deployment_id,
+                "doc_ids": [str(doc_id) for doc_id in touched],
+                **scope.parameters(),
+            },
+        ).scalars()
+    )
+    if not pending:
+        return None
+    return ScopePending(doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS], count=len(pending))
+
+
+def _text_temporal_scope(*, scope: TextScope) -> object:
+    """The D87 temporal-scope variant a text read applied."""
+    believed = scope.believed_at or scope.evaluated_at
+    if scope.mode == "at" and scope.at is not None:
+        return AtTemporalScope(
+            at=scope.at, evaluated_at=scope.evaluated_at, believed_at=believed
+        )
+    if scope.mode == "overlap":
+        return OverlapTemporalScope.model_validate(
+            {
+                "from": scope.range_start,
+                "to": scope.range_end,
+                "evaluated_at": scope.evaluated_at,
+                "believed_at": believed,
+            }
+        )
+    if scope.mode == "history":
+        return HistoryTemporalScope(
+            evaluated_at=scope.evaluated_at, believed_at=believed
+        )
+    return CurrentTemporalScope(evaluated_at=scope.evaluated_at, believed_at=believed)
+
 
 _HYDRATE_RELATION = text(
     """

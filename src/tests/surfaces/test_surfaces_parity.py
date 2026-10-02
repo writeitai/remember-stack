@@ -81,6 +81,7 @@ class _NullSearchIndex:
         k: int,
         current_only: bool,
         documents: object = None,
+        time: object = None,
     ) -> tuple[str, ...]:
         """Never called."""
         return ()

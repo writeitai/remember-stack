@@ -5,7 +5,7 @@ Full original report is retained in cloud analysis/reviews/typescript-client-opu
 
 | Finding | Disposition | Binding home |
 | --- | --- | --- |
-| H1 engine authority/private design | D140 full public design; D95 reduced to provider/naming | D140, engine §1, cloud counterpart |
+| H1 engine authority/private design | D141 full public design; D95 reduced to provider/naming | D141, engine §1, cloud counterpart |
 | H2 private schema/fork CI/deadlock/issuer coupling | No private schemas; issuer-independent get/whoami; one-way provider check public artifacts/pinned source | Engine gate 5; cloud provider obligations |
 | H3 wrong baseline/inventory/missing exports/citations | Source SHA target; normative JSON includes constructors, resolver, root exports and query properties; post-tag differences and corrected test citation | Inventory and §2 |
 | H4 unsafe 421 write retry | Never replay writes; refresh next call; D136 and D90 amended | Engine §4/D136 |
@@ -25,5 +25,5 @@ Full original report is retained in cloud analysis/reviews/typescript-client-opu
 | L3 fixture comparison | Normalize date instant/UUID case/query order; retain values/defaults | Gate 4 |
 | L4 nested casing | Schema-owned nested snake_case/ISO strings | §7 |
 | L5 credential/key details | Nonblocking/no-follow regular file; Bearer/linebreak/empty env checks | §3 |
-| L6 connector wording | Provider connector implementations are separate; SDK methods retained | D140/scope |
+| L6 connector wording | Provider connector implementations are separate; SDK methods retained | D141/scope |
 | L7 proposals | Browser core and alternate generators have adoption triggers | proposal |

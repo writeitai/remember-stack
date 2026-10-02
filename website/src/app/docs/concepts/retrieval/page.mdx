@@ -35,7 +35,7 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, the four operations, adjacent chunks, and the seven SQL query tools. |
+| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 <Cloud>
@@ -130,14 +130,16 @@ anything the facts do not cover. See
 
 Primitives are the building blocks the operations are made of, exposed for
 when you need one exact shape. They are available over HTTP and in the
-Python client. They are not assured operations and are not separate MCP
-tools.
+Python client. They are not assured operations, and most are not MCP tools;
+the table says which are.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions. |
-| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None)` | Source passages, likewise. |
-| Search documents | `search_documents(query=, filters=, versions="current", k=20)` | Documents (files) by name, metadata and text. Also an MCP tool. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None, time=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions, `time` to text in force for the scope. |
+| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None, time=None)` | Source passages, likewise. |
+| Search documents | `search_documents(query=, filters=, versions="current", k=20, time=None)` | Documents (files) by name, metadata and text. Also an MCP tool. |
+| Section history | `section_history(doc_id=, section_key=, time=None)` | One keyed section across a document's versions, with what changed. Also an MCP tool. |
+| Document references | `document_references(chunk_id= or doc_id=, section_key=, direction="both", time=None)` | What a passage, section or document references, and what references it, resolved against the versions in force. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |

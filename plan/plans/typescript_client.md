@@ -1,6 +1,6 @@
 # TypeScript client delivery
 
-1. Merge the engine D140 and cloud D95 design PRs only after Opus 5.5 approval.
+1. Merge the engine D141 and cloud D95 design PRs only after Opus 5.5 approval.
 2. Implement the complete normative Python inventory and safety contracts,
    updating affected Python behavior/tests/docs in the same PR. Push a draft
    checkpoint early; no npm publication is authorized by merge.

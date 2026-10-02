@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from remember.mcp_tools._definitions import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools._definitions import DELETE_DOCUMENT_TOOL_NAME
+from remember.mcp_tools._definitions import DOCUMENT_REFERENCES_TOOL_NAME
 from remember.mcp_tools._definitions import INGEST_TOOL_NAME
 from remember.mcp_tools._definitions import memory_tools
 from remember.mcp_tools._definitions import MEMORY_WRITE_TOOL_NAMES
@@ -25,6 +26,7 @@ from remember.mcp_tools._definitions import PIPELINE_READINESS_TOOL_NAME
 from remember.mcp_tools._definitions import PROJECT_ARGUMENT
 from remember.mcp_tools._definitions import render_tools_list
 from remember.mcp_tools._definitions import SEARCH_DOCUMENTS_TOOL_NAME
+from remember.mcp_tools._definitions import SECTION_HISTORY_TOOL_NAME
 from remember.mcp_tools._definitions import tool
 from remember.mcp_tools._definitions import ToolDefinition
 from remember.mcp_tools._documents import DocumentSearchBackend
@@ -40,11 +42,17 @@ from remember.mcp_tools._memory import handle_memory_write_tool
 from remember.mcp_tools._memory import McpMemorySettings
 from remember.mcp_tools._memory import MemoryWriteBackend
 from remember.mcp_tools._query import validate_saved_query_identifier
+from remember.mcp_tools._references import DocumentReferencesBackend
+from remember.mcp_tools._references import handle_document_references_tool
+from remember.mcp_tools._sections import handle_section_history_tool
+from remember.mcp_tools._sections import SectionHistoryBackend
 from remember.mcp_tools._validate import validate_arguments
 
 __all__ = (
     "ADJACENT_CHUNKS_TOOL_NAME",
     "DELETE_DOCUMENT_TOOL_NAME",
+    "DOCUMENT_REFERENCES_TOOL_NAME",
+    "DocumentReferencesBackend",
     "INGEST_TOOL_NAME",
     "MEMORY_WRITE_TOOL_NAMES",
     "OPEN_QUERY_TOOL_NAMES",
@@ -52,6 +60,8 @@ __all__ = (
     "PIPELINE_READINESS_TOOL_NAME",
     "PROJECT_ARGUMENT",
     "SEARCH_DOCUMENTS_TOOL_NAME",
+    "SECTION_HISTORY_TOOL_NAME",
+    "SectionHistoryBackend",
     "DocumentDeleteBackend",
     "DocumentSearchBackend",
     "McpMemorySettings",
@@ -62,9 +72,11 @@ __all__ = (
     "ToolError",
     "error_result",
     "handle_delete_document_tool",
+    "handle_document_references_tool",
     "invalid_arguments",
     "handle_memory_write_tool",
     "handle_search_documents_tool",
+    "handle_section_history_tool",
     "map_error",
     "memory_tools",
     "render_tools_list",

@@ -4,6 +4,15 @@ One-hop neighborhoods execute static SQL/PGQ. Deeper neighborhoods and
 shortest entity or document paths execute deployment-first
 PostgreSQL helpers. Hydration shares one read-only repeatable-read transaction,
 so every answer is one MVCC cut and one temporal instant without snapshots.
+
+Entity traversal applies the D140 §8.1 evidence gate at ``valid_at``: an edge
+whose only support is document text not in force then is not part of the
+answer. The graph role cannot read evidence, so it is granted exactly one
+private predicate, ``rememberstack_graph_internal.relation_evidence_in_scope``,
+which the traversal helpers and the one-hop PGQ statement apply to every
+candidate edge before expansion, ordering, offset and limit, in the
+traversal's own snapshot. An ineligible edge therefore never spends a budget
+or a result slot.
 """
 
 from collections.abc import Iterator

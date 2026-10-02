@@ -122,6 +122,8 @@ The `remember mcp` server gives the agent these tools:
 | `pipeline_readiness` | Check whether stored documents have finished processing. |
 | `delete_document` | Remove a document from the memory when the user asks. |
 | `search_documents` | Find a file by its name, title, path, authors, dates or text. |
+| `section_history` | Follow one section of a document across its versions. |
+| `document_references` | See what a passage, section or document points to, and what points to it, at a given time. |
 | `adjacent_chunks` | Read neighbouring passages preceding and succeeding a target chunk. |
 | `query_sql` and six related tools | Read-only SQL over the memory, for questions the operations above do not cover. |
 
@@ -131,8 +133,8 @@ two tools that change memory (`ingest` and `delete_document`).
 <Cloud>
 
 The hosted remember.dev server exposes the tools of the engine version
-remember.dev runs, which does not have `search_documents` or
-`adjacent_chunks` yet, plus account tools for projects, keys and balance.
+remember.dev runs, which does not have `search_documents`,
+`adjacent_chunks`, `section_history` or `document_references` yet, plus account tools for projects, keys and balance.
 Every tool there takes a `project` argument. See
 [Hosted MCP](/docs/cloud/hosted-mcp) for its exact list.
 

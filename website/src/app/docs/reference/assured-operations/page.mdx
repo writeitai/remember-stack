@@ -14,7 +14,7 @@ four:
 | Operation | Version | Answers from | Result | Grain |
 |---|---|---|---|---|
 | [`resolve_entity`](#resolve_entity) | 1 | identity | `Envelope` | `fact` |
-| [`claims_and_sources_context`](#claims_and_sources_context) | 2 | what sources said | `Envelope` | `evidence` |
+| [`claims_and_sources_context`](#claims_and_sources_context) | 3 | what sources said | `Envelope` | `evidence` |
 | [`facts_context`](#facts_context) | 3 | what is held true | `Envelope` | `fact` |
 | [`combined_context`](#combined_context) | 4 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
 
@@ -64,8 +64,12 @@ A refused argument is HTTP `422` with
 
 ## The time object
 
-`facts_context` and `combined_context` take an optional `time` object that
-fixes which facts count. The default is `{"mode": "current"}`.
+`claims_and_sources_context`, `facts_context` and `combined_context` take an
+optional `time` object. The default is `{"mode": "current"}`. For facts it
+fixes which facts count, by their validity. For text it fixes which versions
+of a document with declared
+[effective periods](/docs/concepts/time#when-a-version-is-in-force) are read;
+see [Text in force](#text-in-force).
 
 | Mode | Shape | Selects | Result `temporal_scope.mode` |
 |---|---|---|---|
@@ -89,6 +93,33 @@ at a past instant, use the [graph routes](/docs/reference/http-api/graph) or the
 Each returned fact carries `temporal_match`: `confirmed` when its validity
 certainly matches the requested time, `possible` when it may (for example, a
 fact with no known start). See [Time](/docs/concepts/time).
+
+### Text in force
+
+When a document declares effective periods, the same `time` object selects
+which of its versions count as text: those in force now (`current`), at `at`,
+at any point from `from` to `to`, or at any point up to now (`history`). A
+document without declared periods always counts through its served version,
+so `time` changes nothing for it.
+
+- `claims_and_sources_context` searches only the versions in force, in every
+  channel, before the `k` best are chosen. Results name the version they came
+  from, as described in
+  [Reading text as of a date](/docs/reference/http-api/search#reading-text-as-of-a-date),
+  and `freshness.scope_pending` names documents whose version in force is
+  still being processed.
+- `facts_context` applies an **evidence gate**: a fact is returned only if
+  its validity matches `time` *and* at least one claim supporting it occurs
+  in a version in force for `time`, or in a document without declared
+  periods. A fact whose only support is an edition not yet in force, or
+  already withdrawn, is not a candidate at all, so it never crowds an
+  in-force fact out of the `k` best. The evidence shown is limited to such
+  claims, each shown where it occurs in a version in force. The gate changes
+  what is shown, never the fact's validity, evidence counts or support.
+
+The two conditions are independent. If a claim says something holds "from
+2025" but it occurs only in an edition in force from 2026, a `current` read
+in mid-2025 does not return the fact, and an `at` read in February 2026 does.
 
 ## resolve_entity
 
@@ -145,7 +176,7 @@ Return what the sources said about a query: claims and the source passages
 around them, with high recall. This is testimony, not the memory's settled
 view.
 
-**Version** 2. **Answer intent** `claims_and_sources`. **Result contract**
+**Version** 3. **Answer intent** `claims_and_sources`. **Result contract**
 `envelope`, grain `evidence`. **Plan** one step: `claims_and_sources_context`.
 
 ### Parameters
@@ -156,6 +187,7 @@ view.
 | `entity_ids` | array of UUID | no | none | 1 to 20 unique ids. Restricts the search to claims and chunks about these entities. |
 | `k` | integer | no | `50` | 1 to 100. The most claims, and separately the most chunks, returned. |
 | `candidate_k` | integer | no | `200` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
+| `time` | object | no | `{"mode": "current"}` | Which versions of documents with declared effective periods are read. See [The time object](#the-time-object). |
 
 ### What it does
 
@@ -177,7 +209,7 @@ the result is `negative.kind` `unknown_entity`.
 `evidence` holds up to `k` [`EvidenceResult`](/docs/reference/result-types#evidenceresult)
 entries and `chunks` up to `k`
 [`ChunkEvidenceResult`](/docs/reference/result-types#chunkevidenceresult) entries.
-`temporal_scope.mode` is `current`. `truncation` is set when more results
+`temporal_scope.mode` is the `time` mode applied. `truncation` is set when more results
 existed than `k`, or when a channel returned its full `candidate_k` (then
 `total_is_exact` is `false`). Nothing found: `negative.kind` `known_empty`.
 
@@ -358,7 +390,7 @@ children are `claims_and_sources_context` then `facts_context`; its
 | `entity_ids` | array of UUID | no | none | 1 to 19 unique ids. Passed to both children. |
 | `hops` | integer | no | `1` | 1 to 2. Passed to `facts_context`. |
 | `predicate` | string | no | none | 1 to 200 characters. Passed to `facts_context`. |
-| `time` | object | no | `{"mode": "current"}` | Passed to `facts_context`. |
+| `time` | object | no | `{"mode": "current"}` | Passed to both children. |
 
 The children's other parameters are fixed: `claims_and_sources_context` runs
 with `k` 50 and `candidate_k` 200; `facts_context` with `k` 15 and
@@ -377,8 +409,7 @@ A [`ContextBundle/v2`](/docs/reference/result-types#contextbundlev2):
 ```
 
 Each child is a complete envelope with its own `negative`, `truncation` and
-`temporal_scope`. `claims_and_sources` is always current; `facts` follows
-`time`. Read them separately: a claim in the first is testimony, a fact in the
+`temporal_scope`. Both follow `time`. Read them separately: a claim in the first is testimony, a fact in the
 second is the memory's view. See [Reading a result](/docs/concepts/reading-results).
 
 ### Example
@@ -404,7 +435,7 @@ per operation. The values that identify the shipped build:
 | Operation | `version` | `result_contract` | `output_grain` | `answer_intent` | `implementation_plan_hash` |
 |---|---|---|---|---|---|
 | `resolve_entity` | 1 | `envelope` | `fact` | `identity` | `fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a` |
-| `claims_and_sources_context` | 2 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
+| `claims_and_sources_context` | 3 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
 | `facts_context` | 3 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
 | `combined_context` | 4 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
 

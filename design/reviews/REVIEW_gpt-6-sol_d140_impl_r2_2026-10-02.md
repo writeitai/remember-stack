@@ -1,0 +1,46 @@
+# D140 implementation review — round 2, `2bcb681b`
+
+Compared `origin/main...HEAD`, inspected `c57c723c..HEAD`, the round 1 review and response, and the binding D140 contract. The reported CI is green. WP-ET.7 and WP-ET.8 are outside this PR.
+
+## Closure audit
+
+| Round 1 item | Status | Evidence and regression-test check |
+| --- | --- | --- |
+| Deviation (a): graph gate after traversal | **Closed** | `src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py:1350-1376` filters each ordered BFS level before its expansion limit; `src/rememberstack/spine/postgres_graph_sql.py:40-90` gates the one-hop guard, and `:170-173` gates PGQ. `src/rememberstack/surfaces/graph_queries.py:174-193` no longer filters after traversal or opens another connection. `src/tests/surfaces/test_d140_scoped_retrieval.py:1626-1672` puts the excluded edge first at `limit=1` and commits a deletion after the traversal snapshot. Both assertions fail under the old post-filter behavior. `src/rememberstack/spine/fact_graph_contract.py:41-62,130-158` restores the gate during catalog repair. |
+| P1-1: vacuous fact gate | **Closed** | `src/rememberstack/core/text_scope.py:292-314` and the SQL function at `src/rememberstack/spine/migrations/versions/p9_38_0059_d140_effective_time.py:1007-1059` require an in-scope occurrence; support stranded in deleted text cannot pass. `src/tests/surfaces/test_d140_scoped_retrieval.py:1303-1372` checks scored search, nomination, context, and SQL; the deleted-support assertions fail on `c57c723c`. The contradiction-only exception is judged below. |
+| P1-2: replaced reading counts as support | **Closed** | `src/rememberstack/core/text_scope.py:212-253,329-352` and migration `:1041-1053` join each occurrence to the version's current representation. `src/tests/surfaces/test_d140_scoped_retrieval.py:1375-1399` swaps the reading without deleting old chunks and asserts all relevant paths exclude the fact; it fails on the reviewed head. |
+| P1-3: pre-commit ledger stamp crosses a page belief | **Closed** | `src/rememberstack/spine/effective_time.py:337-388` holds a shared transaction advisory lock from stamp to commit and takes an exclusive session lock for the first-page watermark. `src/rememberstack/spine/document_search.py:120-135`, `document_references.py:313-324`, and `section_history.py:113-125` use it before their read snapshots. `src/tests/surfaces/test_d140_scoped_retrieval.py:1448-1515` holds a stamped writer uncommitted while page one starts; the old `now()` pin misses the correction and fails the assertions. |
+| P1-4: obsolete or processing chunk handle | **Closed** | `src/rememberstack/spine/document_references.py:1195-1219` requires a ready version and ready current representation. `src/tests/spine/test_document_references.py:1040-1090` first confirms the handle works, then asserts rejection during processing and after a representation swap; both cases pass on the fix and fail on the old selector. |
+| P1-5: reused claim hidden after origin deletion | **Closed** | The private carried-claim view at migration `:1091-1165` feeds both fact-authority views at `:1184-1213`; `src/rememberstack/surfaces/query_engine.py:4709-4727` hydrates immutable claim fields from the base row and selects the carrying occurrence. `src/tests/surfaces/test_d140_scoped_retrieval.py:1402-1442` deletes the origin version and requires `facts_context` to show the surviving occurrence; the old origin-based join fails. |
+| P1-6: empty result hides a pending in-force edition | **Partially closed** | `src/rememberstack/surfaces/query_engine.py:407-452,1604-1616` and `src/rememberstack/spine/document_search.py:624-681` add a bounded second probe. `src/tests/surfaces/test_d140_scoped_retrieval.py:1521-1576` is a valid red test on `c57c723c` for lexical chunk/claim/compound and ranked-document searches. It does not cover semantic-only matches or matches present in claim text but absent from chunk text; the query-engine probe always uses chunk BM25. See P1. |
+| P2-1: soft deletion changes filter-only walk key | **Closed** | `src/rememberstack/spine/document_search.py:457-477` derives the key without the tombstone filter and applies liveness during judgment. The cited `test_paging_pins_belief_across_a_retroactive_correction` at `src/tests/surfaces/test_d140_scoped_retrieval.py:783-806` changes periods, not tombstones, so it would **not** fail on `c57c723c` for this bug. Add a deletion-between-pages regression test. |
+| P2-2: pinned pending reads current intervals | **Closed** | `src/rememberstack/spine/document_search.py:1002-1048` uses belief-time intervals for pinned pending status and current readiness for each version. The cited paging test at `src/tests/surfaces/test_d140_scoped_retrieval.py:783-806` never asserts `scope_pending`, so it would **not** fail on `c57c723c` for this bug. Add a pending assertion across correction and clear/redeclare. |
+| P2-3: downgrade loses section/text-origin data | **Closed** | Migration `:1503-1517` guards section key and hashes plus both chunk text-origin fields. `src/tests/spine/test_d140_migration.py:288-327` parametrizes the four new cases; each would pass through the old guard and fail its expected refusal on `c57c723c`. |
+| P2-4: full-scale benchmark absent | **Partially closed; accepted scope boundary** | `plan/analysis/version_effective_time_and_section_references.md:432-478`, `plan/plans/effective_time_and_section_references.md:76-82`, and `benchmarks/d140_scope/results/2026-10-02/` record the 500,000-chunk ratios, undated main comparison, 1,000-version projection rewrite, and the unmeasured 50-million-chunk target. This is evidence and disclosure, not a red regression test. See Judgements and P2. |
+
+## Judgements
+
+- **Contradiction-only D54 facts:** Accept the any-stance occurrence rule. A fact with no supporting evidence row still needs an in-scope occurrence; a fact that has a supporting row needs in-scope support even if that row is now stranded in deleted or replaced text. This preserves the existing zero-support flagging behavior for undated corpora while preventing out-of-force evidence from appearing. The current and pinned predicates use that distinction (`text_scope.py:292-313`; migration `:1007-1059`). The rule is general-purpose.
+- **One-time full re-extraction:** Accepted owner decision. `plan/plans/effective_time_and_section_references.md:36-43` states the toolchain and reuse-key changes plainly. No finding.
+- **P2-4 benchmark:** Accept as an honest scope boundary for this PR. The analysis reports measured 500,000-chunk ratios of 0.95–1.03×, a 54 ms p95 projection rewrite, and an undated main comparison. It explicitly says the 50-million-chunk ratio is an extrapolation, not a measurement, and records the `main` EXPLAIN result showing a full scoring scan. The index-driven ranking issue predates D140 and should be tracked separately.
+- **Fix-commit audit:** No additional P0/P1 found in the advisory-lock protocol, graph predicate/grants and catalog repair, private carried-claim view, or downgrade guard. The remaining P1 is incomplete closure of P1-6.
+
+## P0
+
+None.
+
+## P1
+
+- `src/rememberstack/surfaces/query_engine.py:407-452,1604-1616`: **P1-6 remains for semantic and claim-only matches.** The pending probe always calls `search_chunks_lexical_scored` and retains only positive BM25 scores, regardless of the original search grain or channel. For example, an old ready edition can contain “automobile” and match a semantic query for “vehicle” while the in-force edition is converting. The scoped semantic answer is empty, and chunk BM25 has no positive match, so `scope_pending` is still null. Likewise, a claim can match on decontextualized `claim_text` whose terms do not occur in the source chunk. The new BM25 fixture uses identical query terms in chunk and claim text, so it misses both cases. **Fix:** derive the bounded touched-lineage probe from the requested nomination grain and channel before readiness exclusion, reusing the query embedding for semantic search; keep pending picks out of top-k. Add semantic-only chunk and claim-text-only empty-result tests with an unrelated pending lineage.
+
+## P2
+
+- `plan/plans/effective_time_and_section_references.md:76-82`: The 50-million-chunk latency target remains unmeasured. **Fix:** track index-driven ranked search and rerun the full-scale scoped-versus-main measurement once both statements can rank at that scale.
+- `src/tests/surfaces/test_d140_scoped_retrieval.py:783-806`: The cited paging test proves period correction stability but does not protect the P2-1 tombstone fix or P2-2 pending fix. **Fix:** add a soft deletion between filter-only pages and assert no duplicate lineage; separately assert pinned `scope_pending` across correction and clear/redeclare.
+
+## Nits
+
+- `plan/designs/effective_time_and_section_references_design.md:868-871`: The later bullet says every visible fact needs a supporting claim, contradicting the accepted contradiction-only exception at `:860-867`. **Fix:** refer to “the in-scope evidence rule above” there.
+- `plan/analysis/version_effective_time_and_section_references.md:479`: `git diff --check origin/main...HEAD` reports a new blank line at EOF. **Fix:** remove it.
+
+Verdict: Request changes

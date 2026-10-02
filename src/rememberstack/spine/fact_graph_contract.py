@@ -7,15 +7,8 @@ from rememberstack.spine.postgres_graph_sql import _replace_exact
 
 def rebuild_fact_graphs(*, connection: Connection) -> None:
     """Recreate derived graph metadata with the same strict chosen-date predicates."""
-    from rememberstack.spine.migrations._helpers import _split_sql
     from rememberstack.spine.migrations.versions import (
         p9_17_0038_postgres19_live_graph as graph,
-    )
-    from rememberstack.spine.migrations.versions.p9_18_0039_graph_entity_provenance_plan import (
-        _MATERIALIZED_ENTITY_VIEW,
-    )
-    from rememberstack.spine.migrations.versions.p9_19_0040_graph_tenant_planner_settings import (
-        _GRAPH_HELPER_INDEX_SETTINGS,
     )
 
     sources = graph._GRAPH_SOURCES
@@ -39,7 +32,44 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
         old="valid_until, ingested_at, invalidated_at)",
         new="valid_until, ingested_at, invalidated_at, valid_precision)",
     )
-    helpers = tuple(
+    helpers = chosen_window_helpers()
+    grants = _replace_exact(
+        statement=graph._GRANTS,
+        old="predicate, valid_from, valid_until, ingested_at, invalidated_at) ON public.relations",
+        new="predicate, valid_from, valid_until, valid_precision, ingested_at, invalidated_at) ON public.relations",
+    )
+    d140 = connection.exec_driver_sql(
+        "SELECT to_regclass('public.document_reference_generations') IS NOT NULL"
+    ).scalar_one()
+    if d140:
+        # D140 §8.1: traversal applies the evidence gate inside each level.
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            gated_graph_helper,
+        )
+
+        helpers = tuple(
+            gated_graph_helper(sql=sql, function=function)
+            for sql, function in zip(
+                helpers, ("graph_neighborhood", "graph_path"), strict=True
+            )
+        )
+    _rebuild(
+        connection=connection,
+        sources=sources,
+        history=history,
+        helpers=helpers,
+        grants=grants,
+        d140=d140,
+    )
+
+
+def chosen_window_helpers() -> tuple[str, str]:
+    """The D118 chosen-window traversal helpers (neighborhood, path)."""
+    from rememberstack.spine.migrations.versions import (
+        p9_17_0038_postgres19_live_graph as graph,
+    )
+
+    neighborhood, path = (
         _replace_exact(
             statement=_replace_exact(
                 statement=sql,
@@ -53,11 +83,30 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
         )
         for sql in (graph._NEIGHBORHOOD_HELPER, graph._PATH_HELPER)
     )
-    grants = _replace_exact(
-        statement=graph._GRANTS,
-        old="predicate, valid_from, valid_until, ingested_at, invalidated_at) ON public.relations",
-        new="predicate, valid_from, valid_until, valid_precision, ingested_at, invalidated_at) ON public.relations",
+    return neighborhood, path
+
+
+def _rebuild(
+    *,
+    connection: Connection,
+    sources: str,
+    history: str,
+    helpers: tuple[str, ...],
+    grants: str,
+    d140: bool,
+) -> None:
+    """Execute the drop-and-recreate sequence."""
+    from rememberstack.spine.migrations._helpers import _split_sql
+    from rememberstack.spine.migrations.versions import (
+        p9_17_0038_postgres19_live_graph as graph,
     )
+    from rememberstack.spine.migrations.versions.p9_18_0039_graph_entity_provenance_plan import (
+        _MATERIALIZED_ENTITY_VIEW,
+    )
+    from rememberstack.spine.migrations.versions.p9_19_0040_graph_tenant_planner_settings import (
+        _GRAPH_HELPER_INDEX_SETTINGS,
+    )
+
     statements = (
         "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history",
         "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current",
@@ -78,6 +127,35 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
         grants,
         _GRAPH_HELPER_INDEX_SETTINGS,
     )
+    if d140:
+        # D140 replaced the crossref graph source (version grain, active
+        # generations, versions in force now) and added grants; a repair must
+        # restore that shape, not the p9_17 one.
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            GRAPH_CROSSREFS_SOURCE_DDL,
+        )
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            GRAPH_GATE_DDL,
+        )
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            GRAPH_GATE_GRANTS,
+        )
+        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
+            QUERY_ROLE_GRANTS,
+        )
+
+        # the schema drop above removed the gate function: it must exist
+        # before the gated helpers that call it
+        position = statements.index(sources) + 1
+        statements = (
+            *statements[:position],
+            "DROP VIEW rememberstack_graph_internal.crossrefs_live",
+            GRAPH_CROSSREFS_SOURCE_DDL,
+            GRAPH_GATE_DDL,
+            *statements[position:],
+            QUERY_ROLE_GRANTS,
+            GRAPH_GATE_GRANTS,
+        )
     for ddl in statements:
         for statement in _split_sql(sql=ddl):
             connection.exec_driver_sql(statement.replace("%", "%%"))

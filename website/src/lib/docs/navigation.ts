@@ -55,6 +55,7 @@ export const docsNavigation: NavItem[] = [
       { title: "Wait until a document is queryable", href: "/docs/guides/wait-for-readiness" },
       { title: "Give an agent context", href: "/docs/guides/agent-context" },
       { title: "Ask about the past", href: "/docs/guides/ask-about-the-past" },
+      { title: "Read a document as of a date", href: "/docs/guides/versions-in-force" },
       { title: "Cite the source of an answer", href: "/docs/guides/cite-sources" },
       { title: "Handle unknowns and ambiguity", href: "/docs/guides/unknowns-and-ambiguity" },
       { title: "Explore memory with SQL", href: "/docs/guides/sql" },
@@ -108,6 +109,7 @@ export const docsNavigation: NavItem[] = [
     children: [
       { title: "HTTP API conventions", href: "/docs/reference/http-api" },
       { title: "Ingest, readiness and documents", href: "/docs/reference/http-api/ingest" },
+      { title: "Section history and references", href: "/docs/reference/http-api/sections-and-references" },
       { title: "Assured operation routes", href: "/docs/reference/http-api/operations" },
       { title: "Entities and facts", href: "/docs/reference/http-api/entities-and-facts" },
       { title: "Search and adjacent chunks", href: "/docs/reference/http-api/search" },

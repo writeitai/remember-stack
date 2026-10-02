@@ -39,6 +39,18 @@ absent from the current release; nothing here has a date.
   give their title, people and dates, and `.xlsx` workbooks their title,
   author and dates; HTML, EPUB and notebooks give only a title, and other
   formats give none.
+- **References found in the text.** RememberStack does not yet find
+  references itself (links, citations, "see section 4.2"); every reference
+  `document_references` returns is one you supplied with
+  `PUT /documents/{doc_id}/versions/{version_id}/references`.
+- **Fact dates from effective periods.** Declaring when a version is in
+  force decides which text and evidence a time-scoped read uses, but does
+  not yet inform the validity window of the facts that text supports.
+- **Periods, references and section history from the CLI and MCP.** The CLI
+  declares periods only at `remember ingest`, and the MCP server only through
+  `ingest`; neither can change periods later or supply references. The CLI
+  has no section history or references command; the MCP server has the
+  `section_history` and `document_references` tools.
 - **Waiting for readiness from the CLI.** No `remember` command waits for a
   document to be processed; use the SDK's `wait_for_readiness` or the MCP
   `pipeline_readiness` tool.
@@ -66,8 +78,8 @@ absent from the current release; nothing here has a date.
 ## Hosted MCP on remember.dev
 
 - **Newer tools.** The hosted server serves the tools of the engine version
-  remember.dev runs (v0.17.2), which has no `search_documents` or
-  `adjacent_chunks` tool. See
+  remember.dev runs (v0.17.2), which has no `search_documents`,
+  `adjacent_chunks`, `section_history` or `document_references` tool. See
   [What remember.dev serves](/docs/cloud/compatibility).
 - **Files by path.** The hosted `ingest` tool takes `text` or
   `content_base64`, not `path`; it has no access to your files.

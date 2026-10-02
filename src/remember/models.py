@@ -17,6 +17,7 @@ from typing import TypeAlias
 from uuid import UUID
 
 from pydantic import AfterValidator
+from pydantic import AliasChoices
 from pydantic import AwareDatetime
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -39,6 +40,9 @@ def _require_utc(value: datetime) -> datetime:
 UTCDateTime: TypeAlias = Annotated[
     datetime, Field(strict=True), AfterValidator(_require_utc)
 ]
+
+UTCInstant: TypeAlias = Annotated[AwareDatetime, AfterValidator(_require_utc)]
+"""A request instant: ISO 8601 text or a datetime, with a zero UTC offset."""
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +168,160 @@ class DocumentDeletion(BaseModel):
     observations_closed: int = Field(ge=0)
 
 
+EFFECTIVE_PERIODS_MAX: Final = 1000
+"""Most periods one version may be declared with in one request (a starting
+bound, not a measured limit)."""
+
+VERSION_KEY_MAX_LEN: Final = 512
+"""Longest caller-chosen version key, the same bound as a source reference."""
+
+
+class EffectivePeriodInput(BaseModel):
+    """One declared period during which a version's text is in force (D140).
+
+    The period is half-open: ``effective_from`` is included and
+    ``effective_until`` is not. Without ``effective_until`` the period lasts
+    until the next declared start in the document's lineage, so declaring a
+    new edition ends its predecessor without touching it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    effective_from: UTCInstant
+    effective_until: UTCInstant | None = None
+
+    @model_validator(mode="after")
+    def _ends_after_it_starts(self) -> Self:
+        if self.effective_until is not None and (
+            self.effective_until <= self.effective_from
+        ):
+            raise ValueError("effective_until must be later than effective_from")
+        return self
+
+
+class EffectivePeriodsRequest(BaseModel):
+    """The complete set of periods one version is in force for (D140).
+
+    It replaces the version's current declarations: periods not listed are
+    retracted and new ones are declared, atomically. An empty set is allowed
+    and leaves the version with no in-force period; the document keeps its
+    declared effective time.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    periods: tuple[EffectivePeriodInput, ...] = Field(max_length=EFFECTIVE_PERIODS_MAX)
+
+    @model_validator(mode="after")
+    def _starts_are_distinct(self) -> Self:
+        starts = [period.effective_from for period in self.periods]
+        if len(set(starts)) != len(starts):
+            raise ValueError("two periods start at the same instant")
+        return self
+
+
+class DeclaredEffectivePeriod(BaseModel):
+    """One live declaration of a version, exactly as it was declared."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    period_id: UUID
+    effective_from: datetime
+    effective_until: datetime | None
+    """The declared end; ``None`` means until the next declared start."""
+    declared_at: datetime
+    """When the declaration became known."""
+
+
+class EffectivePeriodsSet(BaseModel):
+    """What replacing one version's declared periods left in force."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    periods: tuple[DeclaredEffectivePeriod, ...]
+    """The version's live declarations after the call, by start."""
+    declared: int = Field(ge=0)
+    """Declarations this call added."""
+    retracted: int = Field(ge=0)
+    """Declarations this call retracted."""
+
+
+class EffectiveTimeCleared(BaseModel):
+    """What leaving effective time did to one document (D140).
+
+    Every live declaration of the document is retracted and, when it had
+    declared effective time, the document returns to "the newest processed
+    version is current" for every reader believing after ``cleared_at``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    retracted: int = Field(ge=0)
+    cleared_at: datetime | None
+    """When the document left effective time; ``None`` when it had none."""
+
+
+class CurrentReadTime(BaseModel):
+    """Text in force now."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["current"] = "current"
+
+
+class AtReadTime(BaseModel):
+    """Text in force at one instant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["at"] = "at"
+    at: AwareDatetime
+
+
+class OverlapReadTime(BaseModel):
+    """Text in force at any instant of an inclusive window."""
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
+    mode: Literal["overlap"] = "overlap"
+    from_: AwareDatetime = Field(
+        validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
+    )
+    to: AwareDatetime
+
+    @model_validator(mode="after")
+    def _ordered(self) -> Self:
+        if self.to < self.from_:
+            raise ValueError("time.to must be at or after time.from")
+        return self
+
+
+class HistoryReadTime(BaseModel):
+    """Every text in force at any instant up to now."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    mode: Literal["history"] = "history"
+
+
+ReadTime = Annotated[
+    CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime,
+    Field(discriminator="mode"),
+]
+"""The D140 §3.1 time scope of a text read (the MCP ``time`` argument)."""
+
+
+class EffectiveInterval(BaseModel):
+    """One in-force interval ``[from, until)``; null bounds are open."""
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
+    from_: datetime | None = Field(
+        validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
+    )
+    until: datetime | None = None
+    until_declared: bool = False
+    """True when the end was declared; false when it is derived from the
+    next declared start, or open."""
+
+
 DOCUMENT_SEARCH_MAX_K: Final = 200
 DOCUMENT_SEARCH_DEFAULT_K: Final = 20
 
@@ -203,6 +361,10 @@ class DocumentSearchRequest(BaseModel):
     query: str | None = Field(default=None, min_length=1, max_length=4096)
     filters: DocumentSearchFilters = DocumentSearchFilters()
     versions: Literal["current", "all"] = "current"
+    time: ReadTime | None = None
+    """D140 §3.5: which editions of a document with declared effective periods
+    are candidates (default ``current``: the ones in force now). Documents
+    without declared periods are judged as without it."""
     k: int = Field(default=DOCUMENT_SEARCH_DEFAULT_K, ge=1, le=DOCUMENT_SEARCH_MAX_K)
     cursor: str | None = Field(default=None, min_length=1)
 
@@ -222,6 +384,21 @@ class DocumentSearchPerson(BaseModel):
     address: str | None = None
 
 
+class MatchingEdition(BaseModel):
+    """One candidate edition of a periodised document that matched (D140 §3.5).
+
+    ``version_id`` with ``representation_id`` is the ``source_open`` handle
+    that opens exactly this edition.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version_id: UUID
+    version_no: int
+    version_key: str | None = None
+    representation_id: UUID | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+
+
 class DocumentSearchResult(BaseModel):
     """One matching document, described by the version it was judged by."""
 
@@ -234,10 +411,24 @@ class DocumentSearchResult(BaseModel):
     file_name: str | None = None
     title: str | None = None
     source_path: str | None = None
-    p3_path: str
+    p3_path: str | None = None
     """Canonical corpus-filesystem path, ``documents/<doc_id>``, relative to
     the corpus root; present in a published snapshot only where the
-    deployment builds the filesystem view."""
+    deployment builds the filesystem view. The path opens the lineage's
+    served version, so for a document with declared effective periods it is
+    null when the result describes another edition (``served_version``
+    false)."""
+    served_version: bool = True
+    """Whether ``version_id`` is the lineage's served (current) version."""
+    representation_id: UUID | None = None
+    """The judged version's current reading; with ``version_id`` it opens
+    exactly the version described."""
+    effective: tuple[EffectiveInterval, ...] = ()
+    """The judged version's in-force intervals, when the document declares
+    effective periods."""
+    matching_editions: tuple[MatchingEdition, ...] = ()
+    """Every candidate edition that matched, by effective start, for a
+    document with declared effective periods."""
     family: str
     created_at: datetime | None = None
     modified_at: datetime | None = None
@@ -270,6 +461,9 @@ class DocumentSearchPage(BaseModel):
     cursor: str | None = None
     as_of: datetime
     people_matched: tuple[DocumentPeopleMatch, ...] = ()
+    scope_pending: ScopePending | None = None
+    """D140 §3.7: examined documents whose edition in force for ``time`` is
+    still processing, so "nothing in force" can be told from "not ready"."""
 
 
 class SearchRequest(BaseModel):
@@ -281,6 +475,11 @@ class SearchRequest(BaseModel):
     """D134: only results found in a document version matching these
     general-metadata filters (the ``search_documents`` filters), applied before
     the top-k; returned claims still cite their origin."""
+    time: ReadTime | None = None
+    """D140 §3.1: only text in force for this scope (default ``current``).
+    Documents without declared effective periods read their served version
+    under every mode; a claim of a document with declared periods returns its
+    occurrence in each selected version."""
 
 
 ADJACENT_CHUNKS_MIN_WINDOW: Final = 1
@@ -293,6 +492,416 @@ class AdjacentChunksRequest(BaseModel):
     window: int = Field(
         default=1, ge=ADJACENT_CHUNKS_MIN_WINDOW, le=ADJACENT_CHUNKS_MAX_WINDOW
     )
+
+
+SECTION_HISTORY_DEFAULT_K: Final = 50
+SECTION_HISTORY_MAX_K: Final = 200
+SECTION_KEY_MAX_LEN: Final = 200
+
+
+class SectionHistoryRequest(BaseModel):
+    """One ``section_history`` call (D140 §6.2)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    section_key: str = Field(
+        min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"
+    )
+    time: ReadTime = HistoryReadTime()
+    k: int = Field(default=SECTION_HISTORY_DEFAULT_K, ge=1, le=SECTION_HISTORY_MAX_K)
+    cursor: str | None = Field(default=None, min_length=1)
+
+
+class SectionHistorySection(BaseModel):
+    """The keyed section as one version holds it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    section_id: UUID
+    node_path: str
+    title: str | None = None
+    own_content_hash: str
+    subtree_content_hash: str
+    changed: bool | None = None
+    """Subtree hash differs from the previous row that held the key; null
+    when no earlier row held it."""
+    own_changed: bool | None = None
+    """Own-block hash differs from the previous row that held the key."""
+    first_chunk_ids: tuple[UUID, ...] = ()
+    """Chunks of the version's current representation holding the section's
+    first block."""
+
+
+class SectionHistoryRow(BaseModel):
+    """One selected version of the lineage and what it holds under the key.
+
+    ``status``: ``present`` (``section`` is set), ``absent`` (the version is
+    indexed and lacks the key — a removed section), ``not_indexed`` (its
+    sections predate section keys and are not backfilled yet, so absence
+    cannot be told) or ``processing`` (the version is not readable yet).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version_id: UUID
+    version_no: int
+    version_key: str | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    status: Literal["present", "absent", "not_indexed", "processing"]
+    section: SectionHistorySection | None = None
+
+
+class SectionAmendment(BaseModel):
+    """One live ``amends`` reference that targets the keyed section."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    crossref_id: UUID
+    from_doc_id: UUID
+    from_version_id: UUID
+    from_section_key: str | None = None
+    source_label: str | None = None
+    binding: Literal["floating", "pinned"]
+    to_version_key: str | None = None
+    change_effective_from: datetime | None = None
+    change_date_known: bool
+
+
+class SectionHistoryPage(BaseModel):
+    """A page of ``section_history`` rows.
+
+    Rows are ordered by effective start for a lineage with declared effective
+    periods (``periodised``) and by ``version_no`` otherwise. ``amendments``
+    is filled on the first page only. ``cursor`` pins ``evaluated_at`` and
+    ``believed_at`` for the following pages.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    section_key: str
+    periodised: bool
+    rows: tuple[SectionHistoryRow, ...]
+    amendments: tuple[SectionAmendment, ...] = ()
+    cursor: str | None = None
+    evaluated_at: datetime
+    believed_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Section-level references (D140 §6)
+# ---------------------------------------------------------------------------
+
+REFERENCES_BODY_MAX_BYTES: Final = 64 * 1024 * 1024
+"""Largest NDJSON reference set one PUT accepts (D140 §6.3): about 15 times
+the largest version measured on the motivating corpus. Larger is ``413``."""
+
+REFERENCE_CONTEXT_MAX_LEN: Final = 2000
+REFERENCE_SOURCE_LABEL_MAX_LEN: Final = 200
+REFERENCE_ERRORS_MAX: Final = 100
+"""Most ``{item, field, reason}`` errors a rejected generation records."""
+
+DOCUMENT_REFERENCES_DEFAULT_K: Final = 50
+DOCUMENT_REFERENCES_MAX_K: Final = 200
+DOCUMENT_REFERENCES_MAX_DESCENDANT_KEYS: Final = 1000
+"""Most section keys one ``document_references`` call resolves a section to
+(the section and its descendants); beyond it the call is ``too_broad``."""
+
+ReferenceKind: TypeAlias = Literal[
+    "cites", "links_to", "attaches", "replies_to", "refers_to", "amends", "implements"
+]
+ReferenceBinding: TypeAlias = Literal["floating", "pinned"]
+ReferenceOrigin: TypeAlias = Literal["supplied", "extracted"]
+SectionKey: TypeAlias = Annotated[
+    str,
+    Field(min_length=1, max_length=SECTION_KEY_MAX_LEN, pattern=r"^[A-Za-z0-9_.:/-]+$"),
+]
+
+
+class ReferenceTarget(BaseModel):
+    """The document a supplied reference points at, named by its source identity.
+
+    ``source_kind``/``source_ref`` are the target lineage's identity (the
+    values it was or will be ingested with), so a reference may name a
+    document that is not ingested yet. ``version_key`` pins one version
+    (with ``binding = pinned``); ``section_key`` names a section, else the
+    whole document.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source_kind: str = Field(min_length=1, max_length=128)
+    source_ref: str = Field(min_length=1, max_length=512)
+    version_key: str | None = Field(default=None, min_length=1, max_length=512)
+    section_key: SectionKey | None = None
+
+
+class ReferenceInput(BaseModel):
+    """One line of a supplied NDJSON reference set (D140 §6.3).
+
+    ``from_section_key`` is the section of the source version the reference
+    is made from (omitted: the whole document). A ``pinned`` reference names
+    the target's ``version_key``. ``amends`` must say whether its date is
+    known: ``change_date_known = true`` with ``change_effective_from``, or
+    ``false`` without it; other kinds carry neither.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    kind: ReferenceKind
+    from_section_key: SectionKey | None = None
+    target: ReferenceTarget
+    binding: ReferenceBinding = "floating"
+    change_effective_from: UTCInstant | None = None
+    change_date_known: bool | None = None
+    source_label: str | None = Field(
+        default=None, min_length=1, max_length=REFERENCE_SOURCE_LABEL_MAX_LEN
+    )
+    context: str | None = Field(
+        default=None, min_length=1, max_length=REFERENCE_CONTEXT_MAX_LEN
+    )
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if self.binding == "pinned" and self.target.version_key is None:
+            raise ValueError("a pinned reference requires target.version_key")
+        if self.kind == "amends":
+            if self.change_date_known is None:
+                raise ValueError("an amends reference requires change_date_known")
+            if self.change_date_known and self.change_effective_from is None:
+                raise ValueError(
+                    "change_date_known=true requires change_effective_from"
+                )
+            if not self.change_date_known and self.change_effective_from is not None:
+                raise ValueError(
+                    "change_date_known=false forbids change_effective_from"
+                )
+        elif (
+            self.change_date_known is not None or self.change_effective_from is not None
+        ):
+            raise ValueError(
+                "change_date_known and change_effective_from apply only to amends"
+            )
+        return self
+
+
+class ReferenceItemError(BaseModel):
+    """Why one item of a reference set was rejected."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    item: int = Field(ge=1)
+    """The item's 1-based position in the set."""
+    field: str
+    reason: str
+
+
+ReferenceGenerationStatus: TypeAlias = Literal[
+    "pending", "active", "rejected", "superseded"
+]
+
+
+class ReferenceGeneration(BaseModel):
+    """One production of a version's references (D140 §6.1).
+
+    Rows of a generation are visible only while it is ``active``; a version
+    has at most one active generation per origin. A supplied generation is
+    ``pending`` until the E0 crossref worker validates and activates it,
+    ``rejected`` (with ``errors``) when it names an unknown source section,
+    and ``superseded`` once a later PUT or generation replaced it.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    generation_id: UUID
+    doc_id: UUID
+    version_id: UUID
+    origin: ReferenceOrigin
+    status: ReferenceGenerationStatus
+    request_seq: int | None = None
+    input_hash: str
+    item_count: int | None = None
+    representation_id: UUID | None = None
+    crossref_version: str | None = None
+    errors: tuple[ReferenceItemError, ...] = ()
+    created_at: datetime
+    activated_at: datetime | None = None
+
+
+class ReferencesSet(BaseModel):
+    """What one ``PUT …/references`` did.
+
+    ``outcome``: ``created`` — a new generation was recorded (``pending``,
+    or ``rejected`` when the version's structure already showed an unknown
+    source section); ``unchanged`` — the body equals the version's current
+    intent (a retry); ``pending_cancelled`` — the body equals the active
+    set, so the newer pending generation was cancelled. ``generation`` is
+    the generation the caller's intent now names.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    outcome: Literal["created", "unchanged", "pending_cancelled"]
+    generation: ReferenceGeneration
+
+
+class ReferenceGenerations(BaseModel):
+    """A version's reference generations, newest first."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    generations: tuple[ReferenceGeneration, ...]
+
+
+class DocumentReferencesRequest(BaseModel):
+    """One ``document_references`` call (D140 §6.2).
+
+    Exactly one of ``chunk_id`` (the chunk's version and section are the
+    source) or ``doc_id`` (with an optional ``section_key``). ``time``
+    selects source versions; omitted, it is ``current`` — except with a
+    ``chunk_id``, where it is the chunk version's in-force time up to now.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    chunk_id: UUID | None = None
+    doc_id: UUID | None = None
+    section_key: SectionKey | None = None
+    direction: Literal["outgoing", "incoming", "both"] = "both"
+    kinds: tuple[ReferenceKind, ...] | None = Field(
+        default=None, min_length=1, max_length=7
+    )
+    time: ReadTime | None = None
+    k: int = Field(
+        default=DOCUMENT_REFERENCES_DEFAULT_K, ge=1, le=DOCUMENT_REFERENCES_MAX_K
+    )
+    cursor: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        if (self.chunk_id is None) == (self.doc_id is None):
+            raise ValueError("give exactly one of chunk_id or doc_id")
+        if self.section_key is not None and self.doc_id is None:
+            raise ValueError("section_key requires doc_id")
+        return self
+
+
+class ReferenceWindow(BaseModel):
+    """A time window: from ``from`` (inclusive; null = unbounded) to ``until``.
+
+    ``until`` is exclusive unless ``until_inclusive`` (an instant window has
+    ``from == until`` and ``until_inclusive = true``); null is unbounded.
+    """
+
+    model_config = ConfigDict(
+        frozen=True, extra="forbid", populate_by_name=True, serialize_by_alias=True
+    )
+    from_: datetime | None = Field(
+        validation_alias=AliasChoices("from", "from_"), serialization_alias="from"
+    )
+    until: datetime | None = None
+    until_inclusive: bool = False
+
+
+class NamedReferenceTarget(BaseModel):
+    """The target exactly as the source names it (source content)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    source_kind: str | None = None
+    source_ref: str | None = None
+    version_key: str | None = None
+    section_key: str | None = None
+
+
+class DocumentReferenceSource(BaseModel):
+    """The source side of one reference row."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID
+    version_key: str | None = None
+    section_key: str | None = None
+    section_title: str | None = None
+    window: ReferenceWindow
+    """The source window: the source version's in-force time inside the
+    query window."""
+
+
+class DocumentReferenceTarget(BaseModel):
+    """The resolved target side of one reference row.
+
+    Only what the row's status allows is set: the lineage for
+    ``target_not_in_force`` and ``pinned_version_unavailable``; the version
+    and ``applies_during`` for ``target_processing``; the section and its
+    first chunks for ``resolved``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_id: UUID
+    version_id: UUID | None = None
+    version_key: str | None = None
+    representation_id: UUID | None = None
+    section_key: str | None = None
+    section_title: str | None = None
+    first_chunk_ids: tuple[UUID, ...] = ()
+    effective: tuple[EffectiveInterval, ...] = ()
+    """The target version's own in-force intervals."""
+    applies_during: ReferenceWindow | None = None
+    concurrent: bool = False
+    """Another target version of this reference applies during an
+    overlapping window (overlapping declarations, or a point query that
+    found two versions in force)."""
+
+
+DocumentReferenceStatus: TypeAlias = Literal[
+    "resolved",
+    "target_processing",
+    "target_unavailable",
+    "target_not_in_force",
+    "section_not_in_version",
+    "section_not_indexed",
+    "pinned_version_unavailable",
+]
+
+
+class DocumentReference(BaseModel):
+    """One reference, resolved against one source window and target version."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    direction: Literal["outgoing", "incoming"]
+    crossref_id: UUID
+    kind: ReferenceKind
+    origin: ReferenceOrigin
+    binding: ReferenceBinding
+    source_label: str | None = None
+    context: str | None = None
+    change_effective_from: datetime | None = None
+    change_date_known: bool | None = None
+    source: DocumentReferenceSource
+    named_target: NamedReferenceTarget
+    status: DocumentReferenceStatus
+    target: DocumentReferenceTarget | None = None
+
+
+class DocumentReferencesTooBroad(BaseModel):
+    """The section resolves to more descendant keys than one call follows."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    reason: Literal["too_broad"] = "too_broad"
+    descendant_keys: int
+    limit: int = DOCUMENT_REFERENCES_MAX_DESCENDANT_KEYS
+    explanation: str
+
+
+class DocumentReferencesPage(BaseModel):
+    """A page of ``document_references`` rows.
+
+    Ordered by direction (outgoing first), source document, source version,
+    reference, window start and target version. ``cursor`` pins
+    ``evaluated_at`` and ``believed_at``; a page may be short when the scan
+    bound was reached and still carry a cursor. ``too_broad`` is set (and
+    ``rows`` empty) when the section has too many descendant keys.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    rows: tuple[DocumentReference, ...]
+    cursor: str | None = None
+    evaluated_at: datetime
+    believed_at: datetime
+    too_broad: DocumentReferencesTooBroad | None = None
 
 
 class ReadinessRequirements(BaseModel):
@@ -388,6 +997,8 @@ class IngestedVersion(BaseModel):
     until an operator adds a conversion route and releases the parked work.
     ``None`` means only that it is not parked for ``no_route``; processing
     state comes from readiness."""
+    version_key: str | None = None
+    """The version's caller-chosen key (D140), ``None`` when it has none."""
     processing_admission: Literal["not_required", "pending"] = Field(
         default="not_required", exclude=True
     )
@@ -530,12 +1141,24 @@ class KFreshness(BaseModel):
     open_flags: int = Field(default=0, ge=0)
 
 
+SCOPE_PENDING_MAX_DOC_IDS: Final = 50
+
+
+class ScopePending(BaseModel):
+    """Documents whose in-force text for the scope is still processing (D140 §3.7)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    doc_ids: tuple[UUID, ...] = Field(max_length=SCOPE_PENDING_MAX_DOC_IDS)
+    count: int = Field(ge=0)
+
+
 class Freshness(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     pg_live_ts: UTCDateTime
     p1_written_inline: bool = True
     p1_believed_at_horizon: UTCDateTime | None = None
     k: KFreshness | None = None
+    scope_pending: ScopePending | None = None
 
 
 class EntityCandidate(BaseModel):
@@ -590,6 +1213,21 @@ class EvidenceSpan(BaseModel):
         return self
 
 
+class ClaimOccurrence(BaseModel):
+    """Where a claim occurs in one selected version (D140 §3.4)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    chunk_id: UUID
+    version_id: UUID
+    representation_id: UUID
+    char_start: int
+    char_end: int
+    evidence_spans: tuple[EvidenceSpan, ...] = ()
+    source_locators: JsonValue = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    served_version: bool = True
+
+
 class EvidenceResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     claim_id: UUID
@@ -611,6 +1249,14 @@ class EvidenceResult(BaseModel):
     source_kind: str | None = None
     corroboration_count: int | None = Field(default=None, ge=1)
     grouped_claim_ids: tuple[UUID, ...] = ()
+    version_id: UUID | None = None
+    """For a document with declared effective periods read under a time
+    scope: the selected version the coordinates above belong to."""
+    representation_id: UUID | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    occurrences: tuple[ClaimOccurrence, ...] = ()
+    """One occurrence per selected version, by effective start; the first
+    is the one the top-level coordinates describe."""
 
 
 class FactEvidence(BaseModel):
@@ -651,6 +1297,11 @@ class ChunkEvidenceResult(BaseModel):
     source_kind: str
     source_modified_at: UTCDateTime | None = None
     published_at: UTCDateTime | None = None
+    effective: tuple[EffectiveInterval, ...] = ()
+    """The version's in-force intervals, when its document declares
+    effective periods (D140 §3.7)."""
+    served_version: bool = True
+    """Whether the chunk's version is its document's served version."""
 
 
 class SourceRecord(BaseModel):

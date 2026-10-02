@@ -18,6 +18,7 @@ from datetime import datetime
 from datetime import timezone
 import hashlib
 import json
+import logging
 from pathlib import PurePosixPath
 from typing import Final
 from typing import Protocol
@@ -38,6 +39,7 @@ from rememberstack.core import blocks_from_sidecar
 from rememberstack.core import ConversionRouter
 from rememberstack.core import Converter
 from rememberstack.core import deterministic_section_role
+from rememberstack.core import duplicate_section_key_warnings
 from rememberstack.core import FileHintConverter
 from rememberstack.core import LaneCheckpointConverter
 from rememberstack.core import LaneUsageRecorder
@@ -52,6 +54,7 @@ from rememberstack.core import SKELETON_PARSER_VERSION
 from rememberstack.core import SKELETON_STATS_VERSION
 from rememberstack.core import SkeletonAnalysis
 from rememberstack.core import storage_class_for
+from rememberstack.core import with_content_hashes
 from rememberstack.core.content_detection import detect_content_mime
 from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import is_model_free
@@ -116,6 +119,8 @@ from rememberstack.workers.base import NoRouteHandlerError
 from rememberstack.workers.e0_summary import SectionSummarizer
 from rememberstack.workers.e0_summary import SummarySettings
 from rememberstack.workers.e1 import E1_CHUNK_VERSION
+
+logger = logging.getLogger(__name__)
 
 E0_CONVERT_VERSION: Final = "e0-convert-2026.08"
 """The convert sub-worker's component version (D12 idempotency key member)."""
@@ -224,6 +229,16 @@ class UploadIngestor:
         creation-scoped: an identical-bytes re-ingest is the D55 no-op and
         never rewrites the original attribution.
         """
+        if (
+            upload.version_key is not None
+            or upload.effective_from is not None
+            or upload.effective_until is not None
+        ):
+            # D140: a one-shot upload's lineage is its bytes; a version key or
+            # a period only means something on a lineage that has versions
+            raise ValueError(
+                "version_key and effective periods require source_kind/source_ref"
+            )
         content_hash = hashlib.sha256(upload.content).hexdigest()
         self._guard_ingest(
             deployment_id=deployment_id,
@@ -291,7 +306,9 @@ class UploadIngestor:
         Identity is connector-native (source_kind, source_ref) — bytes
         cannot identify a lineage (they change; that is the premise). A
         changed file becomes a new VERSION of its lineage; identical bytes
-        are the content-hash no-op.
+        are the content-hash no-op. The upload's D140 ``version_key`` and
+        effective period, when given, are applied by the catalog in the same
+        transaction.
         """
         content_hash = hashlib.sha256(upload.content).hexdigest()
         self._guard_ingest(
@@ -326,6 +343,9 @@ class UploadIngestor:
             file_name=upload.filename,
             declared_title=upload.title,
             source_path=upload.source_path,
+            version_key=upload.version_key,
+            effective_from=upload.effective_from,
+            effective_until=upload.effective_until,
         )
         if metering is None:
             try:
@@ -1458,7 +1478,22 @@ class StructureHandler:
         never checker version or provider output. A checker bump over an
         unchanged route+tree derives the same id, while a route/tree or seat
         change appends a generation. Degraded markers still re-mint repairs.
+
+        Every section is stamped with its D140 content hashes here, the one
+        write path, and duplicate section keys are recorded as structure
+        warnings in the generation's sidecar.
         """
+        sections = with_content_hashes(sections=sections, blocks=blocks)
+        key_warnings = duplicate_section_key_warnings(sections=sections, blocks=blocks)
+        for warning in key_warnings:
+            logger.warning(
+                "duplicate section key %r in representation %s: heading %s"
+                " keeps no key, %s holds it",
+                warning["section_key"],
+                source.representation_id,
+                warning["node_path"],
+                warning["kept_node_path"],
+            )
         skeleton_version = _skeleton_version(settings=self._settings)
         generation_id = uuid5(
             NAMESPACE_URL,
@@ -1537,6 +1572,11 @@ class StructureHandler:
                 "stats_version": persisted.stats_version,
                 "stats": persisted.stats.model_dump(mode="json"),
                 "placement": persisted.placement_path,
+                "warnings": list(
+                    duplicate_section_key_warnings(
+                        sections=persisted.sections, blocks=blocks
+                    )
+                ),
                 "sections": [
                     {
                         **section.model_dump(mode="json"),
