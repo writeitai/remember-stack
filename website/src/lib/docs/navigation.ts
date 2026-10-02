@@ -118,6 +118,7 @@ export const docsNavigation: NavItem[] = [
       { title: "Result types", href: "/docs/reference/result-types" },
       { title: "Query space memory_v1", href: "/docs/reference/query-space" },
       { title: "Python SDK", href: "/docs/reference/python-sdk" },
+      { title: "TypeScript SDK", href: "/docs/reference/typescript-sdk" },
       { title: "CLI", href: "/docs/reference/cli" },
       { title: "MCP tools", href: "/docs/reference/mcp" },
       { title: "Configuration variables", href: "/docs/reference/configuration" },

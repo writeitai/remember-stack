@@ -6566,6 +6566,726 @@
       ]
     }
   ],
+  "errorMappings": [
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "network failed",
+        "requestId": "fixture-request",
+        "statusCode": 0
+      },
+      "result": {
+        "error": {
+          "agent_action": "Retry with back-off; check the deployment URL and network.",
+          "code": "transport_error",
+          "detail": "network failed",
+          "request_id": "fixture-request",
+          "retryable": true,
+          "status_code": 0
+        }
+      }
+    },
+    {
+      "class": "RateLimited",
+      "options": {
+        "code": "concurrency_limited",
+        "detail": "limited",
+        "requestId": null,
+        "retryAfter": 7,
+        "statusCode": 429
+      },
+      "result": {
+        "error": {
+          "agent_action": "Wait retry_after seconds (if given), then retry; do not retry sooner. Lower the request rate or run fewer calls at once.",
+          "code": "concurrency_limited",
+          "detail": "limited",
+          "retry_after": 7.0,
+          "retryable": true,
+          "status_code": 429
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "too large",
+        "requestId": "fixture-request",
+        "statusCode": 413
+      },
+      "result": {
+        "error": {
+          "agent_action": "Split or shorten the document; do not retry the same payload.",
+          "code": "body_too_large",
+          "detail": "too large",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 413
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "empty_body:fixture",
+        "requestId": "fixture-request",
+        "statusCode": 400
+      },
+      "result": {
+        "error": {
+          "agent_action": "Provide non-empty path / text / content_base64 content.",
+          "code": "empty_body",
+          "detail": "empty_body:fixture",
+          "reason_code": "fixture",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 400
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "spend_cap:fixture",
+        "requestId": "fixture-request",
+        "statusCode": 409
+      },
+      "result": {
+        "error": {
+          "agent_action": "Surface the spend/reservation refusal to the user/operator; do not busy-retry. Adjust budgets or wait for a new reservation.",
+          "code": "spend_safety",
+          "detail": "spend_cap:fixture",
+          "reason_code": "fixture",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 409
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "dispatch_refused:fixture",
+        "requestId": "fixture-request",
+        "statusCode": 409
+      },
+      "result": {
+        "error": {
+          "agent_action": "Surface the reason to the user/operator; do not busy-retry. Typical causes: spend cap, missing policy, halt.",
+          "code": "dispatch_refused",
+          "detail": "dispatch_refused:fixture",
+          "reason_code": "fixture",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 409
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "dispatch_parked:fixture",
+        "requestId": "fixture-request",
+        "statusCode": 409
+      },
+      "result": {
+        "error": {
+          "agent_action": "Stop automated retries and notify a human; park is policy, not a transient blip.",
+          "code": "dispatch_parked",
+          "detail": "dispatch_parked:fixture",
+          "reason_code": "fixture",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 409
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "",
+        "requestId": "fixture-request",
+        "statusCode": 401
+      },
+      "result": {
+        "error": {
+          "agent_action": "The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY.",
+          "code": "unauthorized",
+          "detail": "Unauthorized.",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 401
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "",
+        "requestId": "fixture-request",
+        "statusCode": 403
+      },
+      "result": {
+        "error": {
+          "agent_action": "The key may not do this here: use a key with the needed permission for this deployment.",
+          "code": "insufficient_permission",
+          "detail": "Forbidden.",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 403
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "failed",
+        "requestId": "fixture-request",
+        "statusCode": 500
+      },
+      "result": {
+        "error": {
+          "agent_action": "Retry with back-off (3\u20135 attempts, 2s\u219230s). If still failing, report an operator outage.",
+          "code": "engine_unavailable",
+          "detail": "failed",
+          "request_id": "fixture-request",
+          "retryable": true,
+          "status_code": 500
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": null,
+        "detail": "missing",
+        "requestId": "fixture-request",
+        "statusCode": 404
+      },
+      "result": {
+        "error": {
+          "agent_action": "Read the detail; fix the call. Do not retry it unchanged.",
+          "code": "engine_client_error",
+          "detail": "missing",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 404
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": "saved_query_revalidation_pending",
+        "detail": "revalidate",
+        "requestId": "fixture-request",
+        "statusCode": 409
+      },
+      "result": {
+        "error": {
+          "agent_action": "Retry with back-off (3\u20135 attempts, 2s\u219230s). If still failing, report an operator outage.",
+          "code": "saved_query_revalidation_pending",
+          "detail": "revalidate",
+          "request_id": "fixture-request",
+          "retryable": true,
+          "status_code": 409
+        }
+      }
+    },
+    {
+      "class": "MemoryApiError",
+      "options": {
+        "code": "invalid_parameter",
+        "detail": "query defect",
+        "requestId": "fixture-request",
+        "statusCode": 422
+      },
+      "result": {
+        "error": {
+          "agent_action": "Read the detail; fix the call. Do not retry it unchanged.",
+          "code": "invalid_parameter",
+          "detail": "query defect",
+          "request_id": "fixture-request",
+          "retryable": false,
+          "status_code": 422
+        }
+      }
+    }
+  ],
+  "failures": [
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {
+        "contract": "QueryResult/v1",
+        "rows": []
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 200,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": [
+        {
+          "kind": "view",
+          "name": "fixture",
+          "purpose": "fixture",
+          "score": 1,
+          "tags": []
+        },
+        {
+          "kind": "view"
+        }
+      ],
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "search_query_space",
+      "options": {
+        "query": "fixture"
+      },
+      "status": 200,
+      "typescriptMethod": "searchQuerySpace",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": [
+        {
+          "name": "partial"
+        }
+      ],
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "list_saved_queries",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "listSavedQueries",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "graph_path",
+      "options": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "to_entity_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "status": 200,
+      "typescriptMethod": "graphPath",
+      "typescriptOptions": {
+        "fromEntityId": "10000000-0000-0000-0000-000000000001",
+        "toEntityId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {
+        "ready": true
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "pipeline_readiness",
+      "options": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "status": 200,
+      "typescriptMethod": "pipelineReadiness",
+      "typescriptOptions": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "versionIds": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {
+        "created": false
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md"
+      },
+      "status": 200,
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "filename": "fixture.md"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "list_documents",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "listDocuments",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "search_documents",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {},
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "delete_document",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "status": 200,
+      "typescriptMethod": "deleteDocument",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "malformed-response"
+    },
+    {
+      "body": [
+        {}
+      ],
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "connectors",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "connectors",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": [],
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "describe_query_space",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "describeQuerySpace",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "pg_unavailable",
+          "message": "offline"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": "pg_unavailable",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 503
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 503,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "pg_unavailable",
+          "message": "offline",
+          "request_id": "fixture-request",
+          "retryable": true
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": "pg_unavailable",
+        "requestId": "fixture-request",
+        "retryable": true,
+        "statusCode": 503
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 503,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "pg_unavailable",
+          "message": "offline",
+          "retryable": "yes"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 503
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 503,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "pg_unavailable",
+          "message": "wrong-status"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 422,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "unknown",
+          "message": "unknown-code"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 422,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "invalid_parameter",
+          "message": ""
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 422
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 422,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": "not found"
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 404
+      },
+      "method": "query_sql",
+      "options": {
+        "sql": "SELECT 1"
+      },
+      "status": 404,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "sql": "SELECT 1"
+      },
+      "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "concurrency_limited",
+          "message": "limited"
+        }
+      },
+      "error": {
+        "class": "RateLimited",
+        "code": "concurrency_limited",
+        "requestId": null,
+        "retryAfter": 7.0,
+        "retryable": null,
+        "statusCode": 429
+      },
+      "headers": {
+        "retry-after": "7"
+      },
+      "method": "list_operations",
+      "options": {},
+      "status": 429,
+      "typescriptMethod": "listOperations",
+      "typescriptOptions": {},
+      "variant": "admission"
+    }
+  ],
   "lifecycleDispositions": {
     "AccountApi.__init__": "issuer/account loopback HTTP tests",
     "AccountApi.get": "issuer/account loopback HTTP tests",
@@ -6807,5 +7527,505 @@
       "documents": [],
       "people_matched": []
     }
-  }
+  },
+  "tools": [
+    {
+      "arguments": {
+        "filename": "fixture.md",
+        "text": "fixture"
+      },
+      "name": "ingest",
+      "result": {
+        "content": {
+          "base64": "Zml4dHVyZQ=="
+        },
+        "filename": "fixture.md",
+        "mime": "text/markdown",
+        "source_kind": null,
+        "source_modified_at": null,
+        "source_ref": null,
+        "source_version_ref": null,
+        "title": null,
+        "versioning_mode": "snapshot"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "filename": "fixture.md",
+        "text": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "ingest",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "name": "pipeline_readiness",
+      "result": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "require": {
+          "live_graph": true,
+          "p1": true,
+          "p3": false,
+          "pipeline": true
+        },
+        "unknown": true,
+        "version_ids": [
+          "10000000-0000-0000-0000-000000000001"
+        ]
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "pipeline_readiness",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "delete_document",
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "delete_document",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "authors": [
+          "alice"
+        ],
+        "language": "en"
+      },
+      "name": "search_documents",
+      "result": {
+        "request": {
+          "cursor": null,
+          "filters": {
+            "authors": [
+              "alice"
+            ],
+            "created_from": null,
+            "created_to": null,
+            "doc_ids": [],
+            "family": [],
+            "language": "en",
+            "modified_from": null,
+            "modified_to": null,
+            "recipients": [],
+            "thread_ref": null
+          },
+          "k": 20,
+          "query": null,
+          "versions": "current"
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "authors": [
+          "alice"
+        ],
+        "language": "en",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "search_documents",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "adjacent_chunks",
+      "result": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001",
+        "window": 1
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "chunk_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "adjacent_chunks",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "name": "fixture"
+      },
+      "name": "resolve_entity",
+      "result": {
+        "name": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "name": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "resolve_entity",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture"
+      },
+      "name": "claims_and_sources_context",
+      "result": {
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "claims_and_sources_context",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture"
+      },
+      "name": "facts_context",
+      "result": {
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "facts_context",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture"
+      },
+      "name": "combined_context",
+      "result": {
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "combined_context",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "sql": "SELECT 1"
+      },
+      "name": "query_sql",
+      "result": {
+        "parameters": [],
+        "sql": "SELECT 1"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "sql": "SELECT 1",
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "query_sql",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "sql": "SELECT 1"
+      },
+      "name": "explain_sql",
+      "result": {
+        "parameters": [],
+        "sql": "SELECT 1"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "sql": "SELECT 1",
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "explain_sql",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {},
+      "name": "describe_query_space",
+      "result": {
+        "include_examples": false,
+        "pattern": null
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "describe_query_space",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "query": "fixture"
+      },
+      "name": "search_query_space",
+      "result": {
+        "k": 10,
+        "query": "fixture"
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "query": "fixture",
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "search_query_space",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {},
+      "name": "list_saved_queries",
+      "result": {
+        "namespace": null,
+        "status": null
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "list_saved_queries",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "name": "describe_saved_query",
+      "result": {
+        "name": "safe",
+        "namespace": "examples",
+        "version": null
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "name": "safe",
+        "namespace": "examples",
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "describe_saved_query",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "name": "safe",
+        "namespace": "examples"
+      },
+      "name": "run_saved_query",
+      "result": {
+        "name": "safe",
+        "namespace": "examples",
+        "parameters": [],
+        "version": null
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "name": "safe",
+        "namespace": "examples",
+        "unknown": true
+      },
+      "error": {
+        "class": "InputValidationError",
+        "code": "invalid_parameter"
+      },
+      "name": "run_saved_query",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "filename": "fixture.md",
+        "path": "/host/file",
+        "text": "fixture"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "ingest",
+      "variant": "invalid-body"
+    },
+    {
+      "arguments": {
+        "filename": "fixture.md",
+        "source_kind": "agent",
+        "text": "fixture"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "source_lineage_pair",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "ingest",
+      "variant": "invalid-body"
+    },
+    {
+      "arguments": {
+        "content_base64": "AA",
+        "filename": "fixture.bin"
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "ingest",
+      "variant": "invalid-body"
+    },
+    {
+      "arguments": {
+        "filename": "fixture.md",
+        "text": ""
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "name": "ingest",
+      "variant": "invalid-body"
+    }
+  ]
 }

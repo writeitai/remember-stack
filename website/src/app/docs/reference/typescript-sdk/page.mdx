@@ -1,0 +1,268 @@
+export const metadata = {
+  title: "TypeScript SDK",
+  description: "The Remember Node.js client, its memory methods, connection settings, typed results and drift checks.",
+};
+
+# TypeScript SDK
+
+<AppliesTo products={["remember.dev", "self-hosted"]} />
+
+`@rememberdev/client` is the asynchronous Node.js memory client. It stores
+and searches documents, queries facts and sources, reads graphs, checks pipeline
+readiness, and manages deployment-side connector configuration. It supports
+Node.js 22 or newer, ESM and CommonJS. Use it in an application backend.
+
+## Build and install
+
+The package is available as source in the RememberStack repository. It has not
+been published to npm. Build a local tarball:
+
+```bash
+git clone https://github.com/writeitai/remember-stack.git
+cd remember-stack
+uv sync --extra dev
+cd packages/typescript-client
+npm ci
+npm run build
+npm pack
+```
+
+In your application, install the actual tarball that command produces:
+
+```bash
+npm install /absolute/path/rememberdev-client-0.1.0.tgz
+```
+
+TypeScript consumers need their usual Node types installed (`@types/node`).
+The tarball exports the client and its types from `@rememberdev/client`; it has
+no command-line executable or MCP server.
+
+## Connecting
+
+```ts
+import { Client } from '@rememberdev/client';
+
+const client = new Client({
+  apiKey: process.env.REMEMBER_API_KEY,
+  baseUrl: 'http://127.0.0.1:8000',
+  timeoutMs: 30_000,
+});
+try {
+  const info = await client.deploymentBuildInfo();
+  const receipt = await client.ingestFile({
+    filePath: '/sources/note.md',
+    sourceKind: 'feeder',
+    sourceRef: 'sources/note',
+  });
+  await client.waitForReadiness({ versionIds: [receipt.version_id] });
+  const result = await client.factsContext({ query: 'What changed?' });
+  console.log(info.build_revision, result.grain);
+} finally {
+  client.close();
+}
+```
+
+`Client`, `MemoryClient`, and the `RememberClient` alias share the memory methods.
+`Client.fromEnv(overrides)` uses the ordinary constructor's precedence;
+`Client.ingestFile` is a file-path convenience, and `client.account` exposes
+`get` and `whoami` for a signed key's issuer account API. Account access fails
+explicitly when that issuer does not advertise an account endpoint.
+
+Explicit `apiKey`, `baseUrl`, and `project` take precedence over
+REMEMBER_API_KEY, REMEMBER_API_URL and REMEMBER_PROJECT, then the existing
+version-2 credential file. `resolveConnection` additionally accepts `issuer`
+and `mcpUrl` with REMEMBER_ISSUER/REMEMBER_MCP_URL precedence. Empty environment
+values are unset. Bare keys and Bearer-prefixed keys are accepted.
+
+Signed-key claims are decoded for routing only; the server verifies signatures.
+The issuer supplies secure metadata and a covered project's engine URL. The
+first project id stays pinned while deployment mappings refresh after ten
+minutes or apparent movement. Without a signed key or configured URL, the
+self-hosted default is `http://127.0.0.1:8000`.
+
+The shared file is REMEMBER_CONFIG_DIR/credentials.json, otherwise
+XDG_CONFIG_HOME/remember/credentials.json, otherwise ~/.config/remember/credentials.json.
+Only required precedence fallthrough reads it. Explicit key and URL settings
+bypass a stale file. POSIX reads refuse symlinks, nonregular files and files
+readable by other users; Windows refuses automatic file reads. A file-loaded
+key is sent only to its recorded, issuer or resolved deployment origin.
+`SecretString`, `StoredCredentials` and `Connection` redact credential display;
+`getSecretValue()` and `connection.authorization` deliberately access a secret.
+
+## Method reference
+
+Every method takes one named options object and returns a Promise. Optional
+`signal` is an AbortSignal. Top-level names are camelCase; nested model fields
+and result fields retain the API's snake_case. The Python return names below
+identify the corresponding model contracts; TypeScript results are ordinary
+objects and arrays, with validated defaults.
+
+| Method | Corresponding result |
+| --- | --- |
+| `listOperations` | `tuple[ToolDescriptor, ...]` |
+| `runOperation` | `Envelope | ContextBundleV2` |
+| `querySql` | `dict[str, object]` |
+| `openQuery` | `QueryResultDict` |
+| `explainQuery` | `QueryResultDict` |
+| `factsContext` | `Envelope` |
+| `combinedContext` | `ContextBundleV2` |
+| `claimsAndSourcesContext` | `Envelope` |
+| `resolveEntity` | `Envelope` |
+| `explainSql` | `dict[str, object]` |
+| `describeQuerySpace` | `dict[str, object]` |
+| `searchQuerySpace` | `list[dict[str, object]]` |
+| `listSavedQueries` | `list[dict[str, object]]` |
+| `describeSavedQuery` | `dict[str, object]` |
+| `runSavedQuery` | `dict[str, object]` |
+| `callOpenQuery` | `object` |
+| `resolve` | `Envelope` |
+| `lookupRelations` | `Envelope` |
+| `transcriptRelation` | `Envelope` |
+| `lookupObservations` | `Envelope` |
+| `searchClaims` | `Envelope` |
+| `searchChunks` | `Envelope` |
+| `adjacentChunks` | `Envelope` |
+| `hydrateRelation` | `Envelope` |
+| `graphNeighborhood` | `Envelope` |
+| `graphPath` | `Envelope` |
+| `graphCitationPath` | `Envelope` |
+| `deploymentBuildInfo` | `DeploymentBuildInfo` |
+| `pipelineReadiness` | `PipelineReadinessReport` |
+| `waitForReadiness` | `PipelineReadinessReport` |
+| `ingest` | `IngestedVersion` |
+| `listDocuments` | `DocumentPage` |
+| `searchDocuments` | `DocumentSearchPage` |
+| `searchDocumentsRequest` | `DocumentSearchPage` |
+| `deleteDocument` | `DocumentDeletion` |
+| `connectors` | `tuple[ConnectorDescriptor, ...]` |
+| `addConnector` | `ConnectorDescriptor` |
+| `pauseConnector` | `ConnectorDescriptor` |
+| `connectorStatus` | `ConnectorDescriptor` |
+
+`close()` cancels this client's operations and closes SDK-owned resources.
+Synchronous and asynchronous disposal are supported. An injected caller-owned
+transport is never closed by the SDK.
+
+Public model names include `CapabilityReadiness`, `ClaimValidPrecision`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `DocumentDeletion`, `DocumentPage`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentSummary`, `DocumentVersionSummary`, `Envelope`, `IngestedVersion`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ReadinessRequirements`, `TemporalMatch`, `ToolDescriptor`, `VersionPipelineReadiness`.
+Their `Input` variants describe schema-owned inputs.
+
+### Ingest and readiness
+
+`ingest` accepts `content: Uint8Array`, or `source` as bytes or a file path.
+Bytes require `filename`. File MIME is inferred from the real path before a
+filename override; explicit `mime` wins. Lineage `sourceKind`/`sourceRef` must
+be supplied together. `sourceModifiedAt`, `sourceVersionRef` and living mode
+require that pair; `sourcePath` records upstream location metadata.
+
+Readiness polling starts immediately, including after `created: false` receipts.
+Defaults are `timeoutMs: 1_800_000`, `pollIntervalMs: 15_000`, and `requireP3: false`.
+A `failed` stage has a retry pending; polling continues. A `dead_letter` stage
+stops with PipelineDeadLettered and the full report. The readiness deadline
+covers routing, HTTP and polling waits, retaining the last validated report.
+
+### Results and validation
+
+Response types such as `Envelope`, `ContextBundleV2`, `IngestedVersion`,
+`DocumentSearchPage` and `PipelineReadinessReport` have all defaulted properties
+filled. Schema-owned input types use the `Input` suffix, such as
+`DocumentSearchFiltersInput` and `ConnectorCreateInput`. `QueryResultDict` is
+an ordinary object with `.rows`, `.columns` and `.truncated` properties.
+`JsonValue` describes JSON values recursively.
+
+Nested timestamps are ISO strings; top-level timestamp options accept strings
+or Date. Explicit nulls are distinct from omitted values where the schema says
+so. Inputs are not coerced from strings or booleans into numbers. Unsafe JSON
+integers fail with numeric precision errors before a rounded value is returned.
+For larger SQL integers, use string parameters and an explicit SQL cast.
+
+Filtered `searchClaims`/`searchChunks` use POST; unfiltered calls use GET as the
+Python client does. `searchDocumentsRequest` omits fields equal to model defaults.
+Connector methods configure remote deployment adapters; they do not execute
+npm connector libraries on the client machine.
+
+## Transport and errors
+
+Ordinary requests default to `timeoutMs: 30_000`. Caller cancellation raises
+AbortError with the signal reason; an HTTP deadline raises RequestTimeoutError;
+readiness expiry raises TimeoutError with its last report. These are distinct.
+
+Writes are never automatically replayed. A classified read can replay once
+only after issuer resolution changes its deployment URL. Network failure/421
+on a write can refresh the mapping for a later operation, while the original
+error is surfaced. Timeouts and caller cancellation do not refresh or replay.
+
+The default adapter uses Node HTTP/HTTPS with per-client agents, no automatic
+redirects/retries and one transmission per invocation. Engine redirects are
+refused. Issuer/account redirects allow at most three hops on the same origin
+and preserve their method. Discovered URLs require HTTPS except loopback HTTP.
+Account paths reject absolute URLs and traversal, including encoded traversal.
+
+A caller-owned `client: HttpClient` cannot be combined with apiKey/baseUrl/project/fetch
+settings. A `fetch` injection supplies a custom transport while retaining SDK
+routing. Every adapter must transmit once per invocation, honor AbortSignal,
+and preserve manual redirects. Ordinary Node global fetch repeats reusable
+requests after HTTP 421 and is unsuitable as an injection. Node TLS defaults
+apply; httpx HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE behavior is not
+reproduced. Use a conforming adapter for custom proxy or CA configuration.
+
+MemoryApiError contains statusCode/detail/code, response when available, and
+optional retryable/requestId diagnostics. RateLimited also has retryAfter in
+seconds. Hints are carried for callers; the client does not interpret them as
+permission to retry writes. ProjectResolutionError, StoredKeyRefused,
+AccountApiUnavailable, IssuerError, NumericPrecisionError and RequestTimeoutError
+extend MemoryApiError. InputValidationError and CredentialError are TypeErrors.
+PipelineDeadLettered, TimeoutError, ConnectorNotFoundError and AbortError are
+outside MemoryApiError.
+
+The optional `/connectors` routes are not part of the standard exported engine
+profile. They require a deployment composing connector ports; otherwise the
+client propagates that deployment's refusal.
+
+## Tool support and separate executable packages
+
+The base package exports `ToolDefinition`, `Permission`, `memoryTools`, `tool`,
+`renderToolsList`, every catalogue name constant, and `PROJECT_ARGUMENT`.
+Definitions carry routes, versions, permissions, schemas and annotations.
+`OPEN_QUERY_TOOL_NAMES`, `OPERATION_TOOL_NAMES` and `MEMORY_WRITE_TOOL_NAMES`
+identify the source-defined groups. Individual constants include
+INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME, DELETE_DOCUMENT_TOOL_NAME,
+SEARCH_DOCUMENTS_TOOL_NAME and ADJACENT_CHUNKS_TOOL_NAME.
+
+`validateArguments` checks every memory tool and returns parsed arguments.
+`validateSavedQueryIdentifier` checks saved-query names. `ToolError`,
+`ToolArgumentError`, `invalidArguments`, `mapError` and `errorResult` supply a
+common structured failure shape. `ToolError.asDict()` renders its envelope.
+ToolDefinition exposes `mutates` and `annotations`. No MCP host settings are loaded. Text/base64
+bodies are resolved locally; a path is refused unless a caller supplies a
+`PathBodyResolver`. That separate host owns root containment, symlink checks,
+regular-file checks, size limits and MIME policy.
+
+Credential/routing helpers include `configDir`, `credentialsPath`,
+`loadCredentials`, `environmentIssuer`, `normalizeKey`, `resolveProject` and
+`clearHostCache`. Issuer helpers include `KeyClaims`, `IssuerMetadata`,
+`isLoopback`, `requireSecureUrl`, `origin`, `sameOrigin`, `normalizeIssuer`,
+`metadataUrl`, `sendSameOrigin`, `fetchIssuerMetadata` and `clearMetadataCache`.
+`NormalizedOrigin` describes canonical origin comparison. `version` is this npm
+package version; `pythonCompatibility` identifies its Python source/baseline.
+`signedKeyClaims` decodes routing claims without verification. KeyClaims supplies
+`covers`/`expiresAt`; IssuerMetadata supplies checked `endpoint` lookup.
+
+CLI/MCP hosts and connector adapter packages have separate design, execution,
+security and release contracts. This client exports their reusable client-side
+contracts, not backend protocols or a server implementation.
+
+## Drift checks
+
+`npm run check:generated` re-exports the engine API offline and compares
+committed schemas, source inventories and pinned type generation without
+changing git. `npm run check:parity` executes current Python methods and
+compares source-recorded requests, defaults, results, malformed responses,
+every catalogue validator and structured error mappings. `npm test` executes
+those shared fixtures plus actual HTTP failure/cancellation scenarios.
+
+`npm run check:package` installs the tarball in independent ESM/CommonJS
+consumers and typechecks imports. CI runs Linux/Windows and supported Node
+versions, plus released/candidate live-engine profiles. A new Python method,
+schema field or semantic validator requires reviewed client/fixture updates.
+Provider repositories check their issuer schemas against the public provider
+contract; private cloud DTOs are not copied into the client.

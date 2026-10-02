@@ -22,6 +22,14 @@ from pydantic import BaseModel
 
 from remember import models
 from remember.client import Client
+from remember.errors import MemoryApiError
+from remember.errors import RateLimited
+from remember.mcp_tools import map_error
+from remember.mcp_tools import McpMemorySettings
+from remember.mcp_tools import memory_tools
+from remember.mcp_tools import ToolArgumentError
+from remember.mcp_tools import validate_arguments
+from remember.query_sandbox.errors import SandboxRejection
 from remember.query_sandbox.result import QueryResult
 from remember.query_sandbox.result import ResultLimits
 
@@ -429,6 +437,12 @@ def python_options(*, options: dict[str, Any], file_path: Path) -> dict[str, Any
 
 def json_result(*, value: Any) -> Any:
     """Render Python model, tuple and dictionary responses into canonical JSON."""
+    if isinstance(value, bytes):
+        return {"base64": base64.b64encode(value).decode()}
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
     if isinstance(value, BaseModel):
         result = value.model_dump(mode="json")
         # Python model attributes exist even for serialization-excluded fields.
@@ -513,12 +527,255 @@ def record() -> dict[str, Any]:
     }
 
 
+def failure_fixtures() -> list[dict[str, Any]]:
+    """Record malformed bodies and exact public error/code/status diagnostics."""
+    cases: list[dict[str, Any]] = []
+    malformed = [
+        ("list_operations", {}, {}),
+        ("query_sql", {"sql": "SELECT 1"}, {"contract": "QueryResult/v1", "rows": []}),
+        (
+            "search_query_space",
+            {"query": "fixture"},
+            [
+                {
+                    "kind": "view",
+                    "name": "fixture",
+                    "score": 1,
+                    "purpose": "fixture",
+                    "tags": [],
+                },
+                {"kind": "view"},
+            ],
+        ),
+        ("list_saved_queries", {}, [{"name": "partial"}]),
+        ("graph_path", {"from_entity_id": ID, "to_entity_id": OTHER_ID}, {}),
+        (
+            "pipeline_readiness",
+            {"version_ids": [ID], "require": REQUIRE},
+            {"ready": True},
+        ),
+        (
+            "ingest",
+            {"content": {"base64": "bm90ZQ=="}, "filename": "fixture.md"},
+            {"created": False},
+        ),
+        ("list_documents", {}, {}),
+        ("search_documents", {}, {}),
+        ("delete_document", {"doc_id": ID}, {}),
+        ("connectors", {}, [{}]),
+        ("describe_query_space", {}, []),
+    ]
+    for method, options, body in malformed:
+        cases.append(
+            {
+                "method": method,
+                "options": options,
+                "status": 200,
+                "body": body,
+                "variant": "malformed-response",
+            }
+        )
+    for status, detail in [
+        (503, {"code": "pg_unavailable", "message": "offline"}),
+        (
+            503,
+            {
+                "code": "pg_unavailable",
+                "message": "offline",
+                "retryable": True,
+                "request_id": "fixture-request",
+            },
+        ),
+        (503, {"code": "pg_unavailable", "message": "offline", "retryable": "yes"}),
+        (422, {"code": "pg_unavailable", "message": "wrong-status"}),
+        (422, {"code": "unknown", "message": "unknown-code"}),
+        (422, {"code": "invalid_parameter", "message": ""}),
+        (404, "not found"),
+    ]:
+        cases.append(
+            {
+                "method": "query_sql",
+                "options": {"sql": "SELECT 1"},
+                "status": status,
+                "body": {"detail": detail},
+                "variant": "error-envelope",
+            }
+        )
+    cases.append(
+        {
+            "method": "list_operations",
+            "options": {},
+            "status": 429,
+            "body": {"detail": {"code": "concurrency_limited", "message": "limited"}},
+            "headers": {"retry-after": "7"},
+            "variant": "admission",
+        }
+    )
+    with tempfile.TemporaryDirectory(prefix="remember-ts-bad-response-") as directory:
+        for case in cases:
+
+            def answer(
+                request: httpx.Request, *, case: dict[str, Any] = case
+            ) -> httpx.Response:
+                """Return the selected synthetic malformed response, never perform network I/O."""
+                return httpx.Response(
+                    case["status"], json=case["body"], headers=case.get("headers", {})
+                )
+
+            with Client(
+                client=httpx.Client(
+                    transport=httpx.MockTransport(answer),
+                    base_url="http://fixture.test",
+                )
+            ) as client:
+                try:
+                    getattr(client, case["method"])(
+                        **python_options(
+                            options=case["options"],
+                            file_path=Path(directory) / "fixture.md",
+                        )
+                    )
+                except MemoryApiError as error:
+                    case["error"] = {
+                        "class": type(error).__name__,
+                        "statusCode": error.status_code,
+                        "code": error.code,
+                        "retryable": error.retryable,
+                        "requestId": error.request_id,
+                    }
+                    if isinstance(error, RateLimited):
+                        case["error"]["retryAfter"] = error.retry_after
+                else:
+                    raise AssertionError(
+                        f"malformed fixture unexpectedly succeeded: {case}"
+                    )
+            case["typescriptMethod"] = camel(value=case["method"])
+            case["typescriptOptions"] = {
+                camel(value=key): value for key, value in case["options"].items()
+            }
+    return cases
+
+
+def tool_fixtures() -> list[dict[str, Any]]:
+    """Run every catalogue validator on shared positive and negative arguments."""
+    valid = {
+        "ingest": {"text": "fixture", "filename": "fixture.md"},
+        "pipeline_readiness": {"version_ids": [ID], "require": REQUIRE},
+        "delete_document": {"doc_id": ID},
+        "search_documents": {"language": "en", "authors": ["alice"]},
+        "adjacent_chunks": {"chunk_id": ID},
+        "resolve_entity": {"name": "fixture"},
+        "claims_and_sources_context": {"query": "fixture"},
+        "facts_context": {"query": "fixture"},
+        "combined_context": {"query": "fixture"},
+        "query_sql": {"sql": "SELECT 1"},
+        "explain_sql": {"sql": "SELECT 1"},
+        "describe_query_space": {},
+        "search_query_space": {"query": "fixture"},
+        "list_saved_queries": {},
+        "describe_saved_query": {"namespace": "examples", "name": "safe"},
+        "run_saved_query": {"namespace": "examples", "name": "safe"},
+    }
+    assert set(valid) == {definition.name for definition in memory_tools()}
+    cases = []
+    for name, arguments in valid.items():
+        cases.extend(
+            [
+                {"name": name, "arguments": arguments, "variant": "valid"},
+                {
+                    "name": name,
+                    "arguments": {**arguments, "unknown": True},
+                    "variant": "unknown-key",
+                },
+            ]
+        )
+    cases.extend(
+        [
+            {"name": "ingest", "arguments": arguments, "variant": "invalid-body"}
+            for arguments in [
+                {"path": "/host/file", "text": "fixture", "filename": "fixture.md"},
+                {"text": "fixture", "filename": "fixture.md", "source_kind": "agent"},
+                {"content_base64": "AA", "filename": "fixture.bin"},
+                {"text": "", "filename": "fixture.md"},
+            ]
+        ]
+    )
+    for case in cases:
+        try:
+            result = validate_arguments(
+                case["name"], case["arguments"], settings=McpMemorySettings()
+            )
+        except ToolArgumentError as error:
+            case["error"] = {
+                "class": "ToolArgumentError",
+                "code": error.error.code,
+                "statusCode": error.error.status_code,
+                "retryable": error.error.retryable,
+            }
+        except SandboxRejection as error:
+            case["error"] = {"class": "InputValidationError", "code": error.code.value}
+        else:
+            case["result"] = json_result(value=result)
+    return cases
+
+
+def error_mapping_fixtures() -> list[dict[str, Any]]:
+    """Pin all public HTTP/tool mapping branches to executed Python source."""
+    cases = []
+    for status, detail, code in [
+        (0, "network failed", None),
+        (429, "limited", "concurrency_limited"),
+        (413, "too large", None),
+        (400, "empty_body:fixture", None),
+        (409, "spend_cap:fixture", None),
+        (409, "dispatch_refused:fixture", None),
+        (409, "dispatch_parked:fixture", None),
+        (401, "", None),
+        (403, "", None),
+        (500, "failed", None),
+        (404, "missing", None),
+        (409, "revalidate", "saved_query_revalidation_pending"),
+        (422, "query defect", "invalid_parameter"),
+    ]:
+        options = {
+            "statusCode": status,
+            "detail": detail,
+            "code": code,
+            "requestId": "fixture-request",
+        }
+        error = (
+            MemoryApiError(
+                status_code=status,
+                detail=detail,
+                code=code,
+                request_id="fixture-request",
+            )
+            if status != 429
+            else RateLimited(detail=detail, code=code, retry_after=7)
+        )
+        if status == 429:
+            options["retryAfter"] = 7
+            options["requestId"] = None
+        cases.append(
+            {
+                "options": options,
+                "class": type(error).__name__,
+                "result": map_error(error).as_dict(),
+            }
+        )
+    return cases
+
+
 def main() -> int:
     """Write or check source-executed fixtures; generation never runs in check mode."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     arguments = parser.parse_args()
-    content = json.dumps(record(), indent=2, sort_keys=True) + "\n"
+    result = record()
+    result["failures"] = failure_fixtures()
+    result["tools"] = tool_fixtures()
+    result["errorMappings"] = error_mapping_fixtures()
+    content = json.dumps(result, indent=2, sort_keys=True) + "\n"
     if arguments.check:
         if not TARGET.exists() or TARGET.read_text() != content:
             raise SystemExit(

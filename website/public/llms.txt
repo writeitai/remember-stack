@@ -72,6 +72,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Result types](https://remember.dev/docs/reference/result-types): Every response model of the RememberStack HTTP API, field by field, with every enum value.
 - [Query space memory_v1](https://remember.dev/docs/reference/query-space): Every view, column, function, grammar rule, limit and shipped saved query of the memory_v1 query space that SQL queries run over.
 - [Python SDK](https://remember.dev/docs/reference/python-sdk): Every public class, method, setting and error in the remember Python package.
+- [TypeScript SDK](https://remember.dev/docs/reference/typescript-sdk): The Remember Node.js client, its memory methods, connection settings, typed results and drift checks.
 - [CLI](https://remember.dev/docs/reference/cli): Every remember command, flag, default, environment variable and exit code.
 - [MCP tools](https://remember.dev/docs/reference/mcp): The MCP servers that give an agent access to memory: every tool with its parameters, results and errors.
 - [Configuration variables](https://remember.dev/docs/reference/configuration): Every environment variable read by the RememberStack engine and by the remember client and CLI, with its default, type and purpose.

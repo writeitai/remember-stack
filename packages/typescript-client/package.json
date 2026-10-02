@@ -41,7 +41,9 @@
     "typecheck": "tsc --noEmit",
     "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
     "test": "npm run build && npm run build:tests && node --test tests/*.test.mjs",
-    "build:tests": "tsup tests/internal.ts --format esm --out-dir .test-build --clean"
+    "build:tests": "tsup tests/internal.ts --format esm --out-dir .test-build --clean",
+    "check:parity": "uv run --project ../.. python ../../scripts/export_typescript_parity.py --check",
+    "check:package": "npm run build && node scripts/check-package.mjs"
   },
   "dependencies": {
     "ajv": "8.20.0",

@@ -30,14 +30,19 @@ export function fetchHttp({ fetch: implementation = globalThis.fetch }: { fetch?
       try { return await implementation(target, { method, headers, body, signal, redirect: 'manual' }); }
       catch (error) {
         if (signal?.aborted) throw signal.reason;
-        const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code
-          ?? (error as { code?: string })?.code;
-        if (['ETIMEDOUT','ESOCKETTIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(code ?? '')
-          || (error instanceof Error && error.name === 'TimeoutError')) throw new RequestTimeoutError();
-        throw new MemoryApiError({ statusCode: 0, detail: 'network request failed' });
+        throw transportError({ error });
       }
     },
   };
+}
+
+/** Normalize network failures from native fetch and caller-owned adapters consistently. */
+export function transportError({ error }: { error: unknown }): MemoryApiError | AbortError {
+  if(error instanceof MemoryApiError || error instanceof AbortError)return error;
+  const code=(error as {cause?:{code?:string};code?:string})?.cause?.code ?? (error as {code?:string})?.code;
+  if(['ETIMEDOUT','ESOCKETTIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(code??'')
+    ||(error instanceof Error && error.name==='TimeoutError'))return new RequestTimeoutError();
+  return new MemoryApiError({statusCode:0,detail:'network request failed'});
 }
 
 /** Bound routing, network and body reads; a caller abort keeps its own identity. */

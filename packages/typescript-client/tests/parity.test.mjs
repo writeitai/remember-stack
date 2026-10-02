@@ -32,6 +32,19 @@ test('the matrix covers every reviewed method and new methods fail coverage',()=
     assert(covered.has(name)||fixture.lifecycleDispositions[`${className}.${name}`],`${className}.${name} lacks an executable conformance disposition`);
   }
   const camel=value=>value.replace(/_([a-z])/g,(_,letter)=>letter.toUpperCase());
-  const prototype=Object.getOwnPropertyNames(MemoryClient.prototype).filter(name=>!['constructor','json','search'].includes(name)&&typeof Object.getOwnPropertyDescriptor(MemoryClient.prototype,name).value==='function');
+  const prototype=Object.getOwnPropertyNames(MemoryClient.prototype).filter(name=>!['constructor','json','search','assertOpen'].includes(name)&&typeof Object.getOwnPropertyDescriptor(MemoryClient.prototype,name).value==='function');
   assert.deepEqual(prototype.sort(),Object.keys(inventory.classes.MemoryClient).filter(name=>name!=='__init__').map(camel).sort());
+});
+
+for(const scenario of fixture.failures)test(`${scenario.typescriptMethod}: shared ${scenario.variant} refusal ${JSON.stringify(scenario.body).slice(0,50)}`,async()=>{
+  let calls=0;
+  const client=new Client({client:{request:async()=>{calls++;return Response.json(scenario.body,{status:scenario.status,headers:scenario.headers});}}});
+  const options={...scenario.typescriptOptions};if(options.content?.base64)options.content=Buffer.from(options.content.base64,'base64');
+  try{
+    await assert.rejects(client[scenario.typescriptMethod](options),error=>{
+      assert.equal(error.name,scenario.error.class);assert.equal(error.statusCode,scenario.error.statusCode);
+      for(const key of ['code','retryable','requestId','retryAfter'])assert.equal(error[key]??null,scenario.error[key]??null);
+      return true;
+    });assert.equal(calls,1);
+  }finally{client.close();}
 });

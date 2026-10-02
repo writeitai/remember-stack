@@ -23,6 +23,7 @@ host uses this one shape.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 import json
 from typing import Final
 
@@ -145,13 +146,17 @@ def map_error(error: BaseException) -> ToolError:
     if isinstance(status_code, int) and detail is not None:
         explicit = getattr(error, "code", None)
         retry_after = getattr(error, "retry_after", None)
-        return _map_http_error(
+        mapped = _map_http_error(
             status_code=status_code,
             detail=str(detail),
             explicit_code=explicit if isinstance(explicit, str) and explicit else None,
             retry_after=float(retry_after)
             if isinstance(retry_after, int | float)
             else None,
+        )
+        request_id = getattr(error, "request_id", None)
+        return replace(
+            mapped, request_id=request_id if isinstance(request_id, str) else None
         )
     if isinstance(error, SandboxRejection):
         code = error.code.value

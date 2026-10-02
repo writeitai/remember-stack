@@ -136,6 +136,11 @@ async function main() {
     const publicTypesPath=join(root,'src/public-types.generated.ts');
     if(check) {if(await readFile(publicTypesPath,'utf8')!==publicTypes) throw new Error('Public model export drift');}
     else await writeFile(publicTypesPath,publicTypes);
+    const packageMetadata=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
+    const versionContent='/* Generated package version; regenerate with npm run generate. */\nexport const version = '+JSON.stringify(packageMetadata.version)+';\n';
+    const versionPath=join(root,'src/version.generated.ts');
+    if(check) {if(await readFile(versionPath,'utf8')!==versionContent)throw new Error('Package version export drift');}
+    else await writeFile(versionPath,versionContent);
     const contracts=['schemas','constants','catalogue','metadata','routes','parity'];
     for (const name of contracts) {
       const content='/* Generated from Python; regenerate with npm run generate. */\nexport default '+(await readFile(join(root,`contracts/${name}.json`),'utf8')).trim()+';\n';
