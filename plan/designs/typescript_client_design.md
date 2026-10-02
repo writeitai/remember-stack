@@ -43,9 +43,11 @@ fail when an entry lacks an implemented mapping or documented adaptation.
 An injected `client` is a caller-owned HttpClient request adapter: it supplies
 its own base URL/headers, skips SDK connection/routing, and cannot be combined
 with apiKey/baseUrl/project/transport/agents settings. A `transport` injection
-implements the same request interface with absolute URLs and SDK-provided
-headers, retaining SDK connection/routing. It replaces Python's lower-level
-transport option; neither mode uses a Fetch-standard implementation. Optional
+implements a distinct HttpTransport interface requiring absolute URLs and SDK-provided
+headers, retaining SDK connection/routing. HttpClient requests require relative paths;
+HttpTransport requests require absolute URLs so accidental injection mix-ups fail type checking. It replaces Python's lower-level
+transport option; callers must provide a conforming single-send implementation in both modes,
+not a Fetch-standard implementation. Optional
 `agents: {http?, https?}` accepts caller-owned Node HTTP/HTTPS agents and reuses
 the SDK's single-transmission adapter for proxy/custom-CA configuration; it is
 mutually exclusive with client/transport injection. Missing agents are created
@@ -81,18 +83,20 @@ per-client engine agents: one transmission per invocation, no automatic
 redirects/retries, and full-response buffering under the operation deadline.
 Buffering is time-bounded, not subject to an invented byte cap; Python also
 buffers responses without such a cap. Default SDK agents never use environment
-proxies, including NODE_USE_ENV_PROXY. For proxies supply caller-owned agents
-(e.g. an operator-configured proxy agent) or a conforming request transport.
+proxies, including NODE_USE_ENV_PROXY. Node 22.0 lacks the proxyEnv agent option;
+explicit injection makes proxy selection deterministic across supported versions. For proxies supply caller-owned agents
+(e.g. an http.Agent subclass configured by the operator) or a conforming request transport.
 Node TLS defaults apply, including NODE_EXTRA_CA_CERTS; --use-system-ca applies
 only on Node versions supporting that flag. A caller-owned HTTPS agent can
 supply explicit ca material. HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE
 are not read by the SDK. Close destroys only SDK-owned engine agents, cancels
-this client's waiters/requests as AbortError, refuses subsequent calls and never
+this client's waiters/requests as AbortError, refuses subsequent calls with AbortError and never
 recreates agents. Caller-owned agents/transports remain open.
 
-SDK-owned agents retire idle sockets after at most four seconds as an initial
-policy, below the engine's five-second keep-alive. Active transfers remain
-controlled by operation deadlines, not an idle-pool expiry. After a 421, retire
+SDK-owned agents retire idle sockets after at most four seconds, a starting value to
+measure, below the engine's five-second keep-alive. Active transfers remain
+controlled by operation deadlines, not an idle-pool expiry. The 421 status means a router or load balancer says this connection cannot serve
+the requested host. After a 421, retire
 that socket before returning the buffered response so a later request cannot
 reuse a connection which refused the destination. HTTPS follows the same
 single-transmission and retirement rules. Shared discovery uses separate
@@ -199,7 +203,7 @@ remain eligible. Timeout and caller abort never trigger retry or re-resolution.
 The Fetch standard automatically repeats reusable requests after 421; manual
 redirects cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
 not global fetch. The SDK invokes an adapter at most once per write, and its default/supplied-agent
-adapter transmits exactly once. Injected request transports must transmit once
+adapter transmits exactly once. Both injected client and transport modes must transmit once
 per invocation, honor cancellation and return redirects without following them;
 the SDK cannot detect violations inside a caller-owned transport. The retired
 fetch option is removed rather than retained as a nonconforming fallback. One
@@ -287,7 +291,9 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
    Include local HTTP server tests of the default adapter and conforming injections;
    count received requests to detect automatic transport replays, not just mocked calls.
    Cover HTTP and HTTPS on the minimum Node version, 421 socket retirement, idle
-   retirement, caller-agent ownership and close during a shared discovery lookup.
+   retirement with a request already queued on the same agent, verified by server
+   connection identity rather than reusedSocket; idle retirement and an active response
+   lasting longer than four seconds; caller-agent ownership and close during a shared discovery lookup.
 5. **Issuer/provider compatibility.** Publish public JSON Schemas for the
    consumed issuer metadata fields, ResolvedProject and object-shaped whoami.
    `account.get` returns unknown JSON and whoami returns a JSON object, matching
@@ -321,7 +327,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 
 | Python behavior | TypeScript behavior and reason | Required test |
 | --- | --- | --- |
-| Synchronous methods/context manager | Promises; close/async disposal | Cleanup and consumer calls |
+| Synchronous methods/context manager; close leaves an injected client usable | Promises; close/async disposal. A closed SDK facade refuses later calls with AbortError even with injected client; borrowed resources remain open | Cleanup, borrowed ownership and calls after close |
 | UUID/datetime/tuple wrappers | UUID/ISO strings and arrays; rows/columns/truncated remain properties | Typed result/default fixtures |
 | Pydantic lax coercion | JSON Schema types, no numeric-string/bool coercion; fill defaults | Invalid types and complete outputs |
 | Arbitrary-size integers | Refuse unsafe integer values before JSON.parse rounding or sending; NumericPrecisionError. Query parameters above MAX_SAFE_INTEGER require an explicit SQL string/cast | 2^53 boundary responses/parameters |
@@ -335,7 +341,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
 | Windows file mode rejects stored credentials | Same refusal; explicit settings work | Windows fixture |
 | HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | SDK-owned agents never use environment proxies, including NODE_USE_ENV_PROXY; Node TLS defaults/NODE_EXTRA_CA_CERTS apply; supplied agents or a conforming request transport handle custom proxy/CA | Agent ownership, HTTPS/custom-CA and documented settings |
-| httpx per-phase idle timeout | timeoutMs is a total operation deadline including routing/upload/body reads; raise it for large/slow uploads | Slow continuous-response deadline and distinct readiness timeout |
+| httpx per-phase idle timeout; constructor timeout ignored with injected client | timeoutMs bounds every operation including injected calls, routing/upload/body reads; raise it for large/slow uploads | Injected deadline, slow continuous-response deadline and distinct readiness timeout |
 
 Use process-wide issuer/project caches keyed by issuer, SHA-256 key fingerprint
 and project; a client pins project identity separately. Completed successful results may be reused across transports. In-flight issuer
