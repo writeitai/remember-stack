@@ -1,0 +1,164 @@
+/* Generated from Python; regenerate with npm run generate. */
+export default {
+  "mime": {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".htm": "text/html",
+    ".html": "text/html",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".markdown": "text/markdown",
+    ".md": "text/markdown",
+    ".pdf": "application/pdf",
+    ".png": "image/png",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  },
+  "queryErrorStatus": {
+    "cancelled": 500,
+    "concurrency_exceeded": 409,
+    "confirmation_failed": 500,
+    "corpus_body_unavailable": 503,
+    "execution_error": 500,
+    "function_not_allowed": 422,
+    "function_placement_not_allowed": 422,
+    "generation_unavailable": 503,
+    "graph_unavailable": 503,
+    "invalid_parameter": 422,
+    "lock_timeout": 500,
+    "multiple_statements": 422,
+    "operator_not_allowed": 422,
+    "p1_unavailable": 503,
+    "parse_error": 422,
+    "pg_unavailable": 503,
+    "quota_exceeded": 409,
+    "relation_not_allowed": 422,
+    "resource_limit": 500,
+    "saved_query_disabled": 409,
+    "saved_query_incompatible": 409,
+    "saved_query_not_found": 404,
+    "saved_query_revalidation_pending": 409,
+    "schema_version_mismatch": 409,
+    "statement_not_allowed": 422,
+    "statement_timeout": 500,
+    "unbounded_recursion": 422
+  },
+  "readRoutes": [
+    {
+      "method": "GET",
+      "pattern": "^/healthz$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/resolve$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/lookup/relations$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/lookup/observations$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/transcript/relation/[^/]+$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/hydrate/relation/[^/]+$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/search/claims$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/search/chunks$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/chunks/[^/]+/adjacent$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/search/claims$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/search/chunks$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/chunks/adjacent$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/graph/neighborhood$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/graph/path$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/graph/citation-path$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/query/sql$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/query/sql/explain$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/query/space$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/query/space/search$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/query/saved$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/query/saved/[^/]+/[^/]+$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/query/saved/[^/]+/[^/]+/run$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/readiness$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/operations$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/connectors$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/connectors/[^/]+$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/documents$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/documents/search$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/deployment$"
+    }
+  ]
+};

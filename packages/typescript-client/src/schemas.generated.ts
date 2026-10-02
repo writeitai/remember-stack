@@ -1,0 +1,4612 @@
+/* Generated from Python; regenerate with npm run generate. */
+export default {
+  "$defs": {
+    "AdjacentChunksRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "window": {
+          "default": 1,
+          "maximum": 2,
+          "minimum": 1,
+          "title": "Window",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "chunk_id"
+      ],
+      "title": "AdjacentChunksRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "AggregateBucket": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "entity_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entity Id"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Key"
+        }
+      },
+      "required": [
+        "key",
+        "count"
+      ],
+      "title": "AggregateBucket",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "AggregateReport": {
+      "additionalProperties": false,
+      "properties": {
+        "bounded_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounded By"
+        },
+        "buckets": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AggregateBucket"
+          },
+          "title": "Buckets",
+          "type": "array"
+        },
+        "form": {
+          "title": "Form",
+          "type": "string"
+        },
+        "total": {
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "form",
+        "total"
+      ],
+      "title": "AggregateReport",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "AsOfTemporalScope": {
+      "additionalProperties": false,
+      "properties": {
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string",
+          "x-utc": true
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string",
+          "x-utc": true
+        },
+        "identity_regime": {
+          "$ref": "#/$defs/IdentityRegime",
+          "default": "current"
+        },
+        "mode": {
+          "const": "as_of",
+          "default": "as_of",
+          "title": "Mode",
+          "type": "string"
+        },
+        "valid_at": {
+          "format": "date-time",
+          "title": "Valid At",
+          "type": "string",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "valid_at",
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "AsOfTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "AtTemporalScope": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string",
+          "x-utc": true
+        },
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string",
+          "x-utc": true
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string",
+          "x-utc": true
+        },
+        "identity_regime": {
+          "$ref": "#/$defs/IdentityRegime",
+          "default": "current"
+        },
+        "mode": {
+          "const": "at",
+          "default": "at",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "AtTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "CapabilityReadiness": {
+      "additionalProperties": false,
+      "properties": {
+        "built_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Built At"
+        },
+        "checked_at": {
+          "format": "date-time",
+          "title": "Checked At",
+          "type": "string"
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Published At"
+        },
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "required",
+        "ready",
+        "checked_at",
+        "reason"
+      ],
+      "title": "CapabilityReadiness",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ChangeRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string",
+          "x-utc": true
+        },
+        "change": {
+          "title": "Change",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        }
+      },
+      "required": [
+        "kind",
+        "change",
+        "id",
+        "label",
+        "at"
+      ],
+      "title": "ChangeRecord",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ChunkEvidenceResult": {
+      "additionalProperties": false,
+      "properties": {
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "chunk_text": {
+          "title": "Chunk Text",
+          "type": "string"
+        },
+        "context_prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context Prefix"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Title"
+        },
+        "published_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Published At",
+          "x-utc": true
+        },
+        "representation_id": {
+          "format": "uuid",
+          "title": "Representation Id",
+          "type": "string"
+        },
+        "section_role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Section Role"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_modified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Modified At",
+          "x-utc": true
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "doc_id",
+        "version_id",
+        "representation_id",
+        "chunk_text",
+        "char_start",
+        "char_end",
+        "section_role",
+        "source_kind"
+      ],
+      "title": "ChunkEvidenceResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ClaimValidPrecision": {
+      "description": "How narrow an author's stated validity window was (D48).",
+      "enum": [
+        "unknown",
+        "instant",
+        "day",
+        "month",
+        "quarter",
+        "year",
+        "open"
+      ],
+      "title": "ClaimValidPrecision",
+      "type": "string"
+    },
+    "CoMember": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_count": {
+          "title": "Evidence Count",
+          "type": "integer"
+        },
+        "fact_id": {
+          "format": "uuid",
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "validity": {
+          "$ref": "#/$defs/Validity"
+        }
+      },
+      "required": [
+        "fact_id",
+        "label",
+        "evidence_count",
+        "validity"
+      ],
+      "title": "CoMember",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ConnectorCreate": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "default": {},
+          "title": "Configuration",
+          "type": "object"
+        },
+        "credential_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential Ref"
+        },
+        "kind": {
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "title": "ConnectorCreate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ConnectorDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "default": {},
+          "title": "Configuration",
+          "type": "object"
+        },
+        "connector_id": {
+          "format": "uuid",
+          "title": "Connector Id",
+          "type": "string"
+        },
+        "credential_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Credential Ref"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "paused",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "connector_id",
+        "kind",
+        "name",
+        "status"
+      ],
+      "title": "ConnectorDescriptor",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ContextBundleV2": {
+      "additionalProperties": false,
+      "properties": {
+        "claims_and_sources": {
+          "$ref": "#/$defs/Envelope"
+        },
+        "contract": {
+          "const": "ContextBundle/v2",
+          "default": "ContextBundle/v2",
+          "title": "Contract",
+          "type": "string"
+        },
+        "facts": {
+          "$ref": "#/$defs/Envelope"
+        }
+      },
+      "required": [
+        "claims_and_sources",
+        "facts"
+      ],
+      "title": "ContextBundleV2",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Contradiction": {
+      "additionalProperties": false,
+      "properties": {
+        "co_members": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CoMember"
+          },
+          "title": "Co Members",
+          "type": "array"
+        },
+        "continuation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Continuation"
+        },
+        "group_id": {
+          "format": "uuid",
+          "title": "Group Id",
+          "type": "string"
+        },
+        "returned": {
+          "minimum": 0,
+          "title": "Returned",
+          "type": "integer"
+        },
+        "total": {
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "group_id",
+        "returned",
+        "total"
+      ],
+      "title": "Contradiction",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "CurrentTemporalScope": {
+      "additionalProperties": false,
+      "properties": {
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string",
+          "x-utc": true
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string",
+          "x-utc": true
+        },
+        "identity_regime": {
+          "$ref": "#/$defs/IdentityRegime",
+          "default": "current"
+        },
+        "mode": {
+          "const": "current",
+          "default": "current",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "CurrentTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DeploymentBuildInfo": {
+      "additionalProperties": false,
+      "properties": {
+        "build_revision": {
+          "default": "",
+          "title": "Build Revision",
+          "type": "string"
+        },
+        "document_binding_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Binding Generation"
+        },
+        "model_bindings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Model Bindings",
+          "type": "object"
+        },
+        "tools": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "default": {},
+          "title": "Tools",
+          "type": "object"
+        }
+      },
+      "title": "DeploymentBuildInfo",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DeviceAuthorization": {
+      "description": "The device authorization response (RFC 8628 \u00a73.2).",
+      "properties": {
+        "device_code": {
+          "format": "password",
+          "title": "Device Code",
+          "type": "string",
+          "writeOnly": true
+        },
+        "expires_in": {
+          "exclusiveMinimum": 0,
+          "title": "Expires In",
+          "type": "integer"
+        },
+        "interval": {
+          "default": 5,
+          "minimum": 1,
+          "title": "Interval",
+          "type": "integer"
+        },
+        "user_code": {
+          "title": "User Code",
+          "type": "string"
+        },
+        "verification_uri": {
+          "title": "Verification Uri",
+          "type": "string"
+        },
+        "verification_uri_complete": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Verification Uri Complete"
+        }
+      },
+      "required": [
+        "device_code",
+        "user_code",
+        "verification_uri",
+        "expires_in"
+      ],
+      "title": "DeviceAuthorization",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "DiscoveryHit": {
+      "additionalProperties": false,
+      "description": "Exact wire contract for one query-space search result.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "view",
+            "function",
+            "core_operation",
+            "example"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "score",
+        "purpose",
+        "tags"
+      ],
+      "title": "_DiscoveryHit",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentDeletion": {
+      "additionalProperties": false,
+      "description": "What deleting one document changed in the live memory.\n\nThe counts describe this call. A call that finishes a deletion another\npath started reports only the work it finished.",
+      "properties": {
+        "claims_retired": {
+          "minimum": 0,
+          "title": "Claims Retired",
+          "type": "integer"
+        },
+        "deleted_at": {
+          "format": "date-time",
+          "title": "Deleted At",
+          "type": "string"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "observations_closed": {
+          "minimum": 0,
+          "title": "Observations Closed",
+          "type": "integer"
+        },
+        "relations_closed": {
+          "minimum": 0,
+          "title": "Relations Closed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "doc_id",
+        "deleted_at",
+        "claims_retired",
+        "relations_closed",
+        "observations_closed"
+      ],
+      "title": "DocumentDeletion",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentPage": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSummary"
+          },
+          "title": "Documents",
+          "type": "array"
+        }
+      },
+      "required": [
+        "documents"
+      ],
+      "title": "DocumentPage",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentPeopleMatch": {
+      "additionalProperties": false,
+      "description": "One distinct person an authors/recipients filter matched.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "documents": {
+          "minimum": 0,
+          "title": "Documents",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "enum": [
+            "author",
+            "recipient"
+          ],
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "documents"
+      ],
+      "title": "DocumentPeopleMatch",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSearchFilters": {
+      "additionalProperties": false,
+      "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
+      "properties": {
+        "authors": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "created_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created From"
+        },
+        "created_to": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created To"
+        },
+        "doc_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Doc Ids",
+          "type": "array"
+        },
+        "family": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Family",
+          "type": "array"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "modified_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified From"
+        },
+        "modified_to": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified To"
+        },
+        "recipients": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Recipients",
+          "type": "array"
+        },
+        "thread_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread Ref"
+        }
+      },
+      "title": "DocumentSearchFilters",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSearchPage": {
+      "additionalProperties": false,
+      "description": "A page of ``search_documents`` results.",
+      "properties": {
+        "as_of": {
+          "format": "date-time",
+          "title": "As Of",
+          "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "documents": {
+          "items": {
+            "$ref": "#/$defs/DocumentSearchResult"
+          },
+          "title": "Documents",
+          "type": "array"
+        },
+        "people_matched": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DocumentPeopleMatch"
+          },
+          "title": "People Matched",
+          "type": "array"
+        }
+      },
+      "required": [
+        "documents",
+        "as_of"
+      ],
+      "title": "DocumentSearchPage",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSearchPerson": {
+      "additionalProperties": false,
+      "description": "One author or recipient as the document declares them.",
+      "properties": {
+        "address": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Address"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "DocumentSearchPerson",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSearchRequest": {
+      "additionalProperties": false,
+      "description": "One ``search_documents`` call.\n\nWith a ``query`` the results are ranked by name and content matches and\nthere is no cursor. Without one they are every document the filters\nmatch, newest declared creation date first, paged by ``cursor``.",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "filters": {
+          "$ref": "#/$defs/DocumentSearchFilters",
+          "default": {
+            "authors": [],
+            "created_from": null,
+            "created_to": null,
+            "doc_ids": [],
+            "family": [],
+            "language": null,
+            "modified_from": null,
+            "modified_to": null,
+            "recipients": [],
+            "thread_ref": null
+          }
+        },
+        "k": {
+          "default": 20,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "maxLength": 4096,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Query"
+        },
+        "versions": {
+          "default": "current",
+          "enum": [
+            "current",
+            "all"
+          ],
+          "title": "Versions",
+          "type": "string"
+        }
+      },
+      "title": "DocumentSearchRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSearchResult": {
+      "additionalProperties": false,
+      "description": "One matching document, described by the version it was judged by.",
+      "properties": {
+        "authors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DocumentSearchPerson"
+          },
+          "title": "Authors",
+          "type": "array"
+        },
+        "created_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Created At"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "extra": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "default": {},
+          "title": "Extra",
+          "type": "object"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string"
+        },
+        "file_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Name"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "lineage_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lineage Title"
+        },
+        "matched_by": {
+          "default": [],
+          "items": {
+            "enum": [
+              "name",
+              "content"
+            ],
+            "type": "string"
+          },
+          "title": "Matched By",
+          "type": "array"
+        },
+        "modified_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Modified At"
+        },
+        "other_matching_version_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Other Matching Version Ids",
+          "type": "array"
+        },
+        "overview": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Overview"
+        },
+        "p3_path": {
+          "title": "P3 Path",
+          "type": "string"
+        },
+        "recipients": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DocumentSearchPerson"
+          },
+          "title": "Recipients",
+          "type": "array"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Score"
+        },
+        "source_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Path"
+        },
+        "status": {
+          "enum": [
+            "ingesting",
+            "converting",
+            "structuring",
+            "ready",
+            "failed",
+            "deleted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "thread_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Thread Ref"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "version_no": {
+          "title": "Version No",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "doc_id",
+        "version_id",
+        "version_no",
+        "status",
+        "p3_path",
+        "family"
+      ],
+      "title": "DocumentSearchResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "first_seen_at": {
+          "format": "date-time",
+          "title": "First Seen At",
+          "type": "string"
+        },
+        "latest": {
+          "$ref": "#/$defs/DocumentVersionSummary"
+        },
+        "serving": {
+          "title": "Serving",
+          "type": "boolean"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Uri"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "doc_id",
+        "source_kind",
+        "first_seen_at",
+        "latest",
+        "serving"
+      ],
+      "title": "DocumentSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentVersionSummary": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "ingested_at": {
+          "format": "date-time",
+          "title": "Ingested At",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "ingesting",
+            "converting",
+            "structuring",
+            "ready",
+            "failed",
+            "deleted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "version_no": {
+          "title": "Version No",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version_id",
+        "version_no",
+        "status",
+        "ingested_at"
+      ],
+      "title": "DocumentVersionSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EntityCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "canonical_name": {
+          "title": "Canonical Name",
+          "type": "string"
+        },
+        "context_hits": {
+          "default": 0,
+          "title": "Context Hits",
+          "type": "integer"
+        },
+        "entity_id": {
+          "format": "uuid",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "tier": {
+          "title": "Tier",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "canonical_name",
+        "tier"
+      ],
+      "title": "EntityCandidate",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Envelope": {
+      "additionalProperties": false,
+      "properties": {
+        "aggregate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AggregateReport"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "changes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ChangeRecord"
+          },
+          "title": "Changes",
+          "type": "array"
+        },
+        "chunks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ChunkEvidenceResult"
+          },
+          "title": "Chunks",
+          "type": "array"
+        },
+        "dropped_by_hydration": {
+          "default": 0,
+          "title": "Dropped By Hydration",
+          "type": "integer"
+        },
+        "edges": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "title": "Edges",
+          "type": "array"
+        },
+        "entities": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EntityCandidate"
+          },
+          "title": "Entities",
+          "type": "array"
+        },
+        "evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceResult"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "evidence_totals": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceTotal"
+          },
+          "title": "Evidence Totals",
+          "type": "array"
+        },
+        "excluded_unstamped": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Excluded Unstamped",
+          "type": "integer"
+        },
+        "fact_evidence": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FactEvidence"
+          },
+          "title": "Fact Evidence",
+          "type": "array"
+        },
+        "facts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/FactResult"
+          },
+          "title": "Facts",
+          "type": "array"
+        },
+        "freshness": {
+          "$ref": "#/$defs/Freshness"
+        },
+        "grain": {
+          "$ref": "#/$defs/Grain"
+        },
+        "negative": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Negative"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "nodes": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "title": "Nodes",
+          "type": "array"
+        },
+        "pages": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PageRef"
+          },
+          "title": "Pages",
+          "type": "array"
+        },
+        "paths": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphPath"
+          },
+          "title": "Paths",
+          "type": "array"
+        },
+        "ranking": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RankedItem"
+          },
+          "title": "Ranking",
+          "type": "array"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceRecord"
+          },
+          "title": "Sources",
+          "type": "array"
+        },
+        "temporal_scope": {
+          "discriminator": {
+            "mapping": {
+              "as_of": "#/$defs/AsOfTemporalScope",
+              "at": "#/$defs/AtTemporalScope",
+              "current": "#/$defs/CurrentTemporalScope",
+              "history": "#/$defs/HistoryTemporalScope",
+              "overlap": "#/$defs/OverlapTemporalScope"
+            },
+            "propertyName": "mode"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CurrentTemporalScope"
+            },
+            {
+              "$ref": "#/$defs/AtTemporalScope"
+            },
+            {
+              "$ref": "#/$defs/OverlapTemporalScope"
+            },
+            {
+              "$ref": "#/$defs/HistoryTemporalScope"
+            },
+            {
+              "$ref": "#/$defs/AsOfTemporalScope"
+            }
+          ],
+          "title": "Temporal Scope"
+        },
+        "transcript": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TranscriptEntry"
+          },
+          "title": "Transcript",
+          "type": "array"
+        },
+        "truncation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Truncation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "grain",
+        "temporal_scope",
+        "freshness"
+      ],
+      "title": "Envelope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EvidenceResult": {
+      "additionalProperties": false,
+      "properties": {
+        "asserted_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asserted At",
+          "x-utc": true
+        },
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "claim_id": {
+          "format": "uuid",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "claim_text": {
+          "title": "Claim Text",
+          "type": "string"
+        },
+        "claim_valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Valid From",
+          "x-utc": true
+        },
+        "claim_valid_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Valid Kind"
+        },
+        "claim_valid_precision": {
+          "default": "unknown",
+          "title": "Claim Valid Precision",
+          "type": "string"
+        },
+        "claim_valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Claim Valid Until",
+          "x-utc": true
+        },
+        "corroboration_count": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Corroboration Count"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "document_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Title"
+        },
+        "evidence_spans": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceSpan"
+          },
+          "title": "Evidence Spans",
+          "type": "array"
+        },
+        "grouped_claim_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Grouped Claim Ids",
+          "type": "array"
+        },
+        "is_attributed": {
+          "title": "Is Attributed",
+          "type": "boolean"
+        },
+        "is_current_testimony": {
+          "title": "Is Current Testimony",
+          "type": "boolean"
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Kind"
+        },
+        "source_span": {
+          "title": "Source Span",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "doc_id",
+        "chunk_id",
+        "claim_text",
+        "source_span",
+        "char_start",
+        "char_end",
+        "is_attributed",
+        "is_current_testimony"
+      ],
+      "title": "EvidenceResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EvidenceSpan": {
+      "additionalProperties": false,
+      "description": "One half-open supporting range on the selected occurrence (D119).",
+      "properties": {
+        "char_end": {
+          "minimum": 0,
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "minimum": 0,
+          "title": "Char Start",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "char_start",
+        "char_end"
+      ],
+      "title": "EvidenceSpan",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EvidenceTotal": {
+      "additionalProperties": false,
+      "properties": {
+        "fact_id": {
+          "format": "uuid",
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "fact_kind": {
+          "enum": [
+            "relation",
+            "observation"
+          ],
+          "title": "Fact Kind",
+          "type": "string"
+        },
+        "returned": {
+          "minimum": 0,
+          "title": "Returned",
+          "type": "integer"
+        },
+        "stance": {
+          "enum": [
+            "supports",
+            "contradicts"
+          ],
+          "title": "Stance",
+          "type": "string"
+        },
+        "total": {
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "fact_kind",
+        "fact_id",
+        "stance",
+        "returned",
+        "total"
+      ],
+      "title": "EvidenceTotal",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "FactEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "claim_id": {
+          "format": "uuid",
+          "title": "Claim Id",
+          "type": "string"
+        },
+        "fact_id": {
+          "format": "uuid",
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "fact_kind": {
+          "enum": [
+            "relation",
+            "observation"
+          ],
+          "title": "Fact Kind",
+          "type": "string"
+        },
+        "stance": {
+          "enum": [
+            "supports",
+            "contradicts"
+          ],
+          "title": "Stance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fact_kind",
+        "fact_id",
+        "claim_id",
+        "stance"
+      ],
+      "title": "FactEvidence",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "FactResult": {
+      "additionalProperties": false,
+      "properties": {
+        "contradiction": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Contradiction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "contradiction_group": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contradiction Group"
+        },
+        "evidence_count": {
+          "title": "Evidence Count",
+          "type": "integer"
+        },
+        "fact_id": {
+          "format": "uuid",
+          "title": "Fact Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "support": {
+          "$ref": "#/$defs/FactSupport",
+          "default": "current"
+        },
+        "temporal_match": {
+          "$ref": "#/$defs/TemporalMatch",
+          "default": "possible"
+        },
+        "validity": {
+          "$ref": "#/$defs/Validity"
+        }
+      },
+      "required": [
+        "fact_id",
+        "kind",
+        "label",
+        "evidence_count",
+        "validity"
+      ],
+      "title": "FactResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "FactSupport": {
+      "enum": [
+        "current",
+        "withdrawn"
+      ],
+      "title": "FactSupport",
+      "type": "string"
+    },
+    "Freshness": {
+      "additionalProperties": false,
+      "properties": {
+        "k": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KFreshness"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "p1_believed_at_horizon": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P1 Believed At Horizon",
+          "x-utc": true
+        },
+        "p1_written_inline": {
+          "default": true,
+          "title": "P1 Written Inline",
+          "type": "boolean"
+        },
+        "pg_live_ts": {
+          "format": "date-time",
+          "title": "Pg Live Ts",
+          "type": "string",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "pg_live_ts"
+      ],
+      "title": "Freshness",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Grain": {
+      "enum": [
+        "fact",
+        "evidence",
+        "compiled",
+        "composite"
+      ],
+      "title": "Grain",
+      "type": "string"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_count": {
+          "title": "Evidence Count",
+          "type": "integer"
+        },
+        "fact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fact"
+        },
+        "ingested_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ingested At",
+          "x-utc": true
+        },
+        "invalidated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Invalidated At",
+          "x-utc": true
+        },
+        "object_id": {
+          "format": "uuid",
+          "title": "Object Id",
+          "type": "string"
+        },
+        "predicate": {
+          "title": "Predicate",
+          "type": "string"
+        },
+        "relation_id": {
+          "format": "uuid",
+          "title": "Relation Id",
+          "type": "string"
+        },
+        "subject_id": {
+          "format": "uuid",
+          "title": "Subject Id",
+          "type": "string"
+        },
+        "support": {
+          "$ref": "#/$defs/FactSupport",
+          "default": "current"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid From",
+          "x-utc": true
+        },
+        "valid_precision": {
+          "$ref": "#/$defs/ClaimValidPrecision",
+          "default": "unknown"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Until",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "relation_id",
+        "subject_id",
+        "object_id",
+        "predicate",
+        "fact",
+        "evidence_count",
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at"
+      ],
+      "title": "GraphEdge",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "GraphInvocation": {
+      "additionalProperties": false,
+      "description": "One graph helper's terminal work and truncation disclosure.",
+      "properties": {
+        "applied_believed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applied Believed At"
+        },
+        "applied_valid_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Applied Valid At"
+        },
+        "effective_depth": {
+          "minimum": 1,
+          "title": "Effective Depth",
+          "type": "integer"
+        },
+        "effective_expansion_budget": {
+          "minimum": 1,
+          "title": "Effective Expansion Budget",
+          "type": "integer"
+        },
+        "effective_frontier_budget": {
+          "minimum": 1,
+          "title": "Effective Frontier Budget",
+          "type": "integer"
+        },
+        "effective_result_budget": {
+          "minimum": 1,
+          "title": "Effective Result Budget",
+          "type": "integer"
+        },
+        "effective_time_budget_ms": {
+          "minimum": 1,
+          "title": "Effective Time Budget Ms",
+          "type": "integer"
+        },
+        "evaluated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluated At"
+        },
+        "examined_edges": {
+          "minimum": 0,
+          "title": "Examined Edges",
+          "type": "integer"
+        },
+        "function": {
+          "enum": [
+            "graph_neighborhood",
+            "graph_path",
+            "graph_citation_path"
+          ],
+          "title": "Function",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "returned_paths": {
+          "minimum": 0,
+          "title": "Returned Paths",
+          "type": "integer"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "truncation_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "depth_budget",
+                "expansion_budget",
+                "frontier_budget",
+                "result_budget",
+                "time_budget"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Truncation Reason"
+        }
+      },
+      "required": [
+        "ordinal",
+        "function",
+        "truncated",
+        "examined_edges",
+        "returned_paths",
+        "effective_depth",
+        "effective_expansion_budget",
+        "effective_frontier_budget",
+        "effective_result_budget",
+        "effective_time_budget_ms"
+      ],
+      "title": "GraphInvocation",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "GraphNode": {
+      "additionalProperties": false,
+      "properties": {
+        "entity_id": {
+          "format": "uuid",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "hops": {
+          "minimum": 0,
+          "title": "Hops",
+          "type": "integer"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "name",
+        "hops"
+      ],
+      "title": "GraphNode",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "GraphPath": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "minItems": 1,
+          "title": "Edges",
+          "type": "array"
+        },
+        "length": {
+          "minimum": 1,
+          "title": "Length",
+          "type": "integer"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "minItems": 2,
+          "title": "Nodes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "length",
+        "nodes",
+        "edges"
+      ],
+      "title": "GraphPath",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "HistoryTemporalScope": {
+      "additionalProperties": false,
+      "properties": {
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string",
+          "x-utc": true
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string",
+          "x-utc": true
+        },
+        "identity_regime": {
+          "$ref": "#/$defs/IdentityRegime",
+          "default": "current"
+        },
+        "mode": {
+          "const": "history",
+          "default": "history",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "HistoryTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "IdentityRegime": {
+      "enum": [
+        "current",
+        "as_of"
+      ],
+      "title": "IdentityRegime",
+      "type": "string"
+    },
+    "IngestedVersion": {
+      "additionalProperties": false,
+      "properties": {
+        "content_hash": {
+          "title": "Content Hash",
+          "type": "string"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "deployment_id": {
+          "format": "uuid",
+          "title": "Deployment Id",
+          "type": "string"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "mime": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mime"
+        },
+        "parked": {
+          "anyOf": [
+            {
+              "const": "no_route",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parked"
+        },
+        "processing_admission": {
+          "default": "not_required",
+          "enum": [
+            "not_required",
+            "pending"
+          ],
+          "title": "Processing Admission",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "versioning_mode": {
+          "anyOf": [
+            {
+              "enum": [
+                "snapshot",
+                "living"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Versioning Mode"
+        }
+      },
+      "required": [
+        "deployment_id",
+        "doc_id",
+        "version_id",
+        "content_hash",
+        "created"
+      ],
+      "title": "IngestedVersion",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "IssuedKey": {
+      "description": "The key a successful device grant returns, with what the client stores.",
+      "properties": {
+        "default_project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Default Project"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires At"
+        },
+        "key": {
+          "format": "password",
+          "title": "Key",
+          "type": "string",
+          "writeOnly": true
+        },
+        "key_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Key Id"
+        }
+      },
+      "required": [
+        "key",
+        "key_id",
+        "expires_at",
+        "default_project"
+      ],
+      "title": "IssuedKey",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "IssuerMetadata": {
+      "description": "The fields of the issuer's authorization-server metadata the client uses.",
+      "properties": {
+        "device_authorization_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Device Authorization Endpoint"
+        },
+        "issuer": {
+          "title": "Issuer",
+          "type": "string"
+        },
+        "jwks_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jwks Uri"
+        },
+        "remember_account_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Account Endpoint"
+        },
+        "remember_mcp_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Mcp Endpoint"
+        },
+        "remember_project_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Remember Project Endpoint"
+        },
+        "revocation_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revocation Endpoint"
+        },
+        "token_endpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Token Endpoint"
+        }
+      },
+      "required": [
+        "issuer"
+      ],
+      "title": "IssuerMetadata",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "object"
+        },
+        {
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "type": "array"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "KFreshness": {
+      "additionalProperties": false,
+      "properties": {
+        "compiled_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Compiled At",
+          "x-utc": true
+        },
+        "open_flags": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Open Flags",
+          "type": "integer"
+        },
+        "stale": {
+          "default": false,
+          "title": "Stale",
+          "type": "boolean"
+        }
+      },
+      "title": "KFreshness",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "KeyClaims": {
+      "description": "The claims of a signed key, read **without verifying the signature**.\n\nOnly for routing and display: the engine perimeter verifies every key.",
+      "properties": {
+        "exp": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exp"
+        },
+        "iss": {
+          "minLength": 1,
+          "title": "Iss",
+          "type": "string"
+        },
+        "jti": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Jti"
+        },
+        "org": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Org"
+        },
+        "permissions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Permissions",
+          "type": "array"
+        },
+        "projects": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "const": "org:*",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Projects"
+        },
+        "sub": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sub"
+        }
+      },
+      "required": [
+        "iss"
+      ],
+      "title": "KeyClaims",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "Negative": {
+      "additionalProperties": false,
+      "properties": {
+        "explanation": {
+          "minLength": 1,
+          "title": "Explanation",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NegativeKind"
+        },
+        "workaround": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Workaround"
+        }
+      },
+      "required": [
+        "kind",
+        "explanation"
+      ],
+      "title": "Negative",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "NegativeKind": {
+      "enum": [
+        "unknown_entity",
+        "known_empty",
+        "boundary"
+      ],
+      "title": "NegativeKind",
+      "type": "string"
+    },
+    "OverlapTemporalScope": {
+      "additionalProperties": false,
+      "properties": {
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string",
+          "x-utc": true
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string",
+          "x-utc": true
+        },
+        "from": {
+          "format": "date-time",
+          "title": "From",
+          "type": "string",
+          "x-utc": true
+        },
+        "identity_regime": {
+          "$ref": "#/$defs/IdentityRegime",
+          "default": "current"
+        },
+        "mode": {
+          "const": "overlap",
+          "default": "overlap",
+          "title": "Mode",
+          "type": "string"
+        },
+        "to": {
+          "format": "date-time",
+          "title": "To",
+          "type": "string",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "OverlapTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "PageRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "git_path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Git Path"
+        },
+        "last_compiled_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Last Compiled At",
+          "x-utc": true
+        },
+        "open_review_flags": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Open Review Flags",
+          "type": "integer"
+        },
+        "page_kind": {
+          "title": "Page Kind",
+          "type": "string"
+        },
+        "page_summary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Page Summary"
+        },
+        "redaction_required": {
+          "default": false,
+          "title": "Redaction Required",
+          "type": "boolean"
+        },
+        "stale": {
+          "default": false,
+          "title": "Stale",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "page_kind",
+        "git_path",
+        "page_summary",
+        "last_compiled_at",
+        "status"
+      ],
+      "title": "PageRef",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "PendingRevocation": {
+      "additionalProperties": false,
+      "description": "One replaced key whose revocation the issuer has not yet confirmed.",
+      "properties": {
+        "issuer": {
+          "title": "Issuer",
+          "type": "string"
+        },
+        "key": {
+          "format": "password",
+          "title": "Key",
+          "type": "string",
+          "writeOnly": true
+        },
+        "key_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Id"
+        }
+      },
+      "required": [
+        "issuer",
+        "key"
+      ],
+      "title": "PendingRevocation",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "PendingRevocations": {
+      "additionalProperties": false,
+      "description": "Every key still awaiting revocation, oldest first.",
+      "properties": {
+        "entries": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PendingRevocation"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "version": {
+          "const": 2,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "PendingRevocations",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "PipelineReadinessReport": {
+      "additionalProperties": false,
+      "properties": {
+        "build_revision": {
+          "default": "",
+          "title": "Build Revision",
+          "type": "string"
+        },
+        "capabilities": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CapabilityReadiness"
+          },
+          "propertyNames": {
+            "enum": [
+              "pipeline",
+              "p1",
+              "live_graph",
+              "p3"
+            ]
+          },
+          "title": "Capabilities",
+          "type": "object"
+        },
+        "document_binding_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Binding Generation"
+        },
+        "model_bindings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "title": "Model Bindings",
+          "type": "object"
+        },
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "versions": {
+          "items": {
+            "$ref": "#/$defs/VersionPipelineReadiness"
+          },
+          "title": "Versions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "ready",
+        "versions",
+        "capabilities"
+      ],
+      "title": "PipelineReadinessReport",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "PipelineStageReadiness": {
+      "additionalProperties": false,
+      "properties": {
+        "component_version": {
+          "title": "Component Version",
+          "type": "string"
+        },
+        "defer_reason": {
+          "anyOf": [
+            {
+              "enum": [
+                "scheduled",
+                "retry_backoff",
+                "budget",
+                "no_route"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Defer Reason"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "missing",
+            "pending",
+            "running",
+            "succeeded",
+            "failed",
+            "dead_letter",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "stage",
+        "component_version",
+        "status"
+      ],
+      "title": "PipelineStageReadiness",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "QueryErrorCode": {
+      "description": "Every public failure code, exactly as bound in design \u00a74.1.",
+      "enum": [
+        "parse_error",
+        "multiple_statements",
+        "statement_not_allowed",
+        "relation_not_allowed",
+        "function_not_allowed",
+        "function_placement_not_allowed",
+        "operator_not_allowed",
+        "invalid_parameter",
+        "schema_version_mismatch",
+        "unbounded_recursion",
+        "quota_exceeded",
+        "concurrency_exceeded",
+        "saved_query_not_found",
+        "saved_query_disabled",
+        "saved_query_incompatible",
+        "saved_query_revalidation_pending",
+        "statement_timeout",
+        "lock_timeout",
+        "cancelled",
+        "resource_limit",
+        "execution_error",
+        "pg_unavailable",
+        "p1_unavailable",
+        "graph_unavailable",
+        "corpus_body_unavailable",
+        "generation_unavailable",
+        "confirmation_failed"
+      ],
+      "title": "QueryErrorCode",
+      "type": "string"
+    },
+    "QueryResult": {
+      "additionalProperties": false,
+      "description": "One complete `QueryResult/v1` response.",
+      "properties": {
+        "columns": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ResultColumn"
+          },
+          "title": "Columns",
+          "type": "array"
+        },
+        "contract": {
+          "const": "QueryResult/v1",
+          "default": "QueryResult/v1",
+          "title": "Contract",
+          "type": "string"
+        },
+        "deployment_id": {
+          "format": "uuid",
+          "title": "Deployment Id",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "minimum": 0,
+          "title": "Elapsed Ms",
+          "type": "number"
+        },
+        "empty_result": {
+          "default": false,
+          "title": "Empty Result",
+          "type": "boolean"
+        },
+        "error_code": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryErrorCode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "error_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Message"
+        },
+        "evaluated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evaluated At"
+        },
+        "exact_total": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Exact Total"
+        },
+        "exact_total_known": {
+          "default": false,
+          "title": "Exact Total Known",
+          "type": "boolean"
+        },
+        "execution_started_at": {
+          "format": "date-time",
+          "title": "Execution Started At",
+          "type": "string"
+        },
+        "grade": {
+          "const": "exploratory_tabular",
+          "default": "exploratory_tabular",
+          "title": "Grade",
+          "type": "string"
+        },
+        "graph_invocations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/GraphInvocation"
+          },
+          "title": "Graph Invocations",
+          "type": "array"
+        },
+        "limits": {
+          "$ref": "#/$defs/ResultLimits"
+        },
+        "negative_kind": {
+          "default": null,
+          "title": "Negative Kind",
+          "type": "null"
+        },
+        "ordered_result": {
+          "default": false,
+          "title": "Ordered Result",
+          "type": "boolean"
+        },
+        "pg_snapshot_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pg Snapshot At"
+        },
+        "query_hash": {
+          "title": "Query Hash",
+          "type": "string"
+        },
+        "query_language": {
+          "const": "sql",
+          "default": "sql",
+          "title": "Query Language",
+          "type": "string"
+        },
+        "query_space_schema": {
+          "const": "memory_v1",
+          "default": "memory_v1",
+          "title": "Query Space Schema",
+          "type": "string"
+        },
+        "referenced_functions": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Referenced Functions",
+          "type": "array"
+        },
+        "referenced_views": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Referenced Views",
+          "type": "array"
+        },
+        "request_id": {
+          "format": "uuid",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "returned_byte_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Returned Byte Count",
+          "type": "integer"
+        },
+        "returned_row_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Returned Row Count",
+          "type": "integer"
+        },
+        "rows": {
+          "default": [],
+          "items": {
+            "items": {},
+            "type": "array"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "saved_query": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saved Query"
+        },
+        "semantic_invocations": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SemanticInvocation"
+          },
+          "title": "Semantic Invocations",
+          "type": "array"
+        },
+        "source_grain_tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Grain Tags",
+          "type": "array"
+        },
+        "surface_manifest_hash": {
+          "title": "Surface Manifest Hash",
+          "type": "string"
+        },
+        "termination_reason": {
+          "default": "completed",
+          "enum": [
+            "completed",
+            "rejected",
+            "failed"
+          ],
+          "title": "Termination Reason",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "truncation_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Truncation Reason"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "request_id",
+        "deployment_id",
+        "surface_manifest_hash",
+        "query_hash",
+        "limits",
+        "execution_started_at",
+        "elapsed_ms"
+      ],
+      "title": "QueryResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "RankedItem": {
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "format": "uuid",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "signals": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "default": {},
+          "title": "Signals",
+          "type": "object"
+        }
+      },
+      "required": [
+        "item_id",
+        "score"
+      ],
+      "title": "RankedItem",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReadinessRequirements": {
+      "additionalProperties": false,
+      "properties": {
+        "live_graph": {
+          "title": "Live Graph",
+          "type": "boolean"
+        },
+        "p1": {
+          "title": "P1",
+          "type": "boolean"
+        },
+        "p3": {
+          "title": "P3",
+          "type": "boolean"
+        },
+        "pipeline": {
+          "title": "Pipeline",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "pipeline",
+        "p1",
+        "live_graph",
+        "p3"
+      ],
+      "title": "ReadinessRequirements",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ResolvedProject": {
+      "description": "The issuer's answer: which deployment serves one project for this key.",
+      "properties": {
+        "api_url": {
+          "minLength": 1,
+          "title": "Api Url",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "project": {
+          "minLength": 1,
+          "title": "Project",
+          "type": "string"
+        }
+      },
+      "required": [
+        "project",
+        "name",
+        "api_url"
+      ],
+      "title": "ResolvedProject",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "ResultColumn": {
+      "additionalProperties": false,
+      "description": "One projected column: name, SQL type, nullability.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "nullable": {
+          "title": "Nullable",
+          "type": "boolean"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "nullable"
+      ],
+      "title": "ResultColumn",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ResultLimits": {
+      "additionalProperties": false,
+      "description": "The caps this request actually ran under.",
+      "properties": {
+        "analytical_tier": {
+          "title": "Analytical Tier",
+          "type": "boolean"
+        },
+        "byte_cap": {
+          "title": "Byte Cap",
+          "type": "integer"
+        },
+        "row_cap": {
+          "title": "Row Cap",
+          "type": "integer"
+        },
+        "statement_timeout_ms": {
+          "title": "Statement Timeout Ms",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "row_cap",
+        "byte_cap",
+        "statement_timeout_ms",
+        "analytical_tier"
+      ],
+      "title": "ResultLimits",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SavedQuerySummary": {
+      "additionalProperties": false,
+      "description": "Exact wire contract for one saved-query discovery row.",
+      "properties": {
+        "assurance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Assurance"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Description"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "namespace": {
+          "minLength": 1,
+          "title": "Namespace",
+          "type": "string"
+        },
+        "origin": {
+          "minLength": 1,
+          "title": "Origin",
+          "type": "string"
+        },
+        "query_hash": {
+          "minLength": 1,
+          "title": "Query Hash",
+          "type": "string"
+        },
+        "query_id": {
+          "format": "uuid",
+          "title": "Query Id",
+          "type": "string"
+        },
+        "status": {
+          "minLength": 1,
+          "title": "Status",
+          "type": "string"
+        },
+        "validated_surface_manifest_hash": {
+          "minLength": 1,
+          "title": "Validated Surface Manifest Hash",
+          "type": "string"
+        },
+        "version": {
+          "minimum": 1,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "query_id",
+        "namespace",
+        "name",
+        "version",
+        "status",
+        "description",
+        "origin",
+        "assurance",
+        "query_hash",
+        "validated_surface_manifest_hash"
+      ],
+      "title": "_SavedQuerySummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ScanRow": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "At",
+          "x-utc": true
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "label"
+      ],
+      "title": "ScanRow",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SearchRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "default": "semantic",
+          "enum": [
+            "semantic",
+            "bm25"
+          ],
+          "title": "Channel",
+          "type": "string"
+        },
+        "documents": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentSearchFilters"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "k": {
+          "default": 10,
+          "maximum": 400,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "query": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Query",
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "title": "SearchRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SemanticInvocation": {
+      "additionalProperties": false,
+      "description": "One \u00a73.4 nomination invocation's disclosure (populated by Batch C).",
+      "properties": {
+        "confirmed": {
+          "title": "Confirmed",
+          "type": "integer"
+        },
+        "dropped_absent": {
+          "default": 0,
+          "title": "Dropped Absent",
+          "type": "integer"
+        },
+        "dropped_absent_current": {
+          "default": 0,
+          "title": "Dropped Absent Current",
+          "type": "integer"
+        },
+        "dropped_absent_projection": {
+          "default": 0,
+          "title": "Dropped Absent Projection",
+          "type": "integer"
+        },
+        "dropped_ambiguous": {
+          "default": 0,
+          "title": "Dropped Ambiguous",
+          "type": "integer"
+        },
+        "dropped_body_mismatch": {
+          "default": 0,
+          "title": "Dropped Body Mismatch",
+          "type": "integer"
+        },
+        "dropped_filtered": {
+          "default": 0,
+          "title": "Dropped Filtered",
+          "type": "integer"
+        },
+        "dropped_hash_mismatch": {
+          "default": 0,
+          "title": "Dropped Hash Mismatch",
+          "type": "integer"
+        },
+        "dropped_stale": {
+          "title": "Dropped Stale",
+          "type": "integer"
+        },
+        "embedder_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Embedder Generation"
+        },
+        "function": {
+          "title": "Function",
+          "type": "string"
+        },
+        "generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Generation"
+        },
+        "nominated": {
+          "title": "Nominated",
+          "type": "integer"
+        },
+        "pg_confirmed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pg Confirmed At"
+        },
+        "policy_generation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Policy Generation"
+        },
+        "termination_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Termination Reason"
+        }
+      },
+      "required": [
+        "function",
+        "nominated",
+        "confirmed",
+        "dropped_stale"
+      ],
+      "title": "SemanticInvocation",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SourceRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "first_mentioned_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Mentioned At",
+          "x-utc": true
+        },
+        "last_mentioned_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Mentioned At",
+          "x-utc": true
+        },
+        "markdown_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Markdown Uri"
+        },
+        "mention_count": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mention Count"
+        },
+        "source_kind": {
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Title"
+        }
+      },
+      "required": [
+        "doc_id",
+        "title",
+        "source_kind",
+        "markdown_uri"
+      ],
+      "title": "SourceRecord",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "StoredCredentials": {
+      "additionalProperties": false,
+      "description": "``credentials.json`` version 2: one key.\n\n- An **issuer key** (``remember login``): ``issuer`` and ``key`` are set,\n  ``api_url`` is not \u2014 the engine is resolved from the key.\n- A **self-hosted entry** (``remember setup --self-hosted``): ``api_url``\n  is set, ``issuer`` is not, and ``key`` is the engine's shared secret (or\n  absent for an engine without authentication).\n\n``extra=\"forbid\"``: this program writes the file, so an unknown field is\ncorruption, and \"run ``remember login``\" is a recoverable answer.",
+      "properties": {
+        "api_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Api Url"
+        },
+        "default_project": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Project"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issuer"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "format": "password",
+              "type": "string",
+              "writeOnly": true
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key"
+        },
+        "key_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Id"
+        },
+        "version": {
+          "const": 2,
+          "title": "Version",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "title": "StoredCredentials",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TemporalMatch": {
+      "description": "Whether a fact definitely or possibly overlapped the query window.",
+      "enum": [
+        "confirmed",
+        "possible"
+      ],
+      "title": "TemporalMatch",
+      "type": "string"
+    },
+    "TokenResponse": {
+      "description": "The token response (RFC 6749 \u00a75.1) plus the issuer's non-secret extras.",
+      "properties": {
+        "access_token": {
+          "format": "password",
+          "title": "Access Token",
+          "type": "string",
+          "writeOnly": true
+        },
+        "default_project": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default Project"
+        },
+        "expires_in": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires In"
+        },
+        "key_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Key Id"
+        },
+        "token_type": {
+          "title": "Token Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "access_token",
+        "token_type"
+      ],
+      "title": "_TokenResponse",
+      "type": "object",
+      "x-extra": "ignore"
+    },
+    "ToolDescriptor": {
+      "additionalProperties": false,
+      "properties": {
+        "answer_intent": {
+          "title": "Answer Intent",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "implementation_plan_hash": {
+          "anyOf": [
+            {
+              "maxLength": 64,
+              "minLength": 64,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Implementation Plan Hash"
+        },
+        "input_schema": {
+          "additionalProperties": true,
+          "title": "Input Schema",
+          "type": "object"
+        },
+        "mutates": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mutates"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "output_grain": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Grain"
+        },
+        "result_contract": {
+          "minLength": 1,
+          "title": "Result Contract",
+          "type": "string"
+        },
+        "result_schema": {
+          "additionalProperties": true,
+          "title": "Result Schema",
+          "type": "object"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "result_schema",
+        "result_contract",
+        "output_grain",
+        "answer_intent"
+      ],
+      "title": "ToolDescriptor",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "TranscriptEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "confidence": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Confidence"
+        },
+        "decided_at": {
+          "format": "date-time",
+          "title": "Decided At",
+          "type": "string",
+          "x-utc": true
+        },
+        "decided_by": {
+          "title": "Decided By",
+          "type": "string"
+        },
+        "features": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Features"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "outcome": {
+          "title": "Outcome",
+          "type": "string"
+        },
+        "related_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Related Id"
+        },
+        "subject_kind": {
+          "title": "Subject Kind",
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject_kind",
+        "outcome",
+        "method",
+        "confidence",
+        "related_id",
+        "decided_by",
+        "decided_at",
+        "features"
+      ],
+      "title": "TranscriptEntry",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Truncation": {
+      "additionalProperties": false,
+      "properties": {
+        "continuation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Continuation"
+        },
+        "estimated_total": {
+          "minimum": 0,
+          "title": "Estimated Total",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "returned": {
+          "minimum": 0,
+          "title": "Returned",
+          "type": "integer"
+        },
+        "total_is_exact": {
+          "default": true,
+          "title": "Total Is Exact",
+          "type": "boolean"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "truncated",
+        "returned",
+        "estimated_total"
+      ],
+      "title": "Truncation",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "Validity": {
+      "additionalProperties": false,
+      "properties": {
+        "ingested_at": {
+          "format": "date-time",
+          "title": "Ingested At",
+          "type": "string",
+          "x-utc": true
+        },
+        "invalidated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Invalidated At",
+          "x-utc": true
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid From",
+          "x-utc": true
+        },
+        "valid_precision": {
+          "$ref": "#/$defs/ClaimValidPrecision",
+          "default": "unknown"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Valid Until",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "valid_from",
+        "valid_until",
+        "ingested_at",
+        "invalidated_at"
+      ],
+      "title": "Validity",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "VersionPipelineReadiness": {
+      "additionalProperties": false,
+      "properties": {
+        "ready": {
+          "title": "Ready",
+          "type": "boolean"
+        },
+        "stages": {
+          "items": {
+            "$ref": "#/$defs/PipelineStageReadiness"
+          },
+          "title": "Stages",
+          "type": "array"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version_id",
+        "ready",
+        "stages"
+      ],
+      "title": "VersionPipelineReadiness",
+      "type": "object",
+      "x-extra": "forbid"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+};

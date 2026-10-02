@@ -1,0 +1,24 @@
+{
+  "name": "@rememberdev/client",
+  "version": "0.1.0",
+  "description": "The Remember memory client for Node.js",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {"node": ">=22"},
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {".": {"import": {"types": "./dist/index.d.ts", "default": "./dist/index.js"}, "require": {"types": "./dist/index.d.cts", "default": "./dist/index.cjs"}}},
+  "files": ["dist", "README.md", "LICENSE"],
+  "repository": {"type": "git", "url": "https://github.com/writeitai/remember-stack.git", "directory": "packages/typescript-client"},
+  "publishConfig": {"access": "public"},
+  "scripts": {
+    "generate": "uv run --project ../.. python ../../scripts/export_typescript_contracts.py && node scripts/generate.mjs",
+    "check:generated": "uv run --project ../.. python ../../scripts/export_typescript_contracts.py --check && node scripts/generate.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "build": "tsup src/index.ts --format esm,cjs --dts --sourcemap --clean",
+    "test": "npm run build && node --test tests/*.test.mjs"
+  },
+  "dependencies": {"ajv": "8.20.0", "ajv-formats": "3.0.1", "mime-db": "1.54.0"},
+  "devDependencies": {"@types/node": "22.19.15", "@types/mime-db": "1.43.6", "openapi-typescript-codegen": "0.30.0", "typescript": "5.9.3", "tsup": "8.5.1"}
+}
