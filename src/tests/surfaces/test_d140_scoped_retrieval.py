@@ -1571,10 +1571,12 @@ def test_an_empty_answer_names_the_pending_lineage_the_query_reaches(rig: _Rig) 
         assert answer.freshness.scope_pending is not None, name
     # BM25 reaches only the lineage whose text has the terms
     for answer in (chunks, claims):
-        assert answer.freshness.scope_pending.doc_ids == (lineage.doc_id,)
+        pending = answer.freshness.scope_pending
+        assert pending is not None and pending.doc_ids == (lineage.doc_id,)
     # the compound context also nominates semantically (top candidate_k by
     # vector), which in this two-lineage corpus reaches every readable text
-    assert lineage.doc_id in context.freshness.scope_pending.doc_ids
+    context_pending = context.freshness.scope_pending
+    assert context_pending is not None and lineage.doc_id in context_pending.doc_ids
     documents = _search(rig, query="quartz allowance", k=5)
     assert documents.documents == ()
     assert documents.scope_pending is not None
