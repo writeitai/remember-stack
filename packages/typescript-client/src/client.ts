@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type * as Models from './generated';
 import { resolveConnection, EngineRoute, type Connection } from './connection';
-import { fetchHttp, bounded, checkedResponse, looksMoved, readRoute, transportError, type HttpClient, type Fetch } from './http';
+import { nodeHttp, discoveryTransport, bounded, checkedResponse, looksMoved, readRoute, transportError, type HttpClient, type HttpTransport, type ClientAgents } from './http';
 import { AbortError, InputValidationError, MemoryApiError, RequestTimeoutError, TimeoutError, PipelineDeadLettered, AccountApiUnavailable } from './errors';
 import { assertJson } from './json';
 import { validateModel, modelDump } from './validation';
@@ -11,7 +11,7 @@ import { uuid, utcTimestamp, validateSavedQueryIdentifier, validateArguments, OP
 import { fetchIssuerMetadata, sendSameOrigin, sameOrigin } from './issuer';
 
 export interface RequestOptions {signal?:AbortSignal;}
-export interface ClientOptions {apiKey?:string|null;baseUrl?:string|null;project?:string|null;timeoutMs?:number;client?:HttpClient;fetch?:Fetch;}
+export interface ClientOptions {apiKey?:string|null;baseUrl?:string|null;project?:string|null;timeoutMs?:number;client?:HttpClient;transport?:HttpTransport;agents?:ClientAgents;}
 export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;}
 export type QueryResultDict = Models.OutputQueryResult;
 type Envelope = Models.OutputEnvelope;
@@ -39,25 +39,29 @@ function queryParams({params}:{params?:Params}):URLSearchParams|undefined {
 }
 /** Typed asynchronous memory HTTP client; construction performs no network I/O. */
 export class MemoryClient {
-  protected readonly http:HttpClient; protected readonly connection:Connection|null;
+  protected readonly http:HttpTransport|null;readonly #client:HttpClient|null;readonly #release:(()=>void)|null;protected readonly discovery:HttpTransport; protected readonly connection:Connection|null;
   protected readonly timeoutMs:number; protected readonly controllers=new Set<AbortController>();
   readonly #route:EngineRoute|null; #closed=false;
   /** Resolve settings or accept a caller-owned adapter unchanged. */
-  constructor({apiKey,baseUrl,project,timeoutMs=30000,client,fetch}:ClientOptions={}) {
+  constructor({apiKey,baseUrl,project,timeoutMs=30000,client,transport,agents}:ClientOptions={}) {
     if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw new InputValidationError({detail:'timeoutMs must be positive and finite'});
     this.timeoutMs=timeoutMs;
     if(client) {
-      if([apiKey,baseUrl,project,fetch].some(value=>value!=null))throw new InputValidationError({detail:'an injected client cannot be combined with client settings'});
-      this.http=client;this.connection=null;this.#route=null;
+      if([apiKey,baseUrl,project,transport,agents].some(value=>value!=null))throw new InputValidationError({detail:'an injected client cannot be combined with client settings'});
+      this.#client=client;this.http=null;this.#release=null;this.discovery=discoveryTransport();this.connection=null;this.#route=null;
     }else {
-      this.http=fetchHttp({fetch});this.connection=resolveConnection({apiKey,apiUrl:baseUrl,project});
-      this.#route=new EngineRoute({connection:this.connection,http:this.http,timeoutMs});
+      if(transport&&agents)throw new InputValidationError({detail:'transport and agents are mutually exclusive'});
+      const owned=transport?null:nodeHttp({agents});
+      this.http=transport??owned!.transport;this.#client=null;this.#release=owned?.close??null;
+      this.discovery=discoveryTransport({transport,agents});
+      this.connection=resolveConnection({apiKey,apiUrl:baseUrl,project});
+      this.#route=new EngineRoute({connection:this.connection,http:this.discovery,timeoutMs});
     }
   }
   /** Refuse future operations after closing, including previously obtained account facades. */
-  protected assertOpen():void {if(this.#closed)throw new InputValidationError({detail:'client is closed'});}
+  protected assertOpen():void {if(this.#closed)throw new AbortError();}
   /** Cancel this client's in-flight operations without closing a caller-owned adapter. */
-  close():void {this.#closed=true;for(const controller of this.controllers)controller.abort(new AbortError());}
+  close():void {if(this.#closed)return;this.#closed=true;this.#release?.();for(const controller of this.controllers)controller.abort(new AbortError());}
   /** Support JavaScript explicit resource management. */
   [Symbol.dispose]():void {this.close();}
   /** Support asynchronous explicit resource management. */
@@ -76,7 +80,9 @@ export class MemoryClient {
         const requestHeaders={...merged,...(target?.authorization?{Authorization:target.authorization}:{})};
         let response:Response;
         try {
-          response=await this.http.request({method,...(target?{url:target.url.replace(/\/+$/,'')+path}:{path}),query,headers:requestHeaders,body:payload,signal:activeSignal});
+          response=target
+            ?await this.http!.request({method,url:target.url.replace(/\/+$/,'')+path,query,headers:requestHeaders,body:payload,signal:activeSignal})
+            :await this.#client!.request({method,path,query,headers:requestHeaders,body:payload,signal:activeSignal});
         }catch(error) {
           if(activeSignal.aborted)throw activeSignal.reason;
           if(error instanceof AbortError||error instanceof RequestTimeoutError)throw error;
@@ -266,15 +272,15 @@ export class Client extends MemoryClient {
   /** Apply the same explicit/environment/file precedence as the ordinary constructor. */
   static fromEnv(options:ClientOptions={}):Client {return new this(options);}
   /** Access the issuer account facade lazily, with no construction-time network calls. */
-  get account():AccountApi {return new AccountApi({connection:this.connection,http:this.http,timeoutMs:this.timeoutMs,controllers:this.controllers,assertOpen:()=>this.assertOpen()});}
+  get account():AccountApi {return new AccountApi({connection:this.connection,http:this.discovery,timeoutMs:this.timeoutMs,controllers:this.controllers,assertOpen:()=>this.assertOpen()});}
   /** Infer MIME from the actual path before applying a display filename override. */
   async ingestFile({filePath,...options}:Omit<IngestOptions,'source'|'content'>&{filePath:string}):Promise<Models.OutputIngestedVersion> {return this.ingest({...options,source:filePath});}
 }
 /** Issuer account requests are separate from the memory engine API. */
 export class AccountApi {
-  readonly #connection:Connection|null;readonly #http:HttpClient;readonly #timeoutMs:number;readonly #controllers:Set<AbortController>;readonly #assertOpen:()=>void;
+  readonly #connection:Connection|null;readonly #http:HttpTransport;readonly #timeoutMs:number;readonly #controllers:Set<AbortController>;readonly #assertOpen:()=>void;
   /** Bind the account transport without fetching issuer metadata. */
-  constructor({connection,http,timeoutMs=30000,controllers=new Set<AbortController>(),assertOpen=()=>{}}:{connection:Connection|null;http:HttpClient;timeoutMs?:number;controllers?:Set<AbortController>;assertOpen?:()=>void}) {this.#assertOpen=assertOpen;this.#connection=connection;this.#http=http;this.#timeoutMs=timeoutMs;this.#controllers=controllers;}
+  constructor({connection,http,timeoutMs=30000,controllers=new Set<AbortController>(),assertOpen=()=>{}}:{connection:Connection|null;http:HttpTransport;timeoutMs?:number;controllers?:Set<AbortController>;assertOpen?:()=>void}) {this.#assertOpen=assertOpen;this.#connection=connection;this.#http=http;this.#timeoutMs=timeoutMs;this.#controllers=controllers;}
   /** Read whoami as an object from the issuer account endpoint. */
   async whoami({signal}:RequestOptions={}):Promise<Record<string,Models.JsonValue>> {return objectResponse({value:await this.get({path:'/v1/keys/self',signal})});}
   /** Read a safe relative account path; reject traversal and cross-origin redirects. */

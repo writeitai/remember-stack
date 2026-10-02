@@ -5,7 +5,7 @@ import {mkdtempSync,writeFileSync,chmodSync,symlinkSync,mkdirSync,rmSync} from '
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {inspect} from 'node:util';
-import {bounded,checkedResponse,fetchHttp,MemoryApiError,RequestTimeoutError,AbortError,CredentialError,loadCredentials,normalizeKey,signedKeyClaims,normalizeIssuer,metadataUrl,sameOrigin,fetchIssuerMetadata,clearMetadataCache,clearHostCache,resolveConnection,EngineRoute,SecretString,Connection,StoredKeyRefused} from '../.test-build/internal.js';
+import {bounded,checkedResponse,MemoryApiError,RequestTimeoutError,AbortError,CredentialError,loadCredentials,normalizeKey,signedKeyClaims,normalizeIssuer,metadataUrl,sameOrigin,fetchIssuerMetadata,clearMetadataCache,clearHostCache,resolveConnection,EngineRoute,SecretString,Connection,StoredKeyRefused} from '../.test-build/internal.js';
 
 /** Create a routing-only token with no authentic signature or production credential. */
 function key({issuer='https://issuer.example',projects=['p1','p2'],jti='same-id'}={}) {
@@ -96,7 +96,7 @@ test('a cancelling discovery waiter leaves another client and cache usable',asyn
 
 test('stored shared keys cannot leave their recorded origin',async()=>{
   const connection=new Connection({key:new SecretString({value:'shared-fixture'}),keySource:'file',apiUrl:'https://other.example',apiUrlSource:'explicit',project:null,issuer:null,mcpUrl:null,claims:null,stored:{version:2,key:new SecretString({value:'shared-fixture'}),api_url:'https://recorded.example',issuer:null,key_id:null,expires_at:null,default_project:null}});
-  const route=new EngineRoute({connection,http:fetchHttp({fetch:async()=>{throw new Error('must not send');}})});
+  const route=new EngineRoute({connection,http:{request:async()=>{throw new Error('must not send');}}});
   await assert.rejects(route.target(),StoredKeyRefused);
   assert(!JSON.stringify(connection).includes('shared-fixture'));assert(!inspect(connection).includes('shared-fixture'));
 });

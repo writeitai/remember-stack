@@ -3,7 +3,7 @@ import type { OutputKeyClaims, OutputIssuerMetadata } from './generated';
 import { InputValidationError, IssuerError, AbortError, RequestTimeoutError } from './errors';
 import { parseJson } from './json';
 import { validateModel } from './validation';
-import { bounded, responseJson, waitShared, type HttpClient, type HttpRequest } from './http';
+import { bounded, responseJson, waitShared, type HttpTransport, type HttpRequest } from './http';
 /** Unverified signed-key claims, used only for routing and display. */
 export class KeyClaims implements OutputKeyClaims {
   readonly iss: string; readonly jti: string | null; readonly sub: string | null;
@@ -64,7 +64,7 @@ export function metadataUrl({ issuer }: { issuer: string }): string {
   url.pathname='/.well-known/oauth-authorization-server'+url.pathname.replace(/\/+$/,''); url.search=''; return url.toString();
 }
 /** Preserve method/body/headers across at most three same-origin redirect hops. */
-export async function sendSameOrigin({ http, request, maxRedirects=3 }: { http: HttpClient; request: HttpRequest & {url:string}; maxRedirects?:number }): Promise<Response> {
+export async function sendSameOrigin({ http, request, maxRedirects=3 }: { http: HttpTransport; request: HttpRequest & {url:string}; maxRedirects?:number }): Promise<Response> {
   let current=request;
   for (let hop=0;hop<=maxRedirects;hop++) {
     const response=await http.request(current);
@@ -97,12 +97,18 @@ export class IssuerMetadata implements OutputIssuerMetadata {
     requireSecureUrl({url,what:name}); return url;
   }
 }
-const metadataCache=new Map<string,Promise<IssuerMetadata>>();
+const metadataCache=new Map<string,IssuerMetadata>();
+let pendingMetadata=new WeakMap<HttpTransport,Map<string,Promise<IssuerMetadata>>>();
 /** Forget cached metadata for provider changes and test isolation. */
-export function clearMetadataCache():void { metadataCache.clear(); }
+export function clearMetadataCache():void { metadataCache.clear();pendingMetadata=new WeakMap(); }
 /** Fetch issuer-bound metadata once per process; each waiter may cancel independently. */
-export async function fetchIssuerMetadata({issuer,http,signal,timeoutMs=30000}:{issuer:string;http:HttpClient;signal?:AbortSignal;timeoutMs?:number}):Promise<IssuerMetadata> {
-  const normalized=normalizeIssuer({issuer}); let promise=metadataCache.get(normalized);
+export async function fetchIssuerMetadata({issuer,http,signal,timeoutMs=30000}:{issuer:string;http:HttpTransport;signal?:AbortSignal;timeoutMs?:number}):Promise<IssuerMetadata> {
+  const normalized=normalizeIssuer({issuer});
+  const cached=metadataCache.get(normalized);
+  if(cached)return waitShared({promise:Promise.resolve(cached),signal});
+  let pending=pendingMetadata.get(http);
+  if(!pending){pending=new Map();pendingMetadata.set(http,pending);}
+  let promise=pending.get(normalized);
   if (!promise) {
     promise=bounded({timeoutMs,work:async sharedSignal=>{
       try {
@@ -110,14 +116,14 @@ export async function fetchIssuerMetadata({issuer,http,signal,timeoutMs=30000}:{
         if (response.status!==200) throw new IssuerError({statusCode:response.status,detail:'issuer metadata is unavailable'});
         const metadata=new IssuerMetadata({value:await responseJson({response})});
         if (metadata.issuer.replace(/\/+$/,'')!==normalized) throw new IssuerError({detail:'issuer metadata names a different issuer'});
-        return metadata;
+        metadataCache.set(normalized,metadata);return metadata;
       } catch (error) {
         if (error instanceof IssuerError || error instanceof AbortError || error instanceof RequestTimeoutError) throw error;
         throw new IssuerError({detail:'issuer metadata is unavailable or malformed'});
       }
     }});
-    metadataCache.set(normalized,promise); const pending=promise;
-    promise.catch(()=>{if(metadataCache.get(normalized)===pending) metadataCache.delete(normalized);});
+    pending.set(normalized,promise);const shared=promise;const requests=pending;
+    promise.finally(()=>{if(requests.get(normalized)===shared)requests.delete(normalized);}).catch(()=>{});
   }
   return waitShared({promise,signal});
 }

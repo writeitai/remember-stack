@@ -75,14 +75,30 @@ a changed issuer-resolved engine URL. Caller cancellation and HTTP timeouts
 never trigger host refresh/replay. The reference transport uses one low-level
 Node HTTP/HTTPS request per invocation, with no automatic retry or redirect.
 
-You can inject a caller-owned `client` implementing `HttpClient.request` instead
-of connection settings, or a conforming `fetch` adapter for custom proxy/CA
-requirements. Adapters must transmit once per invocation and respect manual
-redirects and AbortSignal. Ordinary Node global fetch automatically repeats
-requests after HTTP 421 and is unsuitable as an injection. Node HTTP/HTTPS TLS
-defaults apply; httpx HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE behavior
-is not reproduced. Close cancels this client's work and destroys SDK-owned
-agents, never a caller-owned transport.
+You can inject a caller-owned `client: HttpClient` (relative paths, its own base
+URL/headers), a `transport: HttpTransport` (absolute URLs and SDK routing/headers),
+or `agents: {http?, https?}`. These alternatives are mutually exclusive; `client`
+also excludes connection settings. Both adapter modes must send once, honor
+AbortSignal and return redirects unfollowed. Fetch-standard transports are
+unsuitable because they resend reusable requests after HTTP 421. Caller-owned
+agents and transports remain open after close; the closed facade rejects calls
+with AbortError. Close cancels only this client's requests and discovery waiters.
+
+SDK-owned agents ignore all environment proxy settings, including
+NODE_USE_ENV_PROXY, because Node 22.0 lacks proxyEnv and explicit injection
+makes proxy selection consistent. Node TLS defaults and NODE_EXTRA_CA_CERTS
+apply. A caller-owned `https.Agent({ca: ...})` supports explicit CAs; an
+operator-configured http.Agent subclass or conforming transport supports proxies.
+SSL_CERT_FILE is not read. Idle sockets retire after four seconds; active
+transfers follow the operation deadline. Connections returning 421 are retired.
+
+The default timeoutMs is a **total 30-second deadline**, including discovery,
+upload and complete response buffering. This differs from httpx's per-phase
+idle timeout and still bounds injected calls. Raise it for large/slow uploads:
+50 MB at 5 Mbit/s takes about 80 seconds. A timeout can leave an unknown write
+outcome; the SDK never replays it. Shared discovery uses process-owned pools
+or borrowed resources; pending lookups share only the same transport objects,
+while completed successes may be shared across transports.
 
 Connector methods manage deployment-side configuration. They do not run npm
 connector plugins. Connector adapters, an executable CLI, and MCP hosts have

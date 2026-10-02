@@ -197,13 +197,30 @@ refused. Issuer/account redirects allow at most three hops on the same origin
 and preserve their method. Discovered URLs require HTTPS except loopback HTTP.
 Account paths reject absolute URLs and traversal, including encoded traversal.
 
-A caller-owned `client: HttpClient` cannot be combined with apiKey/baseUrl/project/fetch
-settings. A `fetch` injection supplies a custom transport while retaining SDK
-routing. Every adapter must transmit once per invocation, honor AbortSignal,
-and preserve manual redirects. Ordinary Node global fetch repeats reusable
-requests after HTTP 421 and is unsuitable as an injection. Node TLS defaults
-apply; httpx HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE behavior is not
-reproduced. Use a conforming adapter for custom proxy or CA configuration.
+A caller-owned `client: HttpClient` takes relative paths and its own base URL/headers;
+it cannot be combined with apiKey/baseUrl/project/transport/agents settings.
+`transport: HttpTransport` takes absolute URLs and retains SDK routing/headers.
+Alternatively borrow `agents: {http?, https?}` for the default single-send adapter.
+These modes are mutually exclusive. Both injected adapters must send once,
+honor AbortSignal and return redirects unfollowed. Fetch-standard adapters are
+unsuitable: they resend reusable requests after HTTP 421.
+
+SDK-owned agents ignore environment proxies, including NODE_USE_ENV_PROXY.
+Node 22.0 lacks proxyEnv, so explicit injection keeps selection deterministic.
+Node TLS defaults and NODE_EXTRA_CA_CERTS apply; a caller-owned HTTPS agent can
+supply ca material, and an operator-configured http.Agent subclass or conforming
+transport can handle proxies. SSL_CERT_FILE is not read. Idle sockets retire
+after four seconds; 421 connections are retired before they can serve queued
+requests. An active response may take longer than four seconds.
+
+`timeoutMs` is a total operation deadline including routing/upload/body reads,
+and bounds injected calls too. Raise the 30-second default for slow or large
+uploads (50 MB at 5 Mbit/s takes about 80 seconds). Timeouts can leave an unknown
+write outcome and never authorize replay. Close destroys only SDK-owned engine
+agents and cancels this client's waiters/requests; borrowed resources and shared
+discovery remain available. The closed facade refuses later calls with AbortError.
+Pending lookups share only identical transport objects; completed successes
+may be reused across transports.
 
 MemoryApiError contains statusCode/detail/code, response when available, and
 optional retryable/requestId diagnostics. RateLimited also has retryAfter in

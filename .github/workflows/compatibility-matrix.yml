@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - "src/remember/**"
+      - "packages/typescript-client/**"
+      - "contracts/issuer-provider.json"
+      - "scripts/export_typescript_*.py"
       - "src/tests/surfaces/**"
       - "src/tests/packaging/**"
       - ".github/workflows/compatibility-matrix.yml"
@@ -31,6 +34,15 @@ jobs:
         with:
           version: "0.12.6"
           enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.0.0'
+          cache: npm
+          cache-dependency-path: packages/typescript-client/package-lock.json
+      - name: Build candidate TypeScript client
+        working-directory: packages/typescript-client
+        run: npm ci && npm run build
 
       - name: Set up Python 3.13
         run: uv python install 3.13
@@ -157,4 +169,12 @@ jobs:
               raise AssertionError('expected nonexistent_operation to raise MemoryApiError')
           "
 
-          docker rm --force remember-engine remember-object-store >/dev/null 2>&1 || true
+      - name: Export actual composed profile and exercise every TypeScript method
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          docker exec remember-engine python -c 'import json; from rememberstack.profiles.selfhost import create_api; print(json.dumps(create_api().openapi()))' > /tmp/remember-engine-profile.json
+          node packages/typescript-client/scripts/live-engine.mjs /tmp/remember-engine-profile.json
+      - name: Clean up live engine and object store
+        if: always()
+        run: docker rm --force remember-engine remember-object-store >/dev/null 2>&1 || true

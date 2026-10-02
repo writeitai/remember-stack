@@ -1,42 +1,79 @@
+import {Agent as HttpAgent,request as httpRequest} from 'node:http';
+import {Agent as HttpsAgent,request as httpsRequest} from 'node:https';
 import { AbortError, InputValidationError, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError } from './errors';
 import { parseJson } from './json';
 import constants from './constants.generated';
 
-/** A caller-owned adapter, with its own base URL, headers, timeout and lifecycle. */
-export interface HttpClient {
-  request(options: HttpRequest): Promise<Response>;
-}
-/** SDK requests use url; caller-owned client injection receives path instead. */
-export interface HttpRequest {
-  method: string;
-  url?: string;
-  path?: string;
-  query?: URLSearchParams;
-  headers?: HeadersInit;
-  body?: BodyInit;
-  signal?: AbortSignal;
-}
-/** A replacement fetch retains all SDK routing and security behavior. */
-export type Fetch = typeof globalThis.fetch;
+/** Fields of one request; every adapter must send once and honor cancellation. */
+export interface RequestFields { method:string; query?:URLSearchParams; headers?:HeadersInit; body?:string|Uint8Array; signal?:AbortSignal; }
+/** Caller-owned relative-path adapter with its own base URL and headers. */
+export interface HttpClient { request(options:RelativeHttpRequest):Promise<Response>; }
+/** Caller-owned absolute-URL transport retaining SDK headers and routing. */
+export interface HttpTransport { request(options:AbsoluteHttpRequest):Promise<Response>; }
+export interface RelativeHttpRequest extends RequestFields { path:string; url?:never; }
+export interface AbsoluteHttpRequest extends RequestFields { url:string; path?:never; }
+export type HttpRequest = RelativeHttpRequest|AbsoluteHttpRequest;
+export interface ClientAgents { http?:HttpAgent; https?:HttpsAgent; }
+export interface OwnedTransport { transport:HttpTransport; close():void; }
 
-/** Create a per-client adapter; redirects remain under SDK control. */
-export function fetchHttp({ fetch: implementation = globalThis.fetch }: { fetch?: Fetch } = {}): HttpClient {
+/** Create a single-send Node transport; close destroys only agents we create. */
+export function nodeHttp({agents={}}:{agents?:ClientAgents}={}):OwnedTransport {
+  const httpAgent=agents.http??new HttpAgent({keepAlive:true,timeout:4000});
+  const httpsAgent=agents.https??new HttpsAgent({keepAlive:true,timeout:4000});
   return {
-    /** Send to the resolved absolute URL with manual redirects. */
-    async request({ method, url, query, headers, body, signal }: HttpRequest): Promise<Response> {
-      if (!url) throw new Error('SDK fetch adapter requires an absolute URL');
-      const target = new URL(url);
-      if (query) for (const [name, value] of query) target.searchParams.append(name, value);
-      try { return await implementation(target, { method, headers, body, signal, redirect: 'manual' }); }
-      catch (error) {
-        if (signal?.aborted) throw signal.reason;
-        throw transportError({ error });
-      }
+    /** Release SDK resources without touching borrowed agent pools. */
+    close():void {if(!agents.http)httpAgent.destroy();if(!agents.https)httpsAgent.destroy();},
+    transport:{
+      /** Send exactly once and buffer the response within the caller's deadline. */
+      async request({method,url,query,headers,body,signal}:AbsoluteHttpRequest):Promise<Response> {
+        if(signal?.aborted)throw signal.reason;
+        const target=new URL(url);
+        if(query)for(const[name,value]of query)target.searchParams.append(name,value);
+        if(!['http:','https:'].includes(target.protocol))throw new InputValidationError({detail:'transport requires HTTP or HTTPS'});
+        const fields:Record<string,string>={};
+        new Headers(headers).forEach((value,name)=>{fields[name]=value;});
+        if(body!==undefined&&!('content-length'in fields))fields['content-length']=String(typeof body==='string'?Buffer.byteLength(body):body.byteLength);
+        return new Promise<Response>((resolve,reject)=>{
+          const send=target.protocol==='https:'?httpsRequest:httpRequest;
+          const request=send(target,{method,headers:fields,signal,agent:target.protocol==='https:'?httpsAgent:httpAgent},response=>{
+            // Stop queued requests from taking a socket which rejected this host.
+            if(response.statusCode===421)request.shouldKeepAlive=false;
+            const chunks:Buffer[]=[];
+            response.on('data',(chunk:Buffer)=>chunks.push(chunk));
+            response.once('error',error=>reject(signal?.aborted?signal.reason:transportError({error})));
+            response.once('end',()=>{
+              const status=response.statusCode??500;
+              const responseHeaders=new Headers();
+              for(let i=0;i<response.rawHeaders.length;i+=2)responseHeaders.append(response.rawHeaders[i]!,response.rawHeaders[i+1]!);
+              try{resolve(new Response([204,205,304].includes(status)?null:Buffer.concat(chunks),{status,headers:responseHeaders}));}
+              catch(error){reject(transportError({error}));}
+            });
+          });
+          request.once('error',error=>reject(signal?.aborted?signal.reason:transportError({error})));
+          // Idle agent timeouts are not active-operation timeouts.
+          request.end(body);
+        });
+      },
     },
   };
 }
+const processTransport=nodeHttp().transport;
+const pairedTransports=new WeakMap<HttpAgent,WeakMap<HttpsAgent,HttpTransport>>();
+const processHttp=new HttpAgent({keepAlive:true,timeout:4000});
+const processHttps=new HttpsAgent({keepAlive:true,timeout:4000});
+/** Share discovery only across identical borrowed transport or agent objects. */
+export function discoveryTransport({transport,agents}:{transport?:HttpTransport;agents?:ClientAgents}={}):HttpTransport {
+  if(transport)return transport;
+  if(!agents)return processTransport;
+  const http=agents.http??processHttp;const https=agents.https??processHttps;
+  let pairs=pairedTransports.get(http);
+  if(!pairs){pairs=new WeakMap();pairedTransports.set(http,pairs);}
+  let result=pairs.get(https);
+  if(!result){result=nodeHttp({agents:{http,https}}).transport;pairs.set(https,result);}
+  return result;
+}
 
-/** Normalize network failures from native fetch and caller-owned adapters consistently. */
+/** Normalize network failures from Node requests and caller-owned adapters consistently. */
 export function transportError({ error }: { error: unknown }): MemoryApiError | AbortError {
   if(error instanceof MemoryApiError || error instanceof AbortError)return error;
   const code=(error as {cause?:{code?:string};code?:string})?.cause?.code ?? (error as {code?:string})?.code;

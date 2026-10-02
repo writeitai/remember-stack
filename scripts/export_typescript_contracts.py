@@ -81,7 +81,15 @@ def verify_inventory() -> dict[str, Any]:
                 if isinstance(method, ast.FunctionDef)
                 and (not method.name.startswith("_") or method.name == "__init__")
             }
-            if methods != inventory["classes"][node.name]:
+            expected = {
+                name: {
+                    key: value
+                    for key, value in signature.items()
+                    if key != "typescriptOptions"
+                }
+                for name, signature in inventory["classes"][node.name].items()
+            }
+            if methods != expected:
                 raise ValueError(
                     f"Python {node.name} signatures drifted from the normative inventory"
                 )
@@ -206,7 +214,9 @@ def client_models() -> dict[str, Any]:
         models[name]["x-extra"] = model.model_config.get("extra", "ignore")
         for field_name, field in model.model_fields.items():
             if field.exclude:
-                models[name]["properties"][field.alias or field_name]["x-exclude"] = True
+                models[name]["properties"][field.alias or field_name]["x-exclude"] = (
+                    True
+                )
             if not field.is_required():
                 models[name]["properties"][field.alias or field_name]["default"] = (
                     to_jsonable_python(field.get_default(call_default_factory=True))

@@ -5,7 +5,7 @@ import type { OutputResolvedProject } from './generated';
 import { SecretString, loadCredentials, environment, type StoredCredentials, type ConnectionEnvironment } from './credentials';
 import { KeyClaims, signedKeyClaims, normalizeIssuer, sameOrigin, requireSecureUrl, fetchIssuerMetadata, sendSameOrigin } from './issuer';
 import { InputValidationError, ProjectResolutionError, StoredKeyRefused, AbortError, RequestTimeoutError } from './errors';
-import { bounded, responseJson, waitShared, type HttpClient } from './http';
+import { bounded, responseJson, waitShared, type HttpTransport } from './http';
 import { validateModel } from './validation';
 export const DEFAULT_API_URL = 'http://127.0.0.1:8000';
 export const HOST_CACHE_TTL_SECONDS = 600;
@@ -57,15 +57,17 @@ export type Clock = () => number;
 export function monotonic():number {return performance.now()/1000;}
 interface CachedProject { created:number; value:ResolvedProject; }
 const hostCache=new Map<string,CachedProject>();
-const pendingHosts=new Map<string,Promise<ResolvedProject>>();
+let pendingHosts=new WeakMap<HttpTransport,Map<string,Promise<ResolvedProject>>>();
 /** Forget resolved deployment mappings without cancelling active waiters. */
-export function clearHostCache():void {hostCache.clear();pendingHosts.clear();}
+export function clearHostCache():void {hostCache.clear();pendingHosts=new WeakMap();}
 /** Ask the issuer for a covered project; shared discovery never uses the key id alone. */
-export async function resolveProject({key,claims,project,http,clock=monotonic,refresh=false,signal,timeoutMs=30000}:{key:string;claims:KeyClaims;project:string|null;http:HttpClient;clock?:Clock;refresh?:boolean;signal?:AbortSignal;timeoutMs?:number}):Promise<ResolvedProject> {
+export async function resolveProject({key,claims,project,http,clock=monotonic,refresh=false,signal,timeoutMs=30000}:{key:string;claims:KeyClaims;project:string|null;http:HttpTransport;clock?:Clock;refresh?:boolean;signal?:AbortSignal;timeoutMs?:number}):Promise<ResolvedProject> {
   const cacheKey=JSON.stringify([normalizeIssuer({issuer:claims.iss}),createHash('sha256').update(key).digest('hex'),project]);
   const cached=hostCache.get(cacheKey);
   if(!refresh && cached && clock()-cached.created < HOST_CACHE_TTL_SECONDS) return waitShared({promise:Promise.resolve(cached.value),signal});
-  let pending=pendingHosts.get(cacheKey);
+  let requests=pendingHosts.get(http);
+  if(!requests){requests=new Map();pendingHosts.set(http,requests);}
+  let pending=requests.get(cacheKey);
   if(!pending) {
     pending=bounded({timeoutMs,work:async sharedSignal=>{
       try {
@@ -83,17 +85,17 @@ export async function resolveProject({key,claims,project,http,clock=monotonic,re
         throw new ProjectResolutionError({detail:'issuer returned an unavailable or unusable project resolution'});
       }
     }});
-    pendingHosts.set(cacheKey,pending); const shared=pending;
-    pending.finally(()=>{if(pendingHosts.get(cacheKey)===shared) pendingHosts.delete(cacheKey);}).catch(()=>{});
+    requests.set(cacheKey,pending);const shared=pending;const entries=requests;
+    pending.finally(()=>{if(entries.get(cacheKey)===shared)entries.delete(cacheKey);}).catch(()=>{});
   }
   return waitShared({promise:pending,signal});
 }
 /** Lazy engine routing, with first-project pinning and TTL refresh of its URL. */
 export class EngineRoute {
-  readonly #connection:Connection; readonly #http:HttpClient; readonly #clock:Clock; readonly #timeoutMs:number;
+  readonly #connection:Connection; readonly #http:HttpTransport; readonly #clock:Clock; readonly #timeoutMs:number;
   #pinned:ResolvedProject|undefined; #resolvedAt=0; #pending:Promise<ResolvedProject>|undefined;
   /** Bind connection and issuer transport without discovery. */
-  constructor({connection,http,clock=monotonic,timeoutMs=30000}:{connection:Connection;http:HttpClient;clock?:Clock;timeoutMs?:number}) {this.#connection=connection;this.#http=http;this.#clock=clock;this.#timeoutMs=timeoutMs;}
+  constructor({connection,http,clock=monotonic,timeoutMs=30000}:{connection:Connection;http:HttpTransport;clock?:Clock;timeoutMs?:number}) {this.#connection=connection;this.#http=http;this.#clock=clock;this.#timeoutMs=timeoutMs;}
   /** Whether issuer resolution controls the engine destination. */
   get keyRouted():boolean {return this.#connection.apiUrl===null && this.#connection.claims!==null;}
   /** Get the current URL after checking file-loaded credential destination rules. */

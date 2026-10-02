@@ -120,7 +120,7 @@ test('account paths and redirects stay within the issuer origin',async()=>{
     for(const path of ['https://example.com','//other','../other','/one/%2e%2e/other','/one/%252e%252e/other','/one/%5cother','/one/../../other'])await assert.rejects(account.get({path}),InputValidationError);
     await assert.rejects(account.get({path:'/redirect'}));assert.equal(trap.requests.length,0);
     for(const request of issuer.requests.filter(r=>!r.url.startsWith('/.well-known')))assert(request.headers.authorization.startsWith('Bearer '));
-    client.close();await assert.rejects(account.whoami(),InputValidationError);
+    client.close();await assert.rejects(account.whoami(),AbortError);
   }finally{client.close();await Promise.all([issuer.close(),trap.close()]);}
 });
 
@@ -129,7 +129,7 @@ test('close cancels ignored-signal adapters; per-client state stays independent'
   const one=new MemoryClient({client:{request:async()=>{called();return new Promise(()=>{});}}});
   const two=new MemoryClient({client:{request:async()=>Response.json([])}});
   const pending=one.listOperations();await started;one.close();await assert.rejects(pending,AbortError);
-  assert.deepEqual(await two.listOperations(),[]);await assert.rejects(one.listOperations(),InputValidationError);two[Symbol.dispose]();
+  assert.deepEqual(await two.listOperations(),[]);await assert.rejects(one.listOperations(),AbortError);two[Symbol.dispose]();
   assert.throws(()=>new MemoryClient({client:{request:async()=>Response.json([])},baseUrl:'http://localhost'}),InputValidationError);
 });
 
