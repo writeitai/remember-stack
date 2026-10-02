@@ -416,7 +416,7 @@ host can filter every catalogue tool by its memory:read/memory:write permission.
 The normative inventory's supportExports records exact source signatures,
 Connection return/fields, credential/issuer read helpers, and all 34 current
 `remember.mcp_tools.__all__` names with explicit TypeScript names or a separate
-MCP-library disposition. Backend protocols, host settings and the three
+MCP-library disposition. Backend protocols, host settings and the five
 host-execution handlers live in that separate MCP library; the base client
 supplies their complete catalogue/validation/error dependencies, not host I/O.
 `validateArguments({name, arguments, pathResolver?, maxBodyBytes?})` returns a

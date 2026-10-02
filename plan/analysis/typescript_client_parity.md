@@ -232,7 +232,7 @@ MCP package to keep resolver injection consistent with stdio tool rendering.
 
 
 The runtime transport choice above is superseded by the measured Fetch 421
-evidence in [typescript_transport_421.md](typescript_transport_421.md). D140
+evidence in [typescript_transport_421.md](typescript_transport_421.md). D141
 now selects a single-transmission Node HTTP/HTTPS adapter, borrowed-agent or
 request-transport injection, and explicit total-deadline/proxy adaptations.
 
