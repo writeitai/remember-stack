@@ -336,6 +336,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | --- | --- | --- |
 | Synchronous methods/context manager; close leaves an injected client usable | Promises; close/async disposal. A closed SDK facade refuses later calls with AbortError even with injected client; borrowed resources remain open | Cleanup, borrowed ownership and calls after close |
 | UUID/datetime/tuple wrappers | UUID/ISO strings and arrays; rows/columns/truncated remain properties | Typed result/default fixtures |
+| General lookup/graph datetime options accept naive datetime objects despite the published date-time annotation | Require an ISO datetime with Z or numeric offset, raising InputValidationError before HTTP; preserve nonzero offsets. The SDK asserts the published RFC3339 format to avoid implicit local time; this does not claim the Python server refuses naive values | Naive refusal for lookupRelations/graphNeighborhood/graphPath, unchanged +02:00 wire fixtures and original-format checks |
 | Pydantic lax coercion | JSON Schema types, no numeric-string/bool coercion; fill defaults | Invalid types and complete outputs |
 | Arbitrary-size integers | Refuse unsafe integer values before JSON.parse rounding or sending; NumericPrecisionError. Query parameters above MAX_SAFE_INTEGER require an explicit SQL string/cast | 2^53 boundary responses/parameters |
 | Method-based replay and write replay on 421/connect errors | _READ_ROUTES-derived read eligibility; never write replay. Refresh for next call only | POST readiness and 421/network writes |
