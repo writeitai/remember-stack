@@ -187,6 +187,18 @@ jobs:
         run: |
           docker exec remember-engine python -c 'import json; from rememberstack.profiles.selfhost import create_api; print(json.dumps(create_api().openapi()))' > /tmp/remember-engine-profile.json
           node packages/typescript-client/scripts/live-engine.mjs /tmp/remember-engine-profile.json
+      - name: Check actual released/candidate HTTP timestamp validators
+        env:
+          TARGET_ENGINE_VERSION: ${{ matrix.engine-version }}
+        run: |
+          docker cp .github/ci/temporal-boundary.py remember-engine:/tmp/temporal-boundary.py
+          docker exec --detach remember-engine python /tmp/temporal-boundary.py
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8001/openapi.json >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then docker logs remember-engine; exit 1; fi
+            sleep 1
+          done
+          node packages/typescript-client/scripts/temporal-boundary.mjs
       - name: Clean up live engine and object store
         if: always()
         run: |

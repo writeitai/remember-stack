@@ -243,12 +243,17 @@ export class MemoryClient {
     }});}catch(error) {if(error instanceof RequestTimeoutError&&readinessSignal?.aborted&&readinessSignal.reason===error)throw new TimeoutError({report});throw error;}
   }
   /** Ingest bytes or a file path with optional stable document lineage. */
-  async ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
+  async ingest(options:IngestOptions):Promise<Models.OutputIngestedVersion> {
+    this.assertOpen();
+    return bounded({signal:options.signal,timeoutMs:this.timeoutMs,controllers:this.controllers,work:signal=>this.#ingest({...options,signal})});
+  }
+  /** Include local file loading in the ingest operation's cancellation and deadline. */
+  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
     if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
     let bytes=content;
     if(bytes!==undefined&&source!==undefined&&!filename)filename=typeof source==='string'?source:undefined;
-    else if(bytes===undefined&&typeof source==='string') {bytes=await readFile(source);filename=filename||basename(source);mime=mime||inferUploadMime({filename:source});}
+    else if(bytes===undefined&&typeof source==='string') {bytes=await readFile(source,{signal});filename=filename||basename(source);mime=mime||inferUploadMime({filename:source});}
     else if(bytes===undefined&&source instanceof Uint8Array)bytes=source;
     if(!(bytes instanceof Uint8Array)||!filename)throw new InputValidationError({detail:'content and filename are required when ingesting bytes'});
     const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath};

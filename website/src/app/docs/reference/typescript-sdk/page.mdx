@@ -305,4 +305,8 @@ General lookup/graph `validAt` and `believedAt` strings retain their supplied
 ISO datetime, including nonzero offsets. TypeScript requires a timezone offset
 or Z, unlike Python's permissive naive datetime handling; this keeps requests
 within the published date-time format and avoids ambiguous timestamps.
+The current engine (v0.17.1+) requires UTC on those HTTP fields and returns 422
+for a nonzero offset, just as it does for the Python client. Earlier releases
+accept offsets at the HTTP boundary; this does not guarantee that their
+downstream query implementation accepts them.
 Ingest lineage and schema fields marked UTC continue to require UTC.

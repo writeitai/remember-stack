@@ -33,19 +33,6 @@ try {
   if(version==='candidate')for(const route of Object.values(routes).filter(route=>!route.optionalProfile))assert(profile.paths[route.path]?.[route.method.toLowerCase()],`candidate profile lost ${route.method} ${route.path}`);
   const ops=await client.listOperations();assert(ops.length>0,'deployment must serve assured descriptors');
   const ingest=await client.ingest({source:Buffer.from('# Probe\nSDK parity fixture.\n'),filename:'typescript-probe.md'});
-  const temporal=[];
-  const id='10000000-0000-0000-0000-000000000001';
-  for(const [method,base]of [['lookupRelations',{}],['graphNeighborhood',{entityId:id}],['graphPath',{fromEntityId:id,toEntityId:id}]])for(const validAt of ['2026-10-02T12:00:00Z','2026-10-02T12:00:00+02:00']) {
-    const utc=validAt.endsWith('Z');
-    try{
-      await client[method]({...base,validAt});
-      assert(version!=='candidate'||utc,`${method} candidate accepted a non-UTC clock`);
-      temporal.push({method,validAt,outcome:'served-success'});
-    }catch(error){
-      if(version==='candidate'&&!utc){assert(error instanceof MemoryApiError&&error.statusCode===422&&error.detail.includes('UTC'),`${method} must report the candidate UTC boundary refusal: ${error}`);temporal.push({method,validAt,outcome:'utc-boundary-422'});}
-      else {assert(error instanceof MemoryApiError&&[400,404,409].includes(error.statusCode),`${method} clock failed before its served business operation: ${error}`);temporal.push({method,validAt,outcome:`served-business-refusal-${error.statusCode}`});}
-    }
-  }
   const selected=fixtures.cases.filter(item=>item.variant==='defaults'||item.method==='call_open_query'||item.typescriptMethod==='ingestFile'||(['searchClaims','searchChunks'].includes(item.typescriptMethod)&&item.wire[0].method==='POST'));
   const methods=new Set();
   for(const scenario of selected) {
@@ -81,5 +68,5 @@ try {
   for(const name of covered)assert(methods.has(name),`${name} lacks a live deployment disposition`);
   const deletionRoute={method:'DELETE',path:`/documents/${ingest.doc_id}`};
   if(served({request:deletionRoute}))await client.deleteDocument({docId:ingest.doc_id});
-  console.log(JSON.stringify({engine:version,outcomes,temporal},null,2));
+  console.log(JSON.stringify({engine:version,outcomes},null,2));
 }finally{client.close();agent.destroy();rmSync(directory,{recursive:true,force:true});}

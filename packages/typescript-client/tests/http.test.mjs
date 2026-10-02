@@ -133,6 +133,18 @@ test('close cancels ignored-signal adapters; per-client state stays independent'
   assert.throws(()=>new MemoryClient({client:{request:async()=>Response.json([])},baseUrl:'http://localhost'}),InputValidationError);
 });
 
+test('closed and pre-aborted file ingest refuses before opening a nonexistent file',async()=>{
+  let calls=0;
+  const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.ingest);}}});
+  const filePath=join(tmpdir(),`remember-nonexistent-${process.pid}`,'missing.md');
+  const controller=new AbortController();const cause=new Error('caller cancelled');controller.abort(cause);
+  try {
+    await assert.rejects(client.ingestFile({filePath,signal:controller.signal}),error=>error instanceof AbortError&&error.cause===cause);
+    client.close();await assert.rejects(client.ingestFile({filePath}),AbortError);
+    assert.equal(calls,0);
+  }finally{client.close();}
+});
+
 /** Construct one readiness fixture with a chosen pipeline stage status. */
 function report({status,ready=false}) {return {...fixtures.readiness,ready,versions:[{version_id:id,ready,stages:[{stage:'claims',status,component_version:'fixture',finished_at:null,defer_reason:null}]}]};}
 test('readiness checks immediately, continues failed, and stops on dead letters',async()=>{
