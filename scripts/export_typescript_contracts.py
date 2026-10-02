@@ -170,7 +170,7 @@ def reference_tree(*, value: Any, prefix: str) -> Any:
         return [reference_tree(value=item, prefix=prefix) for item in value]
     if not isinstance(value, dict):
         return value
-    return {
+    result = {
         key: (
             prefix + item.rsplit("/", 1)[1]
             if key == "$ref" and isinstance(item, str) and item.startswith("#/$defs/")
@@ -178,6 +178,13 @@ def reference_tree(*, value: Any, prefix: str) -> Any:
         )
         for key, item in value.items()
     }
+    discriminator = result.get("discriminator")
+    mapping = discriminator.get("mapping") if isinstance(discriminator, dict) else None
+    if isinstance(mapping, dict):
+        for tag, reference in mapping.items():
+            if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                mapping[tag] = prefix + reference.rsplit("/", 1)[1]
+    return result
 
 
 def client_models() -> dict[str, Any]:
@@ -490,6 +497,14 @@ def output_references(*, value: Any, names: set[str]) -> Any:
         if key == "$ref" and isinstance(item, str) and item.rsplit("/", 1)[-1] in names:
             item = "#/components/schemas/Output" + item.rsplit("/", 1)[-1]
         result[key] = output_references(value=item, names=names)
+    discriminator = result.get("discriminator")
+    mapping = discriminator.get("mapping") if isinstance(discriminator, dict) else None
+    if isinstance(mapping, dict):
+        for tag, reference in mapping.items():
+            if isinstance(reference, str) and reference.rsplit("/", 1)[-1] in names:
+                mapping[tag] = (
+                    "#/components/schemas/Output" + reference.rsplit("/", 1)[-1]
+                )
     return result
 
 

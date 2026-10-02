@@ -22,6 +22,14 @@ export type DocumentReferencesRequest = {
     'k'?: number;
     kinds?: Array<'cites' | 'links_to' | 'attaches' | 'replies_to' | 'refers_to' | 'amends' | 'implements'> | null;
     section_key?: string | null;
-    time?: (CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime) | null;
+    time?: ((CurrentReadTime & {
+        mode: 'current';
+    }) | (AtReadTime & {
+        mode: 'at';
+    }) | (OverlapReadTime & {
+        mode: 'overlap';
+    }) | (HistoryReadTime & {
+        mode: 'history';
+    })) | null;
 };
 

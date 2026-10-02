@@ -275,7 +275,11 @@ export class MemoryClient {
   /** Search documents by name, metadata and content with source-owned defaults. */
   async searchDocuments({query=null,filters={},versions='current',k=20,cursor=null,time=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;cursor?:string|null;time?:Models.ReadTime|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,cursor,time},signal});}
   /** Send a prepared document search, excluding recursively default-valued fields. */
-  async searchDocumentsRequest({request,signal}:{request:Models.DocumentSearchRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentSearchPage> {return validateModel({name:'DocumentSearchPage',value:await this.json({method:'POST',path:'/documents/search',body:modelDump({name:'DocumentSearchRequest',value:request,excludeDefaults:true}),signal}),response:true});}
+  async searchDocumentsRequest({request,signal}:{request:Models.DocumentSearchRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentSearchPage> {
+    const body={...modelDump({name:'DocumentSearchRequest',value:request,excludeDefaults:true})};
+    if(request.time!=null)body.time=modelDump({name:'ReadTime',value:request.time});
+    return validateModel({name:'DocumentSearchPage',value:await this.json({method:'POST',path:'/documents/search',body,signal}),response:true});
+  }
   /** Follow a keyed section across versions, defaulting to its complete history. */
   async sectionHistory({docId,sectionKey,time=null,k=50,cursor=null,signal}:{docId:string;sectionKey:string;time?:Models.ReadTime|null;k?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
     return this.sectionHistoryRequest({request:{doc_id:uuid({value:docId,field:'docId'}),section_key:sectionKey,time:time??{mode:'history'},k,cursor},signal});

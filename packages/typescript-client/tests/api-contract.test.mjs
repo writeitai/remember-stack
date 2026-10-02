@@ -8,6 +8,9 @@ const api=JSON.parse(readFileSync(new URL('../../../openapi.json',import.meta.ur
 const fixtures=JSON.parse(readFileSync(new URL('./fixtures/python-methods.json',import.meta.url)));
 const routes=JSON.parse(readFileSync(new URL('../contracts/routes.json',import.meta.url)));
 const ajv=new Ajv2020({strict:false,allErrors:true});addFormats(ajv);
+// AJV otherwise treats this OpenAPI keyword as an annotation. Server-side
+// Pydantic discriminated unions require an explicitly supplied, known tag.
+ajv.addKeyword({keyword:'discriminator',schemaType:'object',validate:(schema,value)=>value!==null&&typeof value==='object'&&typeof value[schema.propertyName]==='string'&&Object.hasOwn(schema.mapping,value[schema.propertyName])});
 
 /** Validate original schema references without using the type generator's projection. */
 function validate({schema,value,label}) {
@@ -58,4 +61,10 @@ for(const scenario of fixtures.cases)test(`${scenario.typescriptMethod}/${scenar
     assert(responseSchema,`${label} lacks a successful JSON response contract`);
     validate({schema:responseSchema,value:scenario.responses[index],label:`${label} response`});
   }
+});
+
+
+test('the original API gate rejects a discriminator omitted as a default',()=>{
+  const schema=api.paths['/documents/search'].post.requestBody.content['application/json'].schema;
+  for(const time of [{},{at:'2026-01-01T00:00:00Z'},{from:'2026-01-01T00:00:00Z',to:'2026-01-01T00:00:00Z'}])assert.throws(()=>validate({schema,value:{time},label:'counterfactual missing mode'}));
 });

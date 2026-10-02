@@ -46,6 +46,12 @@ void sectionRequest;void referencesRequest;void reference;
 const input:sdk.DocumentSearchFiltersInput={authors:['alice']};void input;void responseTypes;
 /** Verify incorrect public inputs are rejected by the installed declarations. */
 function inputTypes():void {
+  // @ts-expect-error A discriminated scope must explicitly carry its mode tag.
+  const missingMode:sdk.ReadTimeInput={at:'2026-01-01T00:00:00Z'};void missingMode;
+  // @ts-expect-error The parent request's scope also requires its mode tag.
+  void client.searchDocuments({time:{at:'2026-01-01T00:00:00Z'}});
+  // @ts-expect-error Literal tags are wire values, never model names.
+  const modelName:sdk.ReadTimeInput={mode:'AtReadTime',at:'2026-01-01T00:00:00Z'};void modelName;
   // @ts-expect-error SQL text is not a number.
   void client.querySql({sql:123});
   // @ts-expect-error Defaulted response fields are available, not optional.

@@ -81,6 +81,6 @@ test('response float lexemes retain Python behavior while integer inputs remain 
 
 test('type projection retains source literal discriminator tags',()=>{
   const original={oneOf:[{$ref:'#/components/schemas/AtReadTime'},{$ref:'#/components/schemas/HistoryReadTime'}],discriminator:{propertyName:'mode',mapping:{at:'#/components/schemas/AtReadTime',history:'#/components/schemas/HistoryReadTime'}}};
-  assert.deepEqual(project({value:original}),{oneOf:original.oneOf});
+  assert.deepEqual(project({value:original}),{oneOf:original.oneOf.map((branch,index)=>({allOf:[branch,{type:'object',properties:{mode:{type:'string',enum:[index===0?'at':'history']}},required:['mode']}]}))});
   assert.deepEqual(project({value:{type:'object',properties:{mode:{const:'at',type:'string'}}}}).properties.mode,{type:'string',enum:['at']});
 });

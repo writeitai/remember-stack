@@ -1569,10 +1569,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -1900,10 +1900,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -2677,11 +2677,11 @@
           "temporal_scope": {
             "discriminator": {
               "mapping": {
-                "as_of": "#/$defs/AsOfTemporalScope",
-                "at": "#/$defs/AtTemporalScope",
-                "current": "#/$defs/CurrentTemporalScope",
-                "history": "#/$defs/HistoryTemporalScope",
-                "overlap": "#/$defs/OverlapTemporalScope"
+                "as_of": "#/components/schemas/AsOfTemporalScope",
+                "at": "#/components/schemas/AtTemporalScope",
+                "current": "#/components/schemas/CurrentTemporalScope",
+                "history": "#/components/schemas/HistoryTemporalScope",
+                "overlap": "#/components/schemas/OverlapTemporalScope"
               },
               "propertyName": "mode"
             },
@@ -5953,10 +5953,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/OutputAtReadTime",
+                    "current": "#/components/schemas/OutputCurrentReadTime",
+                    "history": "#/components/schemas/OutputHistoryReadTime",
+                    "overlap": "#/components/schemas/OutputOverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -6315,10 +6315,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/OutputAtReadTime",
+                    "current": "#/components/schemas/OutputCurrentReadTime",
+                    "history": "#/components/schemas/OutputHistoryReadTime",
+                    "overlap": "#/components/schemas/OutputOverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -7127,11 +7127,11 @@
           "temporal_scope": {
             "discriminator": {
               "mapping": {
-                "as_of": "#/$defs/AsOfTemporalScope",
-                "at": "#/$defs/AtTemporalScope",
-                "current": "#/$defs/CurrentTemporalScope",
-                "history": "#/$defs/HistoryTemporalScope",
-                "overlap": "#/$defs/OverlapTemporalScope"
+                "as_of": "#/components/schemas/OutputAsOfTemporalScope",
+                "at": "#/components/schemas/OutputAtTemporalScope",
+                "current": "#/components/schemas/OutputCurrentTemporalScope",
+                "history": "#/components/schemas/OutputHistoryTemporalScope",
+                "overlap": "#/components/schemas/OutputOverlapTemporalScope"
               },
               "propertyName": "mode"
             },
@@ -9393,10 +9393,10 @@
       "OutputReadTime": {
         "discriminator": {
           "mapping": {
-            "at": "#/$defs/AtReadTime",
-            "current": "#/$defs/CurrentReadTime",
-            "history": "#/$defs/HistoryReadTime",
-            "overlap": "#/$defs/OverlapReadTime"
+            "at": "#/components/schemas/OutputAtReadTime",
+            "current": "#/components/schemas/OutputCurrentReadTime",
+            "history": "#/components/schemas/OutputHistoryReadTime",
+            "overlap": "#/components/schemas/OutputOverlapReadTime"
           },
           "propertyName": "mode"
         },
@@ -10200,10 +10200,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/OutputAtReadTime",
+                    "current": "#/components/schemas/OutputCurrentReadTime",
+                    "history": "#/components/schemas/OutputHistoryReadTime",
+                    "overlap": "#/components/schemas/OutputOverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -10448,10 +10448,10 @@
             },
             "discriminator": {
               "mapping": {
-                "at": "#/$defs/AtReadTime",
-                "current": "#/$defs/CurrentReadTime",
-                "history": "#/$defs/HistoryReadTime",
-                "overlap": "#/$defs/OverlapReadTime"
+                "at": "#/components/schemas/OutputAtReadTime",
+                "current": "#/components/schemas/OutputCurrentReadTime",
+                "history": "#/components/schemas/OutputHistoryReadTime",
+                "overlap": "#/components/schemas/OutputOverlapReadTime"
               },
               "propertyName": "mode"
             },
@@ -12062,10 +12062,10 @@
       "ReadTime": {
         "discriminator": {
           "mapping": {
-            "at": "#/$defs/AtReadTime",
-            "current": "#/$defs/CurrentReadTime",
-            "history": "#/$defs/HistoryReadTime",
-            "overlap": "#/$defs/OverlapReadTime"
+            "at": "#/components/schemas/AtReadTime",
+            "current": "#/components/schemas/CurrentReadTime",
+            "history": "#/components/schemas/HistoryReadTime",
+            "overlap": "#/components/schemas/OverlapReadTime"
           },
           "propertyName": "mode"
         },
@@ -12889,10 +12889,10 @@
               {
                 "discriminator": {
                   "mapping": {
-                    "at": "#/$defs/AtReadTime",
-                    "current": "#/$defs/CurrentReadTime",
-                    "history": "#/$defs/HistoryReadTime",
-                    "overlap": "#/$defs/OverlapReadTime"
+                    "at": "#/components/schemas/AtReadTime",
+                    "current": "#/components/schemas/CurrentReadTime",
+                    "history": "#/components/schemas/HistoryReadTime",
+                    "overlap": "#/components/schemas/OverlapReadTime"
                   },
                   "propertyName": "mode"
                 },
@@ -13127,10 +13127,10 @@
             },
             "discriminator": {
               "mapping": {
-                "at": "#/$defs/AtReadTime",
-                "current": "#/$defs/CurrentReadTime",
-                "history": "#/$defs/HistoryReadTime",
-                "overlap": "#/$defs/OverlapReadTime"
+                "at": "#/components/schemas/AtReadTime",
+                "current": "#/components/schemas/CurrentReadTime",
+                "history": "#/components/schemas/HistoryReadTime",
+                "overlap": "#/components/schemas/OverlapReadTime"
               },
               "propertyName": "mode"
             },

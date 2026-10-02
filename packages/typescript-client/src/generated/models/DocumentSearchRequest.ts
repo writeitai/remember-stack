@@ -19,7 +19,15 @@ export type DocumentSearchRequest = {
     filters?: DocumentSearchFilters;
     'k'?: number;
     query?: string | null;
-    time?: (CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime) | null;
+    time?: ((CurrentReadTime & {
+        mode: 'current';
+    }) | (AtReadTime & {
+        mode: 'at';
+    }) | (OverlapReadTime & {
+        mode: 'overlap';
+    }) | (HistoryReadTime & {
+        mode: 'history';
+    })) | null;
     versions?: 'current' | 'all';
 };
 

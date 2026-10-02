@@ -989,13 +989,13 @@ class MemoryClient:
         self, *, request: DocumentSearchRequest
     ) -> DocumentSearchPage:
         """Send one prepared :class:`DocumentSearchRequest` (``POST /documents/search``)."""
+        body = request.model_dump(mode="json", exclude_defaults=True)
+        if request.time is not None:
+            # Discriminators remain required even when their tag is a default.
+            body["time"] = request.time.model_dump(mode="json")
         return _validated(
             DocumentSearchPage,
-            self._json(
-                "POST",
-                "/documents/search",
-                json_body=request.model_dump(mode="json", exclude_defaults=True),
-            ),
+            self._json("POST", "/documents/search", json_body=body),
             endpoint="POST /documents/search",
         )
 

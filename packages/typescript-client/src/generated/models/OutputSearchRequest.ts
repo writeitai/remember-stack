@@ -12,6 +12,14 @@ export type OutputSearchRequest = {
     documents: OutputDocumentSearchFilters | null;
     'k': number;
     query: string;
-    time: (OutputCurrentReadTime | OutputAtReadTime | OutputOverlapReadTime | OutputHistoryReadTime) | null;
+    time: ((OutputCurrentReadTime & {
+        mode: 'current';
+    }) | (OutputAtReadTime & {
+        mode: 'at';
+    }) | (OutputOverlapReadTime & {
+        mode: 'overlap';
+    }) | (OutputHistoryReadTime & {
+        mode: 'history';
+    })) | null;
 };
 

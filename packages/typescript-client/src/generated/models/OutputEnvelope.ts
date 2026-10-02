@@ -46,7 +46,17 @@ export type OutputEnvelope = {
     paths: Array<OutputGraphPath>;
     ranking: Array<OutputRankedItem>;
     sources: Array<OutputSourceRecord>;
-    temporal_scope: (OutputCurrentTemporalScope | OutputAtTemporalScope | OutputOverlapTemporalScope | OutputHistoryTemporalScope | OutputAsOfTemporalScope);
+    temporal_scope: ((OutputCurrentTemporalScope & {
+        mode: 'current';
+    }) | (OutputAtTemporalScope & {
+        mode: 'at';
+    }) | (OutputOverlapTemporalScope & {
+        mode: 'overlap';
+    }) | (OutputHistoryTemporalScope & {
+        mode: 'history';
+    }) | (OutputAsOfTemporalScope & {
+        mode: 'as_of';
+    }));
     transcript: Array<OutputTranscriptEntry>;
     truncation: OutputTruncation | null;
 };

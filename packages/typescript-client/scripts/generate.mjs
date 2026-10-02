@@ -34,9 +34,19 @@ export function project({value}) {
     else result.anyOf=nonnull;
   }
   if(result.contentMediaType && result.type==='string') {result.format='binary';delete result.contentMediaType;}
-  // Const/enum tags already preserve each union branch. The generator otherwise
-  // replaces source tags with model names when it sees a discriminator mapping.
-  delete result.discriminator;
+  // Preserve the parent union's required tag while leaving standalone models'
+  // defaulted tag optional. Passing discriminator directly to this generator
+  // would instead replace the literal tags with model names.
+  if(result.discriminator) {
+    const {propertyName,mapping}=result.discriminator;
+    if(!Array.isArray(result.oneOf)||!mapping)throw new Error('Unsupported discriminator projection');
+    result.oneOf=result.oneOf.map(branch=>{
+      const tags=Object.entries(mapping).filter(([,reference])=>reference===branch.$ref).map(([tag])=>tag);
+      if(!branch.$ref||tags.length===0)throw new Error('Discriminator branch requires explicit source mapping');
+      return {allOf:[branch,{type:'object',properties:{[propertyName]:{type:'string',enum:tags}},required:[propertyName]}]};
+    });
+    delete result.discriminator;
+  }
   delete result.$schema;
   return result;
 }

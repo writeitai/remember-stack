@@ -5700,7 +5700,8 @@
             "k": 3,
             "query": "fixture",
             "time": {
-              "at": "2026-10-02T12:00:00Z"
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
             },
             "versions": "all"
           },
@@ -8996,6 +8997,400 @@
               "snapshot"
             ]
           ]
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {
+        "time": {
+          "mode": "current"
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "time": {
+          "mode": "current"
+        }
+      },
+      "variant": "scope-current",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "mode": "current"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {
+        "time": {
+          "mode": "history"
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "time": {
+          "mode": "history"
+        }
+      },
+      "variant": "scope-history",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "mode": "history"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "variant": "scope-at",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents",
+      "options": {
+        "time": {
+          "from": "2026-10-02T12:00:00+00:00",
+          "mode": "overlap",
+          "to": "2026-10-02T12:00:00+00:00"
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocuments",
+      "typescriptOptions": {
+        "time": {
+          "from": "2026-10-02T12:00:00+00:00",
+          "mode": "overlap",
+          "to": "2026-10-02T12:00:00+00:00"
+        }
+      },
+      "variant": "scope-overlap",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "from": "2026-10-02T12:00:00Z",
+              "mode": "overlap",
+              "to": "2026-10-02T12:00:00Z"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {
+          "time": {
+            "mode": "current"
+          }
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {
+          "time": {
+            "mode": "current"
+          }
+        }
+      },
+      "variant": "scope-current",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "mode": "current"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {
+          "time": {
+            "mode": "history"
+          }
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {
+          "time": {
+            "mode": "history"
+          }
+        }
+      },
+      "variant": "scope-history",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "mode": "history"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {
+          "time": {
+            "at": "2026-10-02T12:00:00+00:00",
+            "mode": "at"
+          }
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {
+          "time": {
+            "at": "2026-10-02T12:00:00+00:00",
+            "mode": "at"
+          }
+        }
+      },
+      "variant": "scope-at",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_documents_request",
+      "options": {
+        "request": {
+          "time": {
+            "from": "2026-10-02T12:00:00+00:00",
+            "mode": "overlap",
+            "to": "2026-10-02T12:00:00+00:00"
+          }
+        }
+      },
+      "responses": [
+        {
+          "as_of": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "documents": [],
+          "people_matched": [],
+          "scope_pending": null
+        }
+      ],
+      "result": {
+        "as_of": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "documents": [],
+        "people_matched": [],
+        "scope_pending": null
+      },
+      "typescriptMethod": "searchDocumentsRequest",
+      "typescriptOptions": {
+        "request": {
+          "time": {
+            "from": "2026-10-02T12:00:00+00:00",
+            "mode": "overlap",
+            "to": "2026-10-02T12:00:00+00:00"
+          }
+        }
+      },
+      "variant": "scope-overlap",
+      "wire": [
+        {
+          "body": {
+            "time": {
+              "from": "2026-10-02T12:00:00Z",
+              "mode": "overlap",
+              "to": "2026-10-02T12:00:00Z"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/search",
+          "query": []
         }
       ]
     }

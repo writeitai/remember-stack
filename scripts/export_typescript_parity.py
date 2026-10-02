@@ -483,6 +483,26 @@ def scenarios() -> list[dict[str, Any]]:
             },
         ]
     )
+    result.extend(
+        [
+            {
+                "method": method,
+                "variant": "scope-" + scope["mode"],
+                "options": (
+                    {"time": scope}
+                    if method == "search_documents"
+                    else {"request": {"time": scope}}
+                ),
+            }
+            for method in ("search_documents", "search_documents_request")
+            for scope in (
+                {"mode": "current"},
+                {"mode": "history"},
+                {"mode": "at", "at": STAMP},
+                {"mode": "overlap", "from": STAMP, "to": STAMP},
+            )
+        ]
+    )
     inventory = json.loads(
         (ROOT / "plan/designs/typescript_client_parity.json").read_text()
     )
@@ -778,6 +798,10 @@ def record() -> dict[str, Any]:
                         else None,
                     }
                 )
+                if request.method == "POST" and request.url.path == "/documents/search":
+                    # The same request model used by the real HTTP route must accept
+                    # the bytes; matching two clients is insufficient on its own.
+                    models.DocumentSearchRequest.model_validate_json(body)
                 response = select_response(request=request, fixtures=fixtures)
                 replies.append(response)
                 return httpx.Response(200, json=response)

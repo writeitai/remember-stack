@@ -14,6 +14,14 @@ export type SectionHistoryRequest = {
     doc_id: string;
     'k'?: number;
     section_key: string;
-    time?: (CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime);
+    time?: ((CurrentReadTime & {
+        mode: 'current';
+    }) | (AtReadTime & {
+        mode: 'at';
+    }) | (OverlapReadTime & {
+        mode: 'overlap';
+    }) | (HistoryReadTime & {
+        mode: 'history';
+    }));
 };
 

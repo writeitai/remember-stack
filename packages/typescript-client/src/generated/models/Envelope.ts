@@ -46,7 +46,17 @@ export type Envelope = {
     paths?: Array<GraphPath>;
     ranking?: Array<RankedItem>;
     sources?: Array<SourceRecord>;
-    temporal_scope: (CurrentTemporalScope | AtTemporalScope | OverlapTemporalScope | HistoryTemporalScope | AsOfTemporalScope);
+    temporal_scope: ((CurrentTemporalScope & {
+        mode: 'current';
+    }) | (AtTemporalScope & {
+        mode: 'at';
+    }) | (OverlapTemporalScope & {
+        mode: 'overlap';
+    }) | (HistoryTemporalScope & {
+        mode: 'history';
+    }) | (AsOfTemporalScope & {
+        mode: 'as_of';
+    }));
     transcript?: Array<TranscriptEntry>;
     truncation?: Truncation | null;
 };
