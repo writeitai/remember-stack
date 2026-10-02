@@ -32,7 +32,6 @@ const spend=new Set(['spend_safety','reservation_refused','spend_cap','budget_ex
 const prefixes=new Set([...spend,'dispatch_refused','dispatch_parked','body_too_large','empty_body']);
 /** Map SDK failures to source-compatible errors without exposing unexpected exception text. */
 export function mapError({error}:{error:unknown}):ToolError {
-  if(error instanceof ToolArgumentError) return error.error;
   if(error instanceof NumericPrecisionError) return new ToolError({code:'local_backend_error',detail:error.detail,status_code:null,retryable:false,agent_action:'Report a composition/contract defect; do not retry the same call.'});
   if(error instanceof AbortError) return new ToolError({code:'cancelled',detail:'operation aborted',status_code:null,retryable:false,agent_action:'The caller cancelled the operation.'});
   if(error instanceof InputValidationError) {

@@ -42,7 +42,7 @@ for (const [name, validators] of Object.entries(constants.modelValidators)) {
 /** AJV callback for the source-owned UTC-only field annotation. */
 function utcKeyword(enabled: boolean, value: unknown): boolean {
   return !enabled || value === null || (typeof value === 'string'
-    && /(?:[zZ]|[+]00:00)$/.test(value) && Number.isFinite(Date.parse(value)));
+    && /(?:[zZ]|[+-]00:00)$/.test(value) && Number.isFinite(Date.parse(value)));
 }
 
 /** Resolve a local model reference without accepting remote schemas. */
@@ -90,10 +90,18 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
   return value;
 }
 
+/** Compare source datetime precision without JavaScript Date's millisecond truncation. */
+function utcMicroseconds({value}:{value:unknown}):bigint|null {
+  if(typeof value!=='string')return null;
+  const fraction=/\.(\d+)(?=[zZ]|[+-]00:00$)/.exec(value);
+  const base=Date.parse(fraction?value.replace(fraction[0],''):value);
+  if(!Number.isFinite(base))return null;
+  return BigInt(base)*1000n+BigInt((fraction?.[1]??'').slice(0,6).padEnd(6,'0'));
+}
 /** Reject the cross-field invariants which JSON Schema alone cannot express. */
 function semanticInvariant({ name, value }: { name?: string; value: Record<string, unknown> }): void {
   if (name === 'DocumentSearchRequest' && value.query != null && value.cursor != null) fail({ detail: 'query and cursor cannot be combined' });
-  if (name === 'OverlapTemporalScope' && Date.parse(String(value.to)) < Date.parse(String(value.from))) fail({ detail: 'temporal scope ends before it starts' });
+  if(name==='OverlapTemporalScope'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}
   if (name === 'EvidenceSpan' && typeof value.char_end === 'number' && typeof value.char_start === 'number'
     && value.char_end <= value.char_start) fail({ detail: 'evidence span end must be after start' });
   if (name === 'EvidenceTotal' && typeof value.returned === 'number' && typeof value.total === 'number'
@@ -181,7 +189,7 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
   }
   if(typeof value==='string'&&schema.format==='date-time') {
     // Pydantic renders zero offsets as Z and nonzero fractions at microsecond precision.
-    return value.replace(/([+]00:00|-00:00)$/,'Z').replace(/\.(\d{1,6})(?=Z|[+-]\d{2}:\d{2}$)/,(_match,fraction:string)=>Number(fraction)===0?'':'.'+fraction.padEnd(6,'0'));
+    return value.replace(/([+]00:00|-00:00)$/,'Z').replace(/\.(\d+)(?=Z|[+-]\d{2}:\d{2}$)/,(_match,fraction:string)=>Number(fraction.slice(0,6))===0?'':'.'+fraction.slice(0,6).padEnd(6,'0'));
   }
   return value;
 }

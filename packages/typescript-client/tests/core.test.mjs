@@ -1,7 +1,7 @@
 /** Verify D140 precision, strictness, recursive defaults and cross-field rules. */
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {parseJson,assertJson,validateModel,InputValidationError,MemoryApiError,NumericPrecisionError} from '../.test-build/internal.js';
+import {parseJson,assertJson,validateModel,modelDump,InputValidationError,MemoryApiError,NumericPrecisionError} from '../.test-build/internal.js';
 import {project} from '../scripts/generate.mjs';
 
 const id='10000000-0000-0000-0000-000000000001';
@@ -55,4 +55,14 @@ test('projection refuses unsupported constructs',()=>{
   assert.deepEqual(project({value:{type:'string',const:'literal'}}),{type:'string',enum:['literal']});
   assert.deepEqual(project({value:{anyOf:[{type:'string'},{type:'null'}]}}),{type:'string',nullable:true});
   assert.throws(()=>project({value:{prefixItems:[{type:'string'}]}}),/Unsupported/);
+});
+
+
+test('temporal ordering retains source microseconds and accepts every zero UTC offset',()=>{
+  const value={from:'2026-01-01T00:00:00.000002Z',to:'2026-01-01T00:00:00.000001Z',evaluated_at:'2026-01-01T00:00:00Z',believed_at:'2026-01-01T00:00:00Z'};
+  assert.throws(()=>validateModel({name:'OverlapTemporalScope',value}),InputValidationError);
+  value.to='2026-01-01T00:00:00.000002-00:00';
+  assert.doesNotThrow(()=>validateModel({name:'OverlapTemporalScope',value}));
+  value.from='2026-01-01T00:00:00.0000019Z';
+  assert.equal(modelDump({name:'OverlapTemporalScope',value}).from,'2026-01-01T00:00:00.000001Z');
 });
