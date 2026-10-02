@@ -275,7 +275,7 @@ UTC-only rule for the general methods.
 While these PRs awaited contributor CLA acceptance, engine main merged PR #500
 at `2cde3baf`, implementing D140 effective time and section references. D141
 now identifies this TypeScript design. The refreshed normative inventory records
-all 47 MemoryClient methods (excluding its constructor), the 18 transport-neutral
+all 48 MemoryClient methods (excluding its constructor), the 18 transport-neutral
 tools, all new public models and backend export dispositions. The earlier source
 table remains evidence of the original baseline; the normative JSON is the current
 implementation contract. Eight new methods cover section history, document
