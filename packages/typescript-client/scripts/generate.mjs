@@ -152,4 +152,7 @@ async function main() {
   } finally {await rm(temporary,{recursive:true,force:true});}
 }
 
-if (process.argv[1] && resolve(process.argv[1])===fileURLToPath(import.meta.url)) await main();
+if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)) {
+  try{await main();}
+  catch(error){process.stderr.write((error instanceof Error?error.message:'TypeScript generation failed')+'\n');process.exitCode=1;}
+}

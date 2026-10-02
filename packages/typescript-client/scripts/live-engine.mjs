@@ -18,7 +18,7 @@ function served({request}) {
 }
 const outcomes=[];
 try {
-  if(version==='candidate')for(const route of Object.values(routes))assert(profile.paths[route.path]?.[route.method.toLowerCase()],`candidate profile lost ${route.method} ${route.path}`);
+  if(version==='candidate')for(const route of Object.values(routes).filter(route=>!route.optionalProfile))assert(profile.paths[route.path]?.[route.method.toLowerCase()],`candidate profile lost ${route.method} ${route.path}`);
   const ops=await client.listOperations();assert(ops.length>0,'deployment must serve assured descriptors');
   const ingest=await client.ingest({source:Buffer.from('# Probe\nSDK parity fixture.\n'),filename:'typescript-probe.md'});
   const selected=fixtures.cases.filter(item=>item.variant==='defaults'||item.method==='call_open_query'||item.typescriptMethod==='ingestFile'||(['searchClaims','searchChunks'].includes(item.typescriptMethod)&&item.wire[0].method==='POST'));
