@@ -274,7 +274,8 @@ D140 added eight methods to the full client surface: `sectionHistory`,
 `clearEffectiveTime`. Match Python request validation, default time scopes,
 section-key encoding, NDJSON reference replacement, generation status and
 error behavior. All new request/response models and support constants are part
-of the same normative inventory. Ingest carries version keys and effective
+of the same normative inventory. Symbolic default constants resolve against
+`pythonSourceRevision`; fixture/default gates compare their actual values. Ingest carries version keys and effective
 periods; claims/chunks/document searches and claims context carry time scopes.
 No writes gain retry permission from these additions.
 
@@ -302,7 +303,12 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
    fixtures/recording transports. Cover every method, malformed responses,
    query-error statuses, polling, input validation, lineage, file MIME,
    permission failures, routing expiry/movement, secret origins, redirects,
-   ambiguous writes, cancellation and POSIX credential permissions. Every
+   ambiguous writes, cancellation and POSIX credential permissions. Include
+   D140 time-scoped searches, section history default history/offsets, valid
+   slash/colon key encoding and invalid-key refusals, reference NDJSON bytes
+   with null omission/trailing LF/empty sets, and UTC effective-period validation.
+   GET versus PUT on the same references path must have different replay
+   eligibility. Count all three new writes on 421 and connect failures. Every
    adaptation in §7 has explicit tests; fixture comparison normalizes date
    instants, UUID case and query-parameter ordering, but preserves repeated
    values, JSON bodies/defaults and Boolean query encodings.
@@ -408,9 +414,9 @@ error shapes/mapping. A future catalogue addition fails drift checks until
 covered. The seven open-query names are only the SDK dispatch subset; an MCP
 host can filter every catalogue tool by its memory:read/memory:write permission.
 The normative inventory's supportExports records exact source signatures,
-Connection return/fields, credential/issuer read helpers, and all 28 current
+Connection return/fields, credential/issuer read helpers, and all 34 current
 `remember.mcp_tools.__all__` names with explicit TypeScript names or a separate
-MCP-library disposition. Backend protocols, host settings and the three
+MCP-library disposition. Backend protocols, host settings and the five
 host-execution handlers live in that separate MCP library; the base client
 supplies their complete catalogue/validation/error dependencies, not host I/O.
 `validateArguments({name, arguments, pathResolver?, maxBodyBytes?})` returns a

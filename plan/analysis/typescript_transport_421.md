@@ -1,6 +1,6 @@
 # TypeScript transport evidence: HTTP 421 replay
 
-Status: non-binding implementation research for D140. Retrieved and measured
+Status: non-binding implementation research for D141. Retrieved and measured
 2026-10-02. This note supplies evidence for the transport amendment; the accepted
 contract remains `plan/designs/typescript_client_design.md`.
 
@@ -34,7 +34,7 @@ and transmit once per invocation. Fetch-standard implementations are unsuitable
 because of their 421 behavior; no legacy fetch option remains. The default adapter is the
 reference implementation tested by actual server request counts.
 
-This changes the proposed native-fetch default, not the D140 no-write-replay or
+This changes the proposed native-fetch default, not the D141 no-write-replay or
 changed-host single-read-replay requirements. No extra runtime dependency is
 needed. Node's TLS defaults apply; httpx proxy and SSL_CERT_FILE environment
 semantics are not claimed.
@@ -63,6 +63,6 @@ contract. A Fetch stream-body workaround remains rejected because bodyless
 methods still replay and ownership/cancellation semantics are not repaired.
 
 The total HTTP operation deadline is an intentional language adaptation from
-httpx's per-phase idle timeout, now named in D140's adaptation table. Large or
+httpx's per-phase idle timeout, now named in D141's adaptation table. Large or
 slow ingests need a raised timeoutMs; automatic write replay remains forbidden
 when expiry leaves the outcome unknown.

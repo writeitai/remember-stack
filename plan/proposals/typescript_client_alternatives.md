@@ -1,6 +1,6 @@
 # Unselected TypeScript client alternatives
 
-**Status:** viable, not accepted. Current authority: D140.
+**Status:** viable, not accepted. Current authority: D141.
 
 - A browser/edge-capable core with Node-only subpaths wins if concrete consumers
   require it and we can preserve credential isolation without weakening Node
