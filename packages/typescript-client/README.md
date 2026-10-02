@@ -56,6 +56,14 @@ silently rounded; use string values/SQL casts for larger integers.
 
 `Client`, `MemoryClient` and `RememberClient` expose the complete reviewed Python
 memory client scope. `Client` also has `fromEnv`, `ingestFile` and lazy `account`.
+The scope includes effective-period declarations, time-scoped searches, keyed
+section history, supplied reference replacement and reference-generation reads.
+`sectionHistory` defaults to history; `documentReferences` takes exactly one
+chunk or document. Reference sets are NDJSON, including an empty-set replacement.
+`versionKey`, `effectiveFrom` and `effectiveUntil` extend ingest; effective periods
+require UTC and a snapshot lineage. Nested time scopes keep wire keys (`from`,
+`to`) and explicit offsets. The transport-neutral catalogue has all18tools.
+
 `QueryResultDict` is an ordinary typed object with `.rows`, `.columns` and
 `.truncated`. Response model types contain validated, defaulted fields; their
 `Input` counterparts describe schema-owned input objects.

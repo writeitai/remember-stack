@@ -3,7 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { DocumentSearchPerson } from './DocumentSearchPerson';
+import type { EffectiveInterval } from './EffectiveInterval';
 import type { JsonValue } from './JsonValue';
+import type { MatchingEdition } from './MatchingEdition';
 /**
  * One matching document, described by the version it was judged by.
  */
@@ -11,18 +13,22 @@ export type DocumentSearchResult = {
     authors?: Array<DocumentSearchPerson>;
     created_at?: string | null;
     doc_id: string;
+    effective?: Array<EffectiveInterval>;
     extra?: Record<string, JsonValue>;
     family: string;
     file_name?: string | null;
     language?: string | null;
     lineage_title?: string | null;
     matched_by?: Array<'name' | 'content'>;
+    matching_editions?: Array<MatchingEdition>;
     modified_at?: string | null;
     other_matching_version_ids?: Array<string>;
     overview?: string | null;
-    p3_path: string;
+    p3_path?: string | null;
     recipients?: Array<DocumentSearchPerson>;
+    representation_id?: string | null;
     score?: number | null;
+    served_version?: boolean;
     source_path?: string | null;
     status: 'ingesting' | 'converting' | 'structuring' | 'ready' | 'failed' | 'deleted';
     thread_ref?: string | null;

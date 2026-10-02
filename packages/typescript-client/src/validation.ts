@@ -18,6 +18,8 @@ interface Schema {
   default?: unknown;
   'x-extra'?: string;
   'x-exclude'?: boolean;
+  'x-field-order'?: string[];
+  discriminator?: {propertyName:string};
   format?:string;
 }
 const definitions = schemas.$defs as unknown as Record<string, Schema>;
@@ -36,6 +38,8 @@ function validator({schema,model=false}:{schema:object;model?:boolean}):Validate
 }
 const semanticValidators = {
   DocumentSearchRequest: ['cursor_pages_filters_only'], ConnectorCreate: ['_credentials_are_references'],
+  EffectivePeriodInput: ['_ends_after_it_starts'], EffectivePeriodsRequest: ['_starts_are_distinct'],
+  OverlapReadTime: ['_ordered'], ReferenceInput: ['_consistent'], DocumentReferencesRequest: ['_one_source'],
   OverlapTemporalScope: ['_ordered'], EvidenceSpan: ['_end_after_start'],
   EvidenceTotal: ['_returned_does_not_exceed_total'], ContextBundleV2: ['_child_grains_are_exact'],
 };
@@ -68,6 +72,7 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
   name = resolved.name ?? name;
   const variants = schema.anyOf ?? schema.oneOf;
   if (variants) {
+    if(schema.discriminator&&(value===null||typeof value!=='object'||!(schema.discriminator.propertyName in value)))fail({detail:'time requires an explicit mode'});
     for (const variant of variants) {
       try {
         const candidate = normalize({ value, schema: variant });
@@ -98,7 +103,7 @@ function normalize({ value, schema, name }: { value: unknown; schema: Schema; na
 /** Compare source datetime precision without JavaScript Date's millisecond truncation. */
 function utcMicroseconds({value}:{value:unknown}):bigint|null {
   if(typeof value!=='string')return null;
-  const fraction=/\.(\d+)(?=[zZ]|[+-]00:00$)/.exec(value);
+  const fraction=/\.(\d+)(?=[zZ]|[+-]\d{2}:\d{2}$)/.exec(value);
   const base=Date.parse(fraction?value.replace(fraction[0],''):value);
   if(!Number.isFinite(base))return null;
   return BigInt(base)*1000n+BigInt((fraction?.[1]??'').slice(0,6).padEnd(6,'0'));
@@ -106,7 +111,25 @@ function utcMicroseconds({value}:{value:unknown}):bigint|null {
 /** Reject the cross-field invariants which JSON Schema alone cannot express. */
 function semanticInvariant({ name, value }: { name?: string; value: Record<string, unknown> }): void {
   if (name === 'DocumentSearchRequest' && value.query != null && value.cursor != null) fail({ detail: 'query and cursor cannot be combined' });
-  if(name==='OverlapTemporalScope'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}
+  if(name==='OverlapTemporalScope'||name==='OverlapReadTime'){const end=utcMicroseconds({value:value.to}),start=utcMicroseconds({value:value.from});if(end!==null&&start!==null&&end<start)fail({detail:'temporal scope ends before it starts'});}
+  if(name==='EffectivePeriodInput') {const start=utcMicroseconds({value:value.effective_from}),end=utcMicroseconds({value:value.effective_until});if(start!==null&&end!==null&&end<=start)fail({detail:'effective_until must be later than effective_from'});}
+  if(name==='EffectivePeriodsRequest') {
+    const starts=((value.periods??[]) as Record<string,unknown>[]).map(period=>utcMicroseconds({value:period.effective_from}));
+    if(new Set(starts).size!==starts.length)fail({detail:'two periods start at the same instant'});
+  }
+  if(name==='DocumentReferencesRequest') {
+    if((value.chunk_id==null)===(value.doc_id==null))fail({detail:'give exactly one of chunk_id or doc_id'});
+    if(value.section_key!=null&&value.doc_id==null)fail({detail:'section_key requires doc_id'});
+  }
+  if(name==='ReferenceInput') {
+    const target=value.target as Record<string,unknown>|undefined;
+    if(value.binding==='pinned'&&target?.version_key==null)fail({detail:'a pinned reference requires target.version_key'});
+    if(value.kind==='amends') {
+      if(value.change_date_known==null)fail({detail:'an amends reference requires change_date_known'});
+      if(value.change_date_known===true&&value.change_effective_from==null)fail({detail:'change_date_known=true requires change_effective_from'});
+      if(value.change_date_known===false&&value.change_effective_from!=null)fail({detail:'change_date_known=false forbids change_effective_from'});
+    }else if(value.change_date_known!=null||value.change_effective_from!=null)fail({detail:'change dates apply only to amends'});
+  }
   if (name === 'EvidenceSpan' && typeof value.char_end === 'number' && typeof value.char_start === 'number'
     && value.char_end <= value.char_start) fail({ detail: 'evidence span end must be after start' });
   if (name === 'EvidenceTotal' && typeof value.returned === 'number' && typeof value.total === 'number'
@@ -183,7 +206,10 @@ function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:S
   if(Array.isArray(value))return value.map(item=>dump({value:item,schema:schema.items??{},excludeNone,excludeDefaults}));
   if(value!==null&&typeof value==='object') {
     const result:Record<string,unknown>={};
-    for(const [key,item]of Object.entries(value)) {
+    const fields=value as Record<string,unknown>;
+    const keys=schema['x-field-order']?[...schema['x-field-order']!.filter(key=>key in fields),...Object.keys(fields).filter(key=>!schema['x-field-order']!.includes(key))]:Object.keys(fields);
+    for(const key of keys) {
+      const item=fields[key];
       const field=schema.properties?.[key]??{};
       if(field['x-exclude'])continue;
       if(excludeNone&&item===null)continue;

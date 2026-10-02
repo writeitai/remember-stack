@@ -12,7 +12,7 @@ import { fetchIssuerMetadata, sendSameOrigin, sameOrigin } from './issuer';
 
 export interface RequestOptions {signal?:AbortSignal;}
 export interface ClientOptions {apiKey?:string|null;baseUrl?:string|null;project?:string|null;timeoutMs?:number;client?:HttpClient;transport?:HttpTransport;agents?:ClientAgents;}
-export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;}
+export interface IngestOptions extends RequestOptions {source?:Uint8Array|string;content?:Uint8Array;filename?:string;mime?:string;title?:string|null;sourceKind?:string|null;sourceRef?:string|null;sourceModifiedAt?:string|Date|null;versioningMode?:'snapshot'|'living';sourceVersionRef?:string|null;sourcePath?:string|null;versionKey?:string|null;effectiveFrom?:string|Date|null;effectiveUntil?:string|Date|null;}
 export type QueryResultDict = Models.OutputQueryResult;
 type Envelope = Models.OutputEnvelope;
 type ContextBundle = Models.OutputContextBundleV2;
@@ -182,7 +182,7 @@ export class MemoryClient {
     const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{})},signal});return validateModel({name:'ContextBundleV2',value,response:true});
   }
   /** Run assured source-claim recall. */
-  async claimsAndSourcesContext({query,signal}:{query:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query},signal}),response:true});}
+  async claimsAndSourcesContext({query,time,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{})},signal}),response:true});}
   /** Run assured entity resolution. */
   async resolveEntity({name,signal}:{name:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'resolve_entity',arguments:{name},signal}),response:true});}
   /** Resolve a name with optional repeated focal-entity query parameters. */
@@ -198,8 +198,8 @@ export class MemoryClient {
   /** Search live passages; filters switch the wire request from GET to POST. */
   async searchChunks(options:SearchOptions):Promise<Envelope> {return this.search({...options,path:'/search/chunks'});}
   /** Match the two source search endpoints without duplicating their wire behavior. */
-  private async search({query,k=10,channel='semantic',documents,signal,path}:SearchOptions&{path:string}):Promise<Envelope> {
-    const value=documents==null?await this.json({method:'GET',path,params:{query,k,channel},signal}):await this.json({method:'POST',path,body:modelDump({name:'SearchRequest',value:{query,k,channel,documents},excludeNone:true}),signal});
+  private async search({query,k=10,channel='semantic',documents,time,signal,path}:SearchOptions&{path:string}):Promise<Envelope> {
+    const value=documents==null&&time==null?await this.json({method:'GET',path,params:{query,k,channel},signal}):await this.json({method:'POST',path,body:modelDump({name:'SearchRequest',value:{query,k,channel,documents:documents??null,time:time??null},excludeNone:true}),signal});
     return validateModel({name:'Envelope',value,response:true});
   }
   /** Fetch one or two surrounding chunks in document order. */
@@ -248,23 +248,69 @@ export class MemoryClient {
     return bounded({signal:options.signal,timeoutMs:this.timeoutMs,controllers:this.controllers,work:signal=>this.#ingest({...options,signal})});
   }
   /** Include local file loading in the ingest operation's cancellation and deadline. */
-  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
+  async #ingest({source,content,filename,mime,title,sourceKind,sourceRef,sourceModifiedAt,versioningMode='snapshot',sourceVersionRef,sourcePath,versionKey,effectiveFrom,effectiveUntil,signal}:IngestOptions):Promise<Models.OutputIngestedVersion> {
     if((sourceKind==null)!==(sourceRef==null))throw new InputValidationError({detail:'sourceKind and sourceRef must be supplied together'});
-    if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
+    if(sourceKind==null&&(sourceModifiedAt!=null||sourceVersionRef!=null||versioningMode!=='snapshot'||versionKey!=null||effectiveFrom!=null||effectiveUntil!=null))throw new InputValidationError({detail:'source timestamps, revisions, and living mode require sourceKind/sourceRef'});
+    if(effectiveUntil!=null&&effectiveFrom==null)throw new InputValidationError({detail:'effectiveUntil requires effectiveFrom'});
+    const start=effectiveFrom==null?undefined:utcTimestamp({value:effectiveFrom,field:'effectiveFrom'});
+    const end=effectiveUntil==null?undefined:utcTimestamp({value:effectiveUntil,field:'effectiveUntil'});
+    if(start!==undefined) {
+      if(versioningMode!=='snapshot')throw new InputValidationError({detail:'effective periods require snapshot mode'});
+      validateModel({name:'EffectivePeriodInput',value:{effective_from:start,effective_until:end??null}});
+    }
     let bytes=content;
     if(bytes!==undefined&&source!==undefined&&!filename)filename=typeof source==='string'?source:undefined;
     else if(bytes===undefined&&typeof source==='string') {bytes=await readFile(source,{signal});filename=filename||basename(source);mime=mime||inferUploadMime({filename:source});}
     else if(bytes===undefined&&source instanceof Uint8Array)bytes=source;
     if(!(bytes instanceof Uint8Array)||!filename)throw new InputValidationError({detail:'content and filename are required when ingesting bytes'});
-    const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath};
+    const params={filename,mime:mime||inferUploadMime({filename}),versioning_mode:versioningMode,title,source_kind:sourceKind,source_ref:sourceRef,source_modified_at:sourceModifiedAt==null?undefined:utcTimestamp({value:sourceModifiedAt,field:'sourceModifiedAt'}),source_version_ref:sourceVersionRef,source_path:sourcePath,version_key:versionKey,effective_from:start,effective_until:end};
     return validateModel({name:'IngestedVersion',value:await this.json({method:'POST',path:'/ingest',params,content:bytes,headers:{'Content-Type':'application/octet-stream'},signal}),response:true});
   }
   /** Read a page of the deployment's documents. */
   async listDocuments({limit=50,cursor,status,signal}:{limit?:number;cursor?:string|null;status?:Models.DocumentStatusFilter|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentPage> {return validateModel({name:'DocumentPage',value:await this.json({method:'GET',path:'/documents',params:{limit,cursor,status},signal}),response:true});}
   /** Search documents by name, metadata and content with source-owned defaults. */
-  async searchDocuments({query=null,filters={},versions='current',k=20,cursor=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,cursor},signal});}
+  async searchDocuments({query=null,filters={},versions='current',k=20,cursor=null,time=null,signal}:{query?:string|null;filters?:Models.DocumentSearchFilters;versions?:'current'|'all';k?:number;cursor?:string|null;time?:Models.ReadTime|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentSearchPage> {return this.searchDocumentsRequest({request:{query,filters,versions,k,cursor,time},signal});}
   /** Send a prepared document search, excluding recursively default-valued fields. */
   async searchDocumentsRequest({request,signal}:{request:Models.DocumentSearchRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentSearchPage> {return validateModel({name:'DocumentSearchPage',value:await this.json({method:'POST',path:'/documents/search',body:modelDump({name:'DocumentSearchRequest',value:request,excludeDefaults:true}),signal}),response:true});}
+  /** Follow a keyed section across versions, defaulting to its complete history. */
+  async sectionHistory({docId,sectionKey,time=null,k=50,cursor=null,signal}:{docId:string;sectionKey:string;time?:Models.ReadTime|null;k?:number;cursor?:string|null;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
+    return this.sectionHistoryRequest({request:{doc_id:uuid({value:docId,field:'docId'}),section_key:sectionKey,time:time??{mode:'history'},k,cursor},signal});
+  }
+  /** Encode a prepared section-history request and preserve its time offsets. */
+  async sectionHistoryRequest({request,signal}:{request:Models.SectionHistoryRequest;signal?:AbortSignal}):Promise<Models.OutputSectionHistoryPage> {
+    const input=validateModel<Models.OutputSectionHistoryRequest>({name:'SectionHistoryRequest',value:request});
+    const params:Record<string,string|number|null>={mode:input.time.mode,k:input.k};
+    if(input.time.mode==='at')params.at=input.time.at;
+    else if(input.time.mode==='overlap'){params.from=input.time.from;params.to=input.time.to;}
+    if(input.cursor!=null)params.cursor=input.cursor;
+    return validateModel({name:'SectionHistoryPage',value:await this.json({method:'GET',path:`/documents/${input.doc_id}/sections/${segment({value:input.section_key})}/history`,params,signal}),response:true});
+  }
+  /** Replace one version's complete supplied reference set as source-ordered NDJSON. */
+  async setReferences({docId,versionId,references,signal}:{docId:string;versionId:string;references:readonly Models.ReferenceInput[];signal?:AbortSignal}):Promise<Models.OutputReferencesSet> {
+    const document=uuid({value:docId,field:'docId'}),version=uuid({value:versionId,field:'versionId'});
+    const content=new TextEncoder().encode(references.map(reference=>JSON.stringify(modelDump({name:'ReferenceInput',value:reference,excludeNone:true}))+'\n').join(''));
+    return validateModel({name:'ReferencesSet',value:await this.json({method:'PUT',path:`/documents/${document}/versions/${version}/references`,content,headers:{'Content-Type':'application/x-ndjson'},signal}),response:true});
+  }
+  /** Read the pending, active, rejected and superseded reference generations. */
+  async referenceGenerations({docId,versionId,signal}:{docId:string;versionId:string;signal?:AbortSignal}):Promise<Models.OutputReferenceGenerations> {
+    return validateModel({name:'ReferenceGenerations',value:await this.json({method:'GET',path:`/documents/${uuid({value:docId,field:'docId'})}/versions/${uuid({value:versionId,field:'versionId'})}/references`,signal}),response:true});
+  }
+  /** Follow incoming/outgoing references from exactly one document or chunk. */
+  async documentReferences({chunkId=null,docId=null,sectionKey=null,direction='both',kinds=null,time=null,k=50,cursor=null,signal}:{chunkId?:string|null;docId?:string|null;sectionKey?:string|null;direction?:'outgoing'|'incoming'|'both';kinds?:Models.ReferenceKind[]|null;time?:Models.ReadTime|null;k?:number;cursor?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputDocumentReferencesPage> {
+    return this.documentReferencesRequest({request:{chunk_id:chunkId==null?null:uuid({value:chunkId,field:'chunkId'}),doc_id:docId==null?null:uuid({value:docId,field:'docId'}),section_key:sectionKey,direction,kinds,time,k,cursor},signal});
+  }
+  /** Send a prepared references request with canonical aliases and omitted nulls. */
+  async documentReferencesRequest({request,signal}:{request:Models.DocumentReferencesRequest;signal?:AbortSignal}):Promise<Models.OutputDocumentReferencesPage> {
+    return validateModel({name:'DocumentReferencesPage',value:await this.json({method:'POST',path:'/documents/references',body:modelDump({name:'DocumentReferencesRequest',value:request,excludeNone:true}),signal}),response:true});
+  }
+  /** Replace one version's complete effective-period declarations atomically. */
+  async setEffectivePeriods({docId,versionId,periods,signal}:{docId:string;versionId:string;periods:readonly Models.EffectivePeriodInput[];signal?:AbortSignal}):Promise<Models.OutputEffectivePeriodsSet> {
+    return validateModel({name:'EffectivePeriodsSet',value:await this.json({method:'PUT',path:`/documents/${uuid({value:docId,field:'docId'})}/versions/${uuid({value:versionId,field:'versionId'})}/effective-periods`,body:modelDump({name:'EffectivePeriodsRequest',value:{periods}}),signal}),response:true});
+  }
+  /** Clear declared effective time without replaying an ambiguous write. */
+  async clearEffectiveTime({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputEffectiveTimeCleared> {
+    return validateModel({name:'EffectiveTimeCleared',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}/effective-periods`,signal}),response:true});
+  }
   /** Delete one live document after locally validating its identity. */
   async deleteDocument({docId,signal}:{docId:string;signal?:AbortSignal}):Promise<Models.OutputDocumentDeletion> {return validateModel({name:'DocumentDeletion',value:await this.json({method:'DELETE',path:`/documents/${uuid({value:docId,field:'docId'})}`,signal}),response:true});}
   /** List deployment-side connectors; never execute their adapters in this client. */
@@ -276,7 +322,7 @@ export class MemoryClient {
   /** Read one deployment-side connector's status. */
   async connectorStatus({connectorId,signal}:{connectorId:string;signal?:AbortSignal}):Promise<Models.OutputConnectorDescriptor> {return validateModel({name:'ConnectorDescriptor',value:await this.json({method:'GET',path:`/connectors/${segment({value:connectorId})}`,signal}),response:true});}
 }
-export interface SearchOptions extends RequestOptions {query:string;k?:number;channel?:'semantic'|'bm25';documents?:Models.DocumentSearchFilters|null;}
+export interface SearchOptions extends RequestOptions {query:string;k?:number;channel?:'semantic'|'bm25';documents?:Models.DocumentSearchFilters|null;time?:Models.ReadTime|null;}
 /** Wait without leaving a timer or listener behind after cancellation. */
 async function sleep({milliseconds,signal}:{milliseconds:number;signal:AbortSignal}):Promise<void> {
   if(signal.aborted)throw signal.reason;

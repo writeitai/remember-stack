@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { DocumentPeopleMatch } from './DocumentPeopleMatch';
 import type { DocumentSearchResult } from './DocumentSearchResult';
+import type { ScopePending } from './ScopePending';
 /**
  * A page of ``search_documents`` results.
  */
@@ -12,5 +13,6 @@ export type DocumentSearchPage = {
     cursor?: string | null;
     documents: Array<DocumentSearchResult>;
     people_matched?: Array<DocumentPeopleMatch>;
+    scope_pending?: ScopePending | null;
 };
 

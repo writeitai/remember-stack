@@ -12,6 +12,7 @@ export type OutputIngestedVersion = {
     processing_admission: 'not_required' | 'pending';
     title: string | null;
     version_id: string;
+    version_key: string | null;
     versioning_mode: 'snapshot' | 'living' | null;
 };
 

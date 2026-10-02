@@ -5,11 +5,11 @@ import {readFileSync} from 'node:fs';
 import {memoryTools,renderToolsList,validateArguments,ToolArgumentError,ToolError,mapError,errorResult,NumericPrecisionError,RequestTimeoutError,AbortError,InputValidationError,MemoryApiError,modelDump} from '../.test-build/internal.js';
 const source=JSON.parse(readFileSync(new URL('../contracts/catalogue.json',import.meta.url)));
 
-test('all sixteen definitions preserve metadata, schemas and rendering behavior',()=>{
-  const tools=memoryTools();assert.equal(tools.length,16);
+test('all eighteen definitions preserve metadata, schemas and rendering behavior',()=>{
+  const tools=memoryTools();assert.equal(tools.length,18);
   assert.deepEqual(tools.map(t=>({name:t.name,description:t.description,permission:t.permission,tool_version:t.toolVersion,http_route:t.httpRoute,input_schema:t.inputSchema,destructive:t.destructive,annotations:t.annotations})),source.tools);
   const listed=renderToolsList({readOnly:true,project:true});
-  assert.equal(listed.length,14);
+  assert.equal(listed.length,16);
   for(const entry of listed)assert.deepEqual(entry.inputSchema.properties.project,source.projectArgument);
   const wire=renderToolsList();assert.deepEqual(wire.find(t=>t.name==='ingest').inputSchema,source.ingestWithoutPath);
   wire[0].inputSchema.properties.filename.type='number';assert.equal(memoryTools()[0].inputSchema.properties.filename.type,'string');

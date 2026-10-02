@@ -2,7 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutputAtReadTime } from './OutputAtReadTime';
+import type { OutputCurrentReadTime } from './OutputCurrentReadTime';
 import type { OutputDocumentSearchFilters } from './OutputDocumentSearchFilters';
+import type { OutputHistoryReadTime } from './OutputHistoryReadTime';
+import type { OutputOverlapReadTime } from './OutputOverlapReadTime';
 /**
  * One ``search_documents`` call.
  *
@@ -15,6 +19,7 @@ export type OutputDocumentSearchRequest = {
     filters: OutputDocumentSearchFilters;
     'k': number;
     query: string | null;
+    time: (OutputCurrentReadTime | OutputAtReadTime | OutputOverlapReadTime | OutputHistoryReadTime) | null;
     versions: 'current' | 'all';
 };
 

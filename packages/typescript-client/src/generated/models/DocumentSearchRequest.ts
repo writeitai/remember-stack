@@ -2,7 +2,11 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AtReadTime } from './AtReadTime';
+import type { CurrentReadTime } from './CurrentReadTime';
 import type { DocumentSearchFilters } from './DocumentSearchFilters';
+import type { HistoryReadTime } from './HistoryReadTime';
+import type { OverlapReadTime } from './OverlapReadTime';
 /**
  * One ``search_documents`` call.
  *
@@ -15,6 +19,7 @@ export type DocumentSearchRequest = {
     filters?: DocumentSearchFilters;
     'k'?: number;
     query?: string | null;
+    time?: (CurrentReadTime | AtReadTime | OverlapReadTime | HistoryReadTime) | null;
     versions?: 'current' | 'all';
 };
 

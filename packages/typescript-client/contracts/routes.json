@@ -42,6 +42,49 @@
       }
     }
   },
+  "DELETE /documents/{doc_id}/effective-periods": {
+    "method": "DELETE",
+    "operationId": "clear_effective_time_documents__doc_id__effective_periods_delete",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/effective-periods",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EffectiveTimeCleared"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "GET /chunks/{chunk_id}/adjacent": {
     "method": "GET",
     "operationId": "adjacent_chunks_chunks__chunk_id__adjacent_get",
@@ -191,6 +234,203 @@
           }
         },
         "description": "Successful Response"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
+  "GET /documents/{doc_id}/sections/{section_key}/history": {
+    "method": "GET",
+    "operationId": "section_history_documents__doc_id__sections__section_key__history_get",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      },
+      {
+        "in": "path",
+        "name": "section_key",
+        "required": true,
+        "schema": {
+          "title": "Section Key",
+          "type": "string"
+        }
+      },
+      {
+        "in": "query",
+        "name": "mode",
+        "required": false,
+        "schema": {
+          "default": "history",
+          "enum": [
+            "current",
+            "at",
+            "overlap",
+            "history"
+          ],
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      {
+        "in": "query",
+        "name": "at",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "At"
+        }
+      },
+      {
+        "in": "query",
+        "name": "from",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "From"
+        }
+      },
+      {
+        "in": "query",
+        "name": "to",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "To"
+        }
+      },
+      {
+        "in": "query",
+        "name": "k",
+        "required": false,
+        "schema": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        }
+      },
+      {
+        "in": "query",
+        "name": "cursor",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cursor"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/sections/{section_key}/history",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/SectionHistoryPage"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "400": {
+        "description": "cursor is malformed or belongs to another call"
+      },
+      "404": {
+        "description": "document_not_found"
+      },
+      "422": {
+        "description": "invalid section key or time scope"
+      }
+    }
+  },
+  "GET /documents/{doc_id}/versions/{version_id}/references": {
+    "method": "GET",
+    "operationId": "reference_generations_documents__doc_id__versions__version_id__references_get",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      },
+      {
+        "in": "path",
+        "name": "version_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/versions/{version_id}/references",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReferenceGenerations"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found | version_not_found"
       },
       "422": {
         "content": {
@@ -978,6 +1218,50 @@
     "optionalProfile": "connectors",
     "path": "/connectors/{connector_id}/pause"
   },
+  "POST /documents/references": {
+    "method": "POST",
+    "operationId": "document_references_documents_references_post",
+    "parameters": [],
+    "path": "/documents/references",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/DocumentReferencesRequest"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/DocumentReferencesPage"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "400": {
+        "description": "cursor is malformed or belongs to another call"
+      },
+      "404": {
+        "description": "document_not_found | chunk_not_found"
+      },
+      "422": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/HTTPValidationError"
+            }
+          }
+        },
+        "description": "Validation Error"
+      }
+    }
+  },
   "POST /documents/search": {
     "method": "POST",
     "operationId": "search_documents_documents_search_post",
@@ -1271,6 +1555,64 @@
           ],
           "description": "Where the file lives at its source (a folder path or URL). Recorded with this version's metadata and observed names, so the document can later be found by it.",
           "title": "Source Path"
+        }
+      },
+      {
+        "description": "Your immutable key for this version, unique within the document (for example a publisher's edition id). A new key always creates a version; an existing key is accepted only when re-sending the latest version's bytes. Requires source_kind/source_ref.",
+        "in": "query",
+        "name": "version_key",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Your immutable key for this version, unique within the document (for example a publisher's edition id). A new key always creates a version; an existing key is accepted only when re-sending the latest version's bytes. Requires source_kind/source_ref.",
+          "title": "Version Key"
+        }
+      },
+      {
+        "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+        "in": "query",
+        "name": "effective_from",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Start (inclusive, UTC) of the period this version's text is in force for. Requires source_kind/source_ref and versioning_mode=snapshot.",
+          "title": "Effective From"
+        }
+      },
+      {
+        "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+        "in": "query",
+        "name": "effective_until",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Declared end (exclusive, UTC) of that period; without it the period lasts until the next declared start.",
+          "title": "Effective Until"
         }
       },
       {
@@ -1647,6 +1989,123 @@
           }
         },
         "description": "Validation Error"
+      }
+    }
+  },
+  "PUT /documents/{doc_id}/versions/{version_id}/effective-periods": {
+    "method": "PUT",
+    "operationId": "set_effective_periods_documents__doc_id__versions__version_id__effective_periods_put",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      },
+      {
+        "in": "path",
+        "name": "version_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/versions/{version_id}/effective-periods",
+    "requestBody": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/EffectivePeriodsRequest"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/EffectivePeriodsSet"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found | version_not_found"
+      },
+      "409": {
+        "description": "effective_period_conflict"
+      },
+      "422": {
+        "description": "effective_time_requires_snapshot"
+      }
+    }
+  },
+  "PUT /documents/{doc_id}/versions/{version_id}/references": {
+    "method": "PUT",
+    "operationId": "set_references_documents__doc_id__versions__version_id__references_put",
+    "parameters": [
+      {
+        "in": "path",
+        "name": "doc_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        }
+      },
+      {
+        "in": "path",
+        "name": "version_id",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      }
+    ],
+    "path": "/documents/{doc_id}/versions/{version_id}/references",
+    "requestBody": {
+      "content": {
+        "application/x-ndjson": {
+          "schema": {
+            "format": "binary",
+            "type": "string"
+          }
+        }
+      },
+      "required": true
+    },
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ReferencesSet"
+            }
+          }
+        },
+        "description": "Successful Response"
+      },
+      "404": {
+        "description": "document_not_found | version_not_found"
+      },
+      "413": {
+        "description": "reference_set_too_large (over 64 MiB)"
+      },
+      "422": {
+        "description": "invalid_reference_set: the failing line"
       }
     }
   }

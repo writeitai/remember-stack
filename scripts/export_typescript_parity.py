@@ -20,6 +20,7 @@ from uuid import UUID
 import httpx
 from pydantic import BaseModel
 from pydantic import SecretStr
+from pydantic import TypeAdapter
 
 from remember import models
 from remember.client import AccountApi
@@ -89,7 +90,11 @@ def scenarios() -> list[dict[str, Any]]:
             {"query": "fixture"},
             {"query": "fixture", "time": {"mode": "current"}},
         ),
-        ("claims_and_sources_context", {"query": "fixture"}, {"query": "other"}),
+        (
+            "claims_and_sources_context",
+            {"query": "fixture"},
+            {"query": "other", "time": {"mode": "history"}},
+        ),
         ("resolve_entity", {"name": "fixture"}, {"name": "other"}),
         ("describe_query_space", {}, {"pattern": "memory_*", "include_examples": True}),
         ("search_query_space", {"query": "fixture"}, {"query": "fixture", "k": 25}),
@@ -140,6 +145,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "k": 3,
                 "channel": "bm25",
                 "documents": {"language": "en", "authors": ["alice"]},
+                "time": {"mode": "at", "at": STAMP},
             },
         ),
         (
@@ -150,6 +156,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "k": 3,
                 "channel": "bm25",
                 "documents": {"family": ["email"], "doc_ids": [ID]},
+                "time": {"mode": "history"},
             },
         ),
         ("adjacent_chunks", {"chunk_id": ID}, {"chunk_id": ID, "window": 2}),
@@ -229,6 +236,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "query": "fixture",
                 "filters": {"authors": ["alice"], "modified_from": STAMP},
                 "versions": "all",
+                "time": {"mode": "at", "at": STAMP},
                 "k": 3,
             },
         ),
@@ -244,6 +252,109 @@ def scenarios() -> list[dict[str, Any]]:
                 }
             },
         ),
+        (
+            "section_history",
+            {"doc_id": ID, "section_key": "part/4:per-diem"},
+            {
+                "doc_id": ID,
+                "section_key": "part/4:per-diem",
+                "time": {
+                    "mode": "overlap",
+                    "from": "2026-10-02T12:00:00+02:00",
+                    "to": STAMP,
+                },
+                "k": 3,
+                "cursor": "next",
+            },
+        ),
+        (
+            "section_history_request",
+            {"request": {"doc_id": ID, "section_key": "part/4:per-diem"}},
+            {
+                "request": {
+                    "doc_id": ID,
+                    "section_key": "part/4:per-diem",
+                    "time": {"mode": "at", "at": STAMP},
+                    "k": 3,
+                    "cursor": "next",
+                }
+            },
+        ),
+        (
+            "set_references",
+            {"doc_id": ID, "version_id": OTHER_ID, "references": []},
+            {
+                "doc_id": ID,
+                "version_id": OTHER_ID,
+                "references": [
+                    {
+                        "kind": "amends",
+                        "target": {"source_kind": "policy", "source_ref": "expenses"},
+                        "change_date_known": False,
+                        "context": "café",
+                    },
+                    {
+                        "kind": "refers_to",
+                        "target": {
+                            "source_kind": "policy",
+                            "source_ref": "expenses",
+                            "version_key": "edition-2",
+                            "section_key": "part/4",
+                        },
+                        "binding": "pinned",
+                        "from_section_key": "part/4",
+                    },
+                ],
+            },
+        ),
+        (
+            "reference_generations",
+            {"doc_id": ID, "version_id": OTHER_ID},
+            {"doc_id": OTHER_ID, "version_id": ID},
+        ),
+        (
+            "document_references",
+            {"doc_id": ID},
+            {
+                "chunk_id": OTHER_ID,
+                "direction": "incoming",
+                "kinds": ["amends", "refers_to"],
+                "time": {"mode": "at", "at": "2026-10-02T12:00:00+02:00"},
+                "k": 3,
+                "cursor": "next",
+            },
+        ),
+        (
+            "document_references_request",
+            {"request": {"doc_id": ID}},
+            {
+                "request": {
+                    "doc_id": ID,
+                    "section_key": "part/4",
+                    "direction": "outgoing",
+                    "kinds": ["cites"],
+                    "time": {"mode": "overlap", "from": STAMP, "to": STAMP},
+                    "k": 3,
+                    "cursor": "next",
+                }
+            },
+        ),
+        (
+            "set_effective_periods",
+            {"doc_id": ID, "version_id": OTHER_ID, "periods": []},
+            {
+                "doc_id": ID,
+                "version_id": OTHER_ID,
+                "periods": [
+                    {
+                        "effective_from": "2026-01-01T00:00:00Z",
+                        "effective_until": STAMP,
+                    },
+                    {"effective_from": "2026-11-01T00:00:00Z"},
+                ],
+            },
+        ),
+        ("clear_effective_time", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("delete_document", {"doc_id": ID}, {"doc_id": OTHER_ID}),
         ("connectors", {}, {}),
         (
@@ -282,6 +393,41 @@ def scenarios() -> list[dict[str, Any]]:
             "options": {"name": name, "arguments": arguments},
         }
         for name, arguments in query_args.items()
+    )
+    result.extend(
+        [
+            {
+                "method": name,
+                "variant": "time-only",
+                "options": {"query": "fixture", "time": {"mode": "at", "at": STAMP}},
+            }
+            for name in ("search_claims", "search_chunks")
+        ]
+    )
+    result.extend(
+        [
+            {
+                "method": name,
+                "variant": "documents-only",
+                "options": {"query": "fixture", "documents": {"language": "en"}},
+            }
+            for name in ("search_claims", "search_chunks")
+        ]
+    )
+    result.append(
+        {
+            "method": "ingest",
+            "variant": "declared-effective-version",
+            "options": {
+                "content": {"base64": "bm90ZQ=="},
+                "filename": "fixture.md",
+                "source_kind": "policy",
+                "source_ref": "expenses",
+                "version_key": "edition-2",
+                "effective_from": "2026-01-01T00:00:00+00:00",
+                "effective_until": STAMP,
+            },
+        }
     )
     result.extend(
         [
@@ -336,7 +482,61 @@ def responses() -> dict[str, Any]:
         freshness=models.Freshness(pg_live_ts=now),
     )
     fact = evidence.model_copy(update={"grain": models.Grain.FACT})
+    generation = models.ReferenceGeneration(
+        generation_id=UUID(ID),
+        doc_id=UUID(ID),
+        version_id=UUID(OTHER_ID),
+        origin="supplied",
+        status="pending",
+        input_hash="fixture",
+        item_count=2,
+        created_at=now,
+    )
     return {
+        "section_history": models.SectionHistoryPage(
+            doc_id=UUID(ID),
+            section_key="part/4:per-diem",
+            periodised=True,
+            rows=(
+                models.SectionHistoryRow(
+                    version_id=UUID(OTHER_ID),
+                    version_no=2,
+                    status="absent",
+                    effective=(models.EffectiveInterval(from_=now),),
+                ),
+            ),
+            evaluated_at=now,
+            believed_at=now,
+        ).model_dump(mode="json"),
+        "references_set": models.ReferencesSet(
+            doc_id=UUID(ID),
+            version_id=UUID(OTHER_ID),
+            outcome="created",
+            generation=generation,
+        ).model_dump(mode="json"),
+        "reference_generations": models.ReferenceGenerations(
+            doc_id=UUID(ID), version_id=UUID(OTHER_ID), generations=(generation,)
+        ).model_dump(mode="json"),
+        "document_references": models.DocumentReferencesPage(
+            rows=(), evaluated_at=now, believed_at=now
+        ).model_dump(mode="json"),
+        "effective_periods": models.EffectivePeriodsSet(
+            doc_id=UUID(ID),
+            version_id=UUID(OTHER_ID),
+            periods=(
+                models.DeclaredEffectivePeriod(
+                    period_id=UUID(ID),
+                    effective_from=now,
+                    effective_until=None,
+                    declared_at=now,
+                ),
+            ),
+            declared=1,
+            retracted=0,
+        ).model_dump(mode="json"),
+        "effective_cleared": models.EffectiveTimeCleared(
+            doc_id=UUID(ID), retracted=1, cleared_at=now
+        ).model_dump(mode="json"),
         "envelope": evidence.model_dump(mode="json"),
         "fact": fact.model_dump(mode="json"),
         "bundle": models.ContextBundleV2(
@@ -399,6 +599,18 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
         if path in {"/query/space", "/query/saved/examples/safe"}:
             return {}
         return fixtures["query"]
+    if "/sections/" in path and path.endswith("/history"):
+        return fixtures["section_history"]
+    if path.endswith("/references") and "/versions/" in path:
+        return fixtures[
+            "references_set" if request.method == "PUT" else "reference_generations"
+        ]
+    if path == "/documents/references":
+        return fixtures["document_references"]
+    if path.endswith("/effective-periods"):
+        return fixtures[
+            "effective_periods" if request.method == "PUT" else "effective_cleared"
+        ]
     mapping = {
         "/readiness": "readiness",
         "/ingest": "ingest",
@@ -417,7 +629,9 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
     return fixtures["envelope"]
 
 
-def python_options(*, options: dict[str, Any], file_path: Path) -> dict[str, Any]:
+def python_options(
+    *, options: dict[str, Any], file_path: Path, method: str | None = None
+) -> dict[str, Any]:
     """Construct the same typed model/datetime/bytes inputs used by Python callers."""
     result = dict(options)
     for key in ("source", "file_path"):
@@ -425,18 +639,41 @@ def python_options(*, options: dict[str, Any], file_path: Path) -> dict[str, Any
             result[key] = file_path
     if isinstance(result.get("content"), dict):
         result["content"] = base64.b64decode(result["content"]["base64"])
-    for key in ("valid_at", "believed_at", "source_modified_at"):
+    for key in (
+        "valid_at",
+        "believed_at",
+        "source_modified_at",
+        "effective_from",
+        "effective_until",
+    ):
         if key in result:
             result[key] = datetime.fromisoformat(result[key])
     for key, model in {
         "documents": models.DocumentSearchFilters,
         "filters": models.DocumentSearchFilters,
-        "request": models.DocumentSearchRequest,
+        "request": {
+            "section_history_request": models.SectionHistoryRequest,
+            "document_references_request": models.DocumentReferencesRequest,
+        }.get(method, models.DocumentSearchRequest),
         "require": models.ReadinessRequirements,
         "connector": models.ConnectorCreate,
     }.items():
         if key in result:
             result[key] = model.model_validate(result[key])
+    if result.get("time") is not None and method in {
+        "search_claims",
+        "search_chunks",
+        "search_documents",
+        "section_history",
+        "document_references",
+    }:
+        result["time"] = TypeAdapter(models.ReadTime).validate_python(result["time"])
+    for key, model in {
+        "references": models.ReferenceInput,
+        "periods": models.EffectivePeriodInput,
+    }.items():
+        if key in result:
+            result[key] = tuple(model.model_validate(item) for item in result[key])
     for key in ("version_ids", "context_entity_ids"):
         if key in result:
             result[key] = tuple(UUID(value) for value in result[key])
@@ -489,14 +726,15 @@ def record() -> dict[str, Any]:
                 wire.append(
                     {
                         "method": request.method,
-                        "path": request.url.path,
+                        "path": request.url.raw_path.decode("ascii").split("?", 1)[0],
                         "query": list(request.url.params.multi_items()),
                         "contentType": content_type,
                         "body": json.loads(body)
                         if content_type == "application/json"
                         else None,
                         "contentBase64": base64.b64encode(body).decode()
-                        if body and content_type != "application/json"
+                        if content_type is not None
+                        and content_type != "application/json"
                         else None,
                     }
                 )
@@ -512,10 +750,14 @@ def record() -> dict[str, Any]:
             ) as client:
                 method = getattr(client, case["method"])
                 inspect.signature(method).bind(
-                    **python_options(options=case["options"], file_path=path)
+                    **python_options(
+                        options=case["options"], file_path=path, method=case["method"]
+                    )
                 )
                 result = method(
-                    **python_options(options=case["options"], file_path=path)
+                    **python_options(
+                        options=case["options"], file_path=path, method=case["method"]
+                    )
                 )
             case["wire"] = wire
             case["responses"] = replies
@@ -658,6 +900,7 @@ def failure_fixtures() -> list[dict[str, Any]]:
                         **python_options(
                             options=case["options"],
                             file_path=Path(directory) / "fixture.md",
+                            method=case["method"],
                         )
                     )
                 except MemoryApiError as error:
@@ -690,6 +933,8 @@ def tool_fixtures() -> list[dict[str, Any]]:
         "delete_document": {"doc_id": ID},
         "search_documents": {"language": "en", "authors": ["alice"]},
         "adjacent_chunks": {"chunk_id": ID},
+        "section_history": {"doc_id": ID, "section_key": "part/4"},
+        "document_references": {"doc_id": ID},
         "resolve_entity": {"name": "fixture"},
         "claims_and_sources_context": {"query": "fixture"},
         "facts_context": {"query": "fixture"},

@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ClaimOccurrence } from './ClaimOccurrence';
+import type { EffectiveInterval } from './EffectiveInterval';
 import type { EvidenceSpan } from './EvidenceSpan';
 export type EvidenceResult = {
     asserted_at?: string | null;
@@ -17,11 +19,15 @@ export type EvidenceResult = {
     corroboration_count?: number | null;
     doc_id: string;
     document_title?: string | null;
+    effective?: Array<EffectiveInterval>;
     evidence_spans?: Array<EvidenceSpan>;
     grouped_claim_ids?: Array<string>;
     is_attributed: boolean;
     is_current_testimony: boolean;
+    occurrences?: Array<ClaimOccurrence>;
+    representation_id?: string | null;
     source_kind?: string | null;
     source_span: string;
+    version_id?: string | null;
 };
 

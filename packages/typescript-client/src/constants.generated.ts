@@ -21,8 +21,17 @@ export default {
     "ContextBundleV2": [
       "_child_grains_are_exact"
     ],
+    "DocumentReferencesRequest": [
+      "_one_source"
+    ],
     "DocumentSearchRequest": [
       "cursor_pages_filters_only"
+    ],
+    "EffectivePeriodInput": [
+      "_ends_after_it_starts"
+    ],
+    "EffectivePeriodsRequest": [
+      "_starts_are_distinct"
     ],
     "EvidenceSpan": [
       "_end_after_start"
@@ -30,8 +39,14 @@ export default {
     "EvidenceTotal": [
       "_returned_does_not_exceed_total"
     ],
+    "OverlapReadTime": [
+      "_ordered"
+    ],
     "OverlapTemporalScope": [
       "_ordered"
+    ],
+    "ReferenceInput": [
+      "_consistent"
     ]
   },
   "queryErrorStatus": {
@@ -175,6 +190,18 @@ export default {
     {
       "method": "POST",
       "pattern": "^/documents/search$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/documents/[^/]+/sections/.+/history$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/documents/[^/]+/versions/[^/]+/references$"
+    },
+    {
+      "method": "POST",
+      "pattern": "^/documents/references$"
     },
     {
       "method": "GET",

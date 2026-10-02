@@ -147,6 +147,28 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "AtReadTime": {
+      "additionalProperties": false,
+      "description": "Text in force at one instant.",
+      "properties": {
+        "at": {
+          "format": "date-time",
+          "title": "At",
+          "type": "string"
+        },
+        "mode": {
+          "const": "at",
+          "default": "at",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "title": "AtReadTime",
+      "type": "object"
+    },
     "AtTemporalScope": {
       "additionalProperties": false,
       "properties": {
@@ -351,6 +373,14 @@ export default {
           "default": null,
           "title": "Document Title"
         },
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
         "published_at": {
           "anyOf": [
             {
@@ -380,6 +410,11 @@ export default {
             }
           ],
           "title": "Section Role"
+        },
+        "served_version": {
+          "default": true,
+          "title": "Served Version",
+          "type": "boolean"
         },
         "source_kind": {
           "title": "Source Kind",
@@ -417,6 +452,70 @@ export default {
         "source_kind"
       ],
       "title": "ChunkEvidenceResult",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ClaimOccurrence": {
+      "additionalProperties": false,
+      "description": "Where a claim occurs in one selected version (D140 \u00a73.4).",
+      "properties": {
+        "char_end": {
+          "title": "Char End",
+          "type": "integer"
+        },
+        "char_start": {
+          "title": "Char Start",
+          "type": "integer"
+        },
+        "chunk_id": {
+          "format": "uuid",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
+        "evidence_spans": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EvidenceSpan"
+          },
+          "title": "Evidence Spans",
+          "type": "array"
+        },
+        "representation_id": {
+          "format": "uuid",
+          "title": "Representation Id",
+          "type": "string"
+        },
+        "served_version": {
+          "default": true,
+          "title": "Served Version",
+          "type": "boolean"
+        },
+        "source_locators": {
+          "$ref": "#/$defs/JsonValue",
+          "default": null
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "version_id",
+        "representation_id",
+        "char_start",
+        "char_end"
+      ],
+      "title": "ClaimOccurrence",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -646,6 +745,20 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "CurrentReadTime": {
+      "additionalProperties": false,
+      "description": "Text in force now.",
+      "properties": {
+        "mode": {
+          "const": "current",
+          "default": "current",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "CurrentReadTime",
+      "type": "object"
+    },
     "CurrentTemporalScope": {
       "additionalProperties": false,
       "properties": {
@@ -677,6 +790,48 @@ export default {
         "believed_at"
       ],
       "title": "CurrentTemporalScope",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DeclaredEffectivePeriod": {
+      "additionalProperties": false,
+      "description": "One live declaration of a version, exactly as it was declared.",
+      "properties": {
+        "declared_at": {
+          "format": "date-time",
+          "title": "Declared At",
+          "type": "string"
+        },
+        "effective_from": {
+          "format": "date-time",
+          "title": "Effective From",
+          "type": "string"
+        },
+        "effective_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effective Until"
+        },
+        "period_id": {
+          "format": "uuid",
+          "title": "Period Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "period_id",
+        "effective_from",
+        "effective_until",
+        "declared_at"
+      ],
+      "title": "DeclaredEffectivePeriod",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -939,6 +1094,547 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "DocumentReference": {
+      "additionalProperties": false,
+      "description": "One reference, resolved against one source window and target version.",
+      "properties": {
+        "binding": {
+          "enum": [
+            "floating",
+            "pinned"
+          ],
+          "title": "Binding",
+          "type": "string"
+        },
+        "change_date_known": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Date Known"
+        },
+        "change_effective_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Effective From"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context"
+        },
+        "crossref_id": {
+          "format": "uuid",
+          "title": "Crossref Id",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "outgoing",
+            "incoming"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "cites",
+            "links_to",
+            "attaches",
+            "replies_to",
+            "refers_to",
+            "amends",
+            "implements"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "named_target": {
+          "$ref": "#/$defs/NamedReferenceTarget"
+        },
+        "origin": {
+          "enum": [
+            "supplied",
+            "extracted"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/DocumentReferenceSource"
+        },
+        "source_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Label"
+        },
+        "status": {
+          "enum": [
+            "resolved",
+            "target_processing",
+            "target_unavailable",
+            "target_not_in_force",
+            "section_not_in_version",
+            "section_not_indexed",
+            "pinned_version_unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentReferenceTarget"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "direction",
+        "crossref_id",
+        "kind",
+        "origin",
+        "binding",
+        "source",
+        "named_target",
+        "status"
+      ],
+      "title": "DocumentReference",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentReferenceSource": {
+      "additionalProperties": false,
+      "description": "The source side of one reference row.",
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "section_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Key"
+        },
+        "section_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Title"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        },
+        "window": {
+          "$ref": "#/$defs/ReferenceWindow"
+        }
+      },
+      "required": [
+        "doc_id",
+        "version_id",
+        "window"
+      ],
+      "title": "DocumentReferenceSource",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentReferenceTarget": {
+      "additionalProperties": false,
+      "description": "The resolved target side of one reference row.\n\nOnly what the row's status allows is set: the lineage for\n``target_not_in_force`` and ``pinned_version_unavailable``; the version\nand ``applies_during`` for ``target_processing``; the section and its\nfirst chunks for ``resolved``.",
+      "properties": {
+        "applies_during": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReferenceWindow"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "concurrent": {
+          "default": false,
+          "title": "Concurrent",
+          "type": "boolean"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
+        "first_chunk_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "First Chunk Ids",
+          "type": "array"
+        },
+        "representation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
+        },
+        "section_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Key"
+        },
+        "section_title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Title"
+        },
+        "version_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Id"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        }
+      },
+      "required": [
+        "doc_id"
+      ],
+      "title": "DocumentReferenceTarget",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentReferencesPage": {
+      "additionalProperties": false,
+      "description": "A page of ``document_references`` rows.\n\nOrdered by direction (outgoing first), source document, source version,\nreference, window start and target version. ``cursor`` pins\n``evaluated_at`` and ``believed_at``; a page may be short when the scan\nbound was reached and still carry a cursor. ``too_broad`` is set (and\n``rows`` empty) when the section has too many descendant keys.",
+      "properties": {
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/DocumentReference"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "too_broad": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentReferencesTooBroad"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "rows",
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "DocumentReferencesPage",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentReferencesRequest": {
+      "additionalProperties": false,
+      "description": "One ``document_references`` call (D140 \u00a76.2).\n\nExactly one of ``chunk_id`` (the chunk's version and section are the\nsource) or ``doc_id`` (with an optional ``section_key``). ``time``\nselects source versions; omitted, it is ``current`` \u2014 except with a\n``chunk_id``, where it is the chunk version's in-force time up to now.",
+      "properties": {
+        "chunk_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Chunk Id"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "direction": {
+          "default": "both",
+          "enum": [
+            "outgoing",
+            "incoming",
+            "both"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "doc_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Doc Id"
+        },
+        "k": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "kinds": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "cites",
+                  "links_to",
+                  "attaches",
+                  "replies_to",
+                  "refers_to",
+                  "amends",
+                  "implements"
+                ],
+                "type": "string"
+              },
+              "maxItems": 7,
+              "minItems": 1,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Kinds"
+        },
+        "section_key": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:/-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Key"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "at": "#/$defs/AtReadTime",
+                  "current": "#/$defs/CurrentReadTime",
+                  "history": "#/$defs/HistoryReadTime",
+                  "overlap": "#/$defs/OverlapReadTime"
+                },
+                "propertyName": "mode"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CurrentReadTime"
+                },
+                {
+                  "$ref": "#/$defs/AtReadTime"
+                },
+                {
+                  "$ref": "#/$defs/OverlapReadTime"
+                },
+                {
+                  "$ref": "#/$defs/HistoryReadTime"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time"
+        }
+      },
+      "title": "DocumentReferencesRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "DocumentReferencesTooBroad": {
+      "additionalProperties": false,
+      "description": "The section resolves to more descendant keys than one call follows.",
+      "properties": {
+        "descendant_keys": {
+          "title": "Descendant Keys",
+          "type": "integer"
+        },
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "limit": {
+          "default": 1000,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "reason": {
+          "const": "too_broad",
+          "default": "too_broad",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "descendant_keys",
+        "explanation"
+      ],
+      "title": "DocumentReferencesTooBroad",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "DocumentSearchFilters": {
       "additionalProperties": false,
       "description": "General document metadata filters (D134 \u00a73); every one given must hold.\n\n``authors`` and ``recipients`` match a person when any listed term equals\ntheir normalized address or appears as whole words in their normalized\nname (lower case, accents removed): ``\"alice\"`` matches \"Alice Nov\u00e1k\".\nDate ranges are inclusive and exclude documents that do not declare the\ndate.",
@@ -1092,6 +1788,17 @@ export default {
           },
           "title": "People Matched",
           "type": "array"
+        },
+        "scope_pending": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScopePending"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1188,6 +1895,40 @@ export default {
           "default": null,
           "title": "Query"
         },
+        "time": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "at": "#/$defs/AtReadTime",
+                  "current": "#/$defs/CurrentReadTime",
+                  "history": "#/$defs/HistoryReadTime",
+                  "overlap": "#/$defs/OverlapReadTime"
+                },
+                "propertyName": "mode"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CurrentReadTime"
+                },
+                {
+                  "$ref": "#/$defs/AtReadTime"
+                },
+                {
+                  "$ref": "#/$defs/OverlapReadTime"
+                },
+                {
+                  "$ref": "#/$defs/HistoryReadTime"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time"
+        },
         "versions": {
           "default": "current",
           "enum": [
@@ -1231,6 +1972,14 @@ export default {
           "format": "uuid",
           "title": "Doc Id",
           "type": "string"
+        },
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
         },
         "extra": {
           "additionalProperties": {
@@ -1292,6 +2041,14 @@ export default {
           "title": "Matched By",
           "type": "array"
         },
+        "matching_editions": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MatchingEdition"
+          },
+          "title": "Matching Editions",
+          "type": "array"
+        },
         "modified_at": {
           "anyOf": [
             {
@@ -1327,8 +2084,16 @@ export default {
           "title": "Overview"
         },
         "p3_path": {
-          "title": "P3 Path",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "P3 Path"
         },
         "recipients": {
           "default": [],
@@ -1337,6 +2102,19 @@ export default {
           },
           "title": "Recipients",
           "type": "array"
+        },
+        "representation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
         },
         "score": {
           "anyOf": [
@@ -1349,6 +2127,11 @@ export default {
           ],
           "default": null,
           "title": "Score"
+        },
+        "served_version": {
+          "default": true,
+          "title": "Served Version",
+          "type": "boolean"
         },
         "source_path": {
           "anyOf": [
@@ -1413,7 +2196,6 @@ export default {
         "version_id",
         "version_no",
         "status",
-        "p3_path",
         "family"
       ],
       "title": "DocumentSearchResult",
@@ -1539,6 +2321,179 @@ export default {
         "ingested_at"
       ],
       "title": "DocumentVersionSummary",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EffectiveInterval": {
+      "additionalProperties": false,
+      "description": "One in-force interval ``[from, until)``; null bounds are open.",
+      "properties": {
+        "from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "From"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "until_declared": {
+          "default": false,
+          "title": "Until Declared",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "from"
+      ],
+      "title": "EffectiveInterval",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EffectivePeriodInput": {
+      "additionalProperties": false,
+      "description": "One declared period during which a version's text is in force (D140).\n\nThe period is half-open: ``effective_from`` is included and\n``effective_until`` is not. Without ``effective_until`` the period lasts\nuntil the next declared start in the document's lineage, so declaring a\nnew edition ends its predecessor without touching it.",
+      "properties": {
+        "effective_from": {
+          "format": "date-time",
+          "title": "Effective From",
+          "type": "string",
+          "x-utc": true
+        },
+        "effective_until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Effective Until",
+          "x-utc": true
+        }
+      },
+      "required": [
+        "effective_from"
+      ],
+      "title": "EffectivePeriodInput",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EffectivePeriodsRequest": {
+      "additionalProperties": false,
+      "description": "The complete set of periods one version is in force for (D140).\n\nIt replaces the version's current declarations: periods not listed are\nretracted and new ones are declared, atomically. An empty set is allowed\nand leaves the version with no in-force period; the document keeps its\ndeclared effective time.",
+      "properties": {
+        "periods": {
+          "items": {
+            "$ref": "#/$defs/EffectivePeriodInput"
+          },
+          "maxItems": 1000,
+          "title": "Periods",
+          "type": "array"
+        }
+      },
+      "required": [
+        "periods"
+      ],
+      "title": "EffectivePeriodsRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EffectivePeriodsSet": {
+      "additionalProperties": false,
+      "description": "What replacing one version's declared periods left in force.",
+      "properties": {
+        "declared": {
+          "minimum": 0,
+          "title": "Declared",
+          "type": "integer"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "periods": {
+          "items": {
+            "$ref": "#/$defs/DeclaredEffectivePeriod"
+          },
+          "title": "Periods",
+          "type": "array"
+        },
+        "retracted": {
+          "minimum": 0,
+          "title": "Retracted",
+          "type": "integer"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "version_id",
+        "periods",
+        "declared",
+        "retracted"
+      ],
+      "title": "EffectivePeriodsSet",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "EffectiveTimeCleared": {
+      "additionalProperties": false,
+      "description": "What leaving effective time did to one document (D140).\n\nEvery live declaration of the document is retracted and, when it had\ndeclared effective time, the document returns to \"the newest processed\nversion is current\" for every reader believing after ``cleared_at``.",
+      "properties": {
+        "cleared_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cleared At"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "retracted": {
+          "minimum": 0,
+          "title": "Retracted",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "doc_id",
+        "retracted",
+        "cleared_at"
+      ],
+      "title": "EffectiveTimeCleared",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -1892,6 +2847,14 @@ export default {
           "default": null,
           "title": "Document Title"
         },
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
         "evidence_spans": {
           "default": [],
           "items": {
@@ -1917,6 +2880,27 @@ export default {
           "title": "Is Current Testimony",
           "type": "boolean"
         },
+        "occurrences": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ClaimOccurrence"
+          },
+          "title": "Occurrences",
+          "type": "array"
+        },
+        "representation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
+        },
         "source_kind": {
           "anyOf": [
             {
@@ -1932,6 +2916,19 @@ export default {
         "source_span": {
           "title": "Source Span",
           "type": "string"
+        },
+        "version_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Id"
         }
       },
       "required": [
@@ -2171,6 +3168,17 @@ export default {
           "title": "Pg Live Ts",
           "type": "string",
           "x-utc": true
+        },
+        "scope_pending": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScopePending"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -2497,6 +3505,20 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "HistoryReadTime": {
+      "additionalProperties": false,
+      "description": "Every text in force at any instant up to now.",
+      "properties": {
+        "mode": {
+          "const": "history",
+          "default": "history",
+          "title": "Mode",
+          "type": "string"
+        }
+      },
+      "title": "HistoryReadTime",
+      "type": "object"
+    },
     "HistoryTemporalScope": {
       "additionalProperties": false,
       "properties": {
@@ -2611,6 +3633,18 @@ export default {
           "format": "uuid",
           "title": "Version Id",
           "type": "string"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
         },
         "versioning_mode": {
           "anyOf": [
@@ -2945,6 +3979,118 @@ export default {
       "type": "object",
       "x-extra": "ignore"
     },
+    "MatchingEdition": {
+      "additionalProperties": false,
+      "description": "One candidate edition of a periodised document that matched (D140 \u00a73.5).\n\n``version_id`` with ``representation_id`` is the ``source_open`` handle\nthat opens exactly this edition.",
+      "properties": {
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
+        "representation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        },
+        "version_no": {
+          "title": "Version No",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version_id",
+        "version_no"
+      ],
+      "title": "MatchingEdition",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "NamedReferenceTarget": {
+      "additionalProperties": false,
+      "description": "The target exactly as the source names it (source content).",
+      "properties": {
+        "section_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Key"
+        },
+        "source_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Kind"
+        },
+        "source_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Ref"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        }
+      },
+      "title": "NamedReferenceTarget",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "Negative": {
       "additionalProperties": false,
       "properties": {
@@ -2985,6 +4131,34 @@ export default {
       ],
       "title": "NegativeKind",
       "type": "string"
+    },
+    "OverlapReadTime": {
+      "additionalProperties": false,
+      "description": "Text in force at any instant of an inclusive window.",
+      "properties": {
+        "from": {
+          "format": "date-time",
+          "title": "From",
+          "type": "string"
+        },
+        "mode": {
+          "const": "overlap",
+          "default": "overlap",
+          "title": "Mode",
+          "type": "string"
+        },
+        "to": {
+          "format": "date-time",
+          "title": "To",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "title": "OverlapReadTime",
+      "type": "object"
     },
     "OverlapTemporalScope": {
       "additionalProperties": false,
@@ -3639,6 +4813,31 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "ReadTime": {
+      "discriminator": {
+        "mapping": {
+          "at": "#/$defs/AtReadTime",
+          "current": "#/$defs/CurrentReadTime",
+          "history": "#/$defs/HistoryReadTime",
+          "overlap": "#/$defs/OverlapReadTime"
+        },
+        "propertyName": "mode"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CurrentReadTime"
+        },
+        {
+          "$ref": "#/$defs/AtReadTime"
+        },
+        {
+          "$ref": "#/$defs/OverlapReadTime"
+        },
+        {
+          "$ref": "#/$defs/HistoryReadTime"
+        }
+      ]
+    },
     "ReadinessRequirements": {
       "additionalProperties": false,
       "properties": {
@@ -3666,6 +4865,462 @@ export default {
         "p3"
       ],
       "title": "ReadinessRequirements",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReferenceGeneration": {
+      "additionalProperties": false,
+      "description": "One production of a version's references (D140 \u00a76.1).\n\nRows of a generation are visible only while it is ``active``; a version\nhas at most one active generation per origin. A supplied generation is\n``pending`` until the E0 crossref worker validates and activates it,\n``rejected`` (with ``errors``) when it names an unknown source section,\nand ``superseded`` once a later PUT or generation replaced it.",
+      "properties": {
+        "activated_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Activated At"
+        },
+        "created_at": {
+          "format": "date-time",
+          "title": "Created At",
+          "type": "string"
+        },
+        "crossref_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Crossref Version"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "errors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ReferenceItemError"
+          },
+          "title": "Errors",
+          "type": "array"
+        },
+        "generation_id": {
+          "format": "uuid",
+          "title": "Generation Id",
+          "type": "string"
+        },
+        "input_hash": {
+          "title": "Input Hash",
+          "type": "string"
+        },
+        "item_count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item Count"
+        },
+        "origin": {
+          "enum": [
+            "supplied",
+            "extracted"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "representation_id": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Representation Id"
+        },
+        "request_seq": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request Seq"
+        },
+        "status": {
+          "enum": [
+            "pending",
+            "active",
+            "rejected",
+            "superseded"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "generation_id",
+        "doc_id",
+        "version_id",
+        "origin",
+        "status",
+        "input_hash",
+        "created_at"
+      ],
+      "title": "ReferenceGeneration",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReferenceGenerations": {
+      "additionalProperties": false,
+      "description": "A version's reference generations, newest first.",
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "generations": {
+          "items": {
+            "$ref": "#/$defs/ReferenceGeneration"
+          },
+          "title": "Generations",
+          "type": "array"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "version_id",
+        "generations"
+      ],
+      "title": "ReferenceGenerations",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReferenceInput": {
+      "additionalProperties": false,
+      "description": "One line of a supplied NDJSON reference set (D140 \u00a76.3).\n\n``from_section_key`` is the section of the source version the reference\nis made from (omitted: the whole document). A ``pinned`` reference names\nthe target's ``version_key``. ``amends`` must say whether its date is\nknown: ``change_date_known = true`` with ``change_effective_from``, or\n``false`` without it; other kinds carry neither.",
+      "properties": {
+        "binding": {
+          "default": "floating",
+          "enum": [
+            "floating",
+            "pinned"
+          ],
+          "title": "Binding",
+          "type": "string"
+        },
+        "change_date_known": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Date Known"
+        },
+        "change_effective_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Effective From",
+          "x-utc": true
+        },
+        "context": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Context"
+        },
+        "from_section_key": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:/-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Section Key"
+        },
+        "kind": {
+          "enum": [
+            "cites",
+            "links_to",
+            "attaches",
+            "replies_to",
+            "refers_to",
+            "amends",
+            "implements"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "source_label": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Label"
+        },
+        "target": {
+          "$ref": "#/$defs/ReferenceTarget"
+        }
+      },
+      "required": [
+        "kind",
+        "target"
+      ],
+      "title": "ReferenceInput",
+      "type": "object",
+      "x-extra": "forbid",
+      "x-field-order": [
+        "kind",
+        "from_section_key",
+        "target",
+        "binding",
+        "change_effective_from",
+        "change_date_known",
+        "source_label",
+        "context"
+      ]
+    },
+    "ReferenceItemError": {
+      "additionalProperties": false,
+      "description": "Why one item of a reference set was rejected.",
+      "properties": {
+        "field": {
+          "title": "Field",
+          "type": "string"
+        },
+        "item": {
+          "minimum": 1,
+          "title": "Item",
+          "type": "integer"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "field",
+        "reason"
+      ],
+      "title": "ReferenceItemError",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReferenceKind": {
+      "enum": [
+        "cites",
+        "links_to",
+        "attaches",
+        "replies_to",
+        "refers_to",
+        "amends",
+        "implements"
+      ],
+      "type": "string"
+    },
+    "ReferenceTarget": {
+      "additionalProperties": false,
+      "description": "The document a supplied reference points at, named by its source identity.\n\n``source_kind``/``source_ref`` are the target lineage's identity (the\nvalues it was or will be ingested with), so a reference may name a\ndocument that is not ingested yet. ``version_key`` pins one version\n(with ``binding = pinned``); ``section_key`` names a section, else the\nwhole document.",
+      "properties": {
+        "section_key": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:/-]+$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Key"
+        },
+        "source_kind": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Source Kind",
+          "type": "string"
+        },
+        "source_ref": {
+          "maxLength": 512,
+          "minLength": 1,
+          "title": "Source Ref",
+          "type": "string"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        }
+      },
+      "required": [
+        "source_kind",
+        "source_ref"
+      ],
+      "title": "ReferenceTarget",
+      "type": "object",
+      "x-extra": "forbid",
+      "x-field-order": [
+        "source_kind",
+        "source_ref",
+        "version_key",
+        "section_key"
+      ]
+    },
+    "ReferenceWindow": {
+      "additionalProperties": false,
+      "description": "A time window: from ``from`` (inclusive; null = unbounded) to ``until``.\n\n``until`` is exclusive unless ``until_inclusive`` (an instant window has\n``from == until`` and ``until_inclusive = true``); null is unbounded.",
+      "properties": {
+        "from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "From"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "until_inclusive": {
+          "default": false,
+          "title": "Until Inclusive",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "from"
+      ],
+      "title": "ReferenceWindow",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "ReferencesSet": {
+      "additionalProperties": false,
+      "description": "What one ``PUT \u2026/references`` did.\n\n``outcome``: ``created`` \u2014 a new generation was recorded (``pending``,\nor ``rejected`` when the version's structure already showed an unknown\nsource section); ``unchanged`` \u2014 the body equals the version's current\nintent (a retry); ``pending_cancelled`` \u2014 the body equals the active\nset, so the newer pending generation was cancelled. ``generation`` is\nthe generation the caller's intent now names.",
+      "properties": {
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "generation": {
+          "$ref": "#/$defs/ReferenceGeneration"
+        },
+        "outcome": {
+          "enum": [
+            "created",
+            "unchanged",
+            "pending_cancelled"
+          ],
+          "title": "Outcome",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "version_id",
+        "outcome",
+        "generation"
+      ],
+      "title": "ReferencesSet",
       "type": "object",
       "x-extra": "forbid"
     },
@@ -3883,6 +5538,33 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "ScopePending": {
+      "additionalProperties": false,
+      "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
+      "properties": {
+        "count": {
+          "minimum": 0,
+          "title": "Count",
+          "type": "integer"
+        },
+        "doc_ids": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "maxItems": 50,
+          "title": "Doc Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "doc_ids",
+        "count"
+      ],
+      "title": "ScopePending",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "SearchRequest": {
       "additionalProperties": false,
       "properties": {
@@ -3918,12 +5600,420 @@ export default {
           "minLength": 1,
           "title": "Query",
           "type": "string"
+        },
+        "time": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "at": "#/$defs/AtReadTime",
+                  "current": "#/$defs/CurrentReadTime",
+                  "history": "#/$defs/HistoryReadTime",
+                  "overlap": "#/$defs/OverlapReadTime"
+                },
+                "propertyName": "mode"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/CurrentReadTime"
+                },
+                {
+                  "$ref": "#/$defs/AtReadTime"
+                },
+                {
+                  "$ref": "#/$defs/OverlapReadTime"
+                },
+                {
+                  "$ref": "#/$defs/HistoryReadTime"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Time"
         }
       },
       "required": [
         "query"
       ],
       "title": "SearchRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SectionAmendment": {
+      "additionalProperties": false,
+      "description": "One live ``amends`` reference that targets the keyed section.",
+      "properties": {
+        "binding": {
+          "enum": [
+            "floating",
+            "pinned"
+          ],
+          "title": "Binding",
+          "type": "string"
+        },
+        "change_date_known": {
+          "title": "Change Date Known",
+          "type": "boolean"
+        },
+        "change_effective_from": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Change Effective From"
+        },
+        "crossref_id": {
+          "format": "uuid",
+          "title": "Crossref Id",
+          "type": "string"
+        },
+        "from_doc_id": {
+          "format": "uuid",
+          "title": "From Doc Id",
+          "type": "string"
+        },
+        "from_section_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "From Section Key"
+        },
+        "from_version_id": {
+          "format": "uuid",
+          "title": "From Version Id",
+          "type": "string"
+        },
+        "source_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source Label"
+        },
+        "to_version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Version Key"
+        }
+      },
+      "required": [
+        "crossref_id",
+        "from_doc_id",
+        "from_version_id",
+        "binding",
+        "change_date_known"
+      ],
+      "title": "SectionAmendment",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SectionHistoryPage": {
+      "additionalProperties": false,
+      "description": "A page of ``section_history`` rows.\n\nRows are ordered by effective start for a lineage with declared effective\nperiods (``periodised``) and by ``version_no`` otherwise. ``amendments``\nis filled on the first page only. ``cursor`` pins ``evaluated_at`` and\n``believed_at`` for the following pages.",
+      "properties": {
+        "amendments": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SectionAmendment"
+          },
+          "title": "Amendments",
+          "type": "array"
+        },
+        "believed_at": {
+          "format": "date-time",
+          "title": "Believed At",
+          "type": "string"
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "evaluated_at": {
+          "format": "date-time",
+          "title": "Evaluated At",
+          "type": "string"
+        },
+        "periodised": {
+          "title": "Periodised",
+          "type": "boolean"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/SectionHistoryRow"
+          },
+          "title": "Rows",
+          "type": "array"
+        },
+        "section_key": {
+          "title": "Section Key",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "section_key",
+        "periodised",
+        "rows",
+        "evaluated_at",
+        "believed_at"
+      ],
+      "title": "SectionHistoryPage",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SectionHistoryRequest": {
+      "additionalProperties": false,
+      "description": "One ``section_history`` call (D140 \u00a76.2).",
+      "properties": {
+        "cursor": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Cursor"
+        },
+        "doc_id": {
+          "format": "uuid",
+          "title": "Doc Id",
+          "type": "string"
+        },
+        "k": {
+          "default": 50,
+          "maximum": 200,
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "section_key": {
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.:/-]+$",
+          "title": "Section Key",
+          "type": "string"
+        },
+        "time": {
+          "default": {
+            "mode": "history"
+          },
+          "discriminator": {
+            "mapping": {
+              "at": "#/$defs/AtReadTime",
+              "current": "#/$defs/CurrentReadTime",
+              "history": "#/$defs/HistoryReadTime",
+              "overlap": "#/$defs/OverlapReadTime"
+            },
+            "propertyName": "mode"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/CurrentReadTime"
+            },
+            {
+              "$ref": "#/$defs/AtReadTime"
+            },
+            {
+              "$ref": "#/$defs/OverlapReadTime"
+            },
+            {
+              "$ref": "#/$defs/HistoryReadTime"
+            }
+          ],
+          "title": "Time"
+        }
+      },
+      "required": [
+        "doc_id",
+        "section_key"
+      ],
+      "title": "SectionHistoryRequest",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SectionHistoryRow": {
+      "additionalProperties": false,
+      "description": "One selected version of the lineage and what it holds under the key.\n\n``status``: ``present`` (``section`` is set), ``absent`` (the version is\nindexed and lacks the key \u2014 a removed section), ``not_indexed`` (its\nsections predate section keys and are not backfilled yet, so absence\ncannot be told) or ``processing`` (the version is not readable yet).",
+      "properties": {
+        "effective": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/EffectiveInterval"
+          },
+          "title": "Effective",
+          "type": "array"
+        },
+        "section": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SectionHistorySection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "enum": [
+            "present",
+            "absent",
+            "not_indexed",
+            "processing"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "version_id": {
+          "format": "uuid",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "version_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Version Key"
+        },
+        "version_no": {
+          "title": "Version No",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version_id",
+        "version_no",
+        "status"
+      ],
+      "title": "SectionHistoryRow",
+      "type": "object",
+      "x-extra": "forbid"
+    },
+    "SectionHistorySection": {
+      "additionalProperties": false,
+      "description": "The keyed section as one version holds it.",
+      "properties": {
+        "changed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Changed"
+        },
+        "first_chunk_ids": {
+          "default": [],
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "First Chunk Ids",
+          "type": "array"
+        },
+        "node_path": {
+          "title": "Node Path",
+          "type": "string"
+        },
+        "own_changed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Own Changed"
+        },
+        "own_content_hash": {
+          "title": "Own Content Hash",
+          "type": "string"
+        },
+        "section_id": {
+          "format": "uuid",
+          "title": "Section Id",
+          "type": "string"
+        },
+        "subtree_content_hash": {
+          "title": "Subtree Content Hash",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        }
+      },
+      "required": [
+        "section_id",
+        "node_path",
+        "own_content_hash",
+        "subtree_content_hash"
+      ],
+      "title": "SectionHistorySection",
       "type": "object",
       "x-extra": "forbid"
     },

@@ -40,6 +40,16 @@ export default {
         "minLength": 1,
         "type": "string"
       },
+      "effective_from": {
+        "description": "Optional ISO-8601 UTC start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot.",
+        "format": "date-time",
+        "type": "string"
+      },
+      "effective_until": {
+        "description": "Optional ISO-8601 UTC end (exclusive) of that period; requires effective_from. Omit it to last until the next declared start.",
+        "format": "date-time",
+        "type": "string"
+      },
       "filename": {
         "description": "Required when text or content_base64 is used. Optional with path (defaults to the path basename). Does not change mime inference for path mode \u2014 mime follows the real path name unless mime is set.",
         "maxLength": 512,
@@ -84,6 +94,12 @@ export default {
         "maxLength": 512,
         "type": "string"
       },
+      "version_key": {
+        "description": "Optional immutable name for this version, unique within the document (e.g. an edition id). A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Requires source_kind/source_ref.",
+        "maxLength": 512,
+        "minLength": 1,
+        "type": "string"
+      },
       "versioning_mode": {
         "default": "snapshot",
         "description": "Requires source_kind/source_ref when not snapshot.",
@@ -108,7 +124,7 @@ export default {
         "destructiveHint": false,
         "readOnlyHint": false
       },
-      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
+      "description": "Store a document into this deployment's memory (E0 write). Returns a version_id immediately; the indexing pipeline is asynchronous and may take many minutes (structure alone has been measured at ~11 minutes on a ~2.5KB file). Do NOT call assured recall operations expecting this content until pipeline_readiness reports ready=true for the version_id. Prefer source_kind plus a stable source_ref for durable agent memory so later writes become new versions of the same document; omit both only for intentionally anonymous one-shot ingest. Body sources (exactly one): text for short UTF-8 notes already in context; content_base64 for binary; path, where this server offers it, only when the operator has configured REMEMBERSTACK_MCP_INGEST_ROOTS allowlisted directories on this MCP host \u2014 with no roots configured, path is rejected (use text/content_base64 or ask the operator to set roots). Path reads resolve fully, must stay inside a configured root after symlink resolution, must be regular files, and are size-bounded (served capability limit when present, otherwise a local process resource guard). Bodies must be non-empty; deployments may enforce a maximum body size (oversized or empty bodies map to structured body_too_large / empty_body errors). source_kind and source_ref must be supplied together when either is set (stable lineage). version_key names this version for good (a new key always creates a version; reusing a key is only accepted when re-sending that latest version's bytes). effective_from/effective_until declare when this version's text is in force (UTC; snapshot lineages only); without effective_until it lasts until the next declared start. If the result has parked=\"no_route\", the original is stored but its conversion is parked waiting for a conversion route for its MIME type. Tell the user now instead of polling readiness.",
       "destructive": false,
       "http_route": "POST /ingest",
       "input_schema": {
@@ -180,6 +196,16 @@ export default {
             "minLength": 1,
             "type": "string"
           },
+          "effective_from": {
+            "description": "Optional ISO-8601 UTC start (inclusive) of the period this version's text is in force. Requires source_kind/source_ref and versioning_mode snapshot.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "effective_until": {
+            "description": "Optional ISO-8601 UTC end (exclusive) of that period; requires effective_from. Omit it to last until the next declared start.",
+            "format": "date-time",
+            "type": "string"
+          },
           "filename": {
             "description": "Required when text or content_base64 is used. Optional with path (defaults to the path basename). Does not change mime inference for path mode \u2014 mime follows the real path name unless mime is set.",
             "maxLength": 512,
@@ -229,6 +255,12 @@ export default {
             "maxLength": 512,
             "type": "string"
           },
+          "version_key": {
+            "description": "Optional immutable name for this version, unique within the document (e.g. an edition id). A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Requires source_kind/source_ref.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
           "versioning_mode": {
             "default": "snapshot",
             "description": "Requires source_kind/source_ref when not snapshot.",
@@ -243,7 +275,7 @@ export default {
       },
       "name": "ingest",
       "permission": "memory:write",
-      "tool_version": 1
+      "tool_version": 2
     },
     {
       "annotations": {
@@ -415,6 +447,74 @@ export default {
             "minLength": 1,
             "type": "string"
           },
+          "time": {
+            "default": {
+              "mode": "current"
+            },
+            "description": "For a document with declared effective periods, which editions are candidates: current (default, in force now), at an instant, overlap a window, or history. Other documents are unaffected.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
+          },
           "versions": {
             "description": "current (default) or all live versions.",
             "enum": [
@@ -427,6 +527,260 @@ export default {
         "type": "object"
       },
       "name": "search_documents",
+      "permission": "memory:read",
+      "tool_version": 2
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "Follow one section of a document across its versions. A section key is the stable id a heading carries in the source ({#per-diem} in \"## Per-diem allowance {#per-diem}\"). Returns one row per version the time scope selects (default time: history): version_id, version_no, version_key, the version's in-force intervals (effective), and status. status=present carries the section: title, own_content_hash (its own text), subtree_content_hash (including subsections), changed and own_changed against the previous row that held the key (null for the first), and first_chunk_ids to read it. status=absent means that version has no such section (removed); not_indexed means the version has not been indexed for keys yet, so absence is unknown; processing means the version is not readable yet. Rows are ordered by effective start when the document declares effective periods (periodised=true), otherwise by version number. The first page also lists amendments: live references of kind amends that target this section, with change_effective_from and change_date_known. Page with cursor.",
+      "destructive": false,
+      "http_route": "GET /documents/{doc_id}/sections/{section_key}/history",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "The previous page's cursor.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "doc_id": {
+            "description": "The document's UUID (doc_id).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "k": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "section_key": {
+            "description": "The section key, without the leading #.",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "type": "string"
+          },
+          "time": {
+            "default": {
+              "mode": "history"
+            },
+            "description": "Which versions: history (default, every version in force up to now), current, at an instant, or overlap a window.",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "doc_id",
+          "section_key"
+        ],
+        "type": "object"
+      },
+      "name": "section_history",
+      "permission": "memory:read",
+      "tool_version": 1
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "readOnlyHint": true
+      },
+      "description": "List what a passage, section or document references and what references it, across versions and time. Give chunk_id (a passage: its version and section are the source) or doc_id with an optional section_key (the section and its subsections). direction: outgoing, incoming or both (default). time selects the source versions in force (default: current; with chunk_id, the chunk version's own in-force time up to now). Each row is one reference in one source window: kind (refers_to, amends, implements, cites, links_to, attaches, replies_to), binding (floating: whichever target versions are in force; pinned: one named version), source (doc, version, section, window), named_target (the target exactly as the source names it), status and target. A floating reference to a document with effective periods yields one row per target version in force during the source window, with applies_during and concurrent (true when two target versions apply at once). status: resolved (target section readable: first_chunk_ids to read it), target_processing (the version in force is not readable yet), target_unavailable (not ingested, deleted or forgotten), target_not_in_force, section_not_in_version, section_not_indexed, pinned_version_unavailable. too_broad means the section has too many subsections: ask about a narrower one. Page with cursor; a short page with a cursor means keep paging.",
+      "destructive": false,
+      "http_route": "POST /documents/references",
+      "input_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_id": {
+            "description": "A passage's chunk id; or give doc_id instead.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "cursor": {
+            "description": "The previous page's cursor.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "direction": {
+            "default": "both",
+            "enum": [
+              "outgoing",
+              "incoming",
+              "both"
+            ],
+            "type": "string"
+          },
+          "doc_id": {
+            "description": "The document's UUID (doc_id); or give chunk_id.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "k": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "kinds": {
+            "description": "Only these reference kinds.",
+            "items": {
+              "enum": [
+                "cites",
+                "links_to",
+                "attaches",
+                "replies_to",
+                "refers_to",
+                "amends",
+                "implements"
+              ],
+              "type": "string"
+            },
+            "maxItems": 7,
+            "minItems": 1,
+            "type": "array"
+          },
+          "section_key": {
+            "description": "With doc_id: the section key, without the leading #.",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "type": "string"
+          },
+          "time": {
+            "default": {
+              "mode": "current"
+            },
+            "description": "Which source versions: current (default; with chunk_id, the chunk version's in-force time up to now), at an instant, overlap a window, or history (every version in force up to now).",
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "name": "document_references",
       "permission": "memory:read",
       "tool_version": 1
     },
@@ -492,6 +846,73 @@ export default {
             "maxLength": 8192,
             "minLength": 1,
             "type": "string"
+          },
+          "time": {
+            "default": {
+              "mode": "current"
+            },
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "current"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "at"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "at"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "from": {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  "mode": {
+                    "const": "overlap"
+                  },
+                  "to": {
+                    "format": "date-time",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "mode",
+                  "from",
+                  "to"
+                ]
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mode": {
+                    "const": "history"
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
+              }
+            ],
+            "type": "object"
           }
         },
         "required": [
@@ -501,7 +922,7 @@ export default {
       },
       "name": "claims_and_sources_context",
       "permission": "memory:read",
-      "tool_version": 2
+      "tool_version": 3
     },
     {
       "annotations": {

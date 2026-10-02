@@ -185,7 +185,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -220,7 +221,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "fact",
         "negative": null,
@@ -282,7 +284,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -317,7 +320,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "fact",
         "negative": null,
@@ -1292,7 +1296,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -1327,7 +1332,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "fact",
         "negative": null,
@@ -1393,7 +1399,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -1428,7 +1435,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "fact",
         "negative": null,
@@ -1503,7 +1511,8 @@
               "k": null,
               "p1_believed_at_horizon": null,
               "p1_written_inline": true,
-              "pg_live_ts": "2026-10-02T12:00:00Z"
+              "pg_live_ts": "2026-10-02T12:00:00Z",
+              "scope_pending": null
             },
             "grain": "evidence",
             "negative": null,
@@ -1538,7 +1547,8 @@
               "k": null,
               "p1_believed_at_horizon": null,
               "p1_written_inline": true,
-              "pg_live_ts": "2026-10-02T12:00:00Z"
+              "pg_live_ts": "2026-10-02T12:00:00Z",
+              "scope_pending": null
             },
             "grain": "fact",
             "negative": null,
@@ -1575,7 +1585,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -1610,7 +1621,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -1673,7 +1685,8 @@
               "k": null,
               "p1_believed_at_horizon": null,
               "p1_written_inline": true,
-              "pg_live_ts": "2026-10-02T12:00:00Z"
+              "pg_live_ts": "2026-10-02T12:00:00Z",
+              "scope_pending": null
             },
             "grain": "evidence",
             "negative": null,
@@ -1708,7 +1721,8 @@
               "k": null,
               "p1_believed_at_horizon": null,
               "p1_written_inline": true,
-              "pg_live_ts": "2026-10-02T12:00:00Z"
+              "pg_live_ts": "2026-10-02T12:00:00Z",
+              "scope_pending": null
             },
             "grain": "fact",
             "negative": null,
@@ -1745,7 +1759,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -1780,7 +1795,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "fact",
           "negative": null,
@@ -1845,7 +1861,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -1880,7 +1897,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -1919,7 +1937,10 @@
     {
       "method": "claims_and_sources_context",
       "options": {
-        "query": "other"
+        "query": "other",
+        "time": {
+          "mode": "history"
+        }
       },
       "responses": [
         {
@@ -1938,7 +1959,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -1973,7 +1995,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -1993,13 +2016,19 @@
       },
       "typescriptMethod": "claimsAndSourcesContext",
       "typescriptOptions": {
-        "query": "other"
+        "query": "other",
+        "time": {
+          "mode": "history"
+        }
       },
       "variant": "supplied",
       "wire": [
         {
           "body": {
-            "query": "other"
+            "query": "other",
+            "time": {
+              "mode": "history"
+            }
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -2031,7 +2060,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -2066,7 +2096,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -2124,7 +2155,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -2159,7 +2191,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -2699,7 +2732,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -2734,7 +2768,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -2799,7 +2834,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -2834,7 +2870,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -2905,7 +2942,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -2940,7 +2978,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3003,7 +3042,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3038,7 +3078,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3119,7 +3160,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3154,7 +3196,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3210,7 +3253,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3245,7 +3289,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3301,7 +3346,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3336,7 +3382,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3403,7 +3450,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3438,7 +3486,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3509,7 +3558,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3544,7 +3594,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3602,7 +3653,11 @@
           "language": "en"
         },
         "k": 3,
-        "query": "fixture"
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
       },
       "responses": [
         {
@@ -3621,7 +3676,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3656,7 +3712,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3684,7 +3741,11 @@
           "language": "en"
         },
         "k": 3,
-        "query": "fixture"
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
       },
       "variant": "supplied",
       "wire": [
@@ -3701,7 +3762,11 @@
               "recipients": []
             },
             "k": 3,
-            "query": "fixture"
+            "query": "fixture",
+            "time": {
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
+            }
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -3733,7 +3798,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3768,7 +3834,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3828,7 +3895,10 @@
           ]
         },
         "k": 3,
-        "query": "fixture"
+        "query": "fixture",
+        "time": {
+          "mode": "history"
+        }
       },
       "responses": [
         {
@@ -3847,7 +3917,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3882,7 +3953,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -3912,7 +3984,10 @@
           ]
         },
         "k": 3,
-        "query": "fixture"
+        "query": "fixture",
+        "time": {
+          "mode": "history"
+        }
       },
       "variant": "supplied",
       "wire": [
@@ -3930,7 +4005,10 @@
               "recipients": []
             },
             "k": 3,
-            "query": "fixture"
+            "query": "fixture",
+            "time": {
+              "mode": "history"
+            }
           },
           "contentBase64": null,
           "contentType": "application/json",
@@ -3962,7 +4040,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -3997,7 +4076,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4059,7 +4139,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4094,7 +4175,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4156,7 +4238,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4191,7 +4274,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4247,7 +4331,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4282,7 +4367,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4338,7 +4424,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4373,7 +4460,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4447,7 +4535,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4482,7 +4571,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4559,7 +4649,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4594,7 +4685,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4665,7 +4757,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4700,7 +4793,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4773,7 +4867,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4808,7 +4903,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -4871,7 +4967,8 @@
             "k": null,
             "p1_believed_at_horizon": null,
             "p1_written_inline": true,
-            "pg_live_ts": "2026-10-02T12:00:00Z"
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
           },
           "grain": "evidence",
           "negative": null,
@@ -4906,7 +5003,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -5271,6 +5369,7 @@
           "parked": null,
           "title": null,
           "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
           "versioning_mode": null
         }
       ],
@@ -5284,6 +5383,7 @@
         "processing_admission": "not_required",
         "title": null,
         "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
         "versioning_mode": null
       },
       "typescriptMethod": "ingest",
@@ -5344,6 +5444,7 @@
           "parked": null,
           "title": null,
           "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
           "versioning_mode": null
         }
       ],
@@ -5357,6 +5458,7 @@
         "processing_admission": "not_required",
         "title": null,
         "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
         "versioning_mode": null
       },
       "typescriptMethod": "ingest",
@@ -5511,14 +5613,16 @@
           "as_of": "2026-10-02T12:00:00Z",
           "cursor": null,
           "documents": [],
-          "people_matched": []
+          "people_matched": [],
+          "scope_pending": null
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
         "cursor": null,
         "documents": [],
-        "people_matched": []
+        "people_matched": [],
+        "scope_pending": null
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {},
@@ -5545,6 +5649,10 @@
         },
         "k": 3,
         "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        },
         "versions": "all"
       },
       "responses": [
@@ -5552,14 +5660,16 @@
           "as_of": "2026-10-02T12:00:00Z",
           "cursor": null,
           "documents": [],
-          "people_matched": []
+          "people_matched": [],
+          "scope_pending": null
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
         "cursor": null,
         "documents": [],
-        "people_matched": []
+        "people_matched": [],
+        "scope_pending": null
       },
       "typescriptMethod": "searchDocuments",
       "typescriptOptions": {
@@ -5571,6 +5681,10 @@
         },
         "k": 3,
         "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        },
         "versions": "all"
       },
       "variant": "supplied",
@@ -5585,6 +5699,9 @@
             },
             "k": 3,
             "query": "fixture",
+            "time": {
+              "at": "2026-10-02T12:00:00Z"
+            },
             "versions": "all"
           },
           "contentBase64": null,
@@ -5605,14 +5722,16 @@
           "as_of": "2026-10-02T12:00:00Z",
           "cursor": null,
           "documents": [],
-          "people_matched": []
+          "people_matched": [],
+          "scope_pending": null
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
         "cursor": null,
         "documents": [],
-        "people_matched": []
+        "people_matched": [],
+        "scope_pending": null
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -5650,14 +5769,16 @@
           "as_of": "2026-10-02T12:00:00Z",
           "cursor": null,
           "documents": [],
-          "people_matched": []
+          "people_matched": [],
+          "scope_pending": null
         }
       ],
       "result": {
         "as_of": "2026-10-02T12:00:00Z",
         "cursor": null,
         "documents": [],
-        "people_matched": []
+        "people_matched": [],
+        "scope_pending": null
       },
       "typescriptMethod": "searchDocumentsRequest",
       "typescriptOptions": {
@@ -5691,6 +5812,1148 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/documents/search",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "section_history",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4:per-diem"
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "sectionKey": "part/4:per-diem"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4%3Aper-diem/history",
+          "query": [
+            [
+              "mode",
+              "history"
+            ],
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history",
+      "options": {
+        "cursor": "next",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "section_key": "part/4:per-diem",
+        "time": {
+          "from": "2026-10-02T12:00:00+02:00",
+          "mode": "overlap",
+          "to": "2026-10-02T12:00:00+00:00"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistory",
+      "typescriptOptions": {
+        "cursor": "next",
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "k": 3,
+        "sectionKey": "part/4:per-diem",
+        "time": {
+          "from": "2026-10-02T12:00:00+02:00",
+          "mode": "overlap",
+          "to": "2026-10-02T12:00:00+00:00"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4%3Aper-diem/history",
+          "query": [
+            [
+              "mode",
+              "overlap"
+            ],
+            [
+              "k",
+              "3"
+            ],
+            [
+              "from",
+              "2026-10-02T12:00:00+02:00"
+            ],
+            [
+              "to",
+              "2026-10-02T12:00:00+00:00"
+            ],
+            [
+              "cursor",
+              "next"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "section_key": "part/4:per-diem"
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistoryRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "section_key": "part/4:per-diem"
+        }
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4%3Aper-diem/history",
+          "query": [
+            [
+              "mode",
+              "history"
+            ],
+            [
+              "k",
+              "50"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "section_history_request",
+      "options": {
+        "request": {
+          "cursor": "next",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 3,
+          "section_key": "part/4:per-diem",
+          "time": {
+            "at": "2026-10-02T12:00:00+00:00",
+            "mode": "at"
+          }
+        }
+      },
+      "responses": [
+        {
+          "amendments": [],
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "periodised": true,
+          "rows": [
+            {
+              "effective": [
+                {
+                  "from": "2026-10-02T12:00:00Z",
+                  "until": null,
+                  "until_declared": false
+                }
+              ],
+              "section": null,
+              "status": "absent",
+              "version_id": "10000000-0000-0000-0000-000000000002",
+              "version_key": null,
+              "version_no": 2
+            }
+          ],
+          "section_key": "part/4:per-diem"
+        }
+      ],
+      "result": {
+        "amendments": [],
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "periodised": true,
+        "rows": [
+          {
+            "effective": [
+              {
+                "from": "2026-10-02T12:00:00Z",
+                "until": null,
+                "until_declared": false
+              }
+            ],
+            "section": null,
+            "status": "absent",
+            "version_id": "10000000-0000-0000-0000-000000000002",
+            "version_key": null,
+            "version_no": 2
+          }
+        ],
+        "section_key": "part/4:per-diem"
+      },
+      "typescriptMethod": "sectionHistoryRequest",
+      "typescriptOptions": {
+        "request": {
+          "cursor": "next",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 3,
+          "section_key": "part/4:per-diem",
+          "time": {
+            "at": "2026-10-02T12:00:00+00:00",
+            "mode": "at"
+          }
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/sections/part%2F4%3Aper-diem/history",
+          "query": [
+            [
+              "mode",
+              "at"
+            ],
+            [
+              "k",
+              "3"
+            ],
+            [
+              "at",
+              "2026-10-02T12:00:00+00:00"
+            ],
+            [
+              "cursor",
+              "next"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "set_references",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "generation": {
+            "activated_at": null,
+            "created_at": "2026-10-02T12:00:00Z",
+            "crossref_version": null,
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "errors": [],
+            "generation_id": "10000000-0000-0000-0000-000000000001",
+            "input_hash": "fixture",
+            "item_count": 2,
+            "origin": "supplied",
+            "representation_id": null,
+            "request_seq": null,
+            "status": "pending",
+            "version_id": "10000000-0000-0000-0000-000000000002"
+          },
+          "outcome": "created",
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "generation": {
+          "activated_at": null,
+          "created_at": "2026-10-02T12:00:00Z",
+          "crossref_version": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "errors": [],
+          "generation_id": "10000000-0000-0000-0000-000000000001",
+          "input_hash": "fixture",
+          "item_count": 2,
+          "origin": "supplied",
+          "representation_id": null,
+          "request_seq": null,
+          "status": "pending",
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        },
+        "outcome": "created",
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "",
+          "contentType": "application/x-ndjson",
+          "method": "PUT",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "set_references",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": false,
+            "context": "caf\u00e9",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          },
+          {
+            "binding": "pinned",
+            "from_section_key": "part/4",
+            "kind": "refers_to",
+            "target": {
+              "section_key": "part/4",
+              "source_kind": "policy",
+              "source_ref": "expenses",
+              "version_key": "edition-2"
+            }
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "generation": {
+            "activated_at": null,
+            "created_at": "2026-10-02T12:00:00Z",
+            "crossref_version": null,
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "errors": [],
+            "generation_id": "10000000-0000-0000-0000-000000000001",
+            "input_hash": "fixture",
+            "item_count": 2,
+            "origin": "supplied",
+            "representation_id": null,
+            "request_seq": null,
+            "status": "pending",
+            "version_id": "10000000-0000-0000-0000-000000000002"
+          },
+          "outcome": "created",
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "generation": {
+          "activated_at": null,
+          "created_at": "2026-10-02T12:00:00Z",
+          "crossref_version": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "errors": [],
+          "generation_id": "10000000-0000-0000-0000-000000000001",
+          "input_hash": "fixture",
+          "item_count": 2,
+          "origin": "supplied",
+          "representation_id": null,
+          "request_seq": null,
+          "status": "pending",
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        },
+        "outcome": "created",
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "setReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "references": [
+          {
+            "change_date_known": false,
+            "context": "caf\u00e9",
+            "kind": "amends",
+            "target": {
+              "source_kind": "policy",
+              "source_ref": "expenses"
+            }
+          },
+          {
+            "binding": "pinned",
+            "from_section_key": "part/4",
+            "kind": "refers_to",
+            "target": {
+              "section_key": "part/4",
+              "source_kind": "policy",
+              "source_ref": "expenses",
+              "version_key": "edition-2"
+            }
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "eyJraW5kIjoiYW1lbmRzIiwidGFyZ2V0Ijp7InNvdXJjZV9raW5kIjoicG9saWN5Iiwic291cmNlX3JlZiI6ImV4cGVuc2VzIn0sImJpbmRpbmciOiJmbG9hdGluZyIsImNoYW5nZV9kYXRlX2tub3duIjpmYWxzZSwiY29udGV4dCI6ImNhZsOpIn0KeyJraW5kIjoicmVmZXJzX3RvIiwiZnJvbV9zZWN0aW9uX2tleSI6InBhcnQvNCIsInRhcmdldCI6eyJzb3VyY2Vfa2luZCI6InBvbGljeSIsInNvdXJjZV9yZWYiOiJleHBlbnNlcyIsInZlcnNpb25fa2V5IjoiZWRpdGlvbi0yIiwic2VjdGlvbl9rZXkiOiJwYXJ0LzQifSwiYmluZGluZyI6InBpbm5lZCJ9Cg==",
+          "contentType": "application/x-ndjson",
+          "method": "PUT",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "reference_generations",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "generations": [
+            {
+              "activated_at": null,
+              "created_at": "2026-10-02T12:00:00Z",
+              "crossref_version": null,
+              "doc_id": "10000000-0000-0000-0000-000000000001",
+              "errors": [],
+              "generation_id": "10000000-0000-0000-0000-000000000001",
+              "input_hash": "fixture",
+              "item_count": 2,
+              "origin": "supplied",
+              "representation_id": null,
+              "request_seq": null,
+              "status": "pending",
+              "version_id": "10000000-0000-0000-0000-000000000002"
+            }
+          ],
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "generations": [
+          {
+            "activated_at": null,
+            "created_at": "2026-10-02T12:00:00Z",
+            "crossref_version": null,
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "errors": [],
+            "generation_id": "10000000-0000-0000-0000-000000000001",
+            "input_hash": "fixture",
+            "item_count": 2,
+            "origin": "supplied",
+            "representation_id": null,
+            "request_seq": null,
+            "status": "pending",
+            "version_id": "10000000-0000-0000-0000-000000000002"
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "referenceGenerations",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "reference_generations",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000002",
+        "version_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "generations": [
+            {
+              "activated_at": null,
+              "created_at": "2026-10-02T12:00:00Z",
+              "crossref_version": null,
+              "doc_id": "10000000-0000-0000-0000-000000000001",
+              "errors": [],
+              "generation_id": "10000000-0000-0000-0000-000000000001",
+              "input_hash": "fixture",
+              "item_count": 2,
+              "origin": "supplied",
+              "representation_id": null,
+              "request_seq": null,
+              "status": "pending",
+              "version_id": "10000000-0000-0000-0000-000000000002"
+            }
+          ],
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "generations": [
+          {
+            "activated_at": null,
+            "created_at": "2026-10-02T12:00:00Z",
+            "crossref_version": null,
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "errors": [],
+            "generation_id": "10000000-0000-0000-0000-000000000001",
+            "input_hash": "fixture",
+            "item_count": 2,
+            "origin": "supplied",
+            "representation_id": null,
+            "request_seq": null,
+            "status": "pending",
+            "version_id": "10000000-0000-0000-0000-000000000002"
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "referenceGenerations",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000002",
+        "versionId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/documents/10000000-0000-0000-0000-000000000002/versions/10000000-0000-0000-0000-000000000001/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "document_references",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "rows": [],
+          "too_broad": null
+        }
+      ],
+      "result": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "rows": [],
+        "too_broad": null
+      },
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "direction": "both",
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "k": 50
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "document_references",
+      "options": {
+        "chunk_id": "10000000-0000-0000-0000-000000000002",
+        "cursor": "next",
+        "direction": "incoming",
+        "k": 3,
+        "kinds": [
+          "amends",
+          "refers_to"
+        ],
+        "time": {
+          "at": "2026-10-02T12:00:00+02:00",
+          "mode": "at"
+        }
+      },
+      "responses": [
+        {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "rows": [],
+          "too_broad": null
+        }
+      ],
+      "result": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "rows": [],
+        "too_broad": null
+      },
+      "typescriptMethod": "documentReferences",
+      "typescriptOptions": {
+        "chunkId": "10000000-0000-0000-0000-000000000002",
+        "cursor": "next",
+        "direction": "incoming",
+        "k": 3,
+        "kinds": [
+          "amends",
+          "refers_to"
+        ],
+        "time": {
+          "at": "2026-10-02T12:00:00+02:00",
+          "mode": "at"
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "chunk_id": "10000000-0000-0000-0000-000000000002",
+            "cursor": "next",
+            "direction": "incoming",
+            "k": 3,
+            "kinds": [
+              "amends",
+              "refers_to"
+            ],
+            "time": {
+              "at": "2026-10-02T12:00:00+02:00",
+              "mode": "at"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "document_references_request",
+      "options": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001"
+        }
+      },
+      "responses": [
+        {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "rows": [],
+          "too_broad": null
+        }
+      ],
+      "result": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "rows": [],
+        "too_broad": null
+      },
+      "typescriptMethod": "documentReferencesRequest",
+      "typescriptOptions": {
+        "request": {
+          "doc_id": "10000000-0000-0000-0000-000000000001"
+        }
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "direction": "both",
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "k": 50
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "document_references_request",
+      "options": {
+        "request": {
+          "cursor": "next",
+          "direction": "outgoing",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 3,
+          "kinds": [
+            "cites"
+          ],
+          "section_key": "part/4",
+          "time": {
+            "from": "2026-10-02T12:00:00+00:00",
+            "mode": "overlap",
+            "to": "2026-10-02T12:00:00+00:00"
+          }
+        }
+      },
+      "responses": [
+        {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "cursor": null,
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "rows": [],
+          "too_broad": null
+        }
+      ],
+      "result": {
+        "believed_at": "2026-10-02T12:00:00Z",
+        "cursor": null,
+        "evaluated_at": "2026-10-02T12:00:00Z",
+        "rows": [],
+        "too_broad": null
+      },
+      "typescriptMethod": "documentReferencesRequest",
+      "typescriptOptions": {
+        "request": {
+          "cursor": "next",
+          "direction": "outgoing",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 3,
+          "kinds": [
+            "cites"
+          ],
+          "section_key": "part/4",
+          "time": {
+            "from": "2026-10-02T12:00:00+00:00",
+            "mode": "overlap",
+            "to": "2026-10-02T12:00:00+00:00"
+          }
+        }
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "cursor": "next",
+            "direction": "outgoing",
+            "doc_id": "10000000-0000-0000-0000-000000000001",
+            "k": 3,
+            "kinds": [
+              "cites"
+            ],
+            "section_key": "part/4",
+            "time": {
+              "from": "2026-10-02T12:00:00Z",
+              "mode": "overlap",
+              "to": "2026-10-02T12:00:00Z"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/documents/references",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "set_effective_periods",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "declared": 1,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "periods": [
+            {
+              "declared_at": "2026-10-02T12:00:00Z",
+              "effective_from": "2026-10-02T12:00:00Z",
+              "effective_until": null,
+              "period_id": "10000000-0000-0000-0000-000000000001"
+            }
+          ],
+          "retracted": 0,
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "declared": 1,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "declared_at": "2026-10-02T12:00:00Z",
+            "effective_from": "2026-10-02T12:00:00Z",
+            "effective_until": null,
+            "period_id": "10000000-0000-0000-0000-000000000001"
+          }
+        ],
+        "retracted": 0,
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": {
+            "periods": []
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "PUT",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/effective-periods",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "set_effective_periods",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": "2026-10-02T12:00:00+00:00"
+          },
+          {
+            "effective_from": "2026-11-01T00:00:00Z"
+          }
+        ],
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "declared": 1,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "periods": [
+            {
+              "declared_at": "2026-10-02T12:00:00Z",
+              "effective_from": "2026-10-02T12:00:00Z",
+              "effective_until": null,
+              "period_id": "10000000-0000-0000-0000-000000000001"
+            }
+          ],
+          "retracted": 0,
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "result": {
+        "declared": 1,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "declared_at": "2026-10-02T12:00:00Z",
+            "effective_from": "2026-10-02T12:00:00Z",
+            "effective_until": null,
+            "period_id": "10000000-0000-0000-0000-000000000001"
+          }
+        ],
+        "retracted": 0,
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "typescriptMethod": "setEffectivePeriods",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001",
+        "periods": [
+          {
+            "effective_from": "2026-01-01T00:00:00Z",
+            "effective_until": "2026-10-02T12:00:00+00:00"
+          },
+          {
+            "effective_from": "2026-11-01T00:00:00Z"
+          }
+        ],
+        "versionId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": {
+            "periods": [
+              {
+                "effective_from": "2026-01-01T00:00:00Z",
+                "effective_until": "2026-10-02T12:00:00Z"
+              },
+              {
+                "effective_from": "2026-11-01T00:00:00Z",
+                "effective_until": null
+              }
+            ]
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "PUT",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/versions/10000000-0000-0000-0000-000000000002/effective-periods",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "clear_effective_time",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "responses": [
+        {
+          "cleared_at": "2026-10-02T12:00:00Z",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "retracted": 1
+        }
+      ],
+      "result": {
+        "cleared_at": "2026-10-02T12:00:00Z",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "retracted": 1
+      },
+      "typescriptMethod": "clearEffectiveTime",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000001"
+      },
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/documents/10000000-0000-0000-0000-000000000001/effective-periods",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "clear_effective_time",
+      "options": {
+        "doc_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "responses": [
+        {
+          "cleared_at": "2026-10-02T12:00:00Z",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "retracted": 1
+        }
+      ],
+      "result": {
+        "cleared_at": "2026-10-02T12:00:00Z",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "retracted": 1
+      },
+      "typescriptMethod": "clearEffectiveTime",
+      "typescriptOptions": {
+        "docId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "DELETE",
+          "path": "/documents/10000000-0000-0000-0000-000000000002/effective-periods",
           "query": []
         }
       ]
@@ -6565,6 +7828,541 @@
       ]
     },
     {
+      "method": "search_claims",
+      "options": {
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchClaims",
+      "typescriptOptions": {
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "variant": "time-only",
+      "wire": [
+        {
+          "body": {
+            "channel": "semantic",
+            "k": 10,
+            "query": "fixture",
+            "time": {
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/claims",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_chunks",
+      "options": {
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchChunks",
+      "typescriptOptions": {
+        "query": "fixture",
+        "time": {
+          "at": "2026-10-02T12:00:00+00:00",
+          "mode": "at"
+        }
+      },
+      "variant": "time-only",
+      "wire": [
+        {
+          "body": {
+            "channel": "semantic",
+            "k": 10,
+            "query": "fixture",
+            "time": {
+              "at": "2026-10-02T12:00:00Z",
+              "mode": "at"
+            }
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/chunks",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_claims",
+      "options": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchClaims",
+      "typescriptOptions": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "variant": "documents-only",
+      "wire": [
+        {
+          "body": {
+            "channel": "semantic",
+            "documents": {
+              "authors": [],
+              "doc_ids": [],
+              "family": [],
+              "language": "en",
+              "recipients": []
+            },
+            "k": 10,
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/claims",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "search_chunks",
+      "options": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "responses": [
+        {
+          "aggregate": null,
+          "changes": [],
+          "chunks": [],
+          "dropped_by_hydration": 0,
+          "edges": [],
+          "entities": [],
+          "evidence": [],
+          "evidence_totals": [],
+          "excluded_unstamped": 0,
+          "fact_evidence": [],
+          "facts": [],
+          "freshness": {
+            "k": null,
+            "p1_believed_at_horizon": null,
+            "p1_written_inline": true,
+            "pg_live_ts": "2026-10-02T12:00:00Z",
+            "scope_pending": null
+          },
+          "grain": "evidence",
+          "negative": null,
+          "nodes": [],
+          "pages": [],
+          "paths": [],
+          "ranking": [],
+          "sources": [],
+          "temporal_scope": {
+            "believed_at": "2026-10-02T12:00:00Z",
+            "evaluated_at": "2026-10-02T12:00:00Z",
+            "identity_regime": "current",
+            "mode": "current"
+          },
+          "transcript": [],
+          "truncation": null
+        }
+      ],
+      "result": {
+        "aggregate": null,
+        "changes": [],
+        "chunks": [],
+        "dropped_by_hydration": 0,
+        "edges": [],
+        "entities": [],
+        "evidence": [],
+        "evidence_totals": [],
+        "excluded_unstamped": 0,
+        "fact_evidence": [],
+        "facts": [],
+        "freshness": {
+          "k": null,
+          "p1_believed_at_horizon": null,
+          "p1_written_inline": true,
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
+        },
+        "grain": "evidence",
+        "negative": null,
+        "nodes": [],
+        "pages": [],
+        "paths": [],
+        "ranking": [],
+        "sources": [],
+        "temporal_scope": {
+          "believed_at": "2026-10-02T12:00:00Z",
+          "evaluated_at": "2026-10-02T12:00:00Z",
+          "identity_regime": "current",
+          "mode": "current"
+        },
+        "transcript": [],
+        "truncation": null
+      },
+      "typescriptMethod": "searchChunks",
+      "typescriptOptions": {
+        "documents": {
+          "language": "en"
+        },
+        "query": "fixture"
+      },
+      "variant": "documents-only",
+      "wire": [
+        {
+          "body": {
+            "channel": "semantic",
+            "documents": {
+              "authors": [],
+              "doc_ids": [],
+              "family": [],
+              "language": "en",
+              "recipients": []
+            },
+            "k": 10,
+            "query": "fixture"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/search/chunks",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "ingest",
+      "options": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effective_from": "2026-01-01T00:00:00+00:00",
+        "effective_until": "2026-10-02T12:00:00+00:00",
+        "filename": "fixture.md",
+        "source_kind": "policy",
+        "source_ref": "expenses",
+        "version_key": "edition-2"
+      },
+      "responses": [
+        {
+          "content_hash": "fixture",
+          "created": false,
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "mime": null,
+          "parked": null,
+          "title": null,
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
+          "versioning_mode": null
+        }
+      ],
+      "result": {
+        "content_hash": "fixture",
+        "created": false,
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "mime": null,
+        "parked": null,
+        "processing_admission": "not_required",
+        "title": null,
+        "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
+        "versioning_mode": null
+      },
+      "typescriptMethod": "ingest",
+      "typescriptOptions": {
+        "content": {
+          "base64": "bm90ZQ=="
+        },
+        "effectiveFrom": "2026-01-01T00:00:00+00:00",
+        "effectiveUntil": "2026-10-02T12:00:00+00:00",
+        "filename": "fixture.md",
+        "sourceKind": "policy",
+        "sourceRef": "expenses",
+        "versionKey": "edition-2"
+      },
+      "variant": "declared-effective-version",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": "bm90ZQ==",
+          "contentType": "application/octet-stream",
+          "method": "POST",
+          "path": "/ingest",
+          "query": [
+            [
+              "filename",
+              "fixture.md"
+            ],
+            [
+              "mime",
+              "text/markdown"
+            ],
+            [
+              "versioning_mode",
+              "snapshot"
+            ],
+            [
+              "source_kind",
+              "policy"
+            ],
+            [
+              "source_ref",
+              "expenses"
+            ],
+            [
+              "version_key",
+              "edition-2"
+            ],
+            [
+              "effective_from",
+              "2026-01-01T00:00:00+00:00"
+            ],
+            [
+              "effective_until",
+              "2026-10-02T12:00:00+00:00"
+            ]
+          ]
+        }
+      ]
+    },
+    {
       "method": "ingest",
       "options": {
         "filename": "display.png",
@@ -6580,6 +8378,7 @@
           "parked": null,
           "title": null,
           "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
           "versioning_mode": null
         }
       ],
@@ -6593,6 +8392,7 @@
         "processing_admission": "not_required",
         "title": null,
         "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
         "versioning_mode": null
       },
       "typescriptMethod": "ingest",
@@ -6641,6 +8441,7 @@
           "parked": null,
           "title": null,
           "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
           "versioning_mode": null
         }
       ],
@@ -6654,6 +8455,7 @@
         "processing_admission": "not_required",
         "title": null,
         "version_id": "10000000-0000-0000-0000-000000000002",
+        "version_key": null,
         "versioning_mode": null
       },
       "typescriptMethod": "ingestFile",
@@ -8544,7 +10346,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "evidence",
         "negative": null,
@@ -8579,7 +10382,8 @@
           "k": null,
           "p1_believed_at_horizon": null,
           "p1_written_inline": true,
-          "pg_live_ts": "2026-10-02T12:00:00Z"
+          "pg_live_ts": "2026-10-02T12:00:00Z",
+          "scope_pending": null
         },
         "grain": "fact",
         "negative": null,
@@ -8624,6 +10428,32 @@
       "cursor": null,
       "documents": []
     },
+    "document_references": {
+      "believed_at": "2026-10-02T12:00:00Z",
+      "cursor": null,
+      "evaluated_at": "2026-10-02T12:00:00Z",
+      "rows": [],
+      "too_broad": null
+    },
+    "effective_cleared": {
+      "cleared_at": "2026-10-02T12:00:00Z",
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "retracted": 1
+    },
+    "effective_periods": {
+      "declared": 1,
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "periods": [
+        {
+          "declared_at": "2026-10-02T12:00:00Z",
+          "effective_from": "2026-10-02T12:00:00Z",
+          "effective_until": null,
+          "period_id": "10000000-0000-0000-0000-000000000001"
+        }
+      ],
+      "retracted": 0,
+      "version_id": "10000000-0000-0000-0000-000000000002"
+    },
     "envelope": {
       "aggregate": null,
       "changes": [],
@@ -8640,7 +10470,8 @@
         "k": null,
         "p1_believed_at_horizon": null,
         "p1_written_inline": true,
-        "pg_live_ts": "2026-10-02T12:00:00Z"
+        "pg_live_ts": "2026-10-02T12:00:00Z",
+        "scope_pending": null
       },
       "grain": "evidence",
       "negative": null,
@@ -8674,7 +10505,8 @@
         "k": null,
         "p1_believed_at_horizon": null,
         "p1_written_inline": true,
-        "pg_live_ts": "2026-10-02T12:00:00Z"
+        "pg_live_ts": "2026-10-02T12:00:00Z",
+        "scope_pending": null
       },
       "grain": "fact",
       "negative": null,
@@ -8701,6 +10533,7 @@
       "parked": null,
       "title": null,
       "version_id": "10000000-0000-0000-0000-000000000002",
+      "version_key": null,
       "versioning_mode": null
     },
     "query": {
@@ -8752,11 +10585,78 @@
       "ready": true,
       "versions": []
     },
+    "reference_generations": {
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "generations": [
+        {
+          "activated_at": null,
+          "created_at": "2026-10-02T12:00:00Z",
+          "crossref_version": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "errors": [],
+          "generation_id": "10000000-0000-0000-0000-000000000001",
+          "input_hash": "fixture",
+          "item_count": 2,
+          "origin": "supplied",
+          "representation_id": null,
+          "request_seq": null,
+          "status": "pending",
+          "version_id": "10000000-0000-0000-0000-000000000002"
+        }
+      ],
+      "version_id": "10000000-0000-0000-0000-000000000002"
+    },
+    "references_set": {
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "generation": {
+        "activated_at": null,
+        "created_at": "2026-10-02T12:00:00Z",
+        "crossref_version": null,
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "errors": [],
+        "generation_id": "10000000-0000-0000-0000-000000000001",
+        "input_hash": "fixture",
+        "item_count": 2,
+        "origin": "supplied",
+        "representation_id": null,
+        "request_seq": null,
+        "status": "pending",
+        "version_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "outcome": "created",
+      "version_id": "10000000-0000-0000-0000-000000000002"
+    },
     "search_page": {
       "as_of": "2026-10-02T12:00:00Z",
       "cursor": null,
       "documents": [],
-      "people_matched": []
+      "people_matched": [],
+      "scope_pending": null
+    },
+    "section_history": {
+      "amendments": [],
+      "believed_at": "2026-10-02T12:00:00Z",
+      "cursor": null,
+      "doc_id": "10000000-0000-0000-0000-000000000001",
+      "evaluated_at": "2026-10-02T12:00:00Z",
+      "periodised": true,
+      "rows": [
+        {
+          "effective": [
+            {
+              "from": "2026-10-02T12:00:00Z",
+              "until": null,
+              "until_declared": false
+            }
+          ],
+          "section": null,
+          "status": "absent",
+          "version_id": "10000000-0000-0000-0000-000000000002",
+          "version_key": null,
+          "version_no": 2
+        }
+      ],
+      "section_key": "part/4:per-diem"
     }
   },
   "tools": [
@@ -8770,6 +10670,8 @@
         "content": {
           "base64": "Zml4dHVyZQ=="
         },
+        "effective_from": null,
+        "effective_until": null,
         "filename": "fixture.md",
         "mime": "text/markdown",
         "source_kind": null,
@@ -8777,6 +10679,7 @@
         "source_ref": null,
         "source_version_ref": null,
         "title": null,
+        "version_key": null,
         "versioning_mode": "snapshot"
       },
       "variant": "valid"
@@ -8922,6 +10825,7 @@
           },
           "k": 20,
           "query": null,
+          "time": null,
           "versions": "current"
         }
       },
@@ -8985,6 +10889,91 @@
         }
       },
       "name": "adjacent_chunks",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4"
+      },
+      "name": "section_history",
+      "result": {
+        "request": {
+          "cursor": null,
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 50,
+          "section_key": "part/4",
+          "time": {
+            "mode": "history"
+          }
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "section_key": "part/4",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "section_history",
+      "variant": "unknown-key"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001"
+      },
+      "name": "document_references",
+      "result": {
+        "request": {
+          "chunk_id": null,
+          "cursor": null,
+          "direction": "both",
+          "doc_id": "10000000-0000-0000-0000-000000000001",
+          "k": 50,
+          "kinds": null,
+          "section_key": null,
+          "time": null
+        }
+      },
+      "variant": "valid"
+    },
+    {
+      "arguments": {
+        "doc_id": "10000000-0000-0000-0000-000000000001",
+        "unknown": true
+      },
+      "error": {
+        "class": "ToolArgumentError",
+        "code": "invalid_arguments",
+        "retryable": false,
+        "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
+      "name": "document_references",
       "variant": "unknown-key"
     },
     {

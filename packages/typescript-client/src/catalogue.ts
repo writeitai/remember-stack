@@ -11,6 +11,8 @@ export const PIPELINE_READINESS_TOOL_NAME='pipeline_readiness';
 export const DELETE_DOCUMENT_TOOL_NAME='delete_document';
 export const SEARCH_DOCUMENTS_TOOL_NAME='search_documents';
 export const ADJACENT_CHUNKS_TOOL_NAME='adjacent_chunks';
+export const SECTION_HISTORY_TOOL_NAME='section_history';
+export const DOCUMENT_REFERENCES_TOOL_NAME='document_references';
 export const OPEN_QUERY_TOOL_NAMES=Object.freeze(['query_sql','explain_sql','describe_query_space','search_query_space','list_saved_queries','describe_saved_query','run_saved_query']);
 export const OPERATION_TOOL_NAMES=Object.freeze(['resolve_entity','claims_and_sources_context','facts_context','combined_context']);
 export const MEMORY_WRITE_TOOL_NAMES=Object.freeze([INGEST_TOOL_NAME,PIPELINE_READINESS_TOOL_NAME]);
@@ -119,8 +121,9 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
       const window=args.window??1;if(!Number.isInteger(window)||(window as number)<1||(window as number)>2)refuse({detail:'window must be an integer (1 or 2).'});
       return {chunk_id:uuid({value:args.chunk_id,field:'chunk_id'}),window};
     }
+    if(name===SECTION_HISTORY_TOOL_NAME||name===DOCUMENT_REFERENCES_TOOL_NAME)return {request:validateModel({name:name===SECTION_HISTORY_TOOL_NAME?'SectionHistoryRequest':'DocumentReferencesRequest',value:args})};
     if(name==='search_documents') {
-      const top=new Set(['query','versions','k','cursor']);const payload:Record<string,unknown>={filters:{}};
+      const top=new Set(['query','versions','time','k','cursor']);const payload:Record<string,unknown>={filters:{}};
       for(const [key,value]of Object.entries(args)) if(top.has(key))payload[key]=value;else (payload.filters as Record<string,unknown>)[key]=value;
       return {request:validateModel({name:'DocumentSearchRequest',value:payload})};
     }
@@ -136,11 +139,19 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
   const filename=optionalString({arguments:args,name:'filename',max:512});const mime=optionalString({arguments:args,name:'mime',max:255});
   const title=optionalString({arguments:args,name:'title',nonempty:false,max:512});const source_kind=optionalString({arguments:args,name:'source_kind',max:128});
   const source_ref=optionalString({arguments:args,name:'source_ref',max:512});const source_version_ref=optionalString({arguments:args,name:'source_version_ref',max:512});
+  const version_key=optionalString({arguments:args,name:'version_key',max:512});
   const versioning_mode=args.versioning_mode??'snapshot';if(!['snapshot','living'].includes(versioning_mode as string))refuse({detail:"versioning_mode must be 'snapshot' or 'living'."});
-  let source_modified_at:string|null=null;
-  try {if(args.source_modified_at!=null)source_modified_at=utcTimestamp({value:args.source_modified_at as string,field:'source_modified_at'});}
+  let source_modified_at:string|null=null,effective_from:string|null=null,effective_until:string|null=null;
+  try {if(args.source_modified_at!=null)source_modified_at=utcTimestamp({value:args.source_modified_at as string,field:'source_modified_at'});
+    if(args.effective_from!=null)effective_from=utcTimestamp({value:args.effective_from as string,field:'effective_from'});
+    if(args.effective_until!=null)effective_until=utcTimestamp({value:args.effective_until as string,field:'effective_until'});}
   catch(error) {refuse({detail:(error as Error).message});}
-  if((source_kind===null)!==(source_ref===null)||(source_kind===null&&(source_modified_at!==null||source_version_ref!==null||versioning_mode!=='snapshot')))throw new ToolArgumentError({error:new ToolError({code:'source_lineage_pair',detail:'source_kind and source_ref must be supplied together with lineage fields.',status_code:null,retryable:false,agent_action:'Send both source_kind and source_ref, or neither.'})});
+  if((source_kind===null)!==(source_ref===null)||(source_kind===null&&(source_modified_at!==null||source_version_ref!==null||versioning_mode!=='snapshot'||version_key!==null||effective_from!==null||effective_until!==null)))throw new ToolArgumentError({error:new ToolError({code:'source_lineage_pair',detail:'source_kind and source_ref must be supplied together with lineage fields.',status_code:null,retryable:false,agent_action:'Send both source_kind and source_ref, or neither.'})});
+  if(effective_until!==null&&effective_from===null)refuse({detail:'effective_until requires effective_from.'});
+  if(effective_from!==null) {
+    if(versioning_mode!=='snapshot')refuse({detail:'effective periods require snapshot mode.'});
+    try{validateModel({name:'EffectivePeriodInput',value:{effective_from,effective_until}});}catch(error){if(error instanceof InputValidationError)refuse({detail:error.message});throw error;}
+  }
   let body:{content:Uint8Array;filename:string;mime:string};
   if(path!==null) {
     if(!pathResolver)refuse({detail:'Unknown argument keys: path.'});
@@ -160,5 +171,5 @@ async function parseIngest({args,pathResolver,maxBodyBytes}:{args:Record<string,
     const inferred=inferUploadMime({filename});body={content,filename,mime:mime??(text!==null&&!inferred.startsWith('text/')?'text/plain':inferred)};
   }
   bodySize({content:body.content,maxBodyBytes});
-  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref};
+  return {...body,title:title||null,source_kind,source_ref,source_modified_at,versioning_mode,source_version_ref,version_key,effective_from,effective_until};
 }

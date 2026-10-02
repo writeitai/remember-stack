@@ -1,4 +1,4 @@
-/** Verify D140 precision, strictness, recursive defaults and cross-field rules. */
+/** Verify D141 precision, strictness, recursive defaults and cross-field rules. */
 import {test} from 'node:test';
 import {readFileSync} from 'node:fs';
 const fixtures=JSON.parse(readFileSync(new URL('./fixtures/python-methods.json',import.meta.url))).responses;

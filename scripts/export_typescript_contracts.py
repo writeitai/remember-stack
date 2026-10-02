@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export D140 SDK contracts from same-revision Python and offline OpenAPI.
+"""Export D141 SDK contracts from same-revision Python and offline OpenAPI.
 
 Generation is offline. --check compares bytes without authoring tracked files.
 The normative inventory remains reviewed input; source evolution fails closed.
@@ -212,6 +212,11 @@ def client_models() -> dict[str, Any]:
                 classes[name.lstrip("_")] = model
     for name, model in classes.items():
         models[name]["x-extra"] = model.model_config.get("extra", "ignore")
+        if name in {"ReferenceInput", "ReferenceTarget"}:
+            models[name]["x-field-order"] = [
+                field.serialization_alias or field.alias or field_name
+                for field_name, field in model.model_fields.items()
+            ]
         for field_name, field in model.model_fields.items():
             if field.exclude:
                 models[name]["properties"][field.alias or field_name]["x-exclude"] = (
@@ -229,19 +234,26 @@ def client_models() -> dict[str, Any]:
         )
         for node in definition.body:
             if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                if "UTCDateTime" in ast.unparse(node.annotation):
+                if any(
+                    alias in ast.unparse(node.annotation)
+                    for alias in ("UTCDateTime", "UTCInstant")
+                ):
                     field = model.model_fields[node.target.id]
                     models[name]["properties"][field.alias or node.target.id][
                         "x-utc"
                     ] = True
     from remember.models import ClaimValidPrecision
     from remember.models import DocumentStatusFilter
+    from remember.models import ReadTime
+    from remember.models import ReferenceKind
     from remember.models import TemporalMatch
 
     for name, model in {
         "ClaimValidPrecision": ClaimValidPrecision,
         "TemporalMatch": TemporalMatch,
         "DocumentStatusFilter": DocumentStatusFilter,
+        "ReadTime": ReadTime,
+        "ReferenceKind": ReferenceKind,
     }.items():
         schema = TypeAdapter(model).json_schema()
         models.update(schema.pop("$defs", {}))

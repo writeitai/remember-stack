@@ -34,6 +34,9 @@ export function project({value}) {
     else result.anyOf=nonnull;
   }
   if(result.contentMediaType && result.type==='string') {result.format='binary';delete result.contentMediaType;}
+  // Const/enum tags already preserve each union branch. The generator otherwise
+  // replaces source tags with model names when it sees a discriminator mapping.
+  delete result.discriminator;
   delete result.$schema;
   return result;
 }
