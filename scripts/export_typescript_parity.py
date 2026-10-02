@@ -706,6 +706,7 @@ def tool_fixtures() -> list[dict[str, Any]]:
                 case["name"], case["arguments"], settings=McpMemorySettings()
             )
         except ToolArgumentError as error:
+            case["mapped"] = map_error(error).as_dict()
             case["error"] = {
                 "class": "ToolArgumentError",
                 "code": error.error.code,
@@ -713,6 +714,7 @@ def tool_fixtures() -> list[dict[str, Any]]:
                 "retryable": error.error.retryable,
             }
         except SandboxRejection as error:
+            case["mapped"] = map_error(error).as_dict()
             case["error"] = {"class": "InputValidationError", "code": error.code.value}
         else:
             case["result"] = json_result(value=result)

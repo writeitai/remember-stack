@@ -19,6 +19,11 @@ type ContextBundle = Models.OutputContextBundleV2;
 type Params = Record<string,string|number|boolean|null|undefined> | ReadonlyArray<readonly [string,string]>;
 /** Encode one identifier as a URL segment, including characters encodeURIComponent leaves literal. */
 function segment({value}:{value:string}):string {return encodeURIComponent(value).replace(/[!'()*]/g,c=>`%${c.charCodeAt(0).toString(16).toUpperCase()}`);}
+/** Adapt direct SDK identifier failures to Python's ordinary ValueError behavior. */
+function clientIdentifier({value,field}:{value:unknown;field:string}):string {
+  try{return validateSavedQueryIdentifier({value,field});}
+  catch(error){if(error instanceof InputValidationError)throw new InputValidationError({detail:error.message});throw error;}
+}
 /** Require a JSON object in discovery/account APIs with intentionally open response fields. */
 function objectResponse({value}:{value:unknown}):Record<string,Models.JsonValue> {
   if(value===null||typeof value!=='object'||Array.isArray(value))throw new MemoryApiError({statusCode:200,detail:'response must be a JSON object'});
@@ -130,12 +135,12 @@ export class MemoryClient {
   async listSavedQueries({namespace,status,signal}:{namespace?:string|null;status?:string|null;signal?:AbortSignal}={}):Promise<Models.OutputSavedQuerySummary[]> {return listResponse({name:'SavedQuerySummary',value:await this.json({method:'GET',path:'/query/saved',params:{namespace,status},signal})});}
   /** Describe one safe saved-query identifier and optional version. */
   async describeSavedQuery({namespace,name,version,signal}:{namespace:string;name:string;version?:number|null;signal?:AbortSignal}):Promise<Record<string,Models.JsonValue>> {
-    validateSavedQueryIdentifier({value:namespace,field:'namespace'});validateSavedQueryIdentifier({value:name,field:'name'});
+    clientIdentifier({value:namespace,field:'namespace'});clientIdentifier({value:name,field:'name'});
     return objectResponse({value:await this.json({method:'GET',path:`/query/saved/${namespace}/${name}`,params:{version},signal})});
   }
   /** Execute one active saved-query version through the sandbox. */
   async runSavedQuery({namespace,name,parameters=[],version,maxRows,signal}:{namespace:string;name:string;parameters?:Models.JsonValue[];version?:number|null;maxRows?:number|null;signal?:AbortSignal}):Promise<QueryResultDict> {
-    validateSavedQueryIdentifier({value:namespace,field:'namespace'});validateSavedQueryIdentifier({value:name,field:'name'});
+    clientIdentifier({value:namespace,field:'namespace'});clientIdentifier({value:name,field:'name'});
     const body:Record<string,unknown>={parameters};if(version!=null)body.version=version;if(maxRows!=null)body.max_rows=maxRows;
     return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:`/query/saved/${namespace}/${name}/run`,body,signal}),response:true});
   }

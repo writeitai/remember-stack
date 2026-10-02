@@ -7562,6 +7562,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "ingest",
       "variant": "unknown-key"
     },
@@ -7610,6 +7619,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "pipeline_readiness",
       "variant": "unknown-key"
     },
@@ -7633,6 +7651,15 @@
         "code": "invalid_arguments",
         "retryable": false,
         "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "delete_document",
       "variant": "unknown-key"
@@ -7683,6 +7710,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "search_documents",
       "variant": "unknown-key"
     },
@@ -7708,6 +7744,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "adjacent_chunks",
       "variant": "unknown-key"
     },
@@ -7732,6 +7777,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "resolve_entity",
       "variant": "unknown-key"
     },
@@ -7756,6 +7810,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "claims_and_sources_context",
       "variant": "unknown-key"
     },
@@ -7780,6 +7843,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "facts_context",
       "variant": "unknown-key"
     },
@@ -7804,6 +7876,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "combined_context",
       "variant": "unknown-key"
     },
@@ -7827,6 +7908,15 @@
         "class": "InputValidationError",
         "code": "invalid_parameter"
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "query_sql",
       "variant": "unknown-key"
     },
@@ -7850,6 +7940,15 @@
         "class": "InputValidationError",
         "code": "invalid_parameter"
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "explain_sql",
       "variant": "unknown-key"
     },
@@ -7869,6 +7968,15 @@
       "error": {
         "class": "InputValidationError",
         "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "describe_query_space",
       "variant": "unknown-key"
@@ -7893,6 +8001,15 @@
         "class": "InputValidationError",
         "code": "invalid_parameter"
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "search_query_space",
       "variant": "unknown-key"
     },
@@ -7912,6 +8029,15 @@
       "error": {
         "class": "InputValidationError",
         "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "list_saved_queries",
       "variant": "unknown-key"
@@ -7938,6 +8064,15 @@
       "error": {
         "class": "InputValidationError",
         "code": "invalid_parameter"
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "describe_saved_query",
       "variant": "unknown-key"
@@ -7966,6 +8101,15 @@
         "class": "InputValidationError",
         "code": "invalid_parameter"
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Read the detail and fix the query or its arguments.",
+          "code": "invalid_parameter",
+          "detail": "unknown argument keys: ['unknown']",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "run_saved_query",
       "variant": "unknown-key"
     },
@@ -7980,6 +8124,15 @@
         "code": "invalid_arguments",
         "retryable": false,
         "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "ingest",
       "variant": "invalid-body"
@@ -7996,6 +8149,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "ingest",
       "variant": "invalid-body"
     },
@@ -8010,6 +8172,15 @@
         "retryable": false,
         "statusCode": null
       },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
+      },
       "name": "ingest",
       "variant": "invalid-body"
     },
@@ -8023,6 +8194,15 @@
         "code": "invalid_arguments",
         "retryable": false,
         "statusCode": null
+      },
+      "mapped": {
+        "error": {
+          "agent_action": "Unexpected internal failure. Do not busy-retry; report the error (and any request_id) to an operator or as a product defect.",
+          "code": "internal_error",
+          "detail": "Unexpected internal failure; the server logged the details.",
+          "retryable": false,
+          "status_code": null
+        }
       },
       "name": "ingest",
       "variant": "invalid-body"

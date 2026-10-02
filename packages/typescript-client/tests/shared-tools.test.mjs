@@ -17,7 +17,11 @@ for(const scenario of fixture.tools)test(`${scenario.name}: source validator ${s
     assert.equal(error.name,scenario.error.class);
     const actual=error instanceof ToolArgumentError?error.error:error;
     assert.equal(actual.code,scenario.error.code);if('statusCode'in scenario.error)assert.equal(actual.status_code??null,scenario.error.statusCode);
-    if('retryable'in scenario.error)assert.equal(actual.retryable,scenario.error.retryable);return true;
+    if('retryable'in scenario.error)assert.equal(actual.retryable,scenario.error.retryable);
+    const mapped=mapError({error}).asDict();
+    // Language validator wording differs; all machine fields and prescribed actions match.
+    assert.deepEqual({...mapped.error,detail:'normalized'}, {...scenario.mapped.error,detail:'normalized'});
+    assert(mapped.error.detail.length>0);return true;
   });
   else assert.deepEqual(render(await validateArguments({name:scenario.name,arguments:scenario.arguments})),scenario.result);
 });

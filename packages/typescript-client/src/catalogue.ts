@@ -1,3 +1,4 @@
+import {queryArgumentError} from './query-arguments';
 import catalogue from './catalogue.generated';
 import { InputValidationError } from './errors';
 import { assertJson } from './json';
@@ -58,7 +59,7 @@ export function uuid({value,field}:{value:unknown;field:string}):string {
 }
 /** Require the safe identifier shape used by the saved-query registry. */
 export function validateSavedQueryIdentifier({value,field}:{value:unknown;field:string}):string {
-  if(typeof value!=='string'||!(/^[a-z][a-z0-9_]*$/).test(value))throw new InputValidationError({detail:`${field} must match ^[a-z][a-z0-9_]*$`});
+  if(typeof value!=='string'||!(/^[a-z][a-z0-9_]*$/).test(value))throw queryArgumentError({error:new InputValidationError({detail:`${field} must match ^[a-z][a-z0-9_]*$`})});
   return value;
 }
 /** A host-owned, opt-in path reader; the base client never loads MCP path settings. */
@@ -88,14 +89,15 @@ export function utcTimestamp({value,field}:{value:string|Date;field:string}):str
 export async function validateArguments({name,arguments:args,pathResolver,maxBodyBytes}:{name:string;arguments:Record<string,unknown>;pathResolver?:PathBodyResolver;maxBodyBytes?:number}):Promise<Record<string,unknown>> {
   const definition=tool({name});
   const query=OPEN_QUERY_TOOL_NAMES.includes(name);
-  if(args===null||typeof args!=='object'||Array.isArray(args)) {if(query)throw new InputValidationError({detail:'arguments must be a JSON object'});refuse({detail:'arguments must be a JSON object'});}
+  if(args===null||typeof args!=='object'||Array.isArray(args)) {if(query)throw queryArgumentError({error:new InputValidationError({detail:'arguments must be a JSON object'})});refuse({detail:'arguments must be a JSON object'});}
   const properties=definition.inputSchema.properties as Record<string,unknown>;
   const allowed=new Set(Object.keys(properties));if(name===INGEST_TOOL_NAME&&!pathResolver)allowed.delete('path');
   const unknown=Object.keys(args).filter(key=>!allowed.has(key)).sort();
-  if(unknown.length) {if(query)throw new InputValidationError({detail:'unknown argument keys'});refuse({detail:`Unknown argument keys: ${unknown.join(', ')}.`});}
+  if(unknown.length) {if(query)throw queryArgumentError({error:new InputValidationError({detail:'unknown argument keys'})});refuse({detail:`Unknown argument keys: ${unknown.join(', ')}.`});}
   if(maxBodyBytes!==undefined&&(!Number.isSafeInteger(maxBodyBytes)||maxBodyBytes<=0))refuse({detail:'maxBodyBytes must be a positive integer.'});
   if(name===INGEST_TOOL_NAME)return parseIngest({args,pathResolver,maxBodyBytes});
   if(query) {
+    try {
     validateSchema({schema:definition.inputSchema,value:args});const result={...args};
     if(name==='query_sql'||name==='explain_sql'||name==='run_saved_query')result.parameters??=[];
     if(name==='describe_query_space'){result.pattern??=null;result.include_examples??=false;}
@@ -104,6 +106,7 @@ export async function validateArguments({name,arguments:args,pathResolver,maxBod
     if(name==='describe_saved_query'||name==='run_saved_query')result.version??=null;
     for(const field of ['namespace','name'])if(result[field]!=null&&['list_saved_queries','describe_saved_query','run_saved_query'].includes(name))result[field]=validateSavedQueryIdentifier({value:result[field],field});
     return result;
+    }catch(error){if(error instanceof InputValidationError)throw queryArgumentError({error});throw error;}
   }
   try {
     if(name==='pipeline_readiness') {

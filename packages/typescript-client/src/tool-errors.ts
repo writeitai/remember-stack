@@ -1,3 +1,4 @@
+import {isQueryArgumentError} from './query-arguments';
 import { AbortError, InputValidationError, MemoryApiError, NumericPrecisionError, RateLimited } from './errors';
 /** Source-compatible structured tool error fields use their wire names. */
 export interface ToolErrorFields {code:string;detail:string;status_code:number|null;retryable:boolean;agent_action:string;reason_code?:string;request_id?:string;retry_after?:number;}
@@ -34,7 +35,10 @@ export function mapError({error}:{error:unknown}):ToolError {
   if(error instanceof ToolArgumentError) return error.error;
   if(error instanceof NumericPrecisionError) return new ToolError({code:'local_backend_error',detail:error.detail,status_code:null,retryable:false,agent_action:'Report a composition/contract defect; do not retry the same call.'});
   if(error instanceof AbortError) return new ToolError({code:'cancelled',detail:'operation aborted',status_code:null,retryable:false,agent_action:'The caller cancelled the operation.'});
-  if(error instanceof InputValidationError) return invalidArguments({detail:error.message});
+  if(error instanceof InputValidationError) {
+    if(isQueryArgumentError({error}))return new ToolError({code:error.code,detail:error.message,status_code:null,retryable:false,agent_action:'Read the detail and fix the query or its arguments.'});
+    return invalidArguments({detail:error.message});
+  }
   if(error instanceof MemoryApiError) {
     const status=error.statusCode;const detail=error.detail;const separator=detail.indexOf(':');
     const head=separator<0?detail:detail.slice(0,separator);
