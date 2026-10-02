@@ -32,6 +32,9 @@ jobs:
           enable-cache: true
       - name: Install Python dependencies
         run: uv sync --locked --python 3.13
+      - name: Prefer the selected Node installation over stale Windows npm shims
+        if: runner.os == 'Windows'
+        run: node -e "console.log(require('node:path').dirname(process.execPath))" >> $env:GITHUB_PATH
       - name: Install locked SDK dependencies
         working-directory: packages/typescript-client
         run: npm ci

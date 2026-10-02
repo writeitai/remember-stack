@@ -103,6 +103,16 @@ jobs:
             echo "image=$image" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Start deterministic loopback model provider for API compatibility
+        run: |
+          node .github/ci/model-provider-fixture.mjs > /tmp/remember-model-fixture.log 2>&1 &
+          echo "$!" > /tmp/remember-model-fixture.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18882/healthz >/dev/null; then break; fi
+            if [ "$attempt" = 30 ]; then cat /tmp/remember-model-fixture.log; exit 1; fi
+            sleep 1
+          done
+
       - name: Run engine setup and migrations (${{ matrix.engine-version }})
         run: |
           docker run --rm --network host \
@@ -111,6 +121,7 @@ jobs:
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_OPENROUTER_BASE_URL="http://127.0.0.1:18882" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
@@ -124,6 +135,7 @@ jobs:
             --env REMEMBERSTACK_MINIO_ACCESS_KEY="rememberstack" \
             --env REMEMBERSTACK_MINIO_SECRET_KEY="rememberstack_test" \
             --env REMEMBERSTACK_OPENROUTER_API_KEY="test-compatibility-key" \
+            --env REMEMBERSTACK_OPENROUTER_BASE_URL="http://127.0.0.1:18882" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID="74000000-0000-0000-0000-000000000001" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG="default" \
             --env REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME="default" \
@@ -177,4 +189,6 @@ jobs:
           node packages/typescript-client/scripts/live-engine.mjs /tmp/remember-engine-profile.json
       - name: Clean up live engine and object store
         if: always()
-        run: docker rm --force remember-engine remember-object-store >/dev/null 2>&1 || true
+        run: |
+          docker rm --force remember-engine remember-object-store >/dev/null 2>&1 || true
+          if [ -f /tmp/remember-model-fixture.pid ]; then kill "$(cat /tmp/remember-model-fixture.pid)" || true; fi
