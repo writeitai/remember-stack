@@ -16,6 +16,7 @@ page must not link to a hosted-service page. --cloud checks the cloud build
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import re
 import sys
@@ -71,6 +72,35 @@ def check_navigation(docs_dir: Path) -> list[str]:
                 errors.append(f"navigation.ts: '{href}' is a page.cloud.mdx; list it in a DOCS_CLOUD branch")
         else:
             errors.append(f"navigation.ts: no page for '{href}'")
+    return errors
+
+
+def check_typescript_reference(*, docs_dir: Path) -> list[str]:
+    """Keep documented client methods and public models aligned with the reviewed inventory."""
+    page = docs_dir / "reference/typescript-sdk/page.mdx"
+    if not page.is_file():
+        return ["TypeScript client reference page is missing"]
+    text = page.read_text(encoding="utf-8")
+    inventory = json.loads((REPO_ROOT / "plan/designs/typescript_client_parity.json").read_text())
+    schemas = json.loads((REPO_ROOT / "packages/typescript-client/contracts/schemas.json").read_text())
+    errors: list[str] = []
+    for methods in inventory["classes"].values():
+        for name in methods:
+            if name == "__init__":
+                continue
+            camel = re.sub(r"_([a-z])", lambda match: match[1].upper(), name)
+            if not re.search(r"\b" + re.escape(camel) + r"\b", text):
+                errors.append(f"typescript-sdk: missing documented method {camel}")
+    for name in schemas:
+        if name.startswith("$"):
+            continue
+        if name.startswith("Output"):
+            name = name[6:]
+        if not re.search(r"\b" + re.escape(name) + r"\b", text):
+            errors.append(f"typescript-sdk: missing documented model {name}")
+    for name in ("version", "pythonCompatibility", "HttpClient", "HttpTransport", "transport", "agents"):
+        if not re.search(r"\b" + name + r"\b", text):
+            errors.append(f"typescript-sdk: missing documented support export/option {name}")
     return errors
 
 
@@ -138,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    errors = check_docs(args.docs_dir, cloud=args.cloud) + check_navigation(args.docs_dir)
+    errors = check_docs(args.docs_dir, cloud=args.cloud) + check_navigation(args.docs_dir) + check_typescript_reference(docs_dir=args.docs_dir)
     if errors:
         for err in errors:
             print(f"error: {err}", file=sys.stderr)
