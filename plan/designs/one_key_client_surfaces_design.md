@@ -677,6 +677,17 @@ stored-key origin rule below, not a refusal to read the file.
 | Issuer | `--issuer` | `REMEMBER_ISSUER` | `issuer` | key claim `iss` | `https://remember.dev` (login/setup only) |
 | Config directory | — | `REMEMBER_CONFIG_DIR` | — | `$XDG_CONFIG_HOME/remember` | `~/.config/remember` |
 
+**D141 Windows exception.** Automatic stored-file access is refused when owner-only
+access cannot be proved. Argument or environment key and URL bypass the file. A signed key
+supplied by argument or REMEMBER_API_KEY without a URL routes through its issuer
+without reading a stored file, whether present or absent. Stored URL/project/issuer
+values are therefore unavailable in that case; explicit/environment project
+settings still apply. Unsigned keys without a URL refuse a present file and use
+the localhost default if no file exists. POSIX keeps the table's independent
+setting precedence. Connection and config-directory environment names are case-insensitive,
+matching Python settings. If differently cased spellings coexist, the last
+process-environment entry wins; empty connection values then fall through.
+
 A key may be given bare or as `Bearer <key>`. The earlier names
 (`REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION`,
 `REMEMBER_DATA_PLANE_URL`, `REMEMBERSTACK_API_URL`, `REMEMBER_TOKEN_HOST`,
@@ -711,11 +722,14 @@ and resolves the target:
    request to `api_url` fails with a connection error (DNS failure, refused or
    reset connection, TLS failure), `421 Misdirected Request`, or a `404` whose
    body is not the engine's error envelope. The client then re-resolves: if
-   the `api_url` changed it retries the request once there; otherwise, or if
+   the `api_url` changed it retries an eligible read once there; otherwise, or if
    resolution fails, it surfaces the original error. One retry, never a loop.
-   The retry is safe for every catalogue call: reads have no side effects, a
-   repeated identical ingest is a no-op (D55), and deletion is idempotent
-   (D135).
+   D141: retries apply only to source-classified reads, including body-carrying
+   POST reads. A write is never replayed after connection failure or 421;
+   refresh its host for the next call and surface the original failure.
+   Timeout/abort never triggers retry. This is a safety contract, not a
+   statement that a 421 proves no admission or billing took place.
+
 3. Failure is explicit: an unknown project, a project outside the key, or an
    unreachable issuer raises `ProjectResolutionError` (CLI exit 1) naming the
    project and issuer. The client never falls back to localhost for a signed
@@ -814,7 +828,7 @@ The account API's operations and their permissions are defined by the issuer
 | Bridge `--read-only`: remote tool not annotated `readOnlyHint: true` | Omitted and refused locally |
 | Engine: revocation document with lower `seq`, other audience, or retired signer | Rejected; last accepted document kept; logged |
 | Engine: credential signed by a `kid` absent from `active_kids` | `401` |
-| Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve; retry once if the URL changed |
+| Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve pinned project; retry eligible reads once only if URL changed; never replay writes |
 | Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
 | HTTP transport: non-loopback `--bind` | Refuses to start |
 | HTTP transport: bad `Origin` | `403` |
@@ -920,3 +934,10 @@ Client:
   sits behind the operator's proxy and defers authorisation to the engine.
 - Token exchange from a key to per-deployment credentials is not part of the
   client; an issuer may do it internally for its own calls.
+
+## TypeScript application of the client contract
+
+[D141](typescript_client_design.md) owns package identity, complete Python parity,
+language adaptations, provider-consumed schemas and SDK drift gates. It adds no
+engine memory semantics. Shared D136 routing applies except the explicitly
+listed TypeScript adaptations; D141 safety amendments apply to Python too.

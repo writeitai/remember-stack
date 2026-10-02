@@ -78,3 +78,7 @@ floating, start with [D140's design](designs/effective_time_and_section_referenc
 and its [analysis](analysis/version_effective_time_and_section_references.md); the
 [delivery plan](plans/effective_time_and_section_references.md) says which parts ship
 together. It also makes D56's version reuse hold for dated versions (text origin time).
+
+For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
+[analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
+and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.

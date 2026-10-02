@@ -6480,6 +6480,15 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
+> **Amended by D141 (2026-10-02):** SDKs never replay writes after host movement,
+> including 421/connect errors; re-resolution can update the next independent
+> call. Read retry eligibility comes from the source-owned route classification,
+> not the HTTP method. Structured query errors accept optional validated
+> retryable/request_id diagnostics without granting retry permission. On Windows,
+> argument or environment signed keys with no URL bypass unavailable stored files
+> and route through their issuer, in Python and TypeScript.
+
+
 **Status:** accepted (amended in part by [D137](#d137-conversational-section-integrity-and-mcp-adjacent_chunks-parity)). **Date:** 2026-09-23.
 
 **Context.** On 2026-09-23 the owner approved one credential for every client
@@ -6825,3 +6834,17 @@ only through D118 adjudication.
 **Authority:** [design](plan/designs/effective_time_and_section_references_design.md),
 [analysis](plan/analysis/version_effective_time_and_section_references.md),
 [delivery](plan/plans/effective_time_and_section_references.md).
+
+
+## D141. Full-parity TypeScript client, separate executable libraries, checked contracts
+
+- **Status:** owner-selected, binding on approved design merge; implementation/publishing are not implied.
+- **Date:** 2026-10-02.
+- **Context:** The owner requested the full Python client scope in TypeScript under rememberdev, separate CLI/MCP packages and Opus 5.5 approval before implementation and merge. Source version strings alone do not identify Python's evolving surface.
+- **Decision:** `@rememberdev/client` lives in `packages/typescript-client`, Node 22+, ESM/CommonJS, a single-send Node HTTP/HTTPS default adapter with Fetch excluded, generated model/request contracts and a complete typed facade. The binding JSON inventory covers same-revision Python methods/signatures/exports and records all language adaptations. The SDK remains issuer-agnostic; private cloud schemas do not enter the public source. API export, deterministic generation, inventory/behavior fixtures, real released-engine compatibility and packed consumers gate it. CLI/MCP are separate libraries dependent only on declared public support exports.
+- **Windows precedence amendment:** Argument or environment signed keys without a URL bypass unavailable stored files and use issuer routing in both clients; POSIX keeps independent-setting precedence. D136 §8.2 records this exception.
+- **Safety amendment:** Both SDKs never replay mutating requests, even after 421 or connection errors; they may refresh the pinned-project host for the next call. Reads are explicitly classified by the engine. Error diagnostics are validated and surfaced, never retry authorization.
+- **Alternatives:** Generated-only clients omit routing/files/readiness; handwritten DTOs drift; a separate repository multiplies publisher coordination; browser core and newer generator are viable unselected alternatives with adoption triggers.
+- **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
+- **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md), [421 transport evidence](plan/analysis/typescript_transport_421.md) (measured 2026-10-02); issue #501; D136 amended only as stated above.
+
