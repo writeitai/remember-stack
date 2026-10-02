@@ -235,3 +235,27 @@ The runtime transport choice above is superseded by the measured Fetch 421
 evidence in [typescript_transport_421.md](typescript_transport_421.md). D140
 now selects a single-transmission Node HTTP/HTTPS adapter, borrowed-agent or
 request-transport injection, and explicit total-deadline/proxy adaptations.
+
+## General datetime inputs: Python/runtime versus the published format
+
+Observed 2026-10-02 while reconciling implementation review round 2: Python's
+`lookup_relations`, `graph_neighborhood` and `graph_path` accept naive datetime
+objects and emit offset-free ISO strings. Their published OpenAPI fields use
+`format: date-time`. Executed Python wire cases pass, but validating those three
+requests with the SDK's unchanged AJV date-time format check fails: the format
+validator requires an offset. This is an actual source/schema interpretation
+mismatch, not an absent method.
+
+[RFC 3339 §5.6](https://www.rfc-editor.org/rfc/rfc3339#section-5.6)
+defines full-time with a time offset. [JSON Schema validation §7](https://json-schema.org/draft/2020-12/json-schema-validation#section-7)
+defines the date-time format and distinguishes format annotation from optional
+format assertion (retrieved 2026-10-02). The SDK intentionally performs format
+assertion for its API conformance checks; this does not claim FastAPI refuses
+naive values at runtime.
+
+The selected adaptation requires Z or a numeric offset for these TypeScript
+options. Offset strings remain unchanged and Date inputs become UTC ISO. It
+avoids an implicit local-time interpretation and keeps the existing format
+check meaningful. An alternative would permit naive values and add a separate
+source-runtime validation disposition, but that weakens the common format
+contract and adds ambiguity. UTC-only lineage/model fields stay UTC-only.
