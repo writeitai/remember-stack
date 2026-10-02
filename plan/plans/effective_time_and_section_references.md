@@ -79,5 +79,7 @@ deployment of each lineage takes its own date (today's behaviour) and later vers
   rewrite takes 54 ms (p95); an undated corpus is not slower than on `main`. The full
   50-million-chunk target was **not** measured: `main`'s own ranked statements scan every
   chunk of the deployment at this shape, so a full-scale run is bounded by that pre-existing
-  linear cost, not by D140. Making ranked search index-driven at that scale is separate work.
+  linear cost, not by D140. Making ranked search index-driven at that scale, and rerunning the
+  full-scale scoped-versus-`main` measurement once both statements can rank at that scale, is
+  tracked in [writeitai/remember-stack#504](https://github.com/writeitai/remember-stack/issues/504).
 - MCP catalogue changes bump the affected tools' `tool_version` (D136).

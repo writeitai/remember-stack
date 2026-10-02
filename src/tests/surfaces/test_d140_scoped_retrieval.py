@@ -1747,3 +1747,99 @@ def test_a_claim_text_only_match_names_its_pending_lineage(rig: _Rig) -> None:
     assert answer.evidence == ()
     assert answer.freshness.scope_pending is not None
     assert answer.freshness.scope_pending.doc_ids == (reached.doc_id,)
+
+
+# --- implementation review round 2 (P2): paging under deletion and pending ----
+
+
+def _ingested(rig: _Rig, version_id: UUID, at: datetime) -> None:
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE document_versions SET ingested_at = :at WHERE version_id = :v"
+            ),
+            {"at": at, "v": version_id},
+        )
+
+
+def test_soft_deleting_a_returned_lineages_newest_version_never_repeats_it(
+    rig: _Rig,
+) -> None:
+    """P2-1: the walk key ignores later tombstones, so no lineage comes twice."""
+    newest = _lineage(rig, label="walk-newest", bodies=(("a",), ("a two",)))
+    middle = _lineage(rig, label="walk-middle", bodies=(("b",),))
+    oldest = _lineage(rig, label="walk-oldest", bodies=(("c",),))
+    _ingested(rig, newest.version(0), _NOW - timedelta(days=10))
+    _ingested(rig, newest.version(1), _NOW - timedelta(hours=1))
+    _ingested(rig, middle.version(0), _NOW - timedelta(days=1))
+    _ingested(rig, oldest.version(0), _NOW - timedelta(days=2))
+
+    def delete_newest_version() -> None:
+        with rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"
+                ),
+                {"v": newest.version(0), "doc": newest.doc_id},
+            )
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET deleted_at = now()"
+                    " WHERE version_id = :v"
+                ),
+                {"v": newest.version(1)},
+            )
+
+    walked = _walk_all(rig, between=delete_newest_version)
+    assert walked[0] == newest.doc_id
+    assert len(walked) == len(set(walked))
+    assert set(walked) == {newest.doc_id, middle.doc_id, oldest.doc_id}
+
+
+def _walk_pending(rig: _Rig, *, between) -> set[UUID]:  # noqa: ANN001
+    """Every lineage any filter-only page reported as pending."""
+    pending: set[UUID] = set()
+    cursor: str | None = None
+    first = True
+    while True:
+        page = _search(rig, k=1, **({"cursor": cursor} if cursor else {}))
+        if page.scope_pending is not None:
+            pending.update(page.scope_pending.doc_ids)
+        if first:
+            between()
+        first = False
+        cursor = page.cursor
+        if cursor is None:
+            return pending
+
+
+@pytest.mark.parametrize("change", ["correction", "clear_redeclare"])
+def test_pinned_pages_keep_reporting_pending_as_known_at_their_belief(
+    rig: _Rig, change: str
+) -> None:
+    """P2-2: pending is derived at the pinned belief instant, not current belief."""
+    # three newer ready lineages: page one (a batch of k + 1) never reaches
+    # the converting lineage, so it is examined only after the change
+    for hours in (1, 2, 3):
+        leading = _lineage(rig, label=f"pending-leading-{hours}", bodies=(("x",),))
+        _ingested(rig, leading.version(0), _NOW - timedelta(hours=hours))
+    converting = _pending_pair(rig, label="pending-late", body="y", vector=_FAR)
+    for edition in (0, 1):
+        _ingested(rig, converting.version(edition), _NOW - timedelta(days=5 - edition))
+
+    def change_belief() -> None:
+        if change == "correction":
+            # the converting edition is no longer in force now: nothing pending
+            _declare(rig, converting, 1, (_FUTURE, None))
+        else:
+            rig.periods.clear_effective_time(
+                deployment_id=_DEPLOYMENT_ID, doc_id=converting.doc_id
+            )
+            _declare(rig, converting, 0, (_PAST, None))
+
+    assert converting.doc_id in _walk_pending(rig, between=change_belief)
+    fresh = _search(rig, k=50)
+    assert (
+        fresh.scope_pending is None
+        or converting.doc_id not in fresh.scope_pending.doc_ids
+    )

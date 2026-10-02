@@ -476,4 +476,3 @@ both sides. That is a property of the existing engine, not of the synthetic setu
 were current, caches warm) and not of D140, whose ratio to `main` was 0.95–1.03× at 500,000
 chunks (a ratio at full scale is an extrapolation, not a measurement). Index-driven ranked
 search at that scale is separate work.
-

@@ -873,7 +873,7 @@ excludes that edition. The gate closes this without touching fact windows:
   readings does not count, so there is no "no live support, therefore eligible" path.
 - Fact reads under a time scope — `facts_context`, `combined_context`, relation/observation
   lookups, graph neighbourhood and path expansion — return a fact only if it passes its own
-  D118 window predicate **and** has at least one in-scope supporting claim. The returned
+  D118 window predicate **and** passes the in-scope evidence rule above. The returned
   evidence is limited to in-scope claims, shown through their in-scope occurrences (§3.4).
 - **The gate is an eligibility predicate, applied before every relevance bound.** Like entity
   and fact-time eligibility (`decisions.md` D87 context operations: "eligibility constrain[s]
