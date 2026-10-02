@@ -70,7 +70,10 @@ caller-owned injected transport. Every handwritten function has JSDoc/docstrings
 The package supports Node.js 22 and newer with import and require entry points
 and declaration files. Local paths and stored login files are part of its
 scope. Browser support is not advertised: privileged API keys belong on the
-application backend. `fetch` injection supports tests/proxies, with redirects
+application backend. The default adapter uses Node HTTP/HTTPS requests with per-client
+owned agents, one transmission per invocation, no automatic redirects/retries,
+and response buffering under the operation deadline. Close destroys only the
+SDK-owned agents. `fetch` injection supports tests/proxies, with redirects
 left under SDK control; arbitrary injected implementations are caller-owned.
 
 ## 3. Connection, routing and secret handling
@@ -169,9 +172,14 @@ without replay; surface the original error. For reads, use the source-owned
 _READ_ROUTES table in `src/rememberstack/surfaces/route_scope.py` (not the
 separate spend-gate table in http_api.py), not HTTP method alone: POST readiness, graph and queries
 remain eligible. Timeout and caller abort never trigger retry or re-resolution.
-Node fetch can expose some connection-phase failure codes, but arbitrary
-injected fetch cannot promise unsent writes; the universal no-write-replay
-contract avoids transport-dependent billing behavior.
+Node fetch automatically repeats reusable requests after 421; manual redirects
+cannot disable that behavior. The default therefore uses Node HTTP/HTTPS requests,
+not global fetch. Injected fetch/HTTP adapters must transmit once per invocation,
+honor cancellation and preserve manual redirects; ordinary Node fetch is not a
+conforming injection. Caller-owned adapters remain responsible for their own
+behavior and lifecycle. The universal no-write-replay contract applies at the
+wire, not merely to SDK adapter-call counts. See
+[the measured 421 transport evidence](../analysis/typescript_transport_421.md).
 Engine error envelopes do not trigger moved-host refresh. A failed refresh
 surfaces the original failure rather than silently selecting a fallback.
 
@@ -244,7 +252,8 @@ Checks must answer different questions; one regenerate-and-diff is not enough.
    adaptation in §7 has explicit tests; fixture comparison normalizes date
    instants, UUID case and query-parameter ordering, but preserves repeated
    values, JSON bodies/defaults and Boolean query encodings.
-   Include a local HTTP server test to exercise real fetch, not mocks only.
+   Include local HTTP server tests of the default adapter and conforming injections;
+   count received requests to detect automatic transport replays, not just mocked calls.
 5. **Issuer/provider compatibility.** Publish public JSON Schemas for the
    consumed issuer metadata fields, ResolvedProject and object-shaped whoami.
    `account.get` returns unknown JSON and whoami returns a JSON object, matching
@@ -291,7 +300,7 @@ pollIntervalMs=15000. Fixtures normalize equivalent UTC encodings.
 | TypeScript-only cancellation/precision errors | mapError reports AbortError as cancelled (no HTTP status, not retryable), NumericPrecisionError as local_backend_error (not retryable), reusing published codes | Structured error fields and no automatic retry |
 | Unknown MIME uses host database | Known Python map plus fixed mime-db version; octet-stream for unknown | Known/unknown/name override |
 | Windows file mode rejects stored credentials | Same refusal; explicit settings work | Windows fixture |
-| HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | Native fetch defaults; explicit fetch adapter required for custom proxy/CA | Injection and documented settings |
+| HTTP_PROXY/HTTPS_PROXY/NO_PROXY and SSL_CERT_FILE supported by httpx | Node HTTP/HTTPS and TLS defaults; a conforming explicit adapter supplies custom proxy/CA | Injection and documented settings |
 
 Use process-wide issuer/project caches keyed by issuer, SHA-256 key fingerprint
 and project; a client pins project identity separately. Shared resolutions have
