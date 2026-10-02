@@ -229,3 +229,9 @@ error mapping to the existing transport_error/status 0 pair, matching Python.
 Reuse local_backend_error for unsafe response precision; explicitly match
 Python's invalid_arguments for a path with no resolver, and require the future
 MCP package to keep resolver injection consistent with stdio tool rendering.
+
+
+The runtime transport choice above is superseded by the measured Fetch 421
+evidence in [typescript_transport_421.md](typescript_transport_421.md). D140
+now selects a single-transmission Node HTTP/HTTPS adapter, borrowed-agent or
+request-transport injection, and explicit total-deadline/proxy adaptations.
