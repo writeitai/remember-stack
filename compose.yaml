@@ -138,8 +138,8 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
-      # Default 300: above the stock stack's connection ceiling (API 23 + 12
-      # workers x 16 = 215), so a busy default deployment cannot run out of
+      # Default 300: above the stock stack's connection ceiling (API 23 + 13
+      # workers x 16 = 231), so a busy default deployment cannot run out of
       # connections. Raise it when you add API replicas or worker containers.
       - -c
       - max_connections=${REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-300}
@@ -240,6 +240,13 @@ services:
   worker-structure:
     <<: *app
     command: ["worker", "--stage", "structure"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  worker-crossref:
+    <<: *app
+    command: ["worker", "--stage", "crossref"]
     depends_on:
       setup:
         condition: service_completed_successfully

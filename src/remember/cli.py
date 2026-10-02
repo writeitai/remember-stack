@@ -619,6 +619,9 @@ def _run_ingest(args: argparse.Namespace) -> int:
                 source_modified_at=args.source_modified_at,
                 versioning_mode=args.versioning_mode,
                 source_version_ref=args.source_version_ref,
+                version_key=args.version_key,
+                effective_from=args.effective_from,
+                effective_until=args.effective_until,
             )
     except OSError as error:
         print(f"error: could not read {args.file}: {error}", file=sys.stderr)
@@ -1130,6 +1133,20 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--versioning-mode", choices=("snapshot", "living"), default="snapshot"
     )
     ingest.add_argument("--source-version-ref")
+    ingest.add_argument(
+        "--version-key",
+        help="your immutable name for this version, unique within the document",
+    )
+    ingest.add_argument(
+        "--effective-from",
+        type=datetime.fromisoformat,
+        help="UTC start (inclusive) of the period this version is in force",
+    )
+    ingest.add_argument(
+        "--effective-until",
+        type=datetime.fromisoformat,
+        help="UTC end (exclusive) of that period; omit for until the next start",
+    )
 
     documents = commands.add_parser(
         "documents", help="list, search, or delete documents"

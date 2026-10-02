@@ -727,6 +727,15 @@ class _Corpus:
                 "version": version_id,
             },
         )
+        # a ready version reads its current representation (D65), as the
+        # catalog records when the representation becomes ready
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation WHERE version_id = :version"
+            ),
+            {"representation": representation_id, "version": version_id},
+        )
         connection.execute(
             text(
                 "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
@@ -785,6 +794,16 @@ class _Corpus:
                 "current": current,
                 "at": at,
             },
+        )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                " FROM claims WHERE claim_id = :origin_claim"
+            ),
+            {"origin_claim": claim_id},
         )
         table = "relation_evidence" if kind == "relation" else "observation_evidence"
         fact_column = "relation_id" if kind == "relation" else "observation_id"

@@ -59,6 +59,7 @@ src/tests/workers/test_e3_chain.py
 src/tests/workers/test_lifecycle_reconciliation.py
 src/tests/workers/test_p3_corpusfs.py
 src/tests/workers/test_reuse_lifecycle.py
+src/tests/workers/test_d140_text_origin_pg.py
 src/tests/workers/test_watch_loop.py
 src/tests/spine/test_claim_occurrence_provenance.py
 src/tests/spine/test_d119_multi_span.py
@@ -67,3 +68,8 @@ src/tests/workers/test_d119_versions.py
 src/tests/spine/test_d122_selection.py
 src/tests/spine/test_d122_e2.py
 src/tests/spine/test_perimeter_state.py
+src/tests/spine/test_d140_effective_time.py
+src/tests/spine/test_d140_migration.py
+src/tests/spine/test_section_history.py
+src/tests/spine/test_document_references.py
+src/tests/surfaces/test_d140_scoped_retrieval.py

@@ -8,7 +8,7 @@ export const metadata = {
 <AppliesTo products={["self-hosted"]} />
 
 A self-hosted RememberStack is a set of containers from one Compose file:
-PostgreSQL, SeaweedFS object storage, an API process and twelve pipeline
+PostgreSQL, SeaweedFS object storage, an API process and thirteen pipeline
 workers. The Compose file builds or pulls everything it needs. This page
 lists what has to be true of the machine and the accounts around it.
 
@@ -180,7 +180,7 @@ connections as it needs them, up to these ceilings:
 | `api` | 15 (5 kept open, 10 more under load) | retrieval pool 4, graph pool 4 | 23 |
 | Each `worker-…` | 15 (5 kept open, 10 more under load) | 1 held open to listen for new work | 16 |
 
-The ceilings of the default stack add up to 23 + 12 × 16 = 215, which fits
+The ceilings of the default stack add up to 23 + 13 × 16 = 231, which fits
 within 300 with room to spare. They are ceilings, not what a stack holds:
 pools open connections only on demand. Nothing caps the total, though, so
 budget against the ceilings when you add replicas or API processes: each
@@ -193,7 +193,7 @@ Other configured bounds:
 
 | Bound | Default |
 |---|---|
-| Containers started by `docker compose up` | 15: `postgres`, `object-store`, `setup` (exits), `api`, 12 workers |
+| Containers started by `docker compose up` | 16: `postgres`, `object-store`, `setup` (exits), `api`, 13 workers |
 | Items one worker process runs at once | 1 |
 | Claims per second per worker process | 20, burst 20 |
 | Graph connection pool in the API | 4 connections, at most 2 graph queries at once |

@@ -13,6 +13,16 @@
           "ix_kcompilations_artifact"
         ]
       },
+      "chunks_all_versions_live": {
+        "fixtures": {
+          "negative": "chunks_all_versions_live.deleted_version_chunk_absent",
+          "positive": "chunks_all_versions_live.ready_version_chunk_present"
+        },
+        "indexes_used": [
+          "ix_chunks_version",
+          "document_versions_pkey"
+        ]
+      },
       "chunks_live": {
         "fixtures": {
           "negative": "chunks_live.superseded_version_chunk_absent",
@@ -84,7 +94,17 @@
         },
         "indexes_used": [
           "ix_crossrefs_from",
-          "ix_crossrefs_to"
+          "ix_crossrefs_incoming"
+        ]
+      },
+      "document_effective_periods_live": {
+        "fixtures": {
+          "negative": "document_effective_periods_live.retracted_declaration_absent",
+          "positive": "document_effective_periods_live.live_declaration_present"
+        },
+        "indexes_used": [
+          "ix_effective_periods_lineage",
+          "ux_effective_periods_live_start"
         ]
       },
       "document_versions_visible": {
@@ -329,6 +349,73 @@
                 "maxLength": 8192,
                 "minLength": 1,
                 "type": "string"
+              },
+              "time": {
+                "default": {
+                  "mode": "current"
+                },
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "current"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "at"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "at"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "from": {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      "mode": {
+                        "const": "overlap"
+                      },
+                      "to": {
+                        "format": "date-time",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "from",
+                      "to"
+                    ]
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "mode": {
+                        "const": "history"
+                      }
+                    },
+                    "required": [
+                      "mode"
+                    ]
+                  }
+                ],
+                "type": "object"
               }
             },
             "required": [
@@ -605,6 +692,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -633,6 +728,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -669,6 +769,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -795,6 +958,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -828,7 +1032,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -943,6 +1147,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -968,6 +1180,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -983,6 +1216,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -1220,6 +1466,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -1451,6 +1708,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -1674,6 +1932,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -2163,7 +2447,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 2
+          "version": 3
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
@@ -2540,6 +2824,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -2568,6 +2860,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -2604,6 +2901,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -2728,6 +3088,47 @@
                   "believed_at"
                 ],
                 "title": "CurrentTemporalScope",
+                "type": "object"
+              },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
                 "type": "object"
               },
               "EntityCandidate": {
@@ -2968,7 +3369,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -3083,6 +3484,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -3108,6 +3517,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -3123,6 +3553,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -3360,6 +3803,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -3591,6 +4045,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -3814,6 +4269,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -4525,6 +5006,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -4553,6 +5042,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -4589,6 +5083,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -4715,6 +5272,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -4748,7 +5346,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -4863,6 +5461,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -4888,6 +5494,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -4903,6 +5530,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -5140,6 +5780,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -5371,6 +6022,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -5594,6 +6246,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -6371,6 +7049,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "published_at": {
                     "anyOf": [
                       {
@@ -6399,6 +7085,11 @@
                       }
                     ],
                     "title": "Section Role"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
                   },
                   "source_kind": {
                     "title": "Source Kind",
@@ -6435,6 +7126,69 @@
                   "source_kind"
                 ],
                 "title": "ChunkEvidenceResult",
+                "type": "object"
+              },
+              "ClaimOccurrence": {
+                "additionalProperties": false,
+                "description": "Where a claim occurs in one version a time scope selected (D140 §3.4).\n\nD56 attaches one immutable claim to every version-chunk that carried it;\neach occurrence has its own coordinates and evidence spans in its own\nversion's current reading.",
+                "properties": {
+                  "char_end": {
+                    "title": "Char End",
+                    "type": "integer"
+                  },
+                  "char_start": {
+                    "title": "Char Start",
+                    "type": "integer"
+                  },
+                  "chunk_id": {
+                    "format": "uuid",
+                    "title": "Chunk Id",
+                    "type": "string"
+                  },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
+                  "evidence_spans": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EvidenceSpan"
+                    },
+                    "title": "Evidence Spans",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "format": "uuid",
+                    "title": "Representation Id",
+                    "type": "string"
+                  },
+                  "served_version": {
+                    "default": true,
+                    "title": "Served Version",
+                    "type": "boolean"
+                  },
+                  "source_locators": {
+                    "$ref": "#/$defs/JsonValue",
+                    "default": null
+                  },
+                  "version_id": {
+                    "format": "uuid",
+                    "title": "Version Id",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "chunk_id",
+                  "version_id",
+                  "representation_id",
+                  "char_start",
+                  "char_end"
+                ],
+                "title": "ClaimOccurrence",
                 "type": "object"
               },
               "ClaimValidPrecision": {
@@ -6561,6 +7315,47 @@
                 "title": "CurrentTemporalScope",
                 "type": "object"
               },
+              "EffectiveInterval": {
+                "additionalProperties": false,
+                "description": "One in-force interval ``[from, until)``; null bounds are open.",
+                "properties": {
+                  "from": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "From"
+                  },
+                  "until": {
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Until"
+                  },
+                  "until_declared": {
+                    "default": false,
+                    "title": "Until Declared",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "title": "EffectiveInterval",
+                "type": "object"
+              },
               "EntityCandidate": {
                 "additionalProperties": false,
                 "description": "One ranked resolve candidate (never a silent guess, S51).",
@@ -6594,7 +7389,7 @@
               },
               "EvidenceResult": {
                 "additionalProperties": false,
-                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.",
+                "description": "One evidence-grain record: a claim with its provenance anchors.\n\n``source_span`` / ``char_start`` / ``char_end`` are the immutable origin\nof the claim (the target-chunk owner). ``chunk_id`` is that origin chunk.\n``evidence_spans`` is the complete body support for the same origin\noccurrence, in that chunk's representation. Current-version remapped\npositions live on ``memory_v1.claim_occurrences_live``.\n\nUnder a D140 time scope a claim of a lineage with declared effective\nperiods is returned through its occurrences in the selected versions\ninstead (``occurrences``, by effective start); the coordinates above are\nthen the first occurrence's and ``version_id`` names its version.",
                 "properties": {
                   "asserted_at": {
                     "anyOf": [
@@ -6709,6 +7504,14 @@
                     "default": null,
                     "title": "Document Title"
                   },
+                  "effective": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/EffectiveInterval"
+                    },
+                    "title": "Effective",
+                    "type": "array"
+                  },
                   "evidence_spans": {
                     "default": [],
                     "items": {
@@ -6734,6 +7537,27 @@
                     "title": "Is Current Testimony",
                     "type": "boolean"
                   },
+                  "occurrences": {
+                    "default": [],
+                    "items": {
+                      "$ref": "#/$defs/ClaimOccurrence"
+                    },
+                    "title": "Occurrences",
+                    "type": "array"
+                  },
+                  "representation_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Representation Id"
+                  },
                   "source_kind": {
                     "anyOf": [
                       {
@@ -6749,6 +7573,19 @@
                   "source_span": {
                     "title": "Source Span",
                     "type": "string"
+                  },
+                  "version_id": {
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null,
+                    "title": "Version Id"
                   }
                 },
                 "required": [
@@ -6986,6 +7823,17 @@
                     "format": "date-time",
                     "title": "Pg Live Ts",
                     "type": "string"
+                  },
+                  "scope_pending": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/ScopePending"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
                   }
                 },
                 "required": [
@@ -7217,6 +8065,7 @@
                 "title": "IdentityRegime",
                 "type": "string"
               },
+              "JsonValue": {},
               "KFreshness": {
                 "additionalProperties": false,
                 "description": "The compiled-grain honesty block (retrieval §5): a K page's timestamp.\n\nA compiled answer is pre-paid synthesis *with a timestamp*, so any answer\nthat consumed a K page carries when it compiled, whether it is stale\n(inputs changed since), and how many evidence-change flags are still open\nagainst it — the reader-facing flag surface (k_layers spike 9). An agent\nsees \"this page has 3 unresolved flags\" before planning against it (S34).",
@@ -7440,6 +8289,32 @@
                   "score"
                 ],
                 "title": "RankedItem",
+                "type": "object"
+              },
+              "ScopePending": {
+                "additionalProperties": false,
+                "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
+                "properties": {
+                  "count": {
+                    "minimum": 0,
+                    "title": "Count",
+                    "type": "integer"
+                  },
+                  "doc_ids": {
+                    "items": {
+                      "format": "uuid",
+                      "type": "string"
+                    },
+                    "maxItems": 50,
+                    "title": "Doc Ids",
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "doc_ids",
+                  "count"
+                ],
+                "title": "ScopePending",
                 "type": "object"
               },
               "SourceRecord": {
@@ -7973,6 +8848,127 @@
           "security": "definer",
           "target": "claims",
           "volatility": "immutable"
+        },
+        {
+          "arguments": [
+            {
+              "name": "deployment_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "name": "doc_ids",
+              "required": true,
+              "type": "uuid[]"
+            },
+            {
+              "default": "now()",
+              "name": "believed_at",
+              "required": false,
+              "type": "timestamptz"
+            }
+          ],
+          "arguments_max": 3,
+          "arguments_min": 2,
+          "channel": "time_scope",
+          "column_types": [
+            "uuid",
+            "uuid",
+            "uuid",
+            "timestamptz",
+            "timestamptz",
+            "boolean"
+          ],
+          "columns": [
+            "doc_id",
+            "version_id",
+            "period_id",
+            "effective_from",
+            "effective_until",
+            "until_declared"
+          ],
+          "comment": "D140: the derived in-force interval of every declared effective period known at believed_at of the non-deleted versions of the given lineages, whatever their processing status; the end is the declared end, else the next declared start.",
+          "example": "SELECT version_id, effective_from, effective_until, until_declared FROM effective_intervals($1::uuid, $2::uuid[]) ORDER BY effective_from",
+          "filters": [],
+          "name": "effective_intervals",
+          "parallel": "safe",
+          "pre_rank_filters": [],
+          "security": "definer",
+          "target": "documents",
+          "volatility": "stable"
+        },
+        {
+          "arguments": [
+            {
+              "name": "deployment_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "name": "fact_kind",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "name": "fact_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "name": "mode",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "default": null,
+              "name": "at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "range_start",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "range_end",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": "now()",
+              "name": "evaluated_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "believed_at",
+              "required": false,
+              "type": "timestamptz"
+            }
+          ],
+          "arguments_max": 9,
+          "arguments_min": 4,
+          "channel": "time_scope",
+          "column_types": [
+            "boolean"
+          ],
+          "columns": [
+            "fact_in_scope_support"
+          ],
+          "comment": "D140 evidence gate: true when a claim supporting the fact occurs in a version the time scope selects or in a lineage without declared effective periods. facts_current does not apply it; combine the two to exclude facts supported only by text not in force.",
+          "example": "SELECT fact_kind, fact_id, statement FROM facts_current AS f WHERE fact_in_scope_support(f.deployment_id, f.fact_kind, f.fact_id, 'current') LIMIT 50",
+          "filters": [],
+          "kind": "scalar",
+          "name": "fact_in_scope_support",
+          "parallel": "safe",
+          "pre_rank_filters": [],
+          "security": "definer",
+          "target": "facts",
+          "volatility": "stable"
         },
         {
           "arguments": [
@@ -8843,6 +9839,82 @@
           "security": "invoker",
           "target": "facts",
           "volatility": "volatile"
+        },
+        {
+          "arguments": [
+            {
+              "name": "deployment_id",
+              "required": true,
+              "type": "uuid"
+            },
+            {
+              "name": "mode",
+              "required": true,
+              "type": "text"
+            },
+            {
+              "default": null,
+              "name": "at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "range_start",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "range_end",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": "now()",
+              "name": "evaluated_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "believed_at",
+              "required": false,
+              "type": "timestamptz"
+            },
+            {
+              "default": null,
+              "name": "doc_ids",
+              "required": false,
+              "type": "uuid[]"
+            }
+          ],
+          "arguments_max": 8,
+          "arguments_min": 2,
+          "channel": "time_scope",
+          "column_types": [
+            "uuid",
+            "uuid",
+            "uuid",
+            "timestamptz",
+            "timestamptz"
+          ],
+          "columns": [
+            "doc_id",
+            "version_id",
+            "representation_id",
+            "effective_from",
+            "effective_until"
+          ],
+          "comment": "D140: the non-deleted ready versions a time scope selects, one row per selecting in-force interval: versions in force for lineages with declared effective periods, the served version (null bounds) for every other live lineage. A believed_at evaluates the declaration ledgers as known then and requires doc_ids.",
+          "example": "SELECT doc_id, version_id, effective_from, effective_until FROM versions_in_scope($1::uuid, 'at', $2::timestamptz) ORDER BY doc_id, effective_from",
+          "filters": [],
+          "name": "versions_in_scope",
+          "parallel": "safe",
+          "pre_rank_filters": [],
+          "security": "definer",
+          "target": "documents",
+          "volatility": "stable"
         }
       ]
     },
@@ -8930,6 +10002,7 @@
           "date_trunc",
           "dense_rank",
           "extract",
+          "fact_in_scope_support",
           "first_value",
           "floor",
           "greatest",
@@ -8995,6 +10068,7 @@
         ],
         "public_functions": [
           "canonical_bounds",
+          "effective_intervals",
           "facts_as_of",
           "fetch_chunk_bodies",
           "graph_citation_path",
@@ -9005,11 +10079,13 @@
           "semantic_chunks",
           "semantic_claims",
           "semantic_entities",
-          "semantic_facts"
+          "semantic_facts",
+          "versions_in_scope"
         ],
         "recursion_depth_max": 6,
         "srf_categories": {
           "canonical_bounds": "temporal",
+          "effective_intervals": "time_scope",
           "facts_as_of": "bitemporal",
           "fetch_chunk_bodies": "body_fetch",
           "graph_citation_path": "graph",
@@ -9020,7 +10096,8 @@
           "semantic_chunks": "nomination",
           "semantic_claims": "nomination",
           "semantic_entities": "nomination",
-          "semantic_facts": "nomination"
+          "semantic_facts": "nomination",
+          "versions_in_scope": "time_scope"
         },
         "srf_invocations_max_per_category": 3,
         "statement_node_classes": [
@@ -17104,6 +18181,1418 @@
               "type": "uuid"
             },
             {
+              "comment": "Stable identity of this retrieval unit within its version's current reading.",
+              "enum_values": null,
+              "name": "chunk_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage the chunk belongs to.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The non-deleted ready version the chunk was cut from, which need not be the lineage's served version.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The version's current ready reading whose block grid and offsets the chunk uses.",
+              "enum_values": null,
+              "name": "representation_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The section containing the chunk, null when the chunk has no section in the reading's current structure generation.",
+              "enum_values": null,
+              "name": "section_id",
+              "nullable": true,
+              "type": "uuid"
+            },
+            {
+              "comment": "Position of the chunk within its version.",
+              "enum_values": null,
+              "name": "ordinal",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "First block ordinal packed into the chunk.",
+              "enum_values": null,
+              "name": "block_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Last block ordinal packed into the chunk, inclusive.",
+              "enum_values": null,
+              "name": "block_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Start character offset of the chunk within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_start",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "End character offset of the chunk within this representation's markdown.",
+              "enum_values": null,
+              "name": "char_end",
+              "nullable": false,
+              "type": "integer"
+            },
+            {
+              "comment": "Token length of the chunk, null when it was never measured.",
+              "enum_values": null,
+              "name": "token_count",
+              "nullable": true,
+              "type": "integer"
+            },
+            {
+              "comment": "Hash of the chunk's ordered block hashes, which is its content identity.",
+              "enum_values": null,
+              "name": "chunk_content_hash",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of the stable extraction inputs, which is the reuse key that avoids re-extracting unchanged content.",
+              "enum_values": null,
+              "name": "extraction_input_hash",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of the exact text that was embedded under the D80 policy, null when the chunk has not been embedded.",
+              "enum_values": null,
+              "name": "embedding_text_hash",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The deterministic D80 location facts as structured data, null when no policy generation has stamped the chunk.",
+              "enum_values": null,
+              "name": "location_facts",
+              "nullable": true,
+              "type": "jsonb"
+            },
+            {
+              "comment": "The deterministic D80 location header prepended to the embedded text; it is generated orientation text and is never asserted evidence.",
+              "enum_values": null,
+              "name": "location_header",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The D80 embedding-input policy in force for this chunk, null when unstamped.",
+              "enum_values": null,
+              "name": "embedding_input_policy_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The generation label of that policy application, null when unstamped.",
+              "enum_values": null,
+              "name": "policy_generation",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The embedder generation that produced the chunk vector, null when the chunk has not been embedded.",
+              "enum_values": null,
+              "name": "embedder_generation",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The chunker configuration that produced this cut, null on rows written before the stamp existed.",
+              "enum_values": null,
+              "name": "chunker_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The context-prefixer generation for this chunk, null when no prefix was generated.",
+              "enum_values": null,
+              "name": "prefixer_version",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "When the chunk row was written, which is a processing instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "created_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date.",
+              "enum_values": null,
+              "name": "text_origin_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage, keyed by (deployment_id, chunk_id) and joined to document_versions_visible on (deployment_id, version_id). It is the relation time-scoped reads select from through versions_in_scope, so it includes versions that are no longer, or not yet, the lineage's served version; chunks_live keeps meaning served-version chunks. Like chunks_live it is metadata only and carries no authoritative body column. Chunks of deleted versions, of non-ready readings and of forgotten lineages are absent, and a section_id is exposed only when that section belongs to the reading's current structure generation. The view carries no counts and no validity clocks.",
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "chunk_id"
+              },
+              {
+                "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "version_id"
+              },
+              {
+                "@": "String",
+                "sval": "representation_id"
+              },
+              {
+                "@": "String",
+                "sval": "section_id"
+              },
+              {
+                "@": "String",
+                "sval": "ordinal"
+              },
+              {
+                "@": "String",
+                "sval": "block_start"
+              },
+              {
+                "@": "String",
+                "sval": "block_end"
+              },
+              {
+                "@": "String",
+                "sval": "char_start"
+              },
+              {
+                "@": "String",
+                "sval": "char_end"
+              },
+              {
+                "@": "String",
+                "sval": "token_count"
+              },
+              {
+                "@": "String",
+                "sval": "chunk_content_hash"
+              },
+              {
+                "@": "String",
+                "sval": "extraction_input_hash"
+              },
+              {
+                "@": "String",
+                "sval": "embedding_text_hash"
+              },
+              {
+                "@": "String",
+                "sval": "location_facts"
+              },
+              {
+                "@": "String",
+                "sval": "location_header"
+              },
+              {
+                "@": "String",
+                "sval": "embedding_input_policy_version"
+              },
+              {
+                "@": "String",
+                "sval": "policy_generation"
+              },
+              {
+                "@": "String",
+                "sval": "embedder_generation"
+              },
+              {
+                "@": "String",
+                "sval": "chunker_version"
+              },
+              {
+                "@": "String",
+                "sval": "prefixer_version"
+              },
+              {
+                "@": "String",
+                "sval": "created_at"
+              },
+              {
+                "@": "String",
+                "sval": "text_origin_at"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_LEFT"
+                  },
+                  "larg": {
+                    "@": "JoinExpr",
+                    "isNatural": false,
+                    "jointype": {
+                      "#": "JoinType",
+                      "name": "JOIN_INNER"
+                    },
+                    "larg": {
+                      "@": "JoinExpr",
+                      "isNatural": false,
+                      "jointype": {
+                        "#": "JoinType",
+                        "name": "JOIN_INNER"
+                      },
+                      "larg": {
+                        "@": "RangeVar",
+                        "alias": {
+                          "@": "Alias",
+                          "aliasname": "c"
+                        },
+                        "inh": true,
+                        "relname": "chunks",
+                        "relpersistence": "p"
+                      },
+                      "quals": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "v"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "c"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "v"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "version_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "c"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "version_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "v"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "doc_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "c"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "doc_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "v"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "status"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "ready"
+                              }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "v"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "current_representation_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "c"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "representation_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      },
+                      "rarg": {
+                        "@": "RangeVar",
+                        "alias": {
+                          "@": "Alias",
+                          "aliasname": "v"
+                        },
+                        "inh": true,
+                        "relname": "document_versions_visible",
+                        "relpersistence": "p",
+                        "schemaname": "memory_v1"
+                      },
+                      "rtindex": 0
+                    },
+                    "quals": {
+                      "@": "BoolExpr",
+                      "args": [
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "r"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "deployment_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "r"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "version_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "version_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "r"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "representation_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "c"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "representation_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "r"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "status"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "A_Const",
+                            "isnull": false,
+                            "val": {
+                              "@": "String",
+                              "sval": "ready"
+                            }
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        }
+                      ],
+                      "boolop": {
+                        "#": "BoolExprType",
+                        "name": "AND_EXPR"
+                      }
+                    },
+                    "rarg": {
+                      "@": "RangeVar",
+                      "alias": {
+                        "@": "Alias",
+                        "aliasname": "r"
+                      },
+                      "inh": true,
+                      "relname": "document_representations",
+                      "relpersistence": "p"
+                    },
+                    "rtindex": 0
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "section_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "section_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "version_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "version_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "representation_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "c"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "representation_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "sec"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "structure_generation_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "r"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "current_structure_generation_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
+                    }
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "sec"
+                    },
+                    "inh": true,
+                    "relname": "document_sections",
+                    "relpersistence": "p"
+                  },
+                  "rtindex": 0
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "chunk_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "doc_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "version_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "representation_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "sec"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "section_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "ordinal"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "block_start"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "block_end"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "char_start"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "char_end"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "token_count"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "chunk_content_hash"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "extraction_input_hash"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "embedding_text_hash"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "location_facts_json"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "location_header"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "embedding_input_policy_version"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "policy_generation"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "embedding_version"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "chunker_version"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "prefixer_version"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "created_at"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "text_origin_at"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "chunks_all_versions_live",
+              "relpersistence": "p",
+              "schemaname": "memory_v1"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "grain": "one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage",
+          "grain_tag": "chunk_any_ready_version",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "chunks_all_versions_live",
+          "qualified_name": "memory_v1.chunks_all_versions_live",
+          "row_key": [
+            "deployment_id",
+            "chunk_id"
+          ]
+        },
+        {
+          "clock_semantics": "none",
+          "columns": [
+            {
+              "comment": "The deployment that owns the chunk.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
               "comment": "Stable identity of this retrieval unit within the current reading.",
               "enum_values": null,
               "name": "chunk_id",
@@ -17256,6 +19745,13 @@
               "name": "created_at",
               "nullable": false,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date.",
+              "enum_values": null,
+              "name": "text_origin_at",
+              "nullable": true,
+              "type": "timestamp with time zone"
             }
           ],
           "comment": "One row per chunk coordinate in the current ready representation of a live lineage, keyed by (deployment_id, chunk_id) and joined to documents_live on (deployment_id, doc_id) and to sections_live on (deployment_id, section_id). This relation is metadata only and deliberately carries no authoritative body column: chunk text is returned solely by the confirmed body-fetch path, which re-verifies the coordinate and the content and embedding hashes before any bytes leave the system. Chunks of superseded versions, non-ready readings, and forgotten lineages are absent, and a section_id is exposed only when that section belongs to the representation's current structure generation. The location header is generated orientation text, never evidence; the view carries no counts and no validity clocks.",
@@ -17353,6 +19849,10 @@
               {
                 "@": "String",
                 "sval": "created_at"
+              },
+              {
+                "@": "String",
+                "sval": "text_origin_at"
               }
             ],
             "query": {
@@ -18184,6 +20684,22 @@
                       {
                         "@": "String",
                         "sval": "created_at"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "c"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "text_origin_at"
                       }
                     ]
                   }
@@ -25019,61 +27535,126 @@
           "clock_semantics": "none",
           "columns": [
             {
-              "comment": "The deployment that owns both endpoint lineages.",
+              "comment": "The deployment that owns the reference.",
               "enum_values": null,
               "name": "deployment_id",
               "nullable": false,
               "type": "uuid"
             },
             {
-              "comment": "Stable identity of this cross-reference.",
+              "comment": "Stable identity of this reference made by one source version.",
               "enum_values": null,
               "name": "crossref_id",
               "nullable": false,
               "type": "uuid"
             },
             {
-              "comment": "The live lineage that makes the reference.",
+              "comment": "The live lineage whose version makes the reference.",
               "enum_values": null,
               "name": "from_doc_id",
               "nullable": false,
               "type": "uuid"
             },
             {
-              "comment": "The live lineage that is referenced.",
+              "comment": "The live lineage the reference resolves to.",
               "enum_values": null,
               "name": "to_doc_id",
               "nullable": false,
               "type": "uuid"
             },
             {
-              "comment": "What kind of reference this is, one of cites, links_to, attaches, or replies_to.",
+              "comment": "What the reference does, such as cites, links_to, refers_to, amends, or implements.",
               "enum_values": [
                 "cites",
                 "links_to",
                 "attaches",
-                "replies_to"
+                "replies_to",
+                "refers_to",
+                "amends",
+                "implements"
               ],
               "name": "kind",
               "nullable": false,
               "type": "text"
             },
             {
-              "comment": "Bounded surrounding context of the reference, truncated to 500 characters and null when none was captured.",
+              "comment": "Bounded surrounding text of the reference, truncated to 500 characters.",
               "enum_values": null,
               "name": "context",
               "nullable": true,
               "type": "text"
             },
             {
-              "comment": "When the reference was extracted, which is a processing instant.",
+              "comment": "When the reference row was written, which is a processing instant rather than a world-time clock.",
               "enum_values": null,
               "name": "created_at",
               "nullable": false,
               "type": "timestamp with time zone"
+            },
+            {
+              "comment": "The non-deleted version that makes the reference.",
+              "enum_values": null,
+              "name": "from_version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The section key of the source section, null when the reference is not attributed to a keyed section.",
+              "enum_values": null,
+              "name": "from_section_key",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "The section key the reference names in the target, null when it names the whole document.",
+              "enum_values": null,
+              "name": "to_section_key",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Either floating, meaning whichever target versions are in force when read, or pinned, meaning one named target version.",
+              "enum_values": [
+                "floating",
+                "pinned"
+              ],
+              "name": "binding",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "Either extracted by the engine or supplied by a caller.",
+              "enum_values": [
+                "extracted",
+                "supplied"
+              ],
+              "name": "origin",
+              "nullable": false,
+              "type": "text"
+            },
+            {
+              "comment": "The caller's own opaque type code for the reference, returned verbatim and null when none was supplied.",
+              "enum_values": null,
+              "name": "source_label",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "For an amends reference with a known date, when the change takes effect; null otherwise.",
+              "enum_values": null,
+              "name": "change_effective_from",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "For an amends reference, whether the source states when the change takes effect; null for every other kind.",
+              "enum_values": null,
+              "name": "change_date_known",
+              "nullable": true,
+              "type": "boolean"
             }
           ],
-          "comment": "One row per resolved cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). An unresolved reference, a reference whose target was never ingested, or one whose source or target lineage has been forgotten is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.",
+          "comment": "One row per resolved reference made by a live source version to a live target lineage, keyed by (deployment_id, crossref_id) and joined to document_versions_visible on (deployment_id, from_version_id) and to documents_live on (deployment_id, to_doc_id). Only references of the active generation of their source version and origin appear, so a replaced reference set never shows through. An unresolved reference, a reference whose target was never ingested, and one whose source version or either lineage has been deleted or forgotten are absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text and the target as named by the source are deliberately not exposed, because they are retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.",
           "definition_ast": {
             "@": "ViewStmt",
             "aliases": [
@@ -25104,6 +27685,38 @@
               {
                 "@": "String",
                 "sval": "created_at"
+              },
+              {
+                "@": "String",
+                "sval": "from_version_id"
+              },
+              {
+                "@": "String",
+                "sval": "from_section_key"
+              },
+              {
+                "@": "String",
+                "sval": "to_section_key"
+              },
+              {
+                "@": "String",
+                "sval": "binding"
+              },
+              {
+                "@": "String",
+                "sval": "origin"
+              },
+              {
+                "@": "String",
+                "sval": "source_label"
+              },
+              {
+                "@": "String",
+                "sval": "change_effective_from"
+              },
+              {
+                "@": "String",
+                "sval": "change_date_known"
               }
             ],
             "query": {
@@ -25125,14 +27738,201 @@
                       "name": "JOIN_INNER"
                     },
                     "larg": {
-                      "@": "RangeVar",
-                      "alias": {
-                        "@": "Alias",
-                        "aliasname": "x"
+                      "@": "JoinExpr",
+                      "isNatural": false,
+                      "jointype": {
+                        "#": "JoinType",
+                        "name": "JOIN_INNER"
                       },
-                      "inh": true,
-                      "relname": "document_crossrefs",
-                      "relpersistence": "p"
+                      "larg": {
+                        "@": "RangeVar",
+                        "alias": {
+                          "@": "Alias",
+                          "aliasname": "x"
+                        },
+                        "inh": true,
+                        "relname": "document_crossrefs",
+                        "relpersistence": "p"
+                      },
+                      "quals": {
+                        "@": "BoolExpr",
+                        "args": [
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "generation"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "x"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "generation"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "version_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "x"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "from_version_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "generation"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "generation_id"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "x"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "generation_id"
+                                }
+                              ]
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          },
+                          {
+                            "@": "A_Expr",
+                            "kind": {
+                              "#": "A_Expr_Kind",
+                              "name": "AEXPR_OP"
+                            },
+                            "lexpr": {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "generation"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "status"
+                                }
+                              ]
+                            },
+                            "name": [
+                              {
+                                "@": "String",
+                                "sval": "="
+                              }
+                            ],
+                            "rexpr": {
+                              "@": "A_Const",
+                              "isnull": false,
+                              "val": {
+                                "@": "String",
+                                "sval": "active"
+                              }
+                            },
+                            "rexpr_list_end": 0,
+                            "rexpr_list_start": 0
+                          }
+                        ],
+                        "boolop": {
+                          "#": "BoolExprType",
+                          "name": "AND_EXPR"
+                        }
+                      },
+                      "rarg": {
+                        "@": "RangeVar",
+                        "alias": {
+                          "@": "Alias",
+                          "aliasname": "generation"
+                        },
+                        "inh": true,
+                        "relname": "document_reference_generations",
+                        "relpersistence": "p"
+                      },
+                      "rtindex": 0
                     },
                     "quals": {
                       "@": "BoolExpr",
@@ -25193,6 +27993,47 @@
                               },
                               {
                                 "@": "String",
+                                "sval": "version_id"
+                              }
+                            ]
+                          },
+                          "name": [
+                            {
+                              "@": "String",
+                              "sval": "="
+                            }
+                          ],
+                          "rexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "x"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "from_version_id"
+                              }
+                            ]
+                          },
+                          "rexpr_list_end": 0,
+                          "rexpr_list_start": 0
+                        },
+                        {
+                          "@": "A_Expr",
+                          "kind": {
+                            "#": "A_Expr_Kind",
+                            "name": "AEXPR_OP"
+                          },
+                          "lexpr": {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "source"
+                              },
+                              {
+                                "@": "String",
                                 "sval": "doc_id"
                               }
                             ]
@@ -25232,7 +28073,7 @@
                         "aliasname": "source"
                       },
                       "inh": true,
-                      "relname": "documents_live",
+                      "relname": "document_versions_visible",
                       "relpersistence": "p",
                       "schemaname": "memory_v1"
                     },
@@ -25506,6 +28347,164 @@
                       }
                     ]
                   }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "from_version_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "from_section_key"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "to_section_key"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "x"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "binding"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "TypeCast",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "x"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "origin"
+                        }
+                      ]
+                    },
+                    "typeName": {
+                      "@": "TypeName",
+                      "names": [
+                        {
+                          "@": "String",
+                          "sval": "text"
+                        }
+                      ],
+                      "pct_type": false,
+                      "setof": false,
+                      "typemod": -1
+                    }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "source_label"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "change_effective_from"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "x"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "change_date_known"
+                      }
+                    ]
+                  }
                 }
               ],
               "whereClause": {
@@ -25565,7 +28564,7 @@
               "name": "NO_CHECK_OPTION"
             }
           },
-          "grain": "one live document cross-reference",
+          "grain": "one live, resolved reference made by a live source version",
           "grain_tag": "document_crossref_live",
           "join_keys": [
             {
@@ -25574,6 +28573,13 @@
                 "from_doc_id"
               ],
               "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "from_version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
             },
             {
               "columns": [
@@ -25588,6 +28594,572 @@
           "row_key": [
             "deployment_id",
             "crossref_id"
+          ]
+        },
+        {
+          "clock_semantics": "declared_effective_periods",
+          "columns": [
+            {
+              "comment": "The deployment that owns the declaration.",
+              "enum_values": null,
+              "name": "deployment_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Stable identity of this declared effective period.",
+              "enum_values": null,
+              "name": "period_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The live lineage whose version the period belongs to.",
+              "enum_values": null,
+              "name": "doc_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "The non-deleted version declared in force, of any processing status.",
+              "enum_values": null,
+              "name": "version_id",
+              "nullable": false,
+              "type": "uuid"
+            },
+            {
+              "comment": "Inclusive start of the period, as declared by the caller.",
+              "enum_values": null,
+              "name": "effective_from",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "Exclusive end of the period: the declared end, else the next declared start in the lineage, null when the period is open.",
+              "enum_values": null,
+              "name": "effective_until",
+              "nullable": true,
+              "type": "timestamp with time zone"
+            },
+            {
+              "comment": "True when effective_until was declared rather than derived from the next declared start.",
+              "enum_values": null,
+              "name": "until_declared",
+              "nullable": false,
+              "type": "boolean"
+            },
+            {
+              "comment": "When the declaration became known, which is a belief-axis instant rather than a world-time clock.",
+              "enum_values": null,
+              "name": "declared_at",
+              "nullable": false,
+              "type": "timestamp with time zone"
+            }
+          ],
+          "comment": "One row per currently known declared effective period, keyed by (deployment_id, period_id) and joined to document_versions_visible on (deployment_id, version_id). A period says when the publisher holds the version's text to be in force; it is declared by a caller and never inferred. The end is derived from the next declared start of a non-deleted version of the lineage when no end was declared, so declaring a new edition shortens its predecessor without a write to it. Retracted declarations, declarations of deleted versions and every declaration of a forgotten lineage are absent. The view carries no counts; fact validity windows are a separate clock.",
+          "definition_ast": {
+            "@": "ViewStmt",
+            "aliases": [
+              {
+                "@": "String",
+                "sval": "deployment_id"
+              },
+              {
+                "@": "String",
+                "sval": "period_id"
+              },
+              {
+                "@": "String",
+                "sval": "doc_id"
+              },
+              {
+                "@": "String",
+                "sval": "version_id"
+              },
+              {
+                "@": "String",
+                "sval": "effective_from"
+              },
+              {
+                "@": "String",
+                "sval": "effective_until"
+              },
+              {
+                "@": "String",
+                "sval": "until_declared"
+              },
+              {
+                "@": "String",
+                "sval": "declared_at"
+              }
+            ],
+            "query": {
+              "@": "SelectStmt",
+              "all": false,
+              "fromClause": [
+                {
+                  "@": "JoinExpr",
+                  "isNatural": false,
+                  "jointype": {
+                    "#": "JoinType",
+                    "name": "JOIN_INNER"
+                  },
+                  "larg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "p"
+                    },
+                    "inh": true,
+                    "relname": "document_effective_periods",
+                    "relpersistence": "p"
+                  },
+                  "quals": {
+                    "@": "BoolExpr",
+                    "args": [
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "v"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "p"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "deployment_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "v"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "version_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "p"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "version_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      },
+                      {
+                        "@": "A_Expr",
+                        "kind": {
+                          "#": "A_Expr_Kind",
+                          "name": "AEXPR_OP"
+                        },
+                        "lexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "v"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "name": [
+                          {
+                            "@": "String",
+                            "sval": "="
+                          }
+                        ],
+                        "rexpr": {
+                          "@": "ColumnRef",
+                          "fields": [
+                            {
+                              "@": "String",
+                              "sval": "p"
+                            },
+                            {
+                              "@": "String",
+                              "sval": "doc_id"
+                            }
+                          ]
+                        },
+                        "rexpr_list_end": 0,
+                        "rexpr_list_start": 0
+                      }
+                    ],
+                    "boolop": {
+                      "#": "BoolExprType",
+                      "name": "AND_EXPR"
+                    }
+                  },
+                  "rarg": {
+                    "@": "RangeVar",
+                    "alias": {
+                      "@": "Alias",
+                      "aliasname": "v"
+                    },
+                    "inh": true,
+                    "relname": "document_versions_visible",
+                    "relpersistence": "p",
+                    "schemaname": "memory_v1"
+                  },
+                  "rtindex": 0
+                }
+              ],
+              "groupDistinct": false,
+              "limitOption": {
+                "#": "LimitOption",
+                "name": "LIMIT_OPTION_DEFAULT"
+              },
+              "op": {
+                "#": "SetOperation",
+                "name": "SETOP_NONE"
+              },
+              "targetList": [
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "deployment_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "period_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "doc_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "version_id"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "effective_from"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "CoalesceExpr",
+                    "args": [
+                      {
+                        "@": "ColumnRef",
+                        "fields": [
+                          {
+                            "@": "String",
+                            "sval": "p"
+                          },
+                          {
+                            "@": "String",
+                            "sval": "effective_until"
+                          }
+                        ]
+                      },
+                      {
+                        "@": "FuncCall",
+                        "agg_distinct": false,
+                        "agg_star": false,
+                        "agg_within_group": false,
+                        "args": [
+                          {
+                            "@": "ColumnRef",
+                            "fields": [
+                              {
+                                "@": "String",
+                                "sval": "p"
+                              },
+                              {
+                                "@": "String",
+                                "sval": "effective_from"
+                              }
+                            ]
+                          }
+                        ],
+                        "func_variadic": false,
+                        "funcformat": {
+                          "#": "CoercionForm",
+                          "name": "COERCE_EXPLICIT_CALL"
+                        },
+                        "funcname": [
+                          {
+                            "@": "String",
+                            "sval": "lead"
+                          }
+                        ],
+                        "over": {
+                          "@": "WindowDef",
+                          "frameOptions": 1058,
+                          "orderClause": [
+                            {
+                              "@": "SortBy",
+                              "node": {
+                                "@": "ColumnRef",
+                                "fields": [
+                                  {
+                                    "@": "String",
+                                    "sval": "p"
+                                  },
+                                  {
+                                    "@": "String",
+                                    "sval": "effective_from"
+                                  }
+                                ]
+                              },
+                              "sortby_dir": {
+                                "#": "SortByDir",
+                                "name": "SORTBY_DEFAULT"
+                              },
+                              "sortby_nulls": {
+                                "#": "SortByNulls",
+                                "name": "SORTBY_NULLS_DEFAULT"
+                              }
+                            }
+                          ],
+                          "partitionClause": [
+                            {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "p"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "deployment_id"
+                                }
+                              ]
+                            },
+                            {
+                              "@": "ColumnRef",
+                              "fields": [
+                                {
+                                  "@": "String",
+                                  "sval": "p"
+                                },
+                                {
+                                  "@": "String",
+                                  "sval": "doc_id"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "NullTest",
+                    "arg": {
+                      "@": "ColumnRef",
+                      "fields": [
+                        {
+                          "@": "String",
+                          "sval": "p"
+                        },
+                        {
+                          "@": "String",
+                          "sval": "effective_until"
+                        }
+                      ]
+                    },
+                    "argisrow": false,
+                    "nulltesttype": {
+                      "#": "NullTestType",
+                      "name": "IS_NOT_NULL"
+                    }
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "p"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "declared_at"
+                      }
+                    ]
+                  }
+                }
+              ],
+              "whereClause": {
+                "@": "NullTest",
+                "arg": {
+                  "@": "ColumnRef",
+                  "fields": [
+                    {
+                      "@": "String",
+                      "sval": "p"
+                    },
+                    {
+                      "@": "String",
+                      "sval": "retracted_at"
+                    }
+                  ]
+                },
+                "argisrow": false,
+                "nulltesttype": {
+                  "#": "NullTestType",
+                  "name": "IS_NULL"
+                }
+              }
+            },
+            "replace": false,
+            "view": {
+              "@": "RangeVar",
+              "inh": true,
+              "relname": "document_effective_periods_live",
+              "relpersistence": "p",
+              "schemaname": "memory_v1"
+            },
+            "withCheckOption": {
+              "#": "ViewCheckOption",
+              "name": "NO_CHECK_OPTION"
+            }
+          },
+          "grain": "one currently known declared effective period",
+          "grain_tag": "document_effective_period_live",
+          "join_keys": [
+            {
+              "columns": [
+                "deployment_id",
+                "doc_id"
+              ],
+              "target": "memory_v1.documents_live"
+            },
+            {
+              "columns": [
+                "deployment_id",
+                "version_id"
+              ],
+              "target": "memory_v1.document_versions_visible"
+            }
+          ],
+          "name": "document_effective_periods_live",
+          "qualified_name": "memory_v1.document_effective_periods_live",
+          "row_key": [
+            "deployment_id",
+            "period_id"
           ]
         },
         {
@@ -39594,6 +43166,27 @@
               "name": "summary",
               "nullable": true,
               "type": "text"
+            },
+            {
+              "comment": "Stable source-chosen key of the section from a trailing heading attribute, unique within the structure generation, null when the heading declares none.",
+              "enum_values": null,
+              "name": "section_key",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of the section's own ordered block hashes with its children excluded, null until the section has been indexed.",
+              "enum_values": null,
+              "name": "own_content_hash",
+              "nullable": true,
+              "type": "text"
+            },
+            {
+              "comment": "Hash of every block hash in the section span including its children, null until the section has been indexed.",
+              "enum_values": null,
+              "name": "subtree_content_hash",
+              "nullable": true,
+              "type": "text"
             }
           ],
           "comment": "One row per section of the current ready representation of a live lineage, keyed by (deployment_id, section_id) and joined to documents_live on (deployment_id, doc_id). Sections of a superseded version, of a non-ready reading, of a superseded D79 structure generation, and of a forgotten lineage are all absent, so a node_path resolves to exactly one live tree. Character and block offsets are meaningful only against the named representation. The summary column is orientation text, not evidence, and the view carries no counts and no validity clocks.",
@@ -39679,6 +43272,18 @@
               {
                 "@": "String",
                 "sval": "summary"
+              },
+              {
+                "@": "String",
+                "sval": "section_key"
+              },
+              {
+                "@": "String",
+                "sval": "own_content_hash"
+              },
+              {
+                "@": "String",
+                "sval": "subtree_content_hash"
               }
             ],
             "query": {
@@ -40712,6 +44317,54 @@
                       }
                     ]
                   }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "s"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "section_key"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "s"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "own_content_hash"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "@": "ResTarget",
+                  "val": {
+                    "@": "ColumnRef",
+                    "fields": [
+                      {
+                        "@": "String",
+                        "sval": "s"
+                      },
+                      {
+                        "@": "String",
+                        "sval": "subtree_content_hash"
+                      }
+                    ]
+                  }
                 }
               ]
             },
@@ -41543,5 +45196,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2"
+  "surface_manifest_hash": "3e3fbb7e7c3721fa6a8e667fad7b4275906b18db7c7512f19012323964a28355"
 }

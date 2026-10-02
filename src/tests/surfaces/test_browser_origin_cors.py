@@ -210,9 +210,10 @@ def test_only_the_headers_a_browser_client_sends_are_advertised() -> None:
     """A header no route reads is an invitation to depend on one.
 
     `OPTIONS` is absent because the middleware answers preflight itself, so
-    advertising it names a method no route serves. `DELETE` is present
-    because `DELETE /documents/{doc_id}` is a route; it still requires a
-    write-scope credential, so advertising it grants a browser nothing.
+    advertising it names a method no route serves. `DELETE` and `PUT` are
+    present because `DELETE /documents/{doc_id}` and the D140 effective-period
+    routes exist; they still require a write-scope credential, so advertising
+    them grants a browser nothing.
     """
     app = _App()
 
@@ -223,7 +224,7 @@ def test_only_the_headers_a_browser_client_sends_are_advertised() -> None:
 
     installed = app.installed[0]
     assert installed["allow_headers"] == ["Authorization", "Content-Type"]
-    assert installed["allow_methods"] == ["GET", "POST", "DELETE"]
+    assert installed["allow_methods"] == ["GET", "POST", "PUT", "DELETE"]
 
 
 def test_cors_is_installed_outermost() -> None:

@@ -17,7 +17,7 @@ see what the memory itself would return.
 This page is the reference for the query space: [identity and
 versioning](#version-and-manifest-hash), [the grammar a statement must
 follow](#what-a-statement-may-contain), [limits](#limits), the
-[12 functions](#functions), the [25 views](#views) and the
+[15 functions](#functions), the [27 views](#views) and the
 [18 shipped saved queries](#shipped-saved-queries). The routes that run
 statements are in [SQL queries](/docs/reference/http-api/query); a walkthrough is in
 [Explore memory with SQL](/docs/guides/sql).
@@ -39,7 +39,7 @@ RememberStack has two deliberately separate truth layers. Claims are immutable s
 | Schema | `memory_v1` |
 | Schema major version | `1` |
 | Manifest contract | `memory_v1.manifest/2` |
-| Surface manifest hash (this release) | `d8be43966d90048ce3fc8ffe6dfdfc7943999fbf4f018ac2eb7998f2c995aae2` |
+| Surface manifest hash (this release) | `327694a447119ba34e5386b2886311a2350cd59b0fcaa501efc261932e42a78b` |
 | PostgreSQL major | 19 |
 
 The query space is described by a manifest checked into the engine. Its hash
@@ -73,13 +73,13 @@ error code.
 
 ### Relations
 
-A statement may read only the 25 views below, unqualified or as
+A statement may read only the 27 views below, unqualified or as
 `memory_v1.<view>`, and its own CTEs. Any other table, view or schema is
 `relation_not_allowed`.
 
 ### Built-in functions
 
-Besides the [12 public functions](#functions), these built-in functions are
+Besides the [15 public functions](#functions), these built-in functions are
 allowed (`function_not_allowed` otherwise). A `pg_catalog.` prefix is allowed;
 any other schema prefix is not.
 
@@ -154,7 +154,7 @@ SELECT DISTINCT entity_id FROM reach
 
 ### Public function placement
 
-The 12 public functions return rows, and they have extra rules
+The 14 set-returning public functions have extra rules
 (`function_placement_not_allowed` otherwise):
 
 - a call must be a `FROM` item of the top-level statement, or of a top-level
@@ -164,7 +164,12 @@ The 12 public functions return rows, and they have extra rules
 - every argument is a literal or a parameter (`$1`), optionally cast;
 - at most 3 calls per category per statement (`quota_exceeded`): nomination
   (`semantic_*`, `lexical_*`), body fetch (`fetch_chunk_bodies`), bitemporal
-  (`facts_as_of`), temporal (`canonical_bounds`), graph (`graph_*`).
+  (`facts_as_of`), temporal (`canonical_bounds`), graph (`graph_*`), time
+  scope (`versions_in_scope`, `effective_intervals`).
+
+The one scalar public function, `fact_in_scope_support`, is called like a
+built-in function: in a select list or a `WHERE` clause, with columns as
+arguments.
 
 ## Limits
 
@@ -218,8 +223,9 @@ Per-function caps, in addition:
 
 ## Functions
 
-The 12 public functions are set-returning: call them in `FROM`, following the
-[placement rules](#public-function-placement). The search functions nominate
+Fourteen public functions are set-returning: call them in `FROM`, following the
+[placement rules](#public-function-placement). One, `fact_in_scope_support`,
+returns a single boolean and goes in a select list or a `WHERE` clause. The search functions nominate
 candidates from the search index and then confirm each one against the
 database inside the same transaction, so a result never includes something the
 views would hide. What they did is reported in the result's
@@ -548,22 +554,114 @@ FROM graph_neighborhood($1::uuid, $2::uuid, 2)
 ORDER BY hops, relation_ids
 ```
 
+The three graph functions, `facts_as_of` and the fact views do not apply the
+evidence gate for [effective periods](/docs/concepts/time#when-a-version-is-in-force):
+they can return a fact whose only support is text that is not in force.
+Filter with [`fact_in_scope_support`](#fact_in_scope_support) when that
+matters. The HTTP graph routes and the assured operations apply the gate
+themselves.
+
+### versions_in_scope
+
+```sql
+versions_in_scope(deployment_id uuid, mode text [, at timestamptz
+  [, range_start timestamptz [, range_end timestamptz [, evaluated_at timestamptz
+  [, believed_at timestamptz [, doc_ids uuid[]]]]]]])
+```
+
+The document versions a time scope selects: the rule every time-scoped read
+uses, in SQL. `mode` is `current`, `at` (needs `at`), `overlap` (needs
+`range_start` and `range_end`, both included) or `history` (every interval
+that started by `evaluated_at`). `evaluated_at` defaults to the time the
+statement runs. Category: time scope.
+
+For a document with declared effective periods, a version is returned once
+for each of its in-force intervals that meets the scope. For every other
+document, the served version is returned with null bounds. Only versions that
+are not deleted and are fully processed are returned.
+
+Without `believed_at` the function reads the periods as known now and may
+cover the whole deployment. With `believed_at` it reads them as they were
+known at that instant, and `doc_ids` is required.
+
+| Column | Type |
+|---|---|
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `representation_id` | uuid |
+| `effective_from` | timestamptz |
+| `effective_until` | timestamptz |
+
+```sql
+SELECT doc_id, version_id, effective_from, effective_until
+FROM versions_in_scope($1::uuid, 'at', $2::timestamptz)
+ORDER BY doc_id, effective_from
+```
+
+Join `version_id` to [`chunks_all_versions_live`](#chunks_all_versions_live)
+to read the passages of the selected versions.
+
+### effective_intervals
+
+```sql
+effective_intervals(deployment_id uuid, doc_ids uuid[] [, believed_at timestamptz])
+```
+
+Every declared effective period of the given documents, with the end it
+works out to: the declared end, or else the next declared start in the
+document, or open. Periods of deleted versions are left out; processing
+status does not matter. `believed_at` (default: now) reads the periods as
+they were known at that instant. Category: time scope.
+
+| Column | Type |
+|---|---|
+| `doc_id` | uuid |
+| `version_id` | uuid |
+| `period_id` | uuid |
+| `effective_from` | timestamptz |
+| `effective_until` | timestamptz |
+| `until_declared` | boolean |
+
+### fact_in_scope_support
+
+```sql
+fact_in_scope_support(deployment_id uuid, fact_kind text, fact_id uuid, mode text
+  [, at timestamptz [, range_start timestamptz [, range_end timestamptz
+  [, evaluated_at timestamptz [, believed_at timestamptz]]]]]) → boolean
+```
+
+The evidence gate as a predicate. It is `true` when a claim that supports the
+fact occurs in a version the time scope selects, or in a document without
+declared effective periods. It is `false` when no supporting claim occurs in
+a live version at all. `fact_kind` is `relation` or `observation`; the
+scope arguments are those of `versions_in_scope`. It is a scalar function:
+call it in a select list or a `WHERE` clause.
+
+```sql
+SELECT fact_kind, fact_id, statement
+FROM facts_current AS f
+WHERE fact_in_scope_support(f.deployment_id, f.fact_kind, f.fact_id, 'current')
+LIMIT 50
+```
+
 ## Views
 
-The 25 views, with every column. Descriptions are the comments in the
+The 27 views, with every column. Descriptions are the comments in the
 manifest, as `GET /query/space` returns them. Every view has a
 `deployment_id` column; a deployment only ever sees its own rows.
 
 | View | Grain | Row key |
 |---|---|---|
 | [`changes_visible`](#changes_visible) | one externally visible change event | `object_kind`, `event_id` |
+| [`chunks_all_versions_live`](#chunks_all_versions_live) | one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage | `chunk_id` |
 | [`chunks_live`](#chunks_live) | one chunk coordinate in a current ready representation | `chunk_id` |
 | [`claim_occurrences_live`](#claim_occurrences_live) | one current claim occurrence | `claim_id`, `chunk_id`, `derivation_kind` |
 | [`claims_canonical`](#claims_canonical) | one historically visible claim with surviving lineage and its half-open canonical window | `claim_id` |
 | [`claims_live`](#claims_live) | one current-testimony claim | `claim_id` |
 | [`claims_visible_history`](#claims_visible_history) | one historically visible claim with surviving lineage | `claim_id` |
 | [`contradiction_members_current`](#contradiction_members_current) | one current contradiction-group member | `contradiction_group`, `fact_kind`, `fact_id` |
-| [`document_crossrefs_live`](#document_crossrefs_live) | one live document cross-reference | `crossref_id` |
+| [`document_crossrefs_live`](#document_crossrefs_live) | one live, resolved reference made by a live source version | `crossref_id` |
+| [`document_effective_periods_live`](#document_effective_periods_live) | one currently known declared effective period | `period_id` |
 | [`document_versions_visible`](#document_versions_visible) | one visible version of a live lineage | `version_id` |
 | [`documents_live`](#documents_live) | one live document lineage | `doc_id` |
 | [`entities_current`](#entities_current) | one externally visible survivor entity | `entity_id` |
@@ -600,6 +698,42 @@ One row per externally visible change event, keyed by the synthetic pair (deploy
 | `occurred_at` | timestamp with time zone | no | When the change occurred, which is a transaction-time instant and never world validity. |
 | `label` | text | no | Short human-readable label for the changed object, drawn only from objects that are themselves visible. |
 
+### chunks_all_versions_live
+
+One row per chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage, keyed by (deployment_id, chunk_id) and joined to document_versions_visible on (deployment_id, version_id). It is the relation time-scoped reads select from through versions_in_scope, so it includes versions that are no longer, or not yet, the lineage's served version; chunks_live keeps meaning served-version chunks. Like chunks_live it is metadata only and carries no authoritative body column. Chunks of deleted versions, of non-ready readings and of forgotten lineages are absent, and a section_id is exposed only when that section belongs to the reading's current structure generation. The view carries no counts and no validity clocks.
+
+- **Grain:** one chunk coordinate in the current ready representation of any non-deleted ready version of a live lineage (`chunk_any_ready_version`)
+- **Row key:** `deployment_id`, `chunk_id`
+- **Clock semantics:** `none`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the chunk. |
+| `chunk_id` | uuid | no | Stable identity of this retrieval unit within its version's current reading. |
+| `doc_id` | uuid | no | The live lineage the chunk belongs to. |
+| `version_id` | uuid | no | The non-deleted ready version the chunk was cut from, which need not be the lineage's served version. |
+| `representation_id` | uuid | no | The version's current ready reading whose block grid and offsets the chunk uses. |
+| `section_id` | uuid | yes | The section containing the chunk, null when the chunk has no section in the reading's current structure generation. |
+| `ordinal` | integer | no | Position of the chunk within its version. |
+| `block_start` | integer | no | First block ordinal packed into the chunk. |
+| `block_end` | integer | no | Last block ordinal packed into the chunk, inclusive. |
+| `char_start` | integer | no | Start character offset of the chunk within this representation's markdown. |
+| `char_end` | integer | no | End character offset of the chunk within this representation's markdown. |
+| `token_count` | integer | yes | Token length of the chunk, null when it was never measured. |
+| `chunk_content_hash` | text | no | Hash of the chunk's ordered block hashes, which is its content identity. |
+| `extraction_input_hash` | text | no | Hash of the stable extraction inputs, which is the reuse key that avoids re-extracting unchanged content. |
+| `embedding_text_hash` | text | yes | Hash of the exact text that was embedded under the D80 policy, null when the chunk has not been embedded. |
+| `location_facts` | jsonb | yes | The deterministic D80 location facts as structured data, null when no policy generation has stamped the chunk. |
+| `location_header` | text | yes | The deterministic D80 location header prepended to the embedded text; it is generated orientation text and is never asserted evidence. |
+| `embedding_input_policy_version` | text | yes | The D80 embedding-input policy in force for this chunk, null when unstamped. |
+| `policy_generation` | text | yes | The generation label of that policy application, null when unstamped. |
+| `embedder_generation` | text | yes | The embedder generation that produced the chunk vector, null when the chunk has not been embedded. |
+| `chunker_version` | text | yes | The chunker configuration that produced this cut, null on rows written before the stamp existed. |
+| `prefixer_version` | text | yes | The context-prefixer generation for this chunk, null when no prefix was generated. |
+| `created_at` | timestamp with time zone | no | When the chunk row was written, which is a processing instant rather than a world-time clock. |
+| `text_origin_at` | timestamp with time zone | yes | When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date. |
+
 ### chunks_live
 
 One row per chunk coordinate in the current ready representation of a live lineage, keyed by (deployment_id, chunk_id) and joined to documents_live on (deployment_id, doc_id) and to sections_live on (deployment_id, section_id). This relation is metadata only and deliberately carries no authoritative body column: chunk text is returned solely by the confirmed body-fetch path, which re-verifies the coordinate and the content and embedding hashes before any bytes leave the system. Chunks of superseded versions, non-ready readings, and forgotten lineages are absent, and a section_id is exposed only when that section belongs to the representation's current structure generation. The location header is generated orientation text, never evidence; the view carries no counts and no validity clocks.
@@ -634,6 +768,7 @@ One row per chunk coordinate in the current ready representation of a live linea
 | `chunker_version` | text | yes | The chunker configuration that produced this cut, null on rows written before the stamp existed. |
 | `prefixer_version` | text | yes | The context-prefixer generation for this chunk, null when no prefix was generated. |
 | `created_at` | timestamp with time zone | no | When the chunk row was written, which is a processing instant rather than a world-time clock. |
+| `text_origin_at` | timestamp with time zone | yes | When the words of the chunk were first written in this lineage as far as the engine knows, which dates its fresh claims; null on chunks cut before the time was recorded or when the version has no date. |
 
 ### claim_occurrences_live
 
@@ -797,22 +932,50 @@ One row per current member of a contradiction group, keyed by (deployment_id, co
 
 ### document_crossrefs_live
 
-One row per resolved cross-reference whose BOTH endpoint lineages are live, keyed by (deployment_id, crossref_id) and joined to documents_live on (deployment_id, from_doc_id) and (deployment_id, to_doc_id). An unresolved reference, a reference whose target was never ingested, or one whose source or target lineage has been forgotten is absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text is deliberately not exposed, because it is retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.
+One row per resolved reference made by a live source version to a live target lineage, keyed by (deployment_id, crossref_id) and joined to document_versions_visible on (deployment_id, from_version_id) and to documents_live on (deployment_id, to_doc_id). Only references of the active generation of their source version and origin appear, so a replaced reference set never shows through. An unresolved reference, a reference whose target was never ingested, and one whose source version or either lineage has been deleted or forgotten are absent rather than half-resolved, so this relation never reveals that a document once existed. The raw citation text and the target as named by the source are deliberately not exposed, because they are retained even after a target is forgotten; the bounded context is truncated to 500 characters. The creation clock is a processing instant, and the view carries no counts and asserts no facts.
 
-- **Grain:** one live document cross-reference (`document_crossref_live`)
+- **Grain:** one live, resolved reference made by a live source version (`document_crossref_live`)
 - **Row key:** `deployment_id`, `crossref_id`
 - **Clock semantics:** `none`
-- **Joins to:** `documents_live` on `deployment_id`, `from_doc_id`; `documents_live` on `deployment_id`, `to_doc_id`
+- **Joins to:** `documents_live` on `deployment_id`, `from_doc_id`; `document_versions_visible` on `deployment_id`, `from_version_id`; `documents_live` on `deployment_id`, `to_doc_id`
 
 | Column | Type | Null | Meaning |
 |---|---|---|---|
-| `deployment_id` | uuid | no | The deployment that owns both endpoint lineages. |
-| `crossref_id` | uuid | no | Stable identity of this cross-reference. |
-| `from_doc_id` | uuid | no | The live lineage that makes the reference. |
-| `to_doc_id` | uuid | no | The live lineage that is referenced. |
-| `kind` | text | no | What kind of reference this is, one of cites, links_to, attaches, or replies_to. Values: `cites`, `links_to`, `attaches`, `replies_to`. |
-| `context` | text | yes | Bounded surrounding context of the reference, truncated to 500 characters and null when none was captured. |
-| `created_at` | timestamp with time zone | no | When the reference was extracted, which is a processing instant. |
+| `deployment_id` | uuid | no | The deployment that owns the reference. |
+| `crossref_id` | uuid | no | Stable identity of this reference made by one source version. |
+| `from_doc_id` | uuid | no | The live lineage whose version makes the reference. |
+| `to_doc_id` | uuid | no | The live lineage the reference resolves to. |
+| `kind` | text | no | What the reference does, such as cites, links_to, refers_to, amends, or implements. Values: `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `context` | text | yes | Bounded surrounding text of the reference, truncated to 500 characters. |
+| `created_at` | timestamp with time zone | no | When the reference row was written, which is a processing instant rather than a world-time clock. |
+| `from_version_id` | uuid | no | The non-deleted version that makes the reference. |
+| `from_section_key` | text | yes | The section key of the source section, null when the reference is not attributed to a keyed section. |
+| `to_section_key` | text | yes | The section key the reference names in the target, null when it names the whole document. |
+| `binding` | text | no | Either floating, meaning whichever target versions are in force when read, or pinned, meaning one named target version. Values: `floating`, `pinned`. |
+| `origin` | text | no | Either extracted by the engine or supplied by a caller. Values: `extracted`, `supplied`. |
+| `source_label` | text | yes | The caller's own opaque type code for the reference, returned verbatim and null when none was supplied. |
+| `change_effective_from` | timestamp with time zone | yes | For an amends reference with a known date, when the change takes effect; null otherwise. |
+| `change_date_known` | boolean | yes | For an amends reference, whether the source states when the change takes effect; null for every other kind. |
+
+### document_effective_periods_live
+
+One row per currently known declared effective period, keyed by (deployment_id, period_id) and joined to document_versions_visible on (deployment_id, version_id). A period says when the publisher holds the version's text to be in force; it is declared by a caller and never inferred. The end is derived from the next declared start of a non-deleted version of the lineage when no end was declared, so declaring a new edition shortens its predecessor without a write to it. Retracted declarations, declarations of deleted versions and every declaration of a forgotten lineage are absent. The view carries no counts; fact validity windows are a separate clock.
+
+- **Grain:** one currently known declared effective period (`document_effective_period_live`)
+- **Row key:** `deployment_id`, `period_id`
+- **Clock semantics:** `declared_effective_periods`
+- **Joins to:** `documents_live` on `deployment_id`, `doc_id`; `document_versions_visible` on `deployment_id`, `version_id`
+
+| Column | Type | Null | Meaning |
+|---|---|---|---|
+| `deployment_id` | uuid | no | The deployment that owns the declaration. |
+| `period_id` | uuid | no | Stable identity of this declared effective period. |
+| `doc_id` | uuid | no | The live lineage whose version the period belongs to. |
+| `version_id` | uuid | no | The non-deleted version declared in force, of any processing status. |
+| `effective_from` | timestamp with time zone | no | Inclusive start of the period, as declared by the caller. |
+| `effective_until` | timestamp with time zone | yes | Exclusive end of the period: the declared end, else the next declared start in the lineage, null when the period is open. |
+| `until_declared` | boolean | no | True when effective_until was declared rather than derived from the next declared start. |
+| `declared_at` | timestamp with time zone | no | When the declaration became known, which is a belief-axis instant rather than a world-time clock. |
 
 ### document_versions_visible
 
@@ -1228,6 +1391,9 @@ One row per section of the current ready representation of a live lineage, keyed
 | `page_start` | integer | yes | First source page of the section, null when the source is not paginated. |
 | `page_end` | integer | yes | Last source page of the section, null when the source is not paginated. |
 | `summary` | text | yes | Section summary generated for navigation and context; it is labeled orientation text and is never asserted evidence. |
+| `section_key` | text | yes | Stable source-chosen key of the section from a trailing heading attribute, unique within the structure generation, null when the heading declares none. |
+| `own_content_hash` | text | yes | Hash of the section's own ordered block hashes with its children excluded, null until the section has been indexed. |
+| `subtree_content_hash` | text | yes | Hash of every block hash in the section span including its children, null until the section has been indexed. |
 
 ### testimony_currency_events_visible
 

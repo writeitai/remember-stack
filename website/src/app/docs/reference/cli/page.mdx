@@ -146,13 +146,15 @@ remember ingest FILE [--mime MIME] [--title TITLE]
                      [--source-modified-at ISO8601]
                      [--versioning-mode {snapshot,living}]
                      [--source-version-ref REF]
+                     [--version-key KEY]
+                     [--effective-from ISO8601 [--effective-until ISO8601]]
                      [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 Uploads one file and prints the new version as JSON:
 
 ```json
-{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot"}
+{"deployment_id":"…","doc_id":"…","version_id":"…","content_hash":"…","created":true,"mime":"text/markdown","title":"…","versioning_mode":"snapshot","parked":null,"version_key":null}
 ```
 
 `created` is `false` when these exact bytes are already stored for the same
@@ -167,14 +169,25 @@ document; nothing is processed again.
 | `--source-modified-at` | none | When the source last changed, as an ISO 8601 timestamp with a UTC offset of zero, for example `2026-09-21T14:00:00+00:00`. Needs `--source-kind`/`--source-ref`. |
 | `--versioning-mode` | `snapshot` | `snapshot` or `living`; `living` needs `--source-kind`/`--source-ref`. See [Updating a source](/docs/concepts/updating-sources). |
 | `--source-version-ref` | none | The source system's revision label. Needs `--source-kind`/`--source-ref`. |
+| `--version-key` | none | Your permanent name for this version, unique within the document, for example `edition-2`. A new key always creates a version. Needs `--source-kind`/`--source-ref`. |
+| `--effective-from` | none | When this version's text comes into force (included), as an ISO 8601 timestamp with a UTC offset of zero. Needs `--source-kind`/`--source-ref` and `--versioning-mode snapshot`. |
+| `--effective-until` | none | When it stops being in force (excluded), later than `--effective-from`. Omitted: until the next declared start. |
 
-Exit status 2 when the source arguments break these rules or the timestamp is
-not UTC; 1 when the file cannot be read or the upload fails.
+What a key and a period do: [Versions in force](/docs/reference/http-api/ingest#versions-in-force).
+
+Exit status 2 when the source arguments break these rules, a timestamp is
+not UTC, or a period is malformed; 1 when the file cannot be read or the
+upload fails, including a `409` for a key or period start already used by
+another version.
 
 ```bash
 remember ingest notes/2026-09-18-billing-sync.md \
   --title "Billing sync, 18 September" \
   --source-kind meeting-notes --source-ref billing-sync/2026-09-18
+
+remember ingest travel-policy-2026.md \
+  --source-kind intranet --source-ref policy/travel \
+  --version-key edition-2 --effective-from 2026-01-01T00:00:00+00:00
 ```
 
 It prints the `IngestedVersion` as one JSON line. When the file's

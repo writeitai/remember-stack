@@ -448,7 +448,7 @@ def test_a_claim_reused_across_versions_is_tested_per_occurrence(
             query="zanzibar rollout",
             k=5,
             channel="bm25",
-            **({} if filters is None else {"documents": filters}),
+            documents=filters,
         )
         return [
             (

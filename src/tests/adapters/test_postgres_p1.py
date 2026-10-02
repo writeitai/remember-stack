@@ -353,6 +353,17 @@ def seeded(database_engine: Engine) -> dict[str, object]:
                 "at": _NOW,
             },
         )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                " evidence_spans) SELECT deployment_id, chunk_id, claim_id,"
+                " jsonb_build_array(jsonb_build_object('char_start', char_start,"
+                " 'char_end', char_end)) FROM claims"
+                " WHERE claim_id IN (:both_claim, :one_claim)"
+            ),
+            {"both_claim": both_claim, "one_claim": one_claim},
+        )
         for entity_id in (entity_a, entity_b):
             seed_entity_mention(
                 connection=connection,

@@ -46,6 +46,14 @@ both clocks. Send them in UTC (`Z` or `+00:00`); a timestamp with no offset
 or another offset is refused with `422`. See
 [Time](/docs/concepts/time).
 
+Entity traversals (`/graph/neighborhood`, `/graph/path`) apply the
+[evidence gate](/docs/reference/assured-operations#text-in-force) at
+`valid_at`, reading effective periods as known at `believed_at`: a relation
+whose only supporting text is a document version not in force at `valid_at`
+is not an edge. A neighbourhood leaves such edges out before its budgets
+apply. A path search drops any path through such an edge after the search,
+and then marks the answer truncated.
+
 ## POST /graph/neighborhood
 
 Return the entities within a number of hops of one entity, nearest first,
@@ -182,7 +190,10 @@ cites B, B cites C, and so on.
 | `max_hops` | integer | no | `6` | 1 to 6. |
 
 Unknown fields are rejected. At most 10 paths are returned. This route takes
-no clocks; it reads the current document graph.
+no clocks; it reads the current document graph. An edge here is one per pair
+of documents and reference kind, among the resolved references made by the
+versions in force now. To follow references at section level, or at another
+time, use [`document_references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
 
 ### Response
 

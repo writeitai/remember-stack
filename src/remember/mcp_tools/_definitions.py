@@ -23,6 +23,8 @@ PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
 SEARCH_DOCUMENTS_TOOL_NAME: Final = "search_documents"
 ADJACENT_CHUNKS_TOOL_NAME: Final = "adjacent_chunks"
+SECTION_HISTORY_TOOL_NAME: Final = "section_history"
+DOCUMENT_REFERENCES_TOOL_NAME: Final = "document_references"
 MEMORY_WRITE_TOOL_NAMES: Final[frozenset[str]] = frozenset(
     {INGEST_TOOL_NAME, PIPELINE_READINESS_TOOL_NAME}
 )
@@ -50,6 +52,7 @@ TITLE_MAX_LEN: Final = 512
 SOURCE_KIND_MAX_LEN: Final = 128
 SOURCE_REF_MAX_LEN: Final = 512
 SOURCE_VERSION_REF_MAX_LEN: Final = 512
+VERSION_KEY_MAX_LEN: Final = 512
 VERSION_IDS_MAX: Final = 1000
 
 Permission = Literal["memory:read", "memory:write"]
@@ -120,6 +123,11 @@ _INGEST_DESCRIPTION: Final = (
     " a maximum body size (oversized or empty bodies map to structured"
     " body_too_large / empty_body errors). source_kind and source_ref must be"
     " supplied together when either is set (stable lineage)."
+    " version_key names this version for good (a new key always creates a"
+    " version; reusing a key is only accepted when re-sending that latest"
+    " version's bytes). effective_from/effective_until declare when this"
+    " version's text is in force (UTC; snapshot lineages only); without"
+    " effective_until it lasts until the next declared start."
     ' If the result has parked="no_route", the original is stored but its'
     " conversion is parked waiting for a conversion route for its MIME type."
     " Tell the user now instead of polling readiness."
@@ -186,6 +194,25 @@ _SEARCH_DOCUMENTS_DESCRIPTION: Final = (
     " guessing. Without query, results are newest first and cursor pages them."
 )
 
+_SECTION_HISTORY_DESCRIPTION: Final = (
+    "Follow one section of a document across its versions. A section key is"
+    " the stable id a heading carries in the source ({#per-diem} in"
+    ' "## Per-diem allowance {#per-diem}"). Returns one row per version the'
+    " time scope selects (default time: history): version_id, version_no,"
+    " version_key, the version's in-force intervals (effective), and status."
+    " status=present carries the section: title, own_content_hash (its own"
+    " text), subtree_content_hash (including subsections), changed and"
+    " own_changed against the previous row that held the key (null for the"
+    " first), and first_chunk_ids to read it. status=absent means that"
+    " version has no such section (removed); not_indexed means the version"
+    " has not been indexed for keys yet, so absence is unknown; processing"
+    " means the version is not readable yet. Rows are ordered by effective"
+    " start when the document declares effective periods (periodised=true),"
+    " otherwise by version number. The first page also lists amendments:"
+    " live references of kind amends that target this section, with"
+    " change_effective_from and change_date_known. Page with cursor."
+)
+
 _DATE_TIME: Final[dict[str, object]] = {
     "type": "string",
     "format": "date-time",
@@ -195,6 +222,45 @@ _DATE_TIME: Final[dict[str, object]] = {
 _STRING_LIST: Final[dict[str, object]] = {
     "type": "array",
     "items": {"type": "string", "minLength": 1},
+}
+
+_SEARCH_DOCUMENTS_TIME_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "default": {"mode": "current"},
+    "description": (
+        "For a document with declared effective periods, which editions are"
+        " candidates: current (default, in force now), at an instant, overlap"
+        " a window, or history. Other documents are unaffected."
+    ),
+    "oneOf": [
+        {
+            "properties": {"mode": {"const": "current"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "at"},
+                "at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "at"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "overlap"},
+                "from": {"type": "string", "format": "date-time"},
+                "to": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "from", "to"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {"mode": {"const": "history"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    ],
 }
 
 _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
@@ -226,11 +292,164 @@ _SEARCH_DOCUMENTS_INPUT_SCHEMA: Final[dict[str, object]] = {
             "enum": ["current", "all"],
             "description": "current (default) or all live versions.",
         },
+        "time": _SEARCH_DOCUMENTS_TIME_SCHEMA,
         "k": {"type": "integer", "minimum": 1, "maximum": 200},
         "cursor": {
             "type": "string",
             "minLength": 1,
             "description": "The previous page's cursor; only without query.",
+        },
+    },
+}
+
+_SECTION_HISTORY_TIME_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "default": {"mode": "history"},
+    "description": (
+        "Which versions: history (default, every version in force up to"
+        " now), current, at an instant, or overlap a window."
+    ),
+    "oneOf": [
+        {
+            "properties": {"mode": {"const": "current"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "at"},
+                "at": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "at"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {
+                "mode": {"const": "overlap"},
+                "from": {"type": "string", "format": "date-time"},
+                "to": {"type": "string", "format": "date-time"},
+            },
+            "required": ["mode", "from", "to"],
+            "additionalProperties": False,
+        },
+        {
+            "properties": {"mode": {"const": "history"}},
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+    ],
+}
+
+_SECTION_HISTORY_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["doc_id", "section_key"],
+    "properties": {
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id).",
+        },
+        "section_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "description": "The section key, without the leading #.",
+        },
+        "time": _SECTION_HISTORY_TIME_SCHEMA,
+        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The previous page's cursor.",
+        },
+    },
+}
+
+_DOCUMENT_REFERENCES_DESCRIPTION: Final = (
+    "List what a passage, section or document references and what references"
+    " it, across versions and time. Give chunk_id (a passage: its version and"
+    " section are the source) or doc_id with an optional section_key (the"
+    " section and its subsections). direction: outgoing, incoming or both"
+    " (default). time selects the source versions in force (default: current;"
+    " with chunk_id, the chunk version's own in-force time up to now). Each row"
+    " is one reference in one source window: kind (refers_to, amends,"
+    " implements, cites, links_to, attaches, replies_to), binding (floating:"
+    " whichever target versions are in force; pinned: one named version),"
+    " source (doc, version, section, window), named_target (the target exactly"
+    " as the source names it), status and target. A floating reference to a"
+    " document with effective periods yields one row per target version in"
+    " force during the source window, with applies_during and concurrent"
+    " (true when two target versions apply at once). status: resolved (target"
+    " section readable: first_chunk_ids to read it), target_processing (the"
+    " version in force is not readable yet), target_unavailable (not ingested,"
+    " deleted or forgotten), target_not_in_force, section_not_in_version,"
+    " section_not_indexed, pinned_version_unavailable. too_broad means the"
+    " section has too many subsections: ask about a narrower one. Page with"
+    " cursor; a short page with a cursor means keep paging."
+)
+
+_DOCUMENT_REFERENCES_TIME_SCHEMA: Final[dict[str, object]] = {
+    **_SECTION_HISTORY_TIME_SCHEMA,
+    "default": {"mode": "current"},
+    "description": (
+        "Which source versions: current (default; with chunk_id, the chunk"
+        " version's in-force time up to now), at an instant, overlap a window,"
+        " or history (every version in force up to now)."
+    ),
+}
+
+_DOCUMENT_REFERENCES_INPUT_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "chunk_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A passage's chunk id; or give doc_id instead.",
+        },
+        "doc_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The document's UUID (doc_id); or give chunk_id.",
+        },
+        "section_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[A-Za-z0-9_.:/-]+$",
+            "description": "With doc_id: the section key, without the leading #.",
+        },
+        "direction": {
+            "type": "string",
+            "enum": ["outgoing", "incoming", "both"],
+            "default": "both",
+        },
+        "kinds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "items": {
+                "type": "string",
+                "enum": [
+                    "cites",
+                    "links_to",
+                    "attaches",
+                    "replies_to",
+                    "refers_to",
+                    "amends",
+                    "implements",
+                ],
+            },
+            "description": "Only these reference kinds.",
+        },
+        "time": _DOCUMENT_REFERENCES_TIME_SCHEMA,
+        "k": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+        "cursor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The previous page's cursor.",
         },
     },
 }
@@ -377,6 +596,34 @@ _INGEST_PROPERTIES: Final[dict[str, object]] = {
             "Optional upstream revision label. Requires source_kind/source_ref."
         ),
     },
+    "version_key": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": VERSION_KEY_MAX_LEN,
+        "description": (
+            "Optional immutable name for this version, unique within the"
+            " document (e.g. an edition id). A new key always creates a"
+            " version; an existing key is refused unless it re-sends the latest"
+            " version's bytes. Requires source_kind/source_ref."
+        ),
+    },
+    "effective_from": {
+        "type": "string",
+        "format": "date-time",
+        "description": (
+            "Optional ISO-8601 UTC start (inclusive) of the period this"
+            " version's text is in force. Requires source_kind/source_ref and"
+            " versioning_mode snapshot."
+        ),
+    },
+    "effective_until": {
+        "type": "string",
+        "format": "date-time",
+        "description": (
+            "Optional ISO-8601 UTC end (exclusive) of that period; requires"
+            " effective_from. Omit it to last until the next declared start."
+        ),
+    },
 }
 _INGEST_BODY_SOURCES: Final = ("path", "text", "content_base64")
 
@@ -499,7 +746,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_INGEST_DESCRIPTION,
         input_schema=_INGEST_INPUT_SCHEMA,
         permission="memory:write",
-        tool_version=1,
+        tool_version=2,
         http_route="POST /ingest",
     ),
     ToolDefinition(
@@ -524,8 +771,24 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         description=_SEARCH_DOCUMENTS_DESCRIPTION,
         input_schema=_SEARCH_DOCUMENTS_INPUT_SCHEMA,
         permission="memory:read",
-        tool_version=1,
+        tool_version=2,
         http_route="POST /documents/search",
+    ),
+    ToolDefinition(
+        name=SECTION_HISTORY_TOOL_NAME,
+        description=_SECTION_HISTORY_DESCRIPTION,
+        input_schema=_SECTION_HISTORY_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="GET /documents/{doc_id}/sections/{section_key}/history",
+    ),
+    ToolDefinition(
+        name=DOCUMENT_REFERENCES_TOOL_NAME,
+        description=_DOCUMENT_REFERENCES_DESCRIPTION,
+        input_schema=_DOCUMENT_REFERENCES_INPUT_SCHEMA,
+        permission="memory:read",
+        tool_version=1,
+        http_route="POST /documents/references",
     ),
     ToolDefinition(
         name="resolve_entity",
@@ -553,11 +816,12 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
                     "minimum": 1,
                     "maximum": 400,
                 },
+                "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=2,
+        tool_version=3,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(

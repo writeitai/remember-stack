@@ -87,6 +87,7 @@ class OperationExecutor:
                 k=cast(int, arguments.get("k", 50)),
                 candidate_k=cast(int, arguments.get("candidate_k", 200)),
                 evaluated_at=evaluation,
+                time=selected_time,
             )
         if name is AssuredOperationName.FACTS_CONTEXT:
             return self._engine.default_facts_context(
@@ -109,6 +110,7 @@ class OperationExecutor:
                 k=50,
                 candidate_k=200,
                 evaluated_at=evaluation,
+                time=selected_time,
             )
             facts = self._engine.default_facts_context(
                 deployment_id=deployment_id,

@@ -73,8 +73,9 @@ its arguments change in a way an older engine could not handle.
 Every `tools/list` call reads `GET /deployment` and lists, in this order,
 each tool the deployment reports at the same version:
 
-1. `ingest`, `pipeline_readiness`, `delete_document` and `search_documents`
-   (only `pipeline_readiness` and `search_documents` with `--read-only`).
+1. `ingest`, `pipeline_readiness`, `delete_document`, `search_documents`,
+   `section_history` and `document_references` (all but `ingest` and
+   `delete_document` with `--read-only`).
 2. The four assured operations: `resolve_entity`, `claims_and_sources_context`,
    `facts_context`, `combined_context`.
 3. Context expansion: `adjacent_chunks`.
@@ -84,7 +85,7 @@ A tool the deployment does not serve, or serves at another version, is left
 out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
-lists 16 tools: 4 + 4 + 1 + 7.
+lists 18 tools: 6 + 4 + 1 + 7.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -169,8 +170,12 @@ Give exactly one body: `text`, `content_base64` or `path`.
 | `versioning_mode` | `"snapshot"` or `"living"` | no | Default `"snapshot"`. `"living"` needs `source_kind`/`source_ref`. |
 | `source_modified_at` | string | no | ISO 8601 timestamp in UTC (`Z` or `+00:00`). Needs `source_kind`/`source_ref`. |
 | `source_version_ref` | string | no | 1–512 characters. Needs `source_kind`/`source_ref`. |
+| `version_key` | string | no | 1–512 characters. A permanent name for this version, unique within the document. A new key always creates a version; an existing key is refused unless it re-sends the latest version's bytes. Needs `source_kind`/`source_ref`. |
+| `effective_from` | string | no | ISO 8601 timestamp in UTC: the start (included) of the period this version's text is in force. Needs `source_kind`/`source_ref` and `versioning_mode` `"snapshot"`. |
+| `effective_until` | string | no | ISO 8601 timestamp in UTC: the end (excluded) of that period, later than `effective_from`. Without it the period lasts until the next declared start. |
 
-Unknown keys are refused. The input schema enforces the one-body rule with
+Unknown keys are refused. What a key and a period do:
+[Versions in force](/docs/reference/http-api/ingest#versions-in-force). The input schema enforces the one-body rule with
 `oneOf`.
 
 Success result:
@@ -186,6 +191,7 @@ Success result:
   "title": "…",
   "versioning_mode": "snapshot",
   "parked": null,
+  "version_key": null,
   "pipeline": {
     "status": "accepted_not_ready",
     "next_tool": "pipeline_readiness",
@@ -300,19 +306,66 @@ Alice") rather than asking about its content.
 | `language`, `thread_ref` | string | no | Exact match. |
 | `doc_ids` | array of strings | no | Document UUIDs. |
 | `versions` | `"current"` or `"all"` | no | Default `"current"`. |
+| `time` | object | no | Default `{"mode": "current"}`. For a document with declared effective periods, which editions are candidates; the four forms are under [`facts_context`](#facts_context). |
 | `k` | integer | no | 1–200; default 20. |
 | `cursor` | string | no | The previous page's `cursor`; only without `query`. |
 
 Unknown keys are refused. The result is a
 [`DocumentSearchPage`](/docs/reference/result-types#documentsearchpage):
 `documents` (each with `doc_id`, `version_id`, `file_name`, `title`,
-`family`, `status`, `authors`, `recipients`, dates, `p3_path` and
-`overview`),
-`cursor`, `as_of` and `people_matched`. When a people filter matches several
+`family`, `status`, `authors`, `recipients`, dates, `p3_path`,
+`served_version`, `effective`, `matching_editions` and `overview`),
+`cursor`, `as_of`, `people_matched` and `scope_pending`. When a people filter matches several
 different people, `people_matched` lists each with a document count and the
 description tells the agent to narrow the filter instead of guessing. The
 token needs `read` scope. How matching and paging work:
 [`POST /documents/search`](/docs/reference/http-api/ingest#post-documentssearch).
+
+### `section_history`
+
+Follows one section of a document across its versions. A section key is the
+stable id a heading carries in the source: `per-diem` in
+`## 4. Per-diem allowance {#per-diem}`.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `doc_id` | string | yes | The document's UUID. |
+| `section_key` | string | yes | 1–200 characters from `A–Z a–z 0–9 _ . : / -`, without the `#`. |
+| `time` | object | no | Default `{"mode": "history"}`; the forms are under [`facts_context`](#facts_context). |
+| `k` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `cursor`. |
+
+The result is a [`SectionHistoryPage`](/docs/reference/result-types#sectionhistorypage):
+one row per version with `status` `present`, `absent`, `not_indexed` or
+`processing`, and on the first page the `amends` references aimed at the
+section. An unknown or deleted document is `document_not_found`. The token
+needs `read` scope. See
+[`GET …/sections/{section_key}/history`](/docs/reference/http-api/sections-and-references#get-documentsdoc_idsectionssection_keyhistory).
+
+### `document_references`
+
+Lists what a passage, section or document references and what references
+it, each reference resolved against the target versions in force during its
+source window.
+
+| Parameter | Type | Required | Limits and default |
+|---|---|---|---|
+| `chunk_id` | string | one of `chunk_id`, `doc_id` | A passage's chunk id: its version and section are the source. |
+| `doc_id` | string | one of `chunk_id`, `doc_id` | A document's UUID. |
+| `section_key` | string | no | With `doc_id`: the section and its subsections. |
+| `direction` | `"outgoing"`, `"incoming"` or `"both"` | no | Default `"both"`. |
+| `kinds` | array of strings | no | 1–7 of `cites`, `links_to`, `attaches`, `replies_to`, `refers_to`, `amends`, `implements`. |
+| `time` | object | no | Default `{"mode": "current"}`; with `chunk_id`, the chunk's version's in-force time up to now. |
+| `k` | integer | no | 1–200; default 50. |
+| `cursor` | string | no | The previous page's `cursor`. A short page with a cursor means keep paging. |
+
+The result is a [`DocumentReferencesPage`](/docs/reference/result-types#documentreferencespage).
+An unknown document is `document_not_found`, an unknown passage
+`chunk_not_found`. The token needs `read` scope. See
+[`POST /documents/references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
+
+Apart from the period arguments of `ingest`, no MCP tool changes effective
+periods or supplies references; use the HTTP API or the SDK for those.
 
 ### Assured operations
 
@@ -338,6 +391,7 @@ What sources said: current claims and the source passages that confirm them.
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
 | `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+| `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
 
@@ -364,6 +418,8 @@ with a bounded look at the entities' neighbourhood.
 ```
 
 Timestamps are ISO 8601 date-times. What each mode means: [Time](/docs/concepts/time).
+For documents with declared effective periods, `time` also decides which
+versions count as evidence: [Text in force](/docs/reference/assured-operations#text-in-force).
 
 #### `combined_context`
 
@@ -375,7 +431,7 @@ Both of the above in one call, returned as `ContextBundle/v2`.
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
-| `time` | object | no | As in `facts_context`. |
+| `time` | object | no | As in `facts_context`; applies to both halves. |
 
 For every operation, unknown keys are refused, and integers must be whole
 numbers.
@@ -457,7 +513,8 @@ them. Every tool returns the same JSON:
 | `path_unreadable` | `null` | no | The path does not exist or cannot be read. |
 | `path_not_regular_file` | `null` | no | Directory, pipe, device or other special file. |
 | `path_too_large` | `null` | no | Larger than the read limit. |
-| `document_not_found` | 404 | no | `delete_document`: no such document, or it is already deleted. |
+| `document_not_found` | 404 | no | `delete_document`, `section_history`, `document_references`: no such document, or it is deleted. |
+| `chunk_not_found` | 404 | no | `document_references`: no such passage, or its document is deleted. |
 | `forget_in_progress` | 503 | yes | `delete_document` while a hard forget is running. Nothing was deleted. |
 | `body_too_large` | 413 | no | The deployment refused the body as too large. |
 | `unauthorized` | 401 | no | The key is missing, wrong, expired or revoked. |

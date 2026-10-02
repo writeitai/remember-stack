@@ -211,6 +211,12 @@ class SnappedSection(BaseModel):
     ordinal: int = Field(ge=0)
     heading_level: int | None = Field(default=None, ge=1, le=6)
     normalized_title: str = ""
+    section_key: str | None = None
+    """D140: the heading's ``{#key}``; never produced by a model."""
+    own_content_hash: str | None = None
+    """D140: hash of the section's own ordered block hashes (children excluded)."""
+    subtree_content_hash: str | None = None
+    """D140: hash of the ordered block hashes of the whole span."""
 
 
 class SkeletonCheckRecord(BaseModel):

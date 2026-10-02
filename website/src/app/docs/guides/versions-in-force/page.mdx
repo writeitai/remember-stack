@@ -1,0 +1,333 @@
+export const metadata = {
+  title: "Read a document as of a date",
+  description: "Declare when each edition of a document is in force, read the text and facts in force now or at any date, withdraw an edition, follow a section across editions, and supply and follow references between documents.",
+};
+
+# Read a document as of a date
+
+<AppliesTo products={["self-hosted"]} />
+
+Dana keeps the company's travel policy in memory. Edition 1 has applied
+since 1 January 2024. Edition 2 was published on 15 November 2025, and it
+applies from 1 January 2026. Its section 4 raises the daily allowance, and
+its section 7 says that approvals follow section 3 of the expense policy.
+
+Ask "what is the daily allowance?" in December 2025 and the right answer
+comes from edition 1, even though edition 2 is newer and already stored. Ask
+the same question about February 2026 and the answer comes from edition 2.
+"Newest version wins" gets one of the two wrong. This guide shows how to
+tell RememberStack which edition is in force when, and how to read the text,
+the facts, a section's history and the references between documents at any
+date.
+
+The concepts are in [Time](/docs/concepts/time#when-a-version-is-in-force)
+and [Documents, versions and sources](/docs/concepts/documents-and-sources#editions-in-force).
+Setup is in the [Quickstart](/docs/start/quickstart).
+
+<Cloud>
+
+<Callout type="note">
+
+These features are newer than the engine remember.dev runs today; see
+[What remember.dev serves](/docs/cloud/compatibility).
+
+</Callout>
+
+</Cloud>
+
+## Mark the sections you want to follow
+
+Give a heading a stable key with a trailing `{#key}` block. The key is how
+you name the same section in every edition, and how other documents point
+at it.
+
+```markdown
+# Travel policy
+
+## 4. Per-diem allowance {#per-diem}
+
+The daily allowance for travel within the country is 45 EUR.
+
+## 7. Approvals {#approvals}
+
+Approvals follow section 3 of the expense policy.
+```
+
+The block is removed from the stored title ("4. Per-diem allowance"). Keys
+are 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`; see
+[Section keys](/docs/concepts/documents-and-sources#section-keys).
+
+## Declare when each edition is in force
+
+Ingest each edition as a version of one document, with a `version_key` to
+name it and `effective_from` for the day it comes into force. Periods need a
+source identity and `snapshot` mode (the default).
+
+```python
+from datetime import UTC, datetime
+
+from remember import Client
+
+memory = Client()
+edition_1 = memory.ingest(
+    "travel_v1.md",
+    source_kind="intranet",
+    source_ref="policy/travel",
+    source_modified_at=datetime(2023, 12, 10, tzinfo=UTC),
+    version_key="edition-1",
+    effective_from=datetime(2024, 1, 1, tzinfo=UTC),
+)
+edition_2 = memory.ingest(
+    "travel_v2.md",
+    source_kind="intranet",
+    source_ref="policy/travel",
+    source_modified_at=datetime(2025, 11, 10, tzinfo=UTC),
+    version_key="edition-2",
+    effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+)
+memory.wait_for_readiness([edition_1.version_id, edition_2.version_id])
+doc_id = edition_2.doc_id
+```
+
+The same with the CLI:
+
+```bash
+remember ingest travel_v2.md --source-kind intranet --source-ref policy/travel \
+  --source-modified-at 2025-11-10T00:00:00+00:00 \
+  --version-key edition-2 --effective-from 2026-01-01T00:00:00+00:00
+```
+
+Neither edition has an end. Edition 1's period ends where the next declared
+start begins, so declaring edition 2 from 1 January 2026 gives edition 1 the
+period 1 January 2024 to 1 January 2026, without a second call. You can
+declare editions in any order; an archive can be back-filled oldest last.
+
+Edition 2 is processed like any new version, but only the changed parts are
+read again. Sections whose words are the same as in edition 1 keep edition
+1's claims and their date, 10 December 2023, because that is when those
+words were written; see
+[Unchanged passages keep their date](/docs/concepts/documents-and-sources#unchanged-passages-keep-their-date).
+
+A key names one version for good. Sending `edition-2` again with the same
+bytes is a harmless retry. Sending it with different bytes, or sending
+`edition-1` again, is refused with `409` `version_key_conflict`. Two
+editions cannot declare the same start (`409` `effective_period_conflict`).
+
+## Read the text in force
+
+Search passages with a `time` scope. `at` reads the edition in force at an
+instant; `current`, the default, reads the edition in force now.
+
+```python
+december = memory.search_chunks(
+    query="daily allowance",
+    time={"mode": "at", "at": "2025-12-01T00:00:00Z"},
+)
+february = memory.search_chunks(
+    query="daily allowance",
+    time={"mode": "at", "at": "2026-02-01T00:00:00Z"},
+)
+for chunk in december.chunks:
+    print(chunk.version_id, chunk.effective, chunk.served_version)
+```
+
+On 1 December 2025, the passage comes from edition 1, with
+`effective: [{from: 2024-01-01, until: 2026-01-01, until_declared: false}]`
+and `served_version: false`, because edition 2 is already the newest
+processed version. On 1 February 2026 it comes from edition 2.
+
+Every result names the version it came from, and its `chunk_id` and offsets
+belong to that version. `adjacent_chunks` with that `chunk_id` reads the
+text around it in the same edition. A claim that both editions carry is
+returned once, with an entry in `occurrences` for each edition the scope
+selects.
+
+`overlap` reads every edition in force during a window, and `history` every
+edition that has been in force up to now. The same `time` works on
+`search_claims`, `claims_and_sources_context`, `combined_context` and
+`search_documents`. In `search_documents`, each result for this policy lists
+the editions that matched in `matching_editions`, and `p3_path` is `null`
+when the described edition is not the newest processed one.
+
+If the edition in force is still being processed, the policy contributes
+nothing for that time, rather than an outdated edition. The envelope's
+`freshness.scope_pending` names such documents, so an empty answer can be
+told apart from one that is not ready yet. A search with a `documents`
+filter naming the policy's `doc_id` always reports it there.
+
+## Read the facts in force
+
+`facts_context` takes the same `time`. A fact is returned only if a claim
+that supports it occurs in an edition in force for that time.
+
+```python
+before = memory.facts_context(
+    "per diem allowance", time={"mode": "at", "at": "2025-12-01T00:00:00Z"}
+)
+after = memory.facts_context(
+    "per diem allowance", time={"mode": "at", "at": "2026-02-01T00:00:00Z"}
+)
+```
+
+`before` holds the edition-1 allowance; the edition-2 allowance is left out,
+although edition 2 is stored and processed, because no edition in force on
+1 December 2025 supports it. `after` holds the edition-2 allowance. The
+evidence shown with each fact is limited to claims in editions in force,
+shown where they occur in those editions. See
+[Text in force](/docs/reference/assured-operations#text-in-force).
+
+## Withdraw an edition
+
+On 30 June 2027 the company withdraws the policy without a successor. Give
+edition 2 an end:
+
+```python
+from remember import EffectivePeriodInput
+
+memory.set_effective_periods(
+    doc_id=doc_id,
+    version_id=edition_2.version_id,
+    periods=[
+        EffectivePeriodInput(
+            effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+            effective_until=datetime(2027, 6, 30, tzinfo=UTC),
+        )
+    ],
+)
+```
+
+The call replaces edition 2's complete set of periods. From 30 June 2027,
+`current` returns nothing from the policy, and its facts lose their only
+support in force for `current`. `at` 1 May 2026 still reads edition 2.
+Nothing is reprocessed, and the change is recorded, not overwritten: a read
+that pages with a cursor keeps seeing the periods as they were when it
+started.
+
+Two other tools:
+
+- `set_effective_periods(…, periods=[])` leaves a version with no period.
+  The document still reads by period, so that version is never in
+  force; it does not become "current" again.
+- `clear_effective_time(doc_id=…)` withdraws every period of the document
+  and returns it to "the newest processed version is current". It is the
+  only way back.
+
+## Follow a section across editions
+
+```python
+history = memory.section_history(doc_id=doc_id, section_key="per-diem")
+for row in history.rows:
+    section = row.section
+    print(row.version_key, row.status, section and section.changed)
+```
+
+```text
+edition-1 present None
+edition-2 present True
+```
+
+Rows follow the editions' periods. `changed` compares the section with its
+subsections against the previous edition that had the key; `own_changed`
+compares only the section's own text. A row is `absent` when an edition has
+no such section any more, `not_indexed` when an edition stored before
+section keys existed has not been indexed yet, and `processing` while an
+edition is being processed. `first_chunk_ids` are the passages that hold the
+section's first block. The default scope is `history`.
+
+## Supply references
+
+Section 7 refers to section 3 of the expense policy. RememberStack does not
+find references in text yet, so you supply them, per version, as NDJSON:
+
+```python
+from remember import ReferenceInput, ReferenceTarget
+
+result = memory.set_references(
+    doc_id=doc_id,
+    version_id=edition_2.version_id,
+    references=[
+        ReferenceInput(
+            kind="refers_to",
+            from_section_key="approvals",
+            target=ReferenceTarget(
+                source_kind="intranet",
+                source_ref="policy/expense",
+                section_key="approvals-process",
+            ),
+            binding="floating",
+        )
+    ],
+)
+print(result.outcome, result.generation.status)
+```
+
+```bash
+curl -s -X PUT "$REMEMBER_API_URL/documents/$DOC_ID/versions/$VERSION_ID/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/x-ndjson" \
+  --data-binary '{"kind": "refers_to", "from_section_key": "approvals", "target": {"source_kind": "intranet", "source_ref": "policy/expense", "section_key": "approvals-process"}, "binding": "floating"}'
+```
+
+The target is named by its `source_kind` and `source_ref`, so it may not be
+ingested yet. Each call replaces the version's complete set, and the latest
+call wins. The set is checked against edition 2's sections and made active
+in one step by the pipeline; `reference_generations(doc_id=…, version_id=…)`
+shows whether it is `pending`, `active`, or `rejected` with the reason. One
+`from_section_key` the edition does not have rejects the whole set, and the
+previous set stays in place.
+
+A `floating` reference points at whichever editions of the target are in
+force when it is read. A `pinned` one names a single edition by its
+`version_key` (`target.version_key`). An `amends` reference must say whether
+its change has a known date (`change_date_known`, with
+`change_effective_from` when it is `true`); `section_history` of the target
+section lists such references in `amendments`.
+
+## Follow references
+
+```python
+page = memory.document_references(
+    doc_id=doc_id,
+    section_key="approvals",
+    direction="outgoing",
+    time={"mode": "overlap", "from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"},
+)
+for row in page.rows:
+    print(row.status, row.named_target.source_ref, row.target and row.target.applies_during)
+```
+
+While the expense policy is not ingested, the row's status is
+`target_unavailable`, and `named_target` still shows what the policy points
+at. Once the expense policy is ingested, the reference binds to it without
+any further call. If it also declares periods, the query returns one row per
+expense-policy edition in force during 2026, each with `applies_during`, the
+part of the year it covers, and `first_chunk_ids` to read the target
+section. Two expense-policy editions in force at the same time are both
+returned, marked `concurrent`.
+
+Other statuses say exactly what is missing: `target_processing`,
+`target_not_in_force`, `section_not_in_version`, `section_not_indexed` and
+`pinned_version_unavailable`; see
+[`POST /documents/references`](/docs/reference/http-api/sections-and-references#post-documentsreferences).
+`direction="incoming"` lists the references other documents make to this
+one. Start from a passage with `chunk_id=` instead of `doc_id=` to ask what
+that passage pointed to while its edition was in force.
+
+## In SQL
+
+The query space exposes the same rules:
+[`versions_in_scope`](/docs/reference/query-space#versions_in_scope) lists
+the versions a scope selects, [`effective_intervals`](/docs/reference/query-space#effective_intervals)
+the periods with their derived ends,
+[`document_effective_periods_live`](/docs/reference/query-space#document_effective_periods_live)
+the current declarations, and [`fact_in_scope_support`](/docs/reference/query-space#fact_in_scope_support)
+the evidence gate for facts. `sections_live` carries `section_key`.
+
+## Next
+
+- [Section history and references](/docs/reference/http-api/sections-and-references):
+  every field and status.
+- [Ingest, readiness and documents](/docs/reference/http-api/ingest#versions-in-force):
+  the rules for version keys and periods, and the period and reference
+  routes.
+- [Ask about the past](/docs/guides/ask-about-the-past): facts at a date.

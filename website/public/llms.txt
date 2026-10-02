@@ -18,7 +18,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Claims: what a source said](https://remember.dev/docs/concepts/claims): How RememberStack turns documents into standalone, source-grounded statements, what it leaves out, and why a claim never changes.
 - [Facts: what is held true](https://remember.dev/docs/concepts/facts): How RememberStack combines claims from many sources into relations and observations, keeps them current, and counts their support.
 - [Entities and identity](https://remember.dev/docs/concepts/entities): How RememberStack decides that two mentions are the same person, project or thing, and why a query never guesses between two.
-- [Time](https://remember.dev/docs/concepts/time): How RememberStack records when something was true, when a source said it, and when the memory learned it, and how you ask about any of the three.
+- [Time](https://remember.dev/docs/concepts/time): How RememberStack records when something was true, when a source said it, when the memory learned it, and when a document version is in force, and how you ask about each.
 - [Evidence and provenance](https://remember.dev/docs/concepts/evidence): How every fact and claim in RememberStack points back to exact characters in a specific version of a source, and how to follow that path.
 - [Contradictions, corroboration and supersession](https://remember.dev/docs/concepts/contradictions): How RememberStack shows disagreement between sources instead of hiding it, how it counts independent support, and how it tells a change from a conflict.
 - [Updating a source: snapshot and living](https://remember.dev/docs/concepts/updating-sources): What a new version of a document means to RememberStack, and how a living source retracts facts when its content is removed.
@@ -37,6 +37,7 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 - [Wait until a document is queryable](https://remember.dev/docs/guides/wait-for-readiness): Poll readiness for the versions you ingested, with a timeout that fits real processing times, and stop on failures instead of waiting forever.
 - [Give an agent context](https://remember.dev/docs/guides/agent-context): Pick the assured operation that fits the question, size it to your token budget, and put its result into a prompt without losing what it tells you.
 - [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past): Ask what was true at a date, during a period, or ever, what sources said at the time, and what the memory believed on an earlier day.
+- [Read a document as of a date](https://remember.dev/docs/guides/versions-in-force): Declare when each edition of a document is in force, read the text and facts in force now or at any date, withdraw an edition, follow a section across editions, and supply and follow references between documents.
 - [Cite the source of an answer](https://remember.dev/docs/guides/cite-sources): Follow a fact to the claims behind it, the document they came from and the exact passage, and show why the memory holds it.
 - [Handle unknowns and ambiguity](https://remember.dev/docs/guides/unknowns-and-ambiguity): Tell "nothing known" from "no such thing" from "could not look", handle names that match more than one entity, and brief your agent so it never fills a gap by guessing.
 - [Explore memory with SQL](https://remember.dev/docs/guides/sql): Discover the query space, write your first SQL query over current facts, combine search with joins, and read the limits and errors.
@@ -61,7 +62,8 @@ Agents: resolve entities first (`resolve_entity`), then ask for facts (`facts_co
 ## Reference
 
 - [HTTP API conventions](https://remember.dev/docs/reference/http-api): Base URL, authentication, scopes, errors, limits and the other rules every RememberStack HTTP route follows.
-- [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest): The routes that add a document, report how far its processing has got, list what the deployment holds, and delete a document.
+- [Ingest, readiness and documents](https://remember.dev/docs/reference/http-api/ingest): The routes that add a document, report how far its processing has got, list, find and delete documents, declare when versions are in force, and supply a version's references.
+- [Section history and references](https://remember.dev/docs/reference/http-api/sections-and-references): Follow one keyed section of a document across its versions, and read what a passage, section or document references and what references it, at any point in time.
 - [Assured operation routes](https://remember.dev/docs/reference/http-api/operations): List the four assured operations and run one over JSON arguments.
 - [Entities and facts](https://remember.dev/docs/reference/http-api/entities-and-facts): Resolve a name to entities, look up relations and observations, hydrate a relation down to its sources, and read a relation's decision history.
 - [Search and adjacent chunks](https://remember.dev/docs/reference/http-api/search): Search claims and source chunks by meaning or by keyword, and fetch the chunks around one you found.

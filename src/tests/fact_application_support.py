@@ -21,6 +21,7 @@ from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
 from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
 from rememberstack.spine.fact_applications import FactApplicationCatalog
+from tests.surfaces.lineage_seed import seed_live_document_lineage
 
 
 class WriterCase:
@@ -108,8 +109,19 @@ class WriterCase:
         """
         claim = uuid4()
         doc_id = uuid4()
+        chunk = uuid4()
         instant = datetime(2022, 5, day, tzinfo=timezone.utc)
         with self.engine.begin() as connection:
+            # the live source text E2 extracted the claim from (D140 §8.1:
+            # a fact is shown only with in-scope supporting text)
+            seed_live_document_lineage(
+                connection=connection,
+                deployment_id=self.dep,
+                doc_id=doc_id,
+                chunk_ids=(chunk,),
+                label=f"writer-{claim.hex[:12]}",
+                at=instant,
+            )
             connection.execute(
                 text("""INSERT INTO claims(claim_id,deployment_id,doc_id,chunk_id,claim_text,source_span,
                 char_start,char_end,anchor_ok,window_membership_ok,extractor_version,asserted_at,
@@ -120,7 +132,7 @@ class WriterCase:
                     "claim": claim,
                     "dep": self.dep,
                     "doc": doc_id,
-                    "chunk": uuid4(),
+                    "chunk": chunk,
                     "at": instant,
                     "end": None if precision == "open" else instant,
                     "precision": precision,
@@ -128,6 +140,14 @@ class WriterCase:
                     if precision == "open"
                     else "event_time",
                 },
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                    " evidence_spans) VALUES (:dep, :chunk, :claim,"
+                    ' \'[{"char_start": 0, "char_end": 28}]\'::jsonb)'
+                ),
+                {"dep": self.dep, "chunk": chunk, "claim": claim},
             )
         item: dict[str, object] = {
             "subject": {"name": "Nate"},

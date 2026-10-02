@@ -13,11 +13,12 @@ that hold for all of its routes: where to send requests, how to authenticate,
 which credential may call what, how errors look, and which limits apply. The
 group pages then describe each route.
 
-The API has 28 documented operations:
+The API has 35 documented operations:
 
 | Group | Page | Routes |
 |---|---|---|
-| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `DELETE /documents/{doc_id}` |
+| Ingest, readiness, documents | [Ingest](/docs/reference/http-api/ingest) | `POST /ingest`, `POST /readiness`, `GET /documents`, `POST /documents/search`, `DELETE /documents/{doc_id}`, `PUT /documents/{doc_id}/versions/{version_id}/effective-periods`, `DELETE /documents/{doc_id}/effective-periods`, `PUT` and `GET /documents/{doc_id}/versions/{version_id}/references` |
+| Sections and references | [Section history and references](/docs/reference/http-api/sections-and-references) | `GET /documents/{doc_id}/sections/{section_key}/history`, `POST /documents/references` |
 | Assured operations | [Operations](/docs/reference/http-api/operations) | `GET /operations`, `POST /operations/{name}` |
 | Entities and facts | [Entities and facts](/docs/reference/http-api/entities-and-facts) | `GET /resolve`, `GET /lookup/relations`, `GET /lookup/observations`, `GET /hydrate/relation/{relation_id}`, `GET /transcript/relation/{relation_id}` |
 | Search | [Search](/docs/reference/http-api/search) | `GET` and `POST /search/claims`, `GET` and `POST /search/chunks`, `GET /chunks/{chunk_id}/adjacent`, `POST /chunks/adjacent` |
@@ -178,6 +179,13 @@ their arguments do not fit in a query string.
 | `POST` | `/query/saved/{namespace}/{name}/run` | `read` |
 | `POST` | `/readiness` | `read` |
 | `GET` | `/documents` | `read` |
+| `POST` | `/documents/search` | `read` |
+| `GET` | `/documents/{doc_id}/sections/{section_key}/history` | `read` |
+| `POST` | `/documents/references` | `read` |
+| `GET` | `/documents/{doc_id}/versions/{version_id}/references` | `read` |
+| `PUT` | `/documents/{doc_id}/versions/{version_id}/references` | `write` |
+| `PUT` | `/documents/{doc_id}/versions/{version_id}/effective-periods` | `write` |
+| `DELETE` | `/documents/{doc_id}/effective-periods` | `write` |
 | `DELETE` | `/documents/{doc_id}` | `write` |
 | `GET` | `/operations` | `read` |
 | `POST` | `/operations/{name}` | `read` for the four shipped operations (see below) |
@@ -197,7 +205,10 @@ Any route added later without a classification also requires `write`.
 
 Requests with a body send JSON (`Content-Type: application/json`), except
 `POST /ingest`, which sends the raw file bytes
-(`Content-Type: application/octet-stream`). Every response body is JSON.
+(`Content-Type: application/octet-stream`), and
+`PUT /documents/{doc_id}/versions/{version_id}/references`, which sends
+NDJSON, one JSON object per line (`Content-Type: application/x-ndjson`).
+Every response body is JSON.
 
 Timestamps are ISO 8601 strings. Wherever a timestamp is part of a result, it
 is UTC. Identifiers are UUID strings.
@@ -330,16 +341,26 @@ existing version with `"created": false` and starts no new work. For a
 document with a stable source identity (`source_kind` and `source_ref`), bytes
 identical to its latest version are the same no-op; changed bytes become a new
 version of the same document, and so do bytes that match only an older
-version (a revert). See [Ingest](/docs/reference/http-api/ingest#post-ingest).
+version (a revert). A `version_key` new to the document always creates a
+version, even for identical bytes; sending the latest version's key again
+with the same bytes is the same no-op, so a retry stays safe. See
+[Ingest](/docs/reference/http-api/ingest#post-ingest).
 
-Every other route only reads, so repeating it is safe.
+The two `PUT` routes replace a version's complete set of effective periods
+or references, so repeating one with the same body changes nothing.
+`DELETE /documents/{doc_id}/effective-periods` repeated finds nothing left
+to withdraw. Every other route except `DELETE /documents/{doc_id}` only
+reads, so repeating it is safe.
 
 ## Pagination and truncation
 
 Results are bounded everywhere, and a bound is never silent.
 
-- **`GET /documents`** pages with an opaque `cursor`. Pass the `cursor` from
-  one page to get the next; `null` means there is no next page.
+- **`GET /documents`**, `POST /documents/search` (without a query),
+  `section_history` and `document_references` page with an opaque `cursor`.
+  Pass the `cursor` from one page to get the next; `null` means there is no
+  next page. A page of the last three can hold fewer rows than asked for and
+  still carry a `cursor`.
 - **Envelope results** carry a `truncation` block when a cap applied:
   `truncated`, `returned`, `estimated_total`, `total_is_exact`, an optional
   `continuation` and an optional `reason`. Only `POST /graph/neighborhood`
@@ -381,7 +402,7 @@ call it (`REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS`, a comma-separated list of
 exact `https` origins, or `http` origins on `localhost`, `127.0.0.1` or
 `[::1]`; empty by default). For those origins it allows:
 
-- methods `GET`, `POST` and `DELETE` (`DELETE` still needs a `write` credential),
+- methods `GET`, `POST`, `PUT` and `DELETE` (`PUT` and `DELETE` still need a `write` credential),
 - request headers `Authorization` and `Content-Type`,
 - no credentialed (cookie) mode,
 - preflight caching for 600 seconds.
