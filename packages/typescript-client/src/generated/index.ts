@@ -29,6 +29,7 @@ export type { DocumentSearchPage } from './models/DocumentSearchPage';
 export type { DocumentSearchPerson } from './models/DocumentSearchPerson';
 export type { DocumentSearchRequest } from './models/DocumentSearchRequest';
 export type { DocumentSearchResult } from './models/DocumentSearchResult';
+export type { DocumentStatusFilter } from './models/DocumentStatusFilter';
 export type { DocumentSummary } from './models/DocumentSummary';
 export type { DocumentVersionSummary } from './models/DocumentVersionSummary';
 export type { EntityCandidate } from './models/EntityCandidate';
@@ -85,6 +86,7 @@ export type { OutputDocumentSearchPage } from './models/OutputDocumentSearchPage
 export type { OutputDocumentSearchPerson } from './models/OutputDocumentSearchPerson';
 export type { OutputDocumentSearchRequest } from './models/OutputDocumentSearchRequest';
 export type { OutputDocumentSearchResult } from './models/OutputDocumentSearchResult';
+export type { OutputDocumentStatusFilter } from './models/OutputDocumentStatusFilter';
 export type { OutputDocumentSummary } from './models/OutputDocumentSummary';
 export type { OutputDocumentVersionSummary } from './models/OutputDocumentVersionSummary';
 export type { OutputEntityCandidate } from './models/OutputEntityCandidate';

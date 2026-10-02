@@ -1420,6 +1420,16 @@
         "type": "object",
         "x-extra": "forbid"
       },
+      "DocumentStatusFilter": {
+        "enum": [
+          "ingesting",
+          "converting",
+          "structuring",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
+      },
       "DocumentSummary": {
         "additionalProperties": false,
         "properties": {
@@ -4657,6 +4667,16 @@
         "title": "DocumentSearchResult",
         "type": "object",
         "x-extra": "forbid"
+      },
+      "OutputDocumentStatusFilter": {
+        "enum": [
+          "ingesting",
+          "converting",
+          "structuring",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
       },
       "OutputDocumentSummary": {
         "additionalProperties": false,

@@ -1420,6 +1420,16 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "DocumentStatusFilter": {
+      "enum": [
+        "ingesting",
+        "converting",
+        "structuring",
+        "ready",
+        "failed"
+      ],
+      "type": "string"
+    },
     "DocumentSummary": {
       "additionalProperties": false,
       "properties": {

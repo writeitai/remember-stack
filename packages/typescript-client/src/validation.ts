@@ -144,3 +144,41 @@ export function validateSchema({ schema, value }: { schema: object; value: unkno
   const validate = ajv.compile(schema);
   if (!validate(value)) fail({ detail: 'tool arguments do not match the catalogue schema' });
 }
+
+/** Compare JSON defaults recursively without relying on object key ordering. */
+function equalJson({left,right}:{left:unknown;right:unknown}):boolean {
+  if(left===right)return true;
+  if(Array.isArray(left)&&Array.isArray(right))return left.length===right.length&&left.every((item,index)=>equalJson({left:item,right:right[index]}));
+  if(left&&right&&typeof left==='object'&&typeof right==='object') {
+    const a=left as Record<string,unknown>,b=right as Record<string,unknown>;
+    return Object.keys(a).length===Object.keys(b).length&&Object.keys(a).every(key=>key in b&&equalJson({left:a[key],right:b[key]}));
+  }
+  return false;
+}
+/** Match Python model_dump's recursive omission of nulls or default-valued fields. */
+function dump({value,schema,excludeNone,excludeDefaults}:{value:unknown;schema:Schema;excludeNone:boolean;excludeDefaults:boolean}):unknown {
+  schema=resolveSchema({schema}).schema;
+  const variants=schema.anyOf??schema.oneOf;
+  if(variants) {
+    for(const variant of variants) {
+      const validate=ajv.compile({$defs:schemas.$defs,...variant});
+      if(validate(value))return dump({value,schema:variant,excludeNone,excludeDefaults});
+    }
+  }
+  if(Array.isArray(value))return value.map(item=>dump({value:item,schema:schema.items??{},excludeNone,excludeDefaults}));
+  if(value!==null&&typeof value==='object') {
+    const result:Record<string,unknown>={};
+    for(const [key,item]of Object.entries(value)) {
+      const field=schema.properties?.[key]??{};
+      if(excludeNone&&item===null)continue;
+      if(excludeDefaults&&'default'in field&&equalJson({left:item,right:normalize({value:field.default,schema:field})}))continue;
+      Object.defineProperty(result,key,{value:dump({value:item,schema:field,excludeNone,excludeDefaults}),enumerable:true});
+    }
+    return result;
+  }
+  return value;
+}
+/** Validate and render nested model inputs from the original source schema. */
+export function modelDump({name,value,excludeNone=false,excludeDefaults=false}:{name:string;value:unknown;excludeNone?:boolean;excludeDefaults?:boolean}):Record<string,unknown> {
+  return dump({value:validateModel({name,value}),schema:definitions[name]!,excludeNone,excludeDefaults}) as Record<string,unknown>;
+}

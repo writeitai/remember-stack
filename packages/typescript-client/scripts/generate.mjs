@@ -127,6 +127,10 @@ async function main() {
         await rm(join(generated,name));
       }
     }
+    const publicTypes = Object.keys(input.components.schemas).filter(name=>name.startsWith('Output') && !['OutputKeyClaims','OutputIssuerMetadata','OutputStoredCredentials','OutputJsonValue','OutputResolvedProject'].includes(name)).sort().map(name=>`export type { ${name} as ${name.slice(6)}, ${name.slice(6)} as ${name.slice(6)}Input } from './generated';`).join('\n') + "\nexport type { JsonValue } from './generated';\n";
+    const publicTypesPath=join(root,'src/public-types.generated.ts');
+    if(check) {if(await readFile(publicTypesPath,'utf8')!==publicTypes) throw new Error('Public model export drift');}
+    else await writeFile(publicTypesPath,publicTypes);
     const contracts=['schemas','constants','catalogue','metadata','routes','parity'];
     for (const name of contracts) {
       const content='/* Generated from Python; regenerate with npm run generate. */\nexport default '+(await readFile(join(root,`contracts/${name}.json`),'utf8')).trim()+';\n';

@@ -6,3 +6,6 @@ export * from '../src/http';
 export * from '../src/credentials';
 export * from '../src/issuer';
 export * from '../src/connection';
+export * from '../src/catalogue';
+export * from '../src/tool-errors';
+export * from '../src/client';

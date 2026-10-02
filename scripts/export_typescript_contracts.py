@@ -224,10 +224,12 @@ def client_models() -> dict[str, Any]:
                     ] = True
     from remember.models import ClaimValidPrecision
     from remember.models import TemporalMatch
+    from remember.models import DocumentStatusFilter
 
     for name, model in {
         "ClaimValidPrecision": ClaimValidPrecision,
         "TemporalMatch": TemporalMatch,
+        "DocumentStatusFilter": DocumentStatusFilter,
     }.items():
         schema = TypeAdapter(model).json_schema()
         models.update(schema.pop("$defs", {}))
