@@ -1,8 +1,10 @@
 """D61 seam for the P1 search indexes: chunks, claims, facts (D8)."""
 
+from collections.abc import Iterable
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -198,6 +200,72 @@ class P1Nomination:
     #: relation be confirmed against a current observation that happens to
     #: share it. Empty for channels whose id IS the identity.
     qualifier: str | None = None
+
+
+class P1Termination(StrEnum):
+    """Why one ranked P1 search stopped (D142 §8.6).
+
+    ``k_filled`` and ``exhausted`` are complete answers; every other reason is
+    an early stop that callers must disclose as truncation.
+    """
+
+    K_FILLED = "k_filled"
+    EXHAUSTED = "exhausted"
+    WORK_BUDGET = "work_budget"
+    DEADLINE = "deadline"
+    ANN_SCAN_BOUND = "ann_scan_bound"
+    PLAN_REJECTED = "plan_rejected"
+
+    @property
+    def complete(self) -> bool:
+        """Whether the search proved it returned every eligible row it should."""
+        return self in {P1Termination.K_FILLED, P1Termination.EXHAUSTED}
+
+
+@dataclass(frozen=True)
+class P1SearchAccount:
+    """The honest account of one ranked P1 search (D142 §8.6).
+
+    ``fetched`` counts index candidates read, ``confirmed`` the eligible ones
+    kept, ``rejected`` the rest; ``fetch_rounds`` the cursor fetches;
+    ``coverage_rows`` mention/endpoint rows read for entity tiers. ``limits``
+    records the effective bounds the search ran under.
+    """
+
+    termination: P1Termination
+    fetched: int = 0
+    confirmed: int = 0
+    rejected: int = 0
+    fetch_rounds: int = 0
+    coverage_rows: int = 0
+    limits: Mapping[str, float] | None = None
+
+
+class P1SearchResult(tuple[P1Nomination, ...]):
+    """Ranked nominations plus the search's account (D142 §8.6).
+
+    A tuple subclass, so every caller that iterates nominations keeps working;
+    callers that propagate truncation read ``account``. A plain tuple from a
+    test double reads as an exhausted search through :func:`search_account`.
+    """
+
+    account: P1SearchAccount
+
+    def __new__(
+        cls, rows: Iterable[P1Nomination], *, account: P1SearchAccount
+    ) -> "P1SearchResult":
+        """Build the result from its rows and account."""
+        result = super().__new__(cls, tuple(rows))
+        result.account = account
+        return result
+
+
+def search_account(result: Iterable[P1Nomination]) -> P1SearchAccount:
+    """The account of a ranked search result, exhausted for plain tuples."""
+    account = getattr(result, "account", None)
+    if isinstance(account, P1SearchAccount):
+        return account
+    return P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 
 @runtime_checkable
