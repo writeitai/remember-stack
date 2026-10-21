@@ -490,7 +490,7 @@ class PostgresP1Index:
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed semantic claim IDs."""
         return _ids(
             self.search_claims_scored(
@@ -512,7 +512,7 @@ class PostgresP1Index:
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed BM25 claim IDs."""
         return _ids(
             self.search_claims_lexical_scored(
@@ -535,7 +535,7 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed semantic chunk IDs."""
         return _ids(
             self.search_chunks_scored(
@@ -559,7 +559,7 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed BM25 chunk IDs."""
         return _ids(
             self.search_chunks_lexical_scored(
@@ -575,7 +575,7 @@ class PostgresP1Index:
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed current fact IDs."""
         return _ids(
             self.search_facts_scored(

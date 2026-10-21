@@ -41,7 +41,11 @@ from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.assured_operations import HistoryFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import GraphQueries
@@ -51,6 +55,8 @@ from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
 from tests.database_reset import reset_database
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5a000000-0000-0000-0000-000000000001")
@@ -92,7 +98,7 @@ class _FactIndex:
         entity_ids: tuple[str, ...] = (),
         deadline: float | None = None,
         **_: object,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         self.requested_k.append(k)
         self.requested_entity_ids.append(entity_ids)
         self.requested_deadlines.append(deadline)
@@ -102,32 +108,38 @@ class _FactIndex:
             for kind, fact_id in self.fact_keys
             if allowed is None or (kind, fact_id) in allowed
         )[:k]
-        return tuple(
-            P1Nomination(
-                item_id=fact_id,
-                rank=rank,
-                score=1.0 / rank,
-                channel="semantic",
-                qualifier=kind,
-            )
-            for rank, (kind, fact_id) in enumerate(selected, start=1)
+        return P1SearchResult(
+            tuple(
+                P1Nomination(
+                    item_id=fact_id,
+                    rank=rank,
+                    score=1.0 / rank,
+                    channel="semantic",
+                    qualifier=kind,
+                )
+                for rank, (kind, fact_id) in enumerate(selected, start=1)
+            ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
-    def search_facts(self, *, k: int, **_: object) -> tuple[str, ...]:
+    def search_facts(self, *, k: int, **_: object) -> P1SearchIds:
         """Satisfy the legacy primitive port; D87 never calls this method."""
-        return tuple(fact_id for _kind, fact_id in self.fact_keys[:k])
+        return P1SearchIds(
+            tuple(fact_id for _kind, fact_id in self.fact_keys[:k]),
+            account=_EXHAUSTED_ACCOUNT,
+        )
 
-    def search_claims(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         return {}
@@ -144,14 +156,17 @@ class _ProfileRescueIndex(_FactIndex):
 
     def search_entities_scored(
         self, *, deadline: float | None = None, **_: object
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Return the profile whose prose matches the enumerative query."""
         self.profile_requests += 1
         self.profile_deadlines.append(deadline)
-        return (
-            P1Nomination(
-                item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+        return P1SearchResult(
+            (
+                P1Nomination(
+                    item_id=str(self.entity_id), rank=1, score=0.9, channel="semantic"
+                ),
             ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
     def search_facts_scored(
@@ -162,25 +177,28 @@ class _ProfileRescueIndex(_FactIndex):
         entity_ids: tuple[str, ...] = (),
         deadline: float | None = None,
         **arguments: object,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Keep global fact search empty so only profile rescue can find the fact."""
         if not entity_ids:
             self.requested_k.append(k)
             self.requested_deadlines.append(deadline)
-            return ()
-        return super().search_facts_scored(
-            k=k,
-            candidate_keys=candidate_keys,
-            entity_ids=entity_ids,
-            deadline=deadline,
-            **arguments,
+            return P1SearchResult((), account=_EXHAUSTED_ACCOUNT)
+        return P1SearchResult(
+            super().search_facts_scored(
+                k=k,
+                candidate_keys=candidate_keys,
+                entity_ids=entity_ids,
+                deadline=deadline,
+                **arguments,
+            ),
+            account=_EXHAUSTED_ACCOUNT,
         )
 
 
 class _UnavailableProfileIndex(_FactIndex):
     """Expose the ordinary fact channel while the additive profile channel is cut."""
 
-    def search_entities_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+    def search_entities_scored(self, **_: object) -> P1SearchResult:
         """Match the adapter contract during profile backfill or republishing."""
         raise P1SearchUnavailableError("entities semantic channel is not ready")
 
@@ -188,7 +206,7 @@ class _UnavailableProfileIndex(_FactIndex):
 class _UnavailableFactIndex(_FactIndex):
     """Fail the primary fact channel as it can be during a policy cut."""
 
-    def search_facts_scored(self, **_: object) -> tuple[P1Nomination, ...]:
+    def search_facts_scored(self, **_: object) -> P1SearchResult:
         """Expose primary-channel unavailability through the P1 port contract."""
         raise P1SearchUnavailableError("relations semantic channel is not ready")
 
@@ -251,13 +269,21 @@ class _TimedOutReadPool:
 
     @contextmanager
     def snapshot(
-        self, *, deadline: float, import_snapshot: str | None = None
+        self,
+        *,
+        deadline: float,
+        import_snapshot: str | None = None,
+        evaluated_at: datetime | None = None,
     ) -> Iterator[Connection]:
         """Reject the outer compound snapshot at the same admission boundary."""
-        del import_snapshot
+        del import_snapshot, evaluated_at
         self.deadlines.append(deadline)
         raise SQLAlchemyTimeoutError("test retrieval admission expired")
         yield cast(Connection, None)  # pragma: no cover - generator typing only
+
+    def operation(self) -> None:
+        """No operation is ever admitted."""
+        return None
 
 
 class _Corpus:

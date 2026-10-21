@@ -20,11 +20,16 @@ from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Envelope
 from rememberstack.model import P1ChunkText
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_live_document_lineage
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5c000000-0000-0000-0000-000000000001")
@@ -66,9 +71,9 @@ class _CountingClaimIndex:
         current_only: bool,
         documents: object = None,
         time: object = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         self.semantic_calls += 1
-        return self.claim_ids[:k]
+        return P1SearchIds(self.claim_ids[:k], account=_EXHAUSTED_ACCOUNT)
 
     def search_claims_lexical(
         self,
@@ -79,21 +84,21 @@ class _CountingClaimIndex:
         current_only: bool,
         documents: object = None,
         time: object = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         self.lexical_calls += 1
-        return self.claim_ids[:k]
+        return P1SearchIds(self.claim_ids[:k], account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         return {}
 
-    def search_facts(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_facts(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
 
 class _Corpus:

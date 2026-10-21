@@ -28,6 +28,9 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ResolverConfig
 from rememberstack.model import RunResultOutcome
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
@@ -67,6 +70,8 @@ from rememberstack.workers import Worker
 from tests.database_reset import reset_database
 from tests.t4_test_doubles import match_first_t4_candidate
 from tests.workers.e3_test_doubles import same_fact_application_answer
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("11930000-0000-0000-0000-000000000001")
@@ -192,29 +197,29 @@ def _route(prompt: str, type_name: str) -> dict[str, object]:
 class _NullSearchIndex:
     """P1 stub: these proofs hydrate by id and never nominate."""
 
-    def search_claims(self, **_: object) -> tuple[str, ...]:
+    def search_claims(self, **_: object) -> P1SearchIds:
         """Return no semantic nominations; the test hydrates known ids."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
         """Return no lexical nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
+    def search_chunks(self, **_: object) -> P1SearchIds:
         """Return no semantic chunk nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
         """Return no lexical chunk nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         """Supply no search-index text; source coordinates come from the spine."""
         return {}
 
-    def search_facts(self, **_: object) -> tuple[str, ...]:
+    def search_facts(self, **_: object) -> P1SearchIds:
         """Return no fact nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
 
 def _span_text(*, document_md: str, span: object) -> str:

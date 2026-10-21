@@ -40,6 +40,8 @@ from typing import Literal
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from rememberstack.ports.p1_index import merge_accounts  # noqa: F401 -- re-export
+from rememberstack.ports.p1_index import P1EntityScopeTooBroadError  # noqa: F401
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchAccount
 from rememberstack.ports.p1_index import P1SearchResult
@@ -126,10 +128,6 @@ _PLANNER_CONTROLS = (
 
 class P1PlanRejectedError(P1SearchUnavailableError):
     """The nomination statement did not plan as the expected index scan."""
-
-
-class P1EntityScopeTooBroadError(P1SearchUnavailableError):
-    """Entity coverage would read more rows than the entity work budget."""
 
 
 def work_budget(k: int) -> int:
@@ -391,29 +389,4 @@ def as_result(
             for rank, item in enumerate(candidates, start=1)
         ),
         account=account,
-    )
-
-
-def merge_accounts(accounts: Sequence[P1SearchAccount]) -> P1SearchAccount:
-    """Combine per-branch or per-channel accounts (D142 §8.6 propagation).
-
-    The combined search is complete only when every part is; otherwise it
-    carries the first incomplete part's reason. Counters add up.
-    """
-    if not accounts:
-        return P1SearchAccount(termination=P1Termination.EXHAUSTED)
-    incomplete = [item for item in accounts if not item.termination.complete]
-    if incomplete:
-        termination = incomplete[0].termination
-    elif all(item.termination is P1Termination.EXHAUSTED for item in accounts):
-        termination = P1Termination.EXHAUSTED
-    else:
-        termination = P1Termination.K_FILLED
-    return P1SearchAccount(
-        termination=termination,
-        fetched=sum(item.fetched for item in accounts),
-        confirmed=sum(item.confirmed for item in accounts),
-        rejected=sum(item.rejected for item in accounts),
-        fetch_rounds=sum(item.fetch_rounds for item in accounts),
-        coverage_rows=sum(item.coverage_rows for item in accounts),
     )

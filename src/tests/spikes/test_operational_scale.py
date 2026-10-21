@@ -37,6 +37,9 @@ from rememberstack.model import OperationalScaleMeasurement
 from rememberstack.model import OperationalScaleReport
 from rememberstack.model import P1ChunkText
 from rememberstack.model.relations import NormalizationResponse
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.catalog_contract import CatalogInventory
 from rememberstack.spine.catalog_contract import EXPECTED_HASH_PARENTS
@@ -53,6 +56,8 @@ from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.query_engine import INTERACTIVE_HYDRATION_BATCH_SIZE
 from tests.database_reset import reset_database
 from tests.workers.e3_test_doubles import same_fact_application_answer
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("72000000-0000-0000-0000-000000000001")
@@ -88,23 +93,23 @@ _SETTINGS = _ScaleSettings()
 class _NullSearchIndex:
     """The scale battery calls the real confirmation method directly."""
 
-    def search_claims(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         return {}
 
-    def search_facts(self, **_: object) -> tuple[str, ...]:
-        return ()
+    def search_facts(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
 
 class _SqlProbe:

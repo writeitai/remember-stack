@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable
 from collections.abc import Mapping
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -45,6 +46,14 @@ ENTITY_INPUT_POLICY = "entity-profile-v3:dated-history"
 
 class P1SearchUnavailableError(RuntimeError):
     """The requested P1 channel is not published under the active contract."""
+
+
+class P1EntityScopeTooBroadError(P1SearchUnavailableError):
+    """Entity coverage would read more rows than the entity work budget.
+
+    Callers answer with the typed D49 boundary (reason
+    ``entity_scope_too_broad``, D142 §8.4), never a partial-coverage ranking.
+    """
 
 
 @runtime_checkable
@@ -128,7 +137,7 @@ class P1SearchPort(Protocol):
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> "P1SearchIds":
         """Ranked claim-id nominations from the claims channel.
 
         ``documents`` (D134) keeps a claim only when a live occurrence lies in
@@ -145,7 +154,7 @@ class P1SearchPort(Protocol):
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> "P1SearchIds":
         """Ranked claim-id nominations from the lexical claims channel."""
         ...
 
@@ -159,7 +168,7 @@ class P1SearchPort(Protocol):
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> "P1SearchIds":
         """Ranked chunk-id nominations from the semantic source channel.
 
         ``documents`` (D134) keeps a chunk only when its document version
@@ -179,7 +188,7 @@ class P1SearchPort(Protocol):
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> "P1SearchIds":
         """Ranked chunk-id nominations from the lexical source channel."""
         ...
 
@@ -196,7 +205,7 @@ class P1SearchPort(Protocol):
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    ) -> "P1SearchIds":
         """Ranked fact-id nominations from the facts channel."""
         ...
 
@@ -291,8 +300,43 @@ class P1SearchIds(tuple[str, ...]):
         return result
 
 
+def merge_accounts(accounts: Sequence[P1SearchAccount]) -> P1SearchAccount:
+    """Combine per-branch or per-channel accounts (D142 §8.6 propagation).
+
+    The combined search is complete only when every part is; otherwise it
+    carries the first incomplete part's reason. Counters add up and the
+    parts' limits are kept (first value per name).
+    """
+    if not accounts:
+        return P1SearchAccount(termination=P1Termination.EXHAUSTED)
+    incomplete = [item for item in accounts if not item.termination.complete]
+    if incomplete:
+        termination = incomplete[0].termination
+    elif all(item.termination is P1Termination.EXHAUSTED for item in accounts):
+        termination = P1Termination.EXHAUSTED
+    else:
+        termination = P1Termination.K_FILLED
+    limits: dict[str, float] = {}
+    for item in accounts:
+        for name, value in (item.limits or {}).items():
+            limits.setdefault(name, value)
+    return P1SearchAccount(
+        termination=termination,
+        fetched=sum(item.fetched for item in accounts),
+        confirmed=sum(item.confirmed for item in accounts),
+        rejected=sum(item.rejected for item in accounts),
+        fetch_rounds=sum(item.fetch_rounds for item in accounts),
+        coverage_rows=sum(item.coverage_rows for item in accounts),
+        limits=limits or None,
+    )
+
+
 def search_account(result: object) -> P1SearchAccount:
-    """The account of a ranked search result, exhausted for plain tuples."""
+    """The account of a ranked search result.
+
+    Every production port method returns :class:`P1SearchResult` or
+    :class:`P1SearchIds`; a plain tuple (a test double) reads as exhausted.
+    """
     account = getattr(result, "account", None)
     if isinstance(account, P1SearchAccount):
         return account
@@ -321,7 +365,7 @@ class P1ScoredSearchPort(Protocol):
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored claim nominations from the semantic channel."""
         ...
 
@@ -337,7 +381,7 @@ class P1ScoredSearchPort(Protocol):
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored claim nominations from the BM25 channel."""
         ...
 
@@ -354,7 +398,7 @@ class P1ScoredSearchPort(Protocol):
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored source-chunk nominations from the semantic channel.
 
         `equality_filters` are column/value pairs the projection applies BEFORE
@@ -376,7 +420,7 @@ class P1ScoredSearchPort(Protocol):
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored source-chunk nominations from the BM25 channel."""
         ...
 
@@ -395,7 +439,7 @@ class P1ScoredSearchPort(Protocol):
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
         documents: DocumentSearchFilters | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored facts with separate eligible scope and ranking anchors.
 
         ``documents`` (D134) keeps a fact only when a live supporting claim
@@ -410,7 +454,7 @@ class P1ScoredSearchPort(Protocol):
         vector: tuple[float, ...],
         k: int,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Scored entity nominations over the profile/description vectors.
 
         New capability: the entity index previously answered only by id
