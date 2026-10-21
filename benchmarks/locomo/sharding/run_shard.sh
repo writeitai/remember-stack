@@ -205,6 +205,7 @@ bind_benchmark_api() {
   [[ "$port" =~ ^[1-9][0-9]*$ ]] && ((port <= 65535)) ||
     die "could not resolve the Compose API host port: $published"
   export REMEMBER_API_URL="http://127.0.0.1:$port"
+  export REMEMBERSTACK_API_URL="http://127.0.0.1:$port"
   log "benchmark-api status=bound port=$port"
 }
 
@@ -220,7 +221,7 @@ for sample_id in "${requested_samples[@]}"; do
 done
 
 export REMEMBERSTACK_BUILD_REVISION
-REMEMBERSTACK_BUILD_REVISION=$(git rev-parse HEAD)
+REMEMBERSTACK_BUILD_REVISION=${REMEMBERSTACK_BUILD_REVISION:-$(git rev-parse HEAD)}
 
 if [[ ! -f "$run_dir/run.json" ]]; then
   if [[ -d "$run_dir" ]] &&
@@ -489,6 +490,7 @@ for sample_id in "${pending_samples[@]}"; do
       --lock-fd 9
     log "sample=$sample_id stage=wipe status=starting"
     "${compose[@]}" down --volumes --remove-orphans
+    rm -rf "$mount_root"
     backup_python "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
     log "sample=$sample_id stage=stack status=starting"
     "${compose[@]}" up --detach --wait \
