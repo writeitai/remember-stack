@@ -6946,9 +6946,22 @@ stable-ID walk: preserves a tail with no keyword signal at the cost of an
 unbounded walk. Raw-length index scoring as the canonical score: a row's rank
 would change when a maintenance spill moves it to a segment.
 
-**Open.** Indexing each distinct search input once is designed but unchosen
-([proposal](plan/proposals/distinct_text_search_index.md)); an isolated
-prototype on LegalIt pilot data measures it before the owner decides.
+**Distinct-text index (owner-approved adoption rule, 2026-10-21).** Indexing
+each distinct search input once stays an unchosen proposal
+([proposal](plan/proposals/distinct_text_search_index.md)) and is not
+implemented by D142. The owner approved its rule as written: investigate if
+the pilot's median effective duplication is ≥ 5 or p95 extrapolates out of
+budget; then an isolated prototype on pilot data; adopt only with a
+demonstrated benefit and passed gates, through its own design update.
+
+**Owner invariant (2026-10-21): incremental ingestion is untouched.** D142
+changes only the query path. It does not change anchor-stabilized chunking
+(D58), the inputs of `extraction_input_hash` or `reuse_identity_hash`,
+search text versus embedding input, header facts, normalization, text origin
+(D140) or embedding carry-forward (D80). A one-paragraph edit still
+re-extracts and re-embeds at most the changed chunk and its immediate
+same-section neighbours; a CI regression test asserts it per chunk across
+sections.
 
 **Consequences.** In the common case fetched-candidate and confirmation work
 scales with `k` over the eligible share of top candidates, not with corpus

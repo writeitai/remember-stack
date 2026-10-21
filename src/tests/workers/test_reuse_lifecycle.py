@@ -639,3 +639,130 @@ def test_pure_summary_seat_swap_reextracts_and_reprefixes_nothing(
     assert hashes_after == hashes_before
     assert rig.selection_calls() == base_selection
     assert rig.prefix_calls() == base_prefix
+
+
+def _sectioned(*, edited: bool) -> str:
+    """Three sections of eight paragraphs; version 2 rewrites one paragraph of B."""
+    blocks: list[str] = []
+    for name in ("A", "B", "C"):
+        blocks.append(f"# Section {name}")
+        for index in range(8):
+            line = f"Section {name} paragraph {index} states fact {index} about {name}."
+            if edited and name == "B" and index == 4:
+                line = (
+                    "Section B paragraph 4 now reports a completely different finding."
+                )
+            blocks.append(line)
+    return "\n\n".join(blocks)
+
+
+def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
+    rig: _ReuseRig,
+) -> None:
+    """Owner invariant (D56/D80/D140, restated for D142): incremental ingestion.
+
+    v2 of a three-section document changes one paragraph in section B. Only
+    the changed chunk and its immediate same-section neighbours may be
+    re-extracted or re-embedded; every other chunk — all of sections A and C
+    and the rest of B — reattaches its v1 claims and carries its v1 vector.
+    """
+    first = rig.observe(content=_sectioned(edited=False))
+    rig.drain()
+    baseline_embeds = len(rig.provider.embedded_texts)
+
+    second = rig.observe(content=_sectioned(edited=True))
+    assert second.created
+    rig.drain()
+
+    with rig.engine.connect() as connection:
+        v1 = (
+            connection.execute(
+                text(
+                    "SELECT c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
+                    " s.embedding::text AS vector"
+                    " FROM chunks c JOIN chunk_search s"
+                    "   ON s.deployment_id = c.deployment_id AND s.chunk_id = c.chunk_id"
+                    " WHERE c.version_id = :v"
+                ),
+                {"v": first.version_id},
+            )
+            .mappings()
+            .all()
+        )
+        v2 = (
+            connection.execute(
+                text(
+                    "SELECT c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
+                    " c.section_id::text AS section_id, c.ordinal AS ordinal,"
+                    " s.embedding::text AS vector"
+                    " FROM chunks c JOIN chunk_search s"
+                    "   ON s.deployment_id = c.deployment_id AND s.chunk_id = c.chunk_id"
+                    " WHERE c.version_id = :v ORDER BY c.ordinal"
+                ),
+                {"v": second.version_id},
+            )
+            .mappings()
+            .all()
+        )
+        v1_ids = [row["chunk_id"] for row in v1]
+        v2_ids = [row["chunk_id"] for row in v2]
+        fresh = {
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT chunk_id::text FROM claims"
+                    " WHERE chunk_id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": v2_ids},
+            )
+        }
+        reused_links = {
+            str(row[0])
+            for row in connection.execute(
+                text(
+                    "SELECT DISTINCT cc.chunk_id::text FROM chunk_claims cc"
+                    " JOIN claims cl ON cl.claim_id = cc.claim_id"
+                    " WHERE cc.chunk_id = ANY(CAST(:v2 AS uuid[]))"
+                    "   AND cl.chunk_id = ANY(CAST(:v1 AS uuid[]))"
+                ),
+                {"v2": v2_ids, "v1": v1_ids},
+            )
+        }
+
+    assert len(v1) >= 9 and len(v2) >= 9  # a real multi-chunk, multi-section doc
+    v1_vector_by_hash = {row["hash"]: row["vector"] for row in v1}
+    changed = [row for row in v2 if row["hash"] not in v1_vector_by_hash]
+    assert 1 <= len(changed) <= 2, "one paragraph edit changes at most two chunks"
+    assert len({row["section_id"] for row in changed}) == 1
+
+    position = {row["chunk_id"]: index for index, row in enumerate(v2)}
+    allowed: set[str] = set()
+    for row in changed:
+        index = position[row["chunk_id"]]
+        allowed.add(row["chunk_id"])
+        for neighbour in (index - 1, index + 1):
+            if (
+                0 <= neighbour < len(v2)
+                and v2[neighbour]["section_id"] == row["section_id"]
+            ):
+                allowed.add(v2[neighbour]["chunk_id"])
+
+    assert fresh <= allowed, "only the edited neighbourhood is re-extracted"
+    untouched = [row for row in v2 if row["chunk_id"] not in allowed]
+    assert len(untouched) >= len(v2) - 4
+    for row in untouched:
+        assert row["chunk_id"] in reused_links, "unchanged chunk reattaches v1 claims"
+        assert row["vector"] == v1_vector_by_hash[row["hash"]], (
+            "unchanged chunk carries its v1 vector forward"
+        )
+    other_sections = {row["section_id"] for row in v2} - {
+        row["section_id"] for row in changed
+    }
+    assert other_sections, "the document has sections the edit did not touch"
+    assert all(
+        row["chunk_id"] not in allowed
+        for row in v2
+        if row["section_id"] in other_sections
+    )
+    embeds_v2 = len(rig.provider.embedded_texts) - baseline_embeds
+    assert embeds_v2 <= len(allowed), "only the edited neighbourhood is re-embedded"

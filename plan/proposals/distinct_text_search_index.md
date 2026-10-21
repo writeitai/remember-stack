@@ -1,6 +1,8 @@
 # Proposal: index each distinct search input once
 
-**Status:** not chosen (2026-10-21; revised after D142 review round 1). Fully designed option for
+**Status:** not chosen (2026-10-21; revised after D142 review round 1). The
+**owner approved the investigation and adoption rule below on 2026-10-21**;
+the index itself is not implemented. Fully designed option for
 [D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot);
 adoption is an **open owner decision** taken on the evidence named under
 "Investigation trigger and adoption prerequisites". **Analysis:**
@@ -152,7 +154,7 @@ high value can stay high after deduplication.
    - lexical/hybrid answer quality per the D142 §9 gates.
    Artifacts (dataset manifest, query set, raw results) are stored with the
    analysis.
-2. **Investigation thresholds** (starting points, owner to confirm): a median
+2. **Investigation thresholds** (owner-approved 2026-10-21): a median
    of ≥ 5 examined candidates per result **attributable to shared inputs**, or
    p95 outside the interactive budget when extrapolated to the full corpus.
 3. **Adoption** requires the prototype to show a latency or completeness
