@@ -111,29 +111,79 @@ def test_fact_upserts_commit_each_authority_row_independently() -> None:
     assert connection.execute.call_count == 2
 
 
-def test_unscoped_fact_search_orders_by_vector_distance_first() -> None:
-    """An empty entity scope keeps the HNSW-compatible leading sort key."""
-    engine = MagicMock(spec=Engine)
-    connection = engine.connect.return_value.__enter__.return_value
-    connection.execute.return_value.scalar_one.return_value = True
-    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+class _LoopConnection:
+    """A MagicMock connection that serves the D142 loop's statements.
 
-    assert (
-        index.search_facts_scored(
-            deployment_id=str(_DEPLOYMENT_ID),
-            vector=_vector(axis=0),
-            k=5,
-            kind="relation",
-            time=CurrentFactTime(),
-            evaluated_at=_NOW,
-        )
-        == ()
+    ``EXPLAIN`` returns an index-scan plan on the index the statement names,
+    the nomination cursor streams nothing, and every count reads zero, so a
+    deployment-wide search ends ``exhausted`` with no rows. Every executed
+    statement is recorded.
+    """
+
+    def __init__(self, engine: MagicMock) -> None:
+        self.statements: list[str] = []
+        self.streamed: list[str] = []
+        connection = engine.connect.return_value.__enter__.return_value
+        connection.execution_options.return_value = connection
+
+        def execute(statement: object, *_args: object, **_kwargs: object) -> MagicMock:
+            sql = str(statement)
+            self.statements.append(sql)
+            result = MagicMock()
+            if sql.startswith("EXPLAIN"):
+                index = next(
+                    name
+                    for name in (
+                        "ix_relations_embedding_hnsw",
+                        "ix_observations_embedding_hnsw",
+                        "ix_chunk_search_embedding_hnsw",
+                        "ix_chunk_search_bm25",
+                        "ix_claims_current_embedding_hnsw",
+                        "ix_claims_current_bm25",
+                        "ix_entities_embedding_hnsw",
+                    )
+                    if f"FROM {name.removeprefix('ix_').split('_embedding')[0].split('_bm25')[0].replace('claims_current', 'claims')}"
+                    in sql
+                )
+                result.scalar_one.return_value = (
+                    '[{"Plan": {"Node Type": "Index Scan", "Index Name": "%s"}}]'
+                    % index
+                )
+            elif "ORDER BY" in sql and "JOIN" not in sql and "count(" not in sql:
+                self.streamed.append(sql)
+                result.fetchmany.return_value = []
+            else:
+                result.scalar_one.return_value = 0
+                result.mappings.return_value = []
+            return result
+
+        connection.execute.side_effect = execute
+        connection.exec_driver_sql.return_value = MagicMock()
+
+
+def test_unscoped_fact_search_nominates_from_the_index_alone() -> None:
+    """D142: an empty entity scope nominates from a join-free HNSW statement."""
+    engine = MagicMock(spec=Engine)
+    loop = _LoopConnection(engine)
+    index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+    index._require_channel = MagicMock()  # noqa: SLF001
+
+    result = index.search_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=_vector(axis=0),
+        k=5,
+        kind="relation",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW,
     )
 
-    ranked_sql = str(connection.execute.call_args_list[-1].args[0])
-    assert "coverage" not in ranked_sql
-    assert "ORDER BY indexed.embedding <=> CAST(:query_vector AS vector)" in ranked_sql
-    assert "ORDER BY distance, qualifier, item_id" in ranked_sql
+    assert tuple(result) == ()
+    assert result.account.termination.value == "exhausted"
+    (nomination,) = loop.streamed
+    assert "FROM relations" in nomination
+    assert "JOIN" not in nomination and "memory_v1" not in nomination
+    assert "ORDER BY embedding <=> CAST(:query_vector AS vector)" in nomination
+    assert any(sql.startswith("EXPLAIN (FORMAT JSON)") for sql in loop.statements)
 
 
 def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
@@ -169,29 +219,27 @@ def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
 
 
 def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
-    """The fact-context candidate path is vector-first and authority-join free."""
+    """The fact-context candidate path nominates from the index; its
+    confirmation reads base rows only (no ``memory_v1`` authority view)."""
     engine = MagicMock(spec=Engine)
-    connection = engine.connect.return_value.__enter__.return_value
-    connection.execute.return_value.scalar_one.return_value = True
+    loop = _LoopConnection(engine)
     index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
+    index._require_channel = MagicMock()  # noqa: SLF001
 
-    assert (
-        index.nominate_facts_scored(
-            deployment_id=str(_DEPLOYMENT_ID),
-            vector=_vector(axis=0),
-            k=5,
-            kind="observation",
-            time=CurrentFactTime(),
-            evaluated_at=_NOW,
-        )
-        == ()
+    result = index.nominate_facts_scored(
+        deployment_id=str(_DEPLOYMENT_ID),
+        vector=_vector(axis=0),
+        k=5,
+        kind="observation",
+        time=CurrentFactTime(),
+        evaluated_at=_NOW,
     )
 
-    ranked_sql = str(connection.execute.call_args_list[-1].args[0])
-    assert "memory_v1" not in ranked_sql
-    assert "v_memory_fact_visible" not in ranked_sql
-    assert "indexed.invalidated_at IS NULL" in ranked_sql
-    assert "ORDER BY indexed.embedding <=> CAST(:query_vector AS vector)" in ranked_sql
+    assert tuple(result) == ()
+    (nomination,) = loop.streamed
+    assert "FROM observations" in nomination
+    assert "memory_v1" not in nomination
+    assert "ORDER BY embedding <=> CAST(:query_vector AS vector)" in nomination
 
 
 def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> None:

@@ -114,6 +114,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchPort
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.surface_cost import open_surface_scope
@@ -2768,6 +2769,8 @@ class QueryEngine:
                 nomination_exhausted=(
                     len(semantic.ranking) >= candidate_k
                     or len(lexical.ranking) >= candidate_k
+                    or _nomination_stopped_early(semantic)
+                    or _nomination_stopped_early(lexical)
                 ),
             )
 
@@ -2807,6 +2810,8 @@ class QueryEngine:
                 nomination_exhausted=(
                     len(semantic.ranking) >= candidate_k
                     or len(lexical.ranking) >= candidate_k
+                    or _nomination_stopped_early(semantic)
+                    or _nomination_stopped_early(lexical)
                 ),
             )
 
@@ -3847,6 +3852,16 @@ def _validate_claims_and_sources_context_bounds(*, k: int, candidate_k: int) -> 
         )
 
 
+def _nomination_stopped_early(envelope: Envelope) -> bool:
+    """Whether a nomination channel stopped on a D142 bound (§8.6 propagation)."""
+    truncation = envelope.truncation
+    return (
+        truncation is not None
+        and truncation.truncated
+        and (truncation.reason or "").startswith("p1_")
+    )
+
+
 def _bound_testimony_result(
     *, envelope: Envelope, k: int, nomination_exhausted: bool
 ) -> Envelope:
@@ -4090,7 +4105,11 @@ def _unknown_context_entity(
 def _scored_nomination_envelope(
     *, nominations: tuple[P1Nomination, ...], empty_explanation: str
 ) -> Envelope:
-    """Convert scored P1 nominations to the engine's ranking envelope."""
+    """Convert scored P1 nominations to the engine's ranking envelope.
+
+    D142 §8.6: a search that stopped on a bound is disclosed as truncated and
+    an empty result is ``known_empty`` only when the search was complete.
+    """
     ranking = tuple(
         RankedItem(
             item_id=UUID(item.item_id),
@@ -4099,18 +4118,44 @@ def _scored_nomination_envelope(
         )
         for item in nominations
     )
+    account = search_account(nominations)
+    complete = account.termination.complete
+    truncation = (
+        None
+        if complete
+        else Truncation(
+            truncated=True,
+            returned=len(ranking),
+            estimated_total=max(len(ranking), account.confirmed),
+            total_is_exact=False,
+            reason=f"p1_{account.termination.value}",
+        )
+    )
+    negative = None
+    if not ranking:
+        negative = (
+            Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=empty_explanation,
+                workaround="broaden the query or remove entity anchors",
+            )
+            if complete
+            else Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    "the search stopped on its work bound"
+                    f" ({account.termination.value}) before finding a match"
+                ),
+                workaround="narrow the query or add filters, then retry",
+            )
+        )
     return _envelope(
         grain=Grain.EVIDENCE,
         temporal_scope=current_temporal_scope(),
         ranking=ranking,
         freshness=_freshness(),
-        negative=None
-        if ranking
-        else Negative(
-            kind=NegativeKind.KNOWN_EMPTY,
-            explanation=empty_explanation,
-            workaround="broaden the query or remove entity anchors",
-        ),
+        truncation=truncation,
+        negative=negative,
     )
 
 
@@ -4212,7 +4257,11 @@ def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:
 
 
 def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envelope:
-    """Represent ordered projection IDs without claiming they are hydrated."""
+    """Represent ordered projection IDs without claiming they are hydrated.
+
+    D142 §8.6: an early-stopped search is disclosed as truncated, and an empty
+    one is ``known_empty`` only when the search was complete.
+    """
     ranking = tuple(
         RankedItem(
             item_id=UUID(item),
@@ -4221,17 +4270,40 @@ def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envel
         )
         for position, item in enumerate(ids, start=1)
     )
+    account = search_account(ids)
+    complete = account.termination.complete
+    negative = None
+    if not ranking:
+        negative = (
+            Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=empty_explanation,
+                workaround="broaden the query or inspect the source artifacts",
+            )
+            if complete
+            else Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    "the search stopped on its work bound"
+                    f" ({account.termination.value}) before finding a match"
+                ),
+                workaround="narrow the query or add filters, then retry",
+            )
+        )
     return _envelope(
         grain=Grain.EVIDENCE,
         ranking=ranking,
         freshness=_freshness(),
-        negative=None
-        if ranking
-        else Negative(
-            kind=NegativeKind.KNOWN_EMPTY,
-            explanation=empty_explanation,
-            workaround="broaden the query or inspect the source artifacts",
+        truncation=None
+        if complete
+        else Truncation(
+            truncated=True,
+            returned=len(ranking),
+            estimated_total=max(len(ranking), account.confirmed),
+            total_is_exact=False,
+            reason=f"p1_{account.termination.value}",
         ),
+        negative=negative,
     )
 
 

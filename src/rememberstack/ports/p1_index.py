@@ -260,7 +260,19 @@ class P1SearchResult(tuple[P1Nomination, ...]):
         return result
 
 
-def search_account(result: Iterable[P1Nomination]) -> P1SearchAccount:
+class P1SearchIds(tuple[str, ...]):
+    """Ranked ids plus the search's account, for the unscored channels."""
+
+    account: P1SearchAccount
+
+    def __new__(cls, ids: Iterable[str], *, account: P1SearchAccount) -> "P1SearchIds":
+        """Build the result from its ids and account."""
+        result = super().__new__(cls, tuple(ids))
+        result.account = account
+        return result
+
+
+def search_account(result: object) -> P1SearchAccount:
     """The account of a ranked search result, exhausted for plain tuples."""
     account = getattr(result, "account", None)
     if isinstance(account, P1SearchAccount):

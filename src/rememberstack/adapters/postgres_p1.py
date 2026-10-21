@@ -45,9 +45,11 @@ from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 
 P1_HNSW_MAX_SCAN_TUPLES = 20_000
@@ -487,9 +489,8 @@ class PostgresP1Index:
         time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic claim IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_claims_scored(
+        return _ids(
+            self.search_claims_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
@@ -510,9 +511,8 @@ class PostgresP1Index:
         time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 claim IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_claims_lexical_scored(
+        return _ids(
+            self.search_claims_lexical_scored(
                 deployment_id=deployment_id,
                 query=query,
                 k=k,
@@ -534,9 +534,8 @@ class PostgresP1Index:
         time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed semantic chunk IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_chunks_scored(
+        return _ids(
+            self.search_chunks_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
@@ -559,9 +558,8 @@ class PostgresP1Index:
         time: TextScope | None = None,
     ) -> tuple[str, ...]:
         """Return authority-confirmed BM25 chunk IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_chunks_lexical_scored(
+        return _ids(
+            self.search_chunks_lexical_scored(
                 deployment_id=deployment_id,
                 query=query,
                 k=k,
@@ -576,9 +574,8 @@ class PostgresP1Index:
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
     ) -> tuple[str, ...]:
         """Return authority-confirmed current fact IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_facts_scored(
+        return _ids(
+            self.search_facts_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
@@ -989,7 +986,7 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         time: TextScope | None = None,
         pending_doc_ids: tuple[str, ...] | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank cheap entity-scoped testimony candidates for later confirmation.
 
         The D140 time scope (default current) is part of the candidate
@@ -1106,12 +1103,13 @@ class PostgresP1Index:
             )
             score_sql = f"-({distance_sql})::double precision"
             order_sql = distance_sql
-            search_predicate = ""
+            # D142 §8.1: only positive matches are lexical results.
+            search_predicate = f"AND {score_sql} > 0"
             parameters["query"] = query
         else:
             raise ValueError(f"unknown testimony channel {channel!r}")
 
-        statement = f"""
+        scope_ctes = f"""
             WITH scoped_entities AS MATERIALIZED (
                 SELECT entity_id, survivor_entity_id
                 FROM v_memory_entity_survivor
@@ -1135,6 +1133,22 @@ class PostgresP1Index:
                 FROM scoped_items
                 GROUP BY item_id
             )
+        """
+        # D142 §8.4: the coverage set is bounded by the entity work budget;
+        # beyond it the ranking would rest on partial coverage.
+        scoped = self._engine_rows(
+            f"{scope_ctes} SELECT count(*) AS items FROM ("
+            "SELECT 1 FROM coverage LIMIT :entity_budget) AS bounded",
+            {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+        )
+        coverage_rows = int(scoped[0]["items"]) if scoped else 0
+        if coverage_rows > p1_ranked.ENTITY_WORK_BUDGET:
+            raise p1_ranked.P1EntityScopeTooBroadError(
+                "the requested entities are mentioned by more items than the"
+                f" entity work budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
+            )
+        statement = f"""
+            {scope_ctes}
             SELECT indexed.{id_column}::text AS item_id,
                    {score_sql} AS score
             FROM {table} AS indexed
@@ -1145,7 +1159,18 @@ class PostgresP1Index:
             ORDER BY coverage.coverage DESC, {order_sql}, indexed.{id_column}
             LIMIT :limit
         """
-        return _nominations(self._engine_rows(statement, parameters), channel=channel)
+        rows = _nominations(self._engine_rows(statement, parameters), channel=channel)
+        return P1SearchResult(
+            rows,
+            account=P1SearchAccount(
+                termination=P1Termination.K_FILLED
+                if len(rows) >= k
+                else P1Termination.EXHAUSTED,
+                confirmed=len(rows),
+                coverage_rows=coverage_rows,
+                limits={"entity_work_budget": float(p1_ranked.ENTITY_WORK_BUDGET)},
+            ),
+        )
 
     def chunk_texts(
         self,
@@ -1201,7 +1226,7 @@ class PostgresP1Index:
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
         documents: DocumentSearchFilters | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank facts after applying identity, temporal, and entity authority.
 
         The D140 §8.1 evidence gate for ``time`` is part of every branch's
@@ -1300,6 +1325,22 @@ class PostgresP1Index:
             coverage_select = ""
             branch_order = "indexed.embedding <=> CAST(:query_vector AS vector)"
             result_order = "distance, qualifier, item_id"
+        if not entity_ids and candidate_keys is None:
+            # D142 §8.5: deployment-wide fact search nominates per fact table
+            # from its HNSW index and confirms with the same predicates.
+            return self._fact_loop(
+                required=required,
+                parameters=parameters,
+                relation=(
+                    " JOIN memory_v1.facts_visible_history AS fact"
+                    "   ON fact.deployment_id = indexed.deployment_id"
+                    "  AND fact.fact_kind = '{fact_kind}'"
+                    "  AND fact.fact_id = indexed.{id_column}"
+                ),
+                predicates=f"{time_sql} {filter_sql} {supporting_sql}",
+                k=k,
+                deadline=deadline,
+            )
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -1334,10 +1375,93 @@ class PostgresP1Index:
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
         """
-        return _nominations(
-            self._engine_rows(statement, parameters, deadline=deadline),
-            channel="semantic",
-            qualified=True,
+        return _bounded_result(
+            _nominations(
+                self._engine_rows(statement, parameters, deadline=deadline),
+                channel="semantic",
+                qualified=True,
+            ),
+            k=k,
+        )
+
+    def _fact_loop(
+        self,
+        *,
+        required: tuple[str, ...],
+        parameters: Mapping[str, Any],
+        relation: str,
+        predicates: str,
+        k: int,
+        deadline: float | None,
+    ) -> P1SearchResult:
+        """One D142 loop per fact table, merged by (distance, kind, id)."""
+        merged: list[p1_ranked.Candidate] = []
+        accounts: list[P1SearchAccount] = []
+        attestation = (
+            "embedding IS NOT NULL AND embedding_model = :embedding_model"
+            " AND embedding_input_policy_version = :input_policy"
+        )
+        with self._ranked_connection(deadline=deadline) as connection:
+            for table, fact_kind, id_column in (
+                ("relations", "relation", "relation_id"),
+                ("observations", "observation", "observation_id"),
+            ):
+                if table not in required:
+                    continue
+                join = relation.format(fact_kind=fact_kind, id_column=id_column)
+                gate = fact_in_scope(
+                    fact_kind=fact_kind, fact_id=f"indexed.{id_column}"
+                )
+                confirm_sql = (
+                    f"SELECT indexed.{id_column}::text AS item_id"
+                    f" FROM {table} AS indexed{join}"
+                    " WHERE indexed.deployment_id = :deployment_id"
+                    f" {predicates} AND {gate}"
+                    f" AND indexed.{id_column} = ANY(CAST(:batch_ids AS uuid[]))"
+                )
+
+                def confirm(
+                    conn: Connection,
+                    ids: Sequence[str],
+                    sql: str = confirm_sql,
+                    qualifier: str = fact_kind,
+                ) -> dict[str, str | None]:
+                    rows = conn.execute(
+                        text(sql),
+                        {**parameters, "batch_ids": _uuid_strings(tuple(ids))},
+                    ).mappings()
+                    return {str(row["item_id"]): qualifier for row in rows}
+
+                nomination = p1_ranked.NominationStatement(
+                    channel="semantic",
+                    sql=(
+                        f"SELECT {id_column}::text AS item_id,"
+                        " embedding <=> CAST(:query_vector AS vector) AS distance"
+                        f" FROM {table}"
+                        f" WHERE deployment_id = :deployment_id AND {attestation}"
+                        " ORDER BY embedding <=> CAST(:query_vector AS vector)"
+                    ),
+                    parameters=parameters,
+                    expected_index=f"ix_{table}_embedding_hnsw",
+                    count_sql=(
+                        f"SELECT count(*) FROM {table}"
+                        f" WHERE deployment_id = :deployment_id AND {attestation}"
+                    ),
+                )
+                candidates, account = p1_ranked.nominate_and_confirm(
+                    connection,
+                    statement=nomination,
+                    k=k,
+                    confirm=confirm,
+                    deadline=deadline,
+                )
+                merged.extend(candidates)
+                accounts.append(account)
+        merged.sort(
+            key=lambda item: (item.sort_value, item.qualifier or "", item.item_id)
+        )
+        return p1_ranked.as_result(
+            merged[:k], account=p1_ranked.merge_accounts(accounts), channel="semantic"
         )
 
     def nominate_facts_scored(
@@ -1352,7 +1476,7 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank cheap base-table candidates for a caller that confirms every row.
 
         The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``.
@@ -1410,8 +1534,16 @@ class PostgresP1Index:
             """
             result_order = "coverage DESC, distance, qualifier, item_id"
         else:
-            scope_cte = ""
-            result_order = "distance, qualifier, item_id"
+            # D142 §8.5: without anchors, nominate per fact table from its HNSW
+            # index; the D140 gate and time window confirm each batch.
+            return self._fact_loop(
+                required=required,
+                parameters=parameters,
+                relation="",
+                predicates=time_sql,
+                k=k,
+                deadline=deadline,
+            )
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -1494,10 +1626,13 @@ class PostgresP1Index:
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
         """
-        return _nominations(
-            self._engine_rows(statement, parameters, deadline=deadline),
-            channel="semantic",
-            qualified=True,
+        return _bounded_result(
+            _nominations(
+                self._engine_rows(statement, parameters, deadline=deadline),
+                channel="semantic",
+                qualified=True,
+            ),
+            k=k,
         )
 
     def entity_semantic_ready(self, *, deployment_id: str) -> bool:
@@ -1524,8 +1659,11 @@ class PostgresP1Index:
         vector: tuple[float, ...],
         k: int,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
-        """Rank live entity profiles without an entity-class filter (D96)."""
+    ) -> P1SearchResult:
+        """Rank live entity profiles without an entity-class filter (D96).
+
+        D142: the HNSW index nominates; ``entities_current`` confirms.
+        """
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,
@@ -1534,32 +1672,53 @@ class PostgresP1Index:
             policy=ENTITY_INPUT_POLICY,
             deadline=deadline,
         )
-        rows = self._engine_rows(
-            """
-            SELECT indexed.entity_id::text AS item_id,
-                   1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
-            FROM entities AS indexed
-            JOIN memory_v1.entities_current AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.entity_id = indexed.entity_id
-            WHERE indexed.deployment_id = :deployment_id
-              AND indexed.embedding IS NOT NULL
-              AND indexed.embedding_model = :embedding_model
-              AND indexed.embedding_input_policy_version = :input_policy
-            ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
-                     indexed.entity_id
-            LIMIT :limit
-            """,
-            {
-                "deployment_id": UUID(deployment_id),
-                "embedding_model": self._embedding_model,
-                "input_policy": ENTITY_INPUT_POLICY,
-                "query_vector": _vector_literal(vector),
-                "limit": k,
-            },
-            deadline=deadline,
+        parameters = {
+            "deployment_id": UUID(deployment_id),
+            "embedding_model": self._embedding_model,
+            "input_policy": ENTITY_INPUT_POLICY,
+            "query_vector": _vector_literal(vector),
+        }
+        attestation = (
+            "embedding IS NOT NULL AND embedding_model = :embedding_model"
+            " AND embedding_input_policy_version = :input_policy"
         )
-        return _nominations(rows, channel="semantic")
+        nomination = p1_ranked.NominationStatement(
+            channel="semantic",
+            sql=(
+                "SELECT entity_id::text AS item_id,"
+                " embedding <=> CAST(:query_vector AS vector) AS distance"
+                f" FROM entities WHERE deployment_id = :deployment_id AND {attestation}"
+                " ORDER BY embedding <=> CAST(:query_vector AS vector)"
+            ),
+            parameters=parameters,
+            expected_index="ix_entities_embedding_hnsw",
+            count_sql=(
+                "SELECT count(*) FROM entities"
+                f" WHERE deployment_id = :deployment_id AND {attestation}"
+            ),
+        )
+
+        def confirm(conn: Connection, ids: Sequence[str]) -> dict[str, str | None]:
+            rows = conn.execute(
+                text(
+                    "SELECT published.entity_id::text AS item_id"
+                    " FROM memory_v1.entities_current AS published"
+                    " WHERE published.deployment_id = :deployment_id"
+                    " AND published.entity_id = ANY(CAST(:batch_ids AS uuid[]))"
+                ),
+                {**parameters, "batch_ids": _uuid_strings(tuple(ids))},
+            ).mappings()
+            return {str(row["item_id"]): None for row in rows}
+
+        with self._ranked_connection(deadline=deadline) as connection:
+            candidates, account = p1_ranked.nominate_and_confirm(
+                connection,
+                statement=nomination,
+                k=k,
+                confirm=confirm,
+                deadline=deadline,
+            )
+        return p1_ranked.as_result(candidates, account=account, channel="semantic")
 
     def _natural_vectors(
         self,
@@ -2121,4 +2280,24 @@ def _entity_tiers(
             },
         ),
         channel=query.channel,
+    )
+
+
+def _bounded_result(rows: tuple[P1Nomination, ...], *, k: int) -> P1SearchResult:
+    """Wrap an exact scan over a bounded eligible set (entity or explicit ids)."""
+    return P1SearchResult(
+        rows,
+        account=P1SearchAccount(
+            termination=P1Termination.K_FILLED
+            if len(rows) >= k
+            else P1Termination.EXHAUSTED,
+            confirmed=len(rows),
+        ),
+    )
+
+
+def _ids(result: Sequence[P1Nomination]) -> P1SearchIds:
+    """The ranked ids of a search result, keeping its account (D142 §8.6)."""
+    return P1SearchIds(
+        (item.item_id for item in result), account=search_account(result)
     )
