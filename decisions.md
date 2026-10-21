@@ -6779,7 +6779,12 @@ to it.
    selects (or in a lineage without declared periods). The gate is an eligibility
    predicate applied before every relevance bound (D87). D118 remains the only fact-window
    authority; declaration changes also enqueue ordinary re-adjudication, with the
-   in-force intervals as an adjudication input.
+   in-force intervals as an adjudication input. *(Refined 2026-10-21 by the WP-ET.7
+   implementation: there was no mechanism to re-adjudicate evidence already applied, so
+   "re-adjudication" is defined as a **window review** — a per-fact keep-or-replace
+   decision grounded in supplied claims, queued through a per-fact `period_basis`
+   fingerprint when a lineage's periods change or one of its versions completes or is
+   deleted; see the design §8.2.)*
 4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
    key; sections also store deterministic own-block and subtree hashes.
    `section_history` lists a key across versions, including absences.

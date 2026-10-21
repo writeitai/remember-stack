@@ -192,7 +192,7 @@ CREATE TYPE pipeline_component     AS ENUM (
   'profile_summarizer','snapshot_builder','knowledge_planner',
   'knowledge_writer','knowledge_reflector','knowledge_linter','judge','forgetter');
 CREATE TYPE processing_target      AS ENUM ('document','document_section','chunk','claim','relation','observation','entity','snapshot','knowledge_artifact','document_version','knowledge_dispatch');
-CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','build_snapshot','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget');
+CREATE TYPE pipeline_stage         AS ENUM ('ingest','convert','structure','crossref','chunk','embed_chunk','extract_claims','embed_claim','ground_claims','resolve_entities','normalize_relations','adjudicate_supersession','adjudicate_observations','embed_relation','label_relation','embed_observation','label_observation','refresh_profile','build_snapshot','compile_knowledge','reflect_knowledge','lint_knowledge','reconcile','dispatch_knowledge','hard_forget','review_fact_windows');
 CREATE TYPE processing_status      AS ENUM ('pending','running','succeeded','failed','dead_letter','skipped');
 -- D67: only plane-E routes use operational lanes. K/P (and other scheduled aggregate) jobs
 -- represent their single unlaned route with SQL NULL, never a synthetic third enum value.
@@ -1872,6 +1872,7 @@ CREATE TABLE relations (
   -- bi-temporality (concepts §5): two clocks, different questions.
   valid_from      timestamptz,                 -- VALID-time start: when the fact began holding in the world (NULL = unknown/always)
   valid_until     timestamptz,                 -- VALID-time end: closed by supersession when the fact stops holding ("Alice left Acme")
+  period_basis    text,                        -- D140 §8.2: fingerprint of the evidence claims' in-force periods when this window was last adjudicated (NULL = never against a declared period); a differing current fingerprint queues a window review
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed this fact
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when the system learned it was superseded (NULL = still believed)
   evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT DOCUMENT LINEAGES with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
@@ -2047,6 +2048,7 @@ CREATE TABLE observations (
   -- bi-temporality (concepts §5): two clocks, WORLD-VALIDITY OF THE BELIEF.
   valid_from      timestamptz,                 -- VALID-time start: when the belief began holding in the world (NULL = unknown/always); seeded from the claim's asserted validity (D41)
   valid_until     timestamptz,                 -- VALID-time end. NO-CAP RULE (D43): capped ONLY when a CHANGING EFFECTIVE STATE (headcount/balance/status) is superseded by a later value. A MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped here — it doesn't stop being true at period-end; it stays open and conflicting same-period figures coexist. The adjudicator decides state-vs-measurement from `statement` (semantic), not a typed column. (observations_design.md §3)
+  period_basis    text,                        -- D140 §8.2: as on relations — the in-force-period fingerprint this window was last adjudicated against
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed it
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when learned wrong (NULL = still believed). NOT used to "end" a fact — that's valid_until.
   evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT current-testimony LINEAGES supporting (D54 — mirrors relations)

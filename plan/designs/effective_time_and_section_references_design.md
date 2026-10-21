@@ -227,8 +227,8 @@ Consequences a reader should check against the example:
   instant. It is the
   only way back, so reverting to "the newest version is current" is always an explicit act.
 - Periods never trigger reprocessing: they are not part of any extraction, embedding or
-  structure input (§5 keeps them out of every key). They do enqueue fact re-adjudication
-  (§8).
+  structure input (§5 keeps them out of every key). They do queue a fact window review
+  (§8.2).
 
 ### 2.4 Interaction with versioning modes, currency and the served version
 
@@ -919,16 +919,83 @@ excludes that edition. The gate closes this without touching fact windows:
   caller reproduces exactly the evidence set an operation saw. The raw `facts_current` view is
   unchanged and its manifest comment says it does not apply the gate.
 
-### 8.2 Adjudication input
+### 8.2 Adjudication input and window review
 
-A claim's occurrence **in-force interval set** — the union of the intervals of the versions it
-occurs in — is an additional **adjudication input** for E3, shown beside the claim's own
+A claim's occurrence **in-force interval set** — the union of the in-force intervals of the
+versions it occurs in — is an additional **adjudication input** for E3, shown beside the claim's own
 validity. D118's single fact window stays the only fact-time authority: adjudication may use
-the interval to propose or bound a window, exactly as it uses a claim's own dates. When a
-lineage's declarations change (a new start, a declared end, a correction, a version deleted),
-the engine enqueues ordinary D118 re-adjudication for facts supported by claims that occur in
-the affected versions; windows then change through the normal mutable-window path, so open PR
-#486's belief-time rule applies without special cases.
+the interval to propose or bound a window, exactly as it uses a claim's own dates.
+
+**What the adjudicator is shown.** For every supplied claim that occurs in at least one version
+of a periodised lineage, the attempt carries `source_in_force`: the union of those versions'
+in-force intervals, as UTC bounds with exclusive ends (`until` absent = still in force), taken
+from the current-belief projection `document_version_scope` and counting only occurrences in a
+non-deleted version's current reading. `source_in_force_also_undated` is added when the same
+claim also occurs in a lineage without declared periods. A claim from undated lineages only
+gets neither key, and the prompt's *IN-FORCE PERIODS* section is rendered only when some
+supplied claim carries `source_in_force`. An attempt in a corpus without declared periods is
+therefore byte-for-byte the attempt it was before D140: same inputs, same fingerprint, same
+prompt, no extra model call. The section tells the adjudicator when the periods are world
+dates (a rule, rate, obligation or definition the document establishes holds because the
+text is in force) and when they are not (an event the text merely reports keeps its own
+date); a later version stating a different value ends the earlier fact at that version's
+in-force start, never at publication time.
+
+The deterministic adjudication engine (D121 `jev`) uses the same input in its existing
+`use_claim` window action: a claim with no dates of its own whose text was in force over
+exactly one interval is dated by that interval (midnight bounds at day precision; an open
+interval as `open`). Several intervals (text that left and came back) are left unchanged —
+that engine cannot choose among them.
+
+Example (a price list, or a statute): the 2015 and 2020 editions say "VAT on books is 15%",
+the 2024 edition says 10%. When the 10% claim arrives, the adjudicator sees the 15% claim
+with `source_in_force = [2015-01-01, 2024-01-01)` and the 10% claim with
+`[2024-01-01, open)`, and can record the 10% fact from 2024-01-01 while capping the 15% fact
+there — both grounded windows citing the claims, as any D118 window replacement.
+
+**Window review when periods move later.** Ordinary adjudication runs when a claim arrives.
+Periods can change afterwards without any new assertion: a declaration is corrected or
+retracted, a lineage leaves effective time (`clear`), a new version ends its predecessor's
+derived interval, or a version or lineage is deleted. The evidence did not change, so no
+application would ever reach the adjudicator again. A **window review** closes that gap:
+
+- **Period basis.** Each relation and observation stores `period_basis`, a fingerprint of its
+  evidence claims (both stances) that occur in periodised lineages, with their in-force
+  intervals and `also_undated` flags, as they were when the fact's window was last adjudicated.
+  It is recorded in the transaction that applies an ordinary adjudication (for every fact the
+  application changed) and by every review. A fact with no periodised evidence has `NULL`.
+- **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
+  recorded an effective-time event — by a period write that changed anything, by `clear`, by
+  the completion of any of its versions (the reconcile stage, so a new edition is reviewed once
+  its claims exist, not while it is still being processed), by an operator version deletion
+  and by a document deletion. A request is a `review_fact_windows` job targeting the lineage
+  request (its id is fresh per request, or derived from the reconcile run so a retried run does
+  not duplicate it).
+- **Fan-out.** The lineage job finds the live facts with evidence in any version of the
+  lineage (deleted versions included, since deleting one changes the intervals) whose current
+  basis differs from the stored one, and queues one review job per fact. It makes no model
+  call.
+- **Review.** A fact review shows the adjudicator the fact, its current window and window
+  claims, and up to 40 evidence claims (window claims first, then supports, newest first) with
+  their own dates and in-force intervals, and asks one question: keep the window, or replace
+  it with a complete window grounded in supplied claims. It runs like ordinary adjudication:
+  inputs are read under the entity's adjudication lock, the model is called with no lock held,
+  and the answer is applied only if a re-read under the lock (with the fact row locked) yields
+  the same input fingerprint; otherwise the job retries. A replacement below the adjudication
+  confidence floor is not applied. Every review — kept or replaced — appends an
+  `{relation,observation}_adjudications` row (`outcome` `update` or `noop`, method
+  `small_model`, version `fact-window-review-…`) with the before/after window and both bases,
+  stores the new basis, and on a replacement clears the fact's label and embedding and queues
+  its relabeling and entity-profile repair. The review uses the generative adjudication model
+  for both adjudication engines.
+- **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
+  stored basis already matches returns without a model call, so duplicate triggers are free.
+  An undated deployment never queues a request and never computes a basis beyond one indexed
+  existence probe per applied adjudication.
+
+Belief time is the current belief: a review answers "given what is now believed about the
+periods, is this window right?", and windows change through the normal mutable-window path,
+so open PR #486's belief-time rule applies without special cases.
 
 ## 9. Deletion and forgetting
 

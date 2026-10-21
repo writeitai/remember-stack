@@ -176,6 +176,15 @@ evidence shown with each fact is limited to claims in editions in force,
 shown where they occur in those editions. See
 [Text in force](/docs/reference/assured-operations#text-in-force).
 
+The periods also inform the facts' own dates. When RememberStack forms or
+updates a fact from a claim, it tells the model the periods during which an
+edition containing that claim's text was in force, and the model may date a
+rule, rate or entitlement the policy states from them, citing the claim: here,
+the edition-1 allowance as valid until 1 January 2026 and the edition-2
+allowance from that day. An event the text only reports keeps its own date.
+The model decides; the periods are evidence, not an override. Facts from
+documents without periods are formed exactly as before.
+
 ## Withdraw an edition
 
 On 30 June 2027 the company withdraws the policy without a successor. Give
@@ -202,6 +211,14 @@ support in force for `current`. `at` 1 May 2026 still reads edition 2.
 Nothing is reprocessed, and the change is recorded, not overwritten: a read
 that pages with a cursor keeps seeing the periods as they were when it
 started.
+
+Changing periods later also rechecks the dates of the facts the document
+supports. After the call commits, the `worker-review-fact-windows` worker asks
+the model, once for each fact whose evidence's periods moved, whether the
+fact's dates still fit; it keeps them or replaces them with dates grounded in
+the claims, and records the decision in the fact's adjudication history. The
+same check runs when a new edition finishes processing and when a version or
+document is deleted. A fact whose periods did not move is not rechecked.
 
 Two other tools:
 

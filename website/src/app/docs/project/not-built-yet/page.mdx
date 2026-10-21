@@ -43,9 +43,6 @@ absent from the current release; nothing here has a date.
   references itself (links, citations, "see section 4.2"); every reference
   `document_references` returns is one you supplied with
   `PUT /documents/{doc_id}/versions/{version_id}/references`.
-- **Fact dates from effective periods.** Declaring when a version is in
-  force decides which text and evidence a time-scoped read uses, but does
-  not yet inform the validity window of the facts that text supports.
 - **Periods, references and section history from the CLI and MCP.** The CLI
   declares periods only at `remember ingest`, and the MCP server only through
   `ingest`; neither can change periods later or supply references. The CLI
