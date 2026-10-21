@@ -974,15 +974,31 @@ application would ever reach the adjudicator again. A **window review** closes t
   transaction that applies an ordinary adjudication. A fact with no periodised evidence has
   `NULL`.
 - **An ordinary application certifies only what it saw.** Period writers (declarations,
-  deletions, new occurrences) do not take the fence below, so one may commit while an
-  application is between validation and commit. Before writing, the application reads which
-  candidate facts already have a stale basis, and the in-force periods of every claim its
-  bases can cover: the shown claims and all evidence of its candidate facts, including
-  evidence beyond the 100 claims shown. It then records the basis only for changed facts
-  that were current, and re-reads those periods after recording. If any changed, the whole
-  application rolls back and retries. A fact that was already stale keeps its stale basis:
-  the change that made it stale queued its review. A writer that commits after the re-read
-  leaves the old basis stored, which its own fan-out sees as moved.
+  deletions, new occurrences) do not take the fence below, so one may commit at any point of
+  an application's apply transaction. The protocol binds the recorded basis to the inputs the
+  decision consumed:
+  1. **Watch, before final validation.** One SQL statement reads, from one database snapshot,
+     everything the bases may certify, using the prepared inputs (which the final validation
+     must match):
+     - which candidate facts already have a stale basis (stored ≠ current);
+     - one digest over the in-force periods of every claim the bases can cover: all evidence
+       of the candidate facts, both stances, however many, plus the shown claims;
+     - the shown claims' own periods.
+
+     The digest is computed in the database. Only the digest, the stale ids (at most the
+     candidate count) and the shown claims' periods (at most 100) reach the worker, so the
+     worker's memory does not grow with a fact's evidence.
+  2. **Validate.** The final input snapshot must match the prepared fingerprint, and its
+     shown periods must equal the watch's. Otherwise a writer committed between the two
+     reads, and the decision is discarded and prepared again.
+  3. **Record.** After the writes, the basis is recorded only for changed facts that were
+     not stale. A stale fact keeps its stale basis: the change that made it stale queued its
+     review.
+  4. **Re-check.** The digest is read again over the same claims. An application only adds
+     or removes evidence of shown claims, so the set is unchanged. A different digest rolls
+     the whole application back for a fresh attempt. A writer that commits after the
+     re-check leaves the old basis stored, which its own fan-out (waiting at the fence for
+     this commit) sees as moved.
 - **The period fence.** Every writer of a window or basis — ordinary adjudication apply and
   review apply — takes a per-deployment advisory lock *shared* after the entity adjudication
   lock and before its final input validation, and holds it through commit (lock order:

@@ -824,6 +824,23 @@ class FactAdjudicator:
             # D140 §8.2: from the final input validation through commit, no
             # lineage fan-out can read stored period bases (they would be stale)
             share_period_fence_on(connection=connection, deployment_id=deployment_id)
+            # What the bases recorded below may certify, read before the final
+            # validation from the prepared inputs that validation must match.
+            prepared_inputs = connection.execute(
+                text("SELECT prepared FROM fact_applications WHERE application_id=:id"),
+                {"id": application_id},
+            ).scalar_one()
+            watch = watch_periods_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=prepared_inputs["kind"],
+                fact_ids=(
+                    UUID(str(fact["fact_id"])) for fact in prepared_inputs["facts"]
+                ),
+                claim_ids=(
+                    UUID(str(claim["claim_id"])) for claim in prepared_inputs["claims"]
+                ),
+            )
             snapshot = application_snapshot(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -844,7 +861,11 @@ class FactAdjudicator:
                 engine=self._settings.engine,
                 question_identity=active_question_identity(self._settings.engine),
             )
-            if current["input_hash"] != expected_hash:
+            if current["input_hash"] != expected_hash or (
+                watch is not None and watch.shown != _shown_periods(snapshot["claims"])
+            ):
+                # The inputs moved, or the validated periods are not the ones
+                # the watch read (a writer committed between the two reads).
                 connection.execute(
                     text(
                         "UPDATE fact_applications SET attempt_id=NULL,input_hash=NULL,prepared=NULL,decision=NULL WHERE application_id=:id"
@@ -864,16 +885,6 @@ class FactAdjudicator:
                     confidence=decision.confidence,
                     rationale=f"Confidence below {self._settings.confidence_floor}; preserve coexistence. {decision.rationale}",
                 )
-            # What the bases recorded below may certify, read before any write.
-            watch = watch_periods_on(
-                connection=connection,
-                deployment_id=deployment_id,
-                kind=snapshot["kind"],
-                fact_ids=(UUID(str(fact["fact_id"])) for fact in snapshot["facts"]),
-                claim_ids=(
-                    UUID(str(claim["claim_id"])) for claim in snapshot["claims"]
-                ),
-            )
             try:
                 with connection.begin_nested():
                     result = apply_fact_decision(
@@ -902,6 +913,9 @@ class FactAdjudicator:
                             connection=connection,
                             deployment_id=deployment_id,
                             watch=watch,
+                            changed_fact_ids=(
+                                UUID(value) for value in result["changed_fact_ids"]
+                            ),
                         ):
                             raise ApplicationInputChanged(
                                 "in-force periods changed before the decision committed"
@@ -1024,3 +1038,15 @@ def _jev_new_fact(
         confidence=confidence,
         rationale=rationale,
     )
+
+
+def _shown_periods(claims: Any) -> dict[str, dict[str, Any]]:
+    """The in-force periods validated inputs showed, keyed like a period watch."""
+    return {
+        str(claim["claim_id"]): {
+            "in_force": claim["in_force"],
+            "also_undated": claim["in_force_also_undated"],
+        }
+        for claim in claims
+        if "in_force" in claim
+    }

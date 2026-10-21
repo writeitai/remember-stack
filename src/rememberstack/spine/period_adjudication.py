@@ -245,21 +245,137 @@ def record_period_basis_on(
     )
 
 
+# One statement, so every part is read from the same database snapshot: the
+# stale candidates (stored basis differs from current), one digest over the
+# in-force periods of every watched claim (all evidence of the facts, both
+# stances, plus the shown claims), and the shown claims' own periods. Only the
+# digest, the stale ids (at most the candidate count) and the shown claims'
+# periods (at most the shown count) leave the database, however much evidence
+# the facts have.
+_PERIOD_WATCH = """
+WITH watched AS (
+  SELECT e.claim_id FROM {evidence} e
+  WHERE e.deployment_id = :deployment_id
+    AND e.{id_column} = ANY(CAST(:fact_ids AS uuid[]))
+  UNION
+  SELECT shown.claim_id FROM unnest(CAST(:shown_ids AS uuid[])) AS shown(claim_id)
+),
+occurrence AS (
+  SELECT cc.claim_id, s.periodised, s.in_force
+  FROM watched w
+  JOIN chunk_claims cc
+    ON cc.deployment_id = :deployment_id AND cc.claim_id = w.claim_id
+  JOIN chunks ch
+    ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+  JOIN document_versions v
+    ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
+   AND v.current_representation_id = ch.representation_id
+  JOIN document_version_scope s
+    ON s.deployment_id = v.deployment_id AND s.version_id = v.version_id
+),
+claim_union AS (
+  SELECT o.claim_id,
+         bool_or(o.periodised) AS periodised,
+         bool_or(NOT o.periodised) AS also_undated,
+         range_agg(r) FILTER (WHERE o.periodised AND r IS NOT NULL) AS in_force
+  FROM occurrence o
+  LEFT JOIN LATERAL unnest(o.in_force) AS r ON true
+  GROUP BY o.claim_id
+),
+rendered AS (
+  SELECT u.claim_id, u.also_undated,
+         (SELECT coalesce(
+                   jsonb_agg(
+                     jsonb_build_array(
+                       to_char(lower(x) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'),
+                       to_char(upper(x) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'))
+                     ORDER BY lower(x)),
+                   '[]'::jsonb)
+          FROM unnest(coalesce(u.in_force, '{{}}'::tstzmultirange)) AS x) AS in_force
+  FROM claim_union u
+  WHERE u.periodised
+),
+fact_basis AS ({fact_basis}),
+stale AS (
+  SELECT f.{id_column} AS fact_id
+  FROM {table} f JOIN fact_basis b ON b.fact_id = f.{id_column}
+  WHERE f.deployment_id = :deployment_id
+    AND f.period_basis IS DISTINCT FROM b.basis
+)
+SELECT
+  (SELECT encode(sha256(convert_to(coalesce(string_agg(
+            r.claim_id::text || '|' || r.also_undated::text || '|' || r.in_force::text,
+            E'\\n' ORDER BY r.claim_id), ''), 'UTF8')), 'hex')
+   FROM rendered r) AS digest,
+  (SELECT coalesce(jsonb_object_agg(r.claim_id::text,
+            jsonb_build_object('in_force', r.in_force, 'also_undated', r.also_undated)),
+          '{{}}'::jsonb)
+   FROM rendered r
+   WHERE r.claim_id = ANY(CAST(:shown_ids AS uuid[]))) AS shown,
+  (SELECT coalesce(array_agg(fact_id), '{{}}'::uuid[]) FROM stale) AS stale
+"""
+
+
 @dataclass(frozen=True)
 class PeriodWatch:
-    """The in-force periods an application was validated against (D140 §8.2).
+    """What an application's period bases may certify (D140 §8.2).
 
+    Read in one statement before the application's final input validation.
     ``stale`` holds the candidate facts whose stored basis already differed
-    from their current one: a change the application did not adjudicate is
+    from their current one: a change the decision did not adjudicate is
     pending review for them, so their basis must not be certified now.
-    ``claim_ids`` are every claim the application's recorded bases can cover
-    (its snapshot claims and all evidence of its candidate facts), and
-    ``in_force`` their periods when validated.
+    ``digest`` covers the periods of every claim the recorded bases can cover;
+    ``shown`` holds the shown claims' own periods, in the shape adjudication
+    is shown them, so the caller can check them against its validated inputs.
     """
 
+    kind: FactKind
+    fact_ids: tuple[str, ...]
+    shown_ids: tuple[str, ...]
     stale: frozenset[UUID]
-    claim_ids: tuple[UUID, ...]
-    in_force: dict[str, dict[str, Any]]
+    digest: str
+    shown: dict[str, dict[str, Any]]
+
+
+def _read_watch(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: FactKind,
+    fact_ids: tuple[str, ...],
+    shown_ids: tuple[str, ...],
+) -> tuple[str, dict[str, dict[str, Any]], frozenset[UUID]]:
+    table, id_column, evidence = _FACT_TABLES[kind]
+    row = connection.execute(
+        text(
+            _PERIOD_WATCH.format(
+                evidence=evidence,
+                id_column=id_column,
+                table=table,
+                fact_basis=_FACT_BASIS.format(id_column=id_column, evidence=evidence),
+            )
+        ),
+        {
+            "deployment_id": deployment_id,
+            "fact_ids": list(fact_ids),
+            "shown_ids": list(shown_ids),
+        },
+    ).one()
+    shown = {
+        claim_id: {
+            "in_force": [
+                {"from": _instant(start), "until": _instant(end)}
+                for start, end in value["in_force"]
+            ],
+            "also_undated": bool(value["also_undated"]),
+        }
+        for claim_id, value in dict(row.shown).items()
+    }
+    return (
+        str(row.digest),
+        shown,
+        frozenset(UUID(str(fact_id)) for fact_id in row.stale),
+    )
 
 
 def watch_periods_on(
@@ -270,82 +386,67 @@ def watch_periods_on(
     fact_ids: Iterable[UUID],
     claim_ids: Iterable[UUID],
 ) -> PeriodWatch | None:
-    """Capture what an application's period bases may certify, before it writes.
+    """Capture what an application's bases may certify, before its final validation.
 
+    ``fact_ids`` and ``claim_ids`` are the prepared inputs' candidate facts and
+    shown claims; the final validation proves they are still the inputs.
     Period writers do not take the period fence (it only keeps fan-outs out),
-    so a declaration, deletion or new occurrence may commit while an
-    application is between validation and commit. The application records
-    bases only for facts that were current here, and only if
-    :func:`periods_unchanged_on` still holds after recording. None for a
-    deployment that never declared a period: nothing is recorded there.
+    so a declaration, deletion or new occurrence may commit at any point; the
+    caller checks ``shown`` against its validated inputs, records bases only
+    for facts not in ``stale``, and requires :func:`periods_unchanged_on`
+    after recording. None for a deployment that never declared a period:
+    nothing is recorded there.
     """
     if not deployment_ever_periodised_on(
         connection=connection, deployment_id=deployment_id
     ):
         return None
-    facts = sorted({str(fact_id) for fact_id in fact_ids})
-    table, id_column, evidence = _FACT_TABLES[kind]
-    stale: frozenset[UUID] = frozenset()
-    evidence_ids: list[UUID] = []
-    if facts:
-        params = {"deployment_id": deployment_id, "fact_ids": facts}
-        current = fact_period_basis_on(
-            connection=connection,
-            deployment_id=deployment_id,
-            kind=kind,
-            fact_ids=(UUID(fact_id) for fact_id in facts),
-        )
-        stale = frozenset(
-            UUID(str(row["fact_id"]))
-            for row in connection.execute(
-                text(
-                    f"SELECT {id_column} AS fact_id, period_basis FROM {table}"
-                    f" WHERE deployment_id = :deployment_id"
-                    f" AND {id_column} = ANY(CAST(:fact_ids AS uuid[]))"
-                ),
-                params,
-            ).mappings()
-            if row["period_basis"] != current.get(UUID(str(row["fact_id"])))
-        )
-        evidence_ids = [
-            UUID(str(claim_id))
-            for claim_id in connection.execute(
-                text(
-                    f"SELECT DISTINCT claim_id FROM {evidence}"
-                    f" WHERE deployment_id = :deployment_id"
-                    f" AND {id_column} = ANY(CAST(:fact_ids AS uuid[]))"
-                ),
-                params,
-            ).scalars()
-        ]
-    watched = tuple(sorted({*claim_ids, *evidence_ids}, key=str))
+    facts = tuple(sorted({str(fact_id) for fact_id in fact_ids}))
+    shown_ids = tuple(sorted({str(claim_id) for claim_id in claim_ids}))
+    digest, shown, stale = _read_watch(
+        connection=connection,
+        deployment_id=deployment_id,
+        kind=kind,
+        fact_ids=facts,
+        shown_ids=shown_ids,
+    )
     return PeriodWatch(
+        kind=kind,
+        fact_ids=facts,
+        shown_ids=shown_ids,
         stale=stale,
-        claim_ids=watched,
-        in_force=claim_in_force_on(
-            connection=connection, deployment_id=deployment_id, claim_ids=watched
-        ),
+        digest=digest,
+        shown=shown,
     )
 
 
 def periods_unchanged_on(
-    *, connection: Connection, deployment_id: UUID, watch: PeriodWatch
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    watch: PeriodWatch,
+    changed_fact_ids: Iterable[UUID],
 ) -> bool:
-    """Whether every watched claim still has the periods it was validated with.
+    """Whether every watched claim still has the periods the watch read.
 
-    Called after the bases are recorded, in the same transaction: a period
-    writer that committed before this read is detected (the application rolls
-    back and retries); one that commits after it leaves the old basis stored,
-    which its own fan-out then sees as moved and reviews.
+    Called after the bases are recorded, in the same transaction. The watched
+    claims are the same set: an application only adds or removes evidence of
+    shown claims, and every fact it changed is a candidate or holds only
+    shown-claim evidence. A period writer that committed before this read is
+    detected (the application rolls back and retries); one that commits
+    after it leaves the old basis stored, which its own fan-out then sees as
+    moved and reviews.
     """
-    return (
-        claim_in_force_on(
-            connection=connection,
-            deployment_id=deployment_id,
-            claim_ids=watch.claim_ids,
-        )
-        == watch.in_force
+    digest, _, _ = _read_watch(
+        connection=connection,
+        deployment_id=deployment_id,
+        kind=watch.kind,
+        fact_ids=tuple(
+            sorted({*watch.fact_ids, *(str(fact_id) for fact_id in changed_fact_ids)})
+        ),
+        shown_ids=watch.shown_ids,
     )
+    return digest == watch.digest
 
 
 def share_period_fence_on(*, connection: Connection, deployment_id: UUID) -> None:

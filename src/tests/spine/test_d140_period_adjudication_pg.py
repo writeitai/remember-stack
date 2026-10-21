@@ -17,7 +17,9 @@ from datetime import UTC
 import hashlib
 import json
 from pathlib import Path
+import sys
 import threading
+import tracemalloc
 from typing import Any
 from uuid import NAMESPACE_URL
 from uuid import UUID
@@ -54,6 +56,7 @@ from rememberstack.spine import fact_adjudication as adjudication_module
 from rememberstack.spine import fact_application_inputs as inputs_module
 from rememberstack.spine import fact_window_review as review_module
 from rememberstack.spine import FactCatalog
+from rememberstack.spine import period_adjudication as period_module
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
@@ -74,6 +77,8 @@ from rememberstack.spine.period_adjudication import claim_in_force_on
 from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import period_fence_barrier_on
+from rememberstack.spine.period_adjudication import periods_unchanged_on
+from rememberstack.spine.period_adjudication import watch_periods_on
 from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import HandlerRegistry
@@ -1393,6 +1398,216 @@ def test_ordinary_apply_never_certifies_evidence_periods_it_was_not_shown(
         )
     assert _fact(rig, vat["old_fact"])["period_basis"] != current[vat["old_fact"]]
     assert _fan_out_review_for(rig, vat["old_fact"]).payload is not None
+
+
+def _drain_through_retries(rig: _Rig) -> None:
+    """Drain, letting the application retry after rolled-back attempts."""
+    for _ in range(3):
+        try:
+            _drain(rig)
+            return
+        except ApplicationInputChanged:
+            continue
+    raise AssertionError("the application never settled")
+
+
+def test_a_correction_after_final_validation_is_never_certified(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A correction committed right after the final snapshot was read is caught: the
+    watch was read before validation, so it cannot adopt the corrected periods
+    as its baseline (R3 P1-1, first interleaving)."""
+    doc_id, version_id, claim = _one_edition_rule(rig, body="Allowance is 45 per day")
+    real_snapshot = adjudication_module.application_snapshot
+    corrected = {"done": False}
+
+    def snapshot_then_correct(**kwargs: Any) -> Any:
+        snapshot = real_snapshot(**kwargs)
+        # only the final validation read in apply, not the prepare read
+        if not corrected["done"] and sys._getframe(1).f_code.co_name == "apply":
+            corrected["done"] = True  # a separate, committed writer
+            rig.periods.set_effective_periods(
+                deployment_id=_DEPLOYMENT,
+                doc_id=doc_id,
+                version_id=version_id,
+                periods=(
+                    EffectivePeriodInput(effective_from=_Y2015, effective_until=_Y2024),
+                ),
+            )
+        return snapshot
+
+    monkeypatch.setattr(
+        adjudication_module, "application_snapshot", snapshot_then_correct
+    )
+    rig.answers.append(
+        _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, None))
+    )
+    rig.answers.append(
+        _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, _Y2024))
+    )
+    _stage(rig, claim_id=claim, statement="Allowance is 45 per day")
+    _drain_through_retries(rig)
+    assert corrected["done"]
+    with rig.engine.connect() as connection:
+        (fact,) = connection.execute(
+            text("SELECT observation_id FROM observations WHERE deployment_id = :d"),
+            {"d": _DEPLOYMENT},
+        ).scalars()
+        current = fact_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(fact,),
+        )
+    row = _fact(rig, fact)
+    # the window was decided on the corrected periods, and only then certified
+    assert (row["valid_from"], row["valid_until"]) == (_Y2015, _Y2024)
+    assert row["period_basis"] == current[fact]
+
+
+def test_a_correction_inside_the_watch_is_never_certified(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A correction to unshown evidence committed while bases are being read leaves
+    the fact's basis stale, so the correction's fan-out reviews it (R3 P1-1,
+    second interleaving: the stale check and the period read are one statement)."""
+    vat = _vat_rig(rig)
+    memo_doc, (memo,) = _lineage(rig, label="memo", editions=1)
+    memo_claim = _claim(
+        rig, doc_id=memo_doc, body="VAT on books is 15%", chunks=(memo.chunk_id,)
+    )
+    monkeypatch.setattr(inputs_module, "_CLAIM_LIMIT", 1)  # evidence is unshown
+    real_basis = period_module.fact_period_basis_on
+    corrected = {"done": False}
+
+    def basis_then_correct(**kwargs: Any) -> Any:
+        found = real_basis(**kwargs)
+        if not corrected["done"]:
+            corrected["done"] = True  # a separate, committed writer
+            _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
+        return found
+
+    monkeypatch.setattr(period_module, "fact_period_basis_on", basis_then_correct)
+
+    def support(prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "PromptFactDecision"
+        (fact,) = (
+            fact
+            for fact in _inputs(prompt)["facts"]
+            if fact["chosen_from"] == _Y2015.isoformat()  # the 15% fact
+        )
+        return {
+            "target": fact["handle"],
+            "stance": "supports",
+            "new_facts": [],
+            "window": None,
+            "updates": [],
+            "support_moves": [],
+            "contradict_with": [],
+            "confidence": 0.9,
+            "rationale": "Same rate.",
+        }
+
+    rig.answers.extend((support, support, support))
+    _stage(rig, claim_id=memo_claim, statement="VAT on books is 15%")
+    _drain_through_retries(rig)
+    assert corrected["done"]
+    with rig.engine.connect() as connection:
+        current = fact_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(vat["old_fact"],),
+        )
+    assert _fact(rig, vat["old_fact"])["period_basis"] != current[vat["old_fact"]]
+    assert _fan_out_review_for(rig, vat["old_fact"]).payload is not None
+
+
+def test_the_period_watch_stays_bounded_over_5001_evidence_claims(rig: _Rig) -> None:
+    """The watch compares all evidence in the database and returns only a digest,
+    the stale ids and the shown claims' periods (R3 P1-3): 5,001 unshown dated
+    evidence claims cost the worker no per-claim memory, and a change to any of
+    them is still detected."""
+    vat = _vat_rig(rig)
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TEMP TABLE bulk ON COMMIT DROP AS"
+                " SELECT gen_random_uuid() AS claim_id, g FROM generate_series(1, 5001) g"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, is_current_testimony, extractor_version,"
+                " asserted_at) SELECT b.claim_id, :d, :doc, :chunk, 'rate ' || b.g,"
+                " 'rate ' || b.g, 0, 6, true, true, true, 'wpet7-test', :at FROM bulk b"
+            ),
+            {
+                "d": _DEPLOYMENT,
+                "doc": vat["doc_id"],
+                "chunk": vat["editions"][0].chunk_id,
+                "at": _Y2015,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                " evidence_spans) SELECT :d, :chunk, b.claim_id,"
+                ' \'[{"char_start": 0, "char_end": 6}]\'::jsonb FROM bulk b'
+            ),
+            {"d": _DEPLOYMENT, "chunk": vat["editions"][0].chunk_id},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO observation_evidence (deployment_id, observation_id,"
+                " claim_id, doc_id, stance, normalizer_version)"
+                " SELECT :d, :f, b.claim_id, :doc, 'supports', :n FROM bulk b"
+            ),
+            {
+                "d": _DEPLOYMENT,
+                "f": vat["old_fact"],
+                "doc": vat["doc_id"],
+                "n": FACT_NORMALIZER_VERSION,
+            },
+        )
+        connection.execute(  # their periods are now the fact's adjudicated basis
+            text(
+                "UPDATE observations SET period_basis = NULL WHERE observation_id = :f"
+            ),
+            {"f": vat["old_fact"]},
+        )
+        period_module.record_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(vat["old_fact"],),
+        )
+    with rig.engine.connect() as connection:
+        tracemalloc.start()
+        watch = watch_periods_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(vat["old_fact"],),
+            claim_ids=(vat["new_claim"],),
+        )
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+    assert peak < 256 * 1024  # not proportional to the 5,001 claims
+    assert watch is not None
+    assert watch.stale == frozenset()
+    assert set(watch.shown) == {str(vat["new_claim"])}
+    # the unshown evidence is still covered: moving its period end is detected
+    _declare(rig, vat["doc_id"], vat["editions"][1], datetime(2019, 1, 1, tzinfo=UTC))
+    with rig.engine.connect() as connection:
+        assert not periods_unchanged_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            watch=watch,
+            changed_fact_ids=(),
+        )
 
 
 def test_deleting_a_lineage_queues_review_in_its_tombstone_transaction(
