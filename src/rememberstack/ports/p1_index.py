@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+import math
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -18,6 +19,24 @@ from rememberstack.model.client import DocumentSearchFilters
 
 P1_VECTOR_DIMENSIONS = 1_536
 """Fixed D94 semantic dimension for every current P1 target."""
+
+
+def require_p1_vector(vector: tuple[float, ...]) -> None:
+    """Reject a vector no P1 HNSW index can reach (D94, D142 §8.6).
+
+    The dimension is fixed; every component must be finite and the norm
+    non-zero (cosine distance to a zero vector is undefined and HNSW does not
+    index it, while an exhaustion proof counts every stored vector).
+    """
+    if len(vector) != P1_VECTOR_DIMENSIONS:
+        raise ValueError(
+            f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
+        )
+    if not all(math.isfinite(item) for item in vector):
+        raise ValueError("P1 vector has a non-finite component")
+    if not any(item != 0.0 for item in vector):
+        raise ValueError("P1 vector has zero norm")
+
 
 CLAIM_INPUT_POLICY = "claim-text-v1"
 FACT_INPUT_POLICY = "fact-label-v2:chosen-window"

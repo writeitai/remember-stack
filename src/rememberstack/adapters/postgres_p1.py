@@ -50,6 +50,7 @@ from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 
@@ -881,6 +882,9 @@ class PostgresP1Index:
                 count_sql=(
                     f"SELECT count(*) FROM {search_table}"
                     f" WHERE deployment_id = :deployment_id AND {attestation}{partial}"
+                    # HNSW (cosine) does not index zero vectors; legacy rows
+                    # written before validation must not count as reachable.
+                    " AND vector_norm(embedding) > 0"
                 ),
             )
         else:
@@ -1484,6 +1488,9 @@ class PostgresP1Index:
                     count_sql=(
                         f"SELECT count(*) FROM {table}"
                         f" WHERE deployment_id = :deployment_id AND {attestation}"
+                        # HNSW (cosine) does not index zero vectors; legacy rows
+                        # written before validation must not count as reachable.
+                        " AND vector_norm(embedding) > 0"
                     ),
                 )
                 candidates, account = p1_ranked.nominate_and_confirm(
@@ -1733,6 +1740,9 @@ class PostgresP1Index:
             count_sql=(
                 "SELECT count(*) FROM entities"
                 f" WHERE deployment_id = :deployment_id AND {attestation}"
+                # HNSW (cosine) does not index zero vectors; legacy rows
+                # written before validation must not count as reachable.
+                " AND vector_norm(embedding) > 0"
             ),
         )
 
@@ -2146,20 +2156,8 @@ def _parse_vector(value: str) -> tuple[float, ...]:
 
 
 def _require_vector(vector: tuple[float, ...]) -> None:
-    """Refuse any vector that cannot match the column or be reached by HNSW.
-
-    D94 fixes the dimension. D142 §8.6 adds that every component is finite and
-    the vector has a non-zero norm: cosine distance to a zero vector is
-    undefined, and an exhaustion proof counts every stored vector as reachable.
-    """
-    if len(vector) != P1_VECTOR_DIMENSIONS:
-        raise ValueError(
-            f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
-        )
-    if not all(math.isfinite(item) for item in vector):
-        raise ValueError("P1 vector has a non-finite component")
-    if not any(item != 0.0 for item in vector):
-        raise ValueError("P1 vector has zero norm")
+    """Validate one vector before writing it (shared port contract)."""
+    require_p1_vector(vector)
 
 
 def _require_vectors(*, rows: tuple[tuple[float, ...], ...]) -> None:

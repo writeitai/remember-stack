@@ -15,10 +15,13 @@ from typing import Any
 import pytest
 
 from rememberstack.adapters import p1_ranked
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.ports.p1_index import P1SearchAccount
 from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.ports.p1_index import search_account
+from rememberstack.spine import profile_refresher
 
 # pg_textsearch src/segment/fieldnorm.c FIELDNORM_DECODE_TABLE at the pinned
 # revision: 0..39 exact, then a 3-bit-mantissa pattern. The first 256 values
@@ -304,3 +307,23 @@ def test_analyzed_terms_bound_covers_every_parser_split() -> None:
     assert p1_ranked.analyzed_terms_bound("") == 1
     with pytest.raises(ValueError, match="too long"):
         p1_ranked.score_epsilon(2**23)
+
+
+@pytest.mark.parametrize(
+    "vector",
+    [
+        (0.0,) * P1_VECTOR_DIMENSIONS,
+        (float("nan"),) + (1.0,) * (P1_VECTOR_DIMENSIONS - 1),
+        (float("inf"),) + (1.0,) * (P1_VECTOR_DIMENSIONS - 1),
+        (1.0,) * 3,
+    ],
+    ids=["zero", "nan", "inf", "dimension"],
+)
+def test_every_p1_vector_writer_rejects_unreachable_vectors(
+    vector: tuple[float, ...],
+) -> None:
+    """Review r1 P2-6: entity profiles validate like chunks, claims and facts."""
+    with pytest.raises(ValueError):
+        require_p1_vector(vector)
+    with pytest.raises(ValueError):
+        profile_refresher._vector_literal(vector)  # noqa: SLF001
