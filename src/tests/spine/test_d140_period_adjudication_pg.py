@@ -334,7 +334,7 @@ def _jobs(rig: _Rig, *, target_kind: str) -> list[dict[str, Any]]:
                     " FROM processing_state WHERE deployment_id = :d"
                     " AND stage = 'review_fact_windows'"
                     " AND target_kind = CAST(:kind AS processing_target)"
-                    " ORDER BY created_at"
+                    " ORDER BY enqueued_at"
                 ),
                 {"d": _DEPLOYMENT, "kind": target_kind},
             ).mappings()
@@ -472,13 +472,13 @@ def test_adjudication_is_shown_in_force_periods_and_applies_the_grounded_windows
     prompt = rig.provider.generated_prompts[-1]
     assert "IN-FORCE PERIODS" in prompt
     presentation = _inputs(prompt)
-    by_text = {claim.get("claim_text"): claim for claim in presentation["claims"]}
-    assert by_text["VAT on books is 15%"]["source_in_force"] == [
+    by_handle = {claim["handle"]: claim for claim in presentation["claims"]}
+    old_claim = by_handle[_claim_handle(presentation, "VAT on books is 15%")]
+    new_claim = by_handle[_claim_handle(presentation, "VAT on books is 10%")]
+    assert old_claim["source_in_force"] == [
         {"from": _Y2015.isoformat(), "until": _Y2024.isoformat()}
     ]
-    assert by_text["VAT on books is 10%"]["source_in_force"] == [
-        {"from": _Y2024.isoformat(), "until": None}
-    ]
+    assert new_claim["source_in_force"] == [{"from": _Y2024.isoformat(), "until": None}]
     old = _fact(rig, vat["old_fact"])
     new = _fact(rig, vat["new_fact"])
     assert (old["valid_from"], old["valid_until"], old["valid_precision"]) == (

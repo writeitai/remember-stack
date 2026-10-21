@@ -350,7 +350,47 @@ def facts_needing_review_on(
             kind=kind,  # type: ignore[arg-type]
             fact_ids=stored,
         )
-        for fact_id in sorted(stored, key=str):
-            if current[fact_id] != stored[fact_id]:
-                found.append((kind, fact_id, current[fact_id]))  # type: ignore[arg-type]
+        moved = [fact for fact in stored if current[fact] != stored[fact]]
+        # A fact left with no periodised evidence and no live evidence at all
+        # (its only source was deleted) has nothing to review against: the
+        # lifecycle cascade already settled it, so it costs no model call.
+        live = _with_live_evidence(
+            connection=connection,
+            deployment_id=deployment_id,
+            kind=kind,  # type: ignore[arg-type]
+            fact_ids=[fact for fact in moved if current[fact] is None],
+        )
+        for fact_id in sorted(moved, key=str):
+            if current[fact_id] is None and fact_id not in live:
+                continue
+            found.append((kind, fact_id, current[fact_id]))  # type: ignore[arg-type]
     return found
+
+
+def _with_live_evidence(
+    *, connection: Connection, deployment_id: UUID, kind: FactKind, fact_ids: list[UUID]
+) -> set[UUID]:
+    """The facts with an evidence claim occurring in some live version's current reading."""
+    if not fact_ids:
+        return set()
+    _, id_column, evidence = _FACT_TABLES[kind]
+    return {
+        UUID(str(value))
+        for value in connection.execute(
+            text(
+                f"SELECT DISTINCT e.{id_column} FROM {evidence} e"
+                " JOIN chunk_claims cc ON cc.deployment_id = e.deployment_id"
+                " AND cc.claim_id = e.claim_id"
+                " JOIN chunks ch ON ch.deployment_id = cc.deployment_id"
+                " AND ch.chunk_id = cc.chunk_id"
+                " JOIN document_versions v ON v.deployment_id = ch.deployment_id"
+                " AND v.version_id = ch.version_id"
+                " AND v.current_representation_id = ch.representation_id"
+                " JOIN document_version_scope s ON s.deployment_id = v.deployment_id"
+                " AND s.version_id = v.version_id"
+                f" WHERE e.deployment_id = :deployment_id"
+                f" AND e.{id_column} = ANY(CAST(:fact_ids AS uuid[]))"
+            ),
+            {"deployment_id": deployment_id, "fact_ids": [str(f) for f in fact_ids]},
+        ).scalars()
+    }
