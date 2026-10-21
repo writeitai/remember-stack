@@ -1428,12 +1428,11 @@ class PostgresP1Index:
                 gate = fact_in_scope(
                     fact_kind=fact_kind, fact_id=f"indexed.{id_column}"
                 )
-                confirm_sql = (
-                    f"SELECT indexed.{id_column}::text AS item_id"
-                    f" FROM {table} AS indexed{join}"
+                confirm_sql = _confirm_by_candidate(
+                    f"FROM {table} AS indexed{join}"
                     " WHERE indexed.deployment_id = :deployment_id"
-                    f" {predicates} AND {gate}"
-                    f" AND indexed.{id_column} = ANY(CAST(:batch_ids AS uuid[]))"
+                    f" {predicates} AND {gate}",
+                    f"indexed.{id_column}",
                 )
 
                 def confirm(
@@ -1717,10 +1716,11 @@ class PostgresP1Index:
         def confirm(conn: Connection, ids: Sequence[str]) -> dict[str, str | None]:
             rows = conn.execute(
                 text(
-                    "SELECT published.entity_id::text AS item_id"
-                    " FROM memory_v1.entities_current AS published"
-                    " WHERE published.deployment_id = :deployment_id"
-                    " AND published.entity_id = ANY(CAST(:batch_ids AS uuid[]))"
+                    _confirm_by_candidate(
+                        "FROM memory_v1.entities_current AS published"
+                        " WHERE published.deployment_id = :deployment_id",
+                        "published.entity_id",
+                    )
                 ),
                 {**parameters, "batch_ids": _uuid_strings(tuple(ids))},
             ).mappings()
@@ -2170,6 +2170,23 @@ class _TestimonyQuery:
     coverage_sql: str | None
 
 
+def _confirm_by_candidate(relation_where: str, id_expression: str) -> str:
+    """Confirm a nominated batch one candidate at a time, by primary key.
+
+    ``= ANY(:batch_ids)`` lets the planner drive from the eligibility joins
+    instead — every eligible row, re-probing the whole id array per row, which
+    grows with the corpus (17 s for a 4,000-id batch at 30k chunks). A
+    ``LATERAL`` existence probe per candidate keeps confirmation proportional
+    to the batch (D142 §8.3 step 3).
+    """
+    return (
+        "SELECT candidate.item_id::text AS item_id"
+        " FROM unnest(CAST(:batch_ids AS uuid[])) AS candidate(item_id)"
+        f" CROSS JOIN LATERAL (SELECT 1 {relation_where}"
+        f" AND {id_expression} = candidate.item_id LIMIT 1) AS eligible"
+    )
+
+
 def _confirm_testimony(
     connection: Connection, *, query: _TestimonyQuery, ids: Sequence[str]
 ) -> dict[str, str | None]:
@@ -2178,9 +2195,9 @@ def _confirm_testimony(
         return {}
     rows = connection.execute(
         text(
-            f"SELECT indexed.{query.id_column}::text AS item_id {query.relation}"
-            f" {query.where}"
-            f" AND indexed.{query.id_column} = ANY(CAST(:batch_ids AS uuid[]))"
+            _confirm_by_candidate(
+                f"{query.relation} {query.where}", f"indexed.{query.id_column}"
+            )
         ),
         {**query.parameters, "batch_ids": _uuid_strings(tuple(ids))},
     ).mappings()
@@ -2193,22 +2210,25 @@ def _exact_testimony(
     """Score a bounded id set exactly: coverage, score, then stable id."""
     if not ids or limit <= 0:
         return []
+    positive = f" AND {query.score_sql} > 0" if query.channel == "bm25" else ""
     coverage_join = ""
     coverage_order = ""
     if query.coverage_sql is not None:
         coverage_join = (
             f" JOIN ({query.coverage_sql}) AS coverage"
-            f" ON coverage.item_id = indexed.{query.id_column}::text"
+            " ON coverage.item_id = candidate.item_id::text"
         )
         coverage_order = "coverage.coverage DESC,"
-    positive = f" AND {query.score_sql} > 0" if query.channel == "bm25" else ""
     rows = connection.execute(
         text(
-            f"SELECT indexed.{query.id_column}::text AS item_id,"
-            f" {query.score_sql} AS score {query.relation}{coverage_join}"
-            f" {query.where}{positive}"
-            f" AND indexed.{query.id_column} = ANY(CAST(:candidate_ids AS uuid[]))"
-            f" ORDER BY {coverage_order} score DESC, indexed.{query.id_column}"
+            # per-candidate probes, as in _confirm_by_candidate
+            "SELECT candidate.item_id::text AS item_id, eligible.score"
+            " FROM unnest(CAST(:candidate_ids AS uuid[])) AS candidate(item_id)"
+            f" CROSS JOIN LATERAL (SELECT {query.score_sql} AS score"
+            f" {query.relation} {query.where}{positive}"
+            f" AND indexed.{query.id_column} = candidate.item_id LIMIT 1) AS eligible"
+            f"{coverage_join}"
+            f" ORDER BY {coverage_order} eligible.score DESC, candidate.item_id"
             " LIMIT :limit"
         ),
         {**query.parameters, "candidate_ids": _uuid_strings(ids), "limit": limit},
