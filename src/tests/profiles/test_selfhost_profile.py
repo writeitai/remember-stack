@@ -84,8 +84,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
     assert tuple(_expected_components()) == tuple(
         stage
         for stage in _SUPPORTED_WORKER_STAGES
-        if stage
-        not in (PipelineStage.CROSSREF, PipelineStage.REVIEW_FACT_WINDOWS)
+        if stage not in (PipelineStage.CROSSREF, PipelineStage.REVIEW_FACT_WINDOWS)
     )
 
 
