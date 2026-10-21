@@ -520,6 +520,55 @@ Readings:
   at 30k chunks; now a per-candidate `LATERAL` probe). The D140 benchmark's
   own BM25 numbers were measured on the degenerate text.
 
+### 8.2 Review r1 rerun at 3M chunks (2026-10-21)
+
+After the round-1 fixes (filter pushdown, per-candidate confirmation, fixed
+query set from the generator's Zipf distribution), on an isolated VM
+(n2-highmem-8, the branch image) over 3M chunks (60,000 lineages × 5 × 10,
+half duplicated across versions, D134 metadata). Results are archived in
+`plan/analysis/data/d142_sweep_3m_2026-10-21.json` (query hash
+`c5d83714…`, corpus md5 `972a88f9…`).
+
+Adapter-level comparison on the same corpus (BM25 chunks, k = 20, 20 queries):
+
+| stratum | plain loop p50 / p95 ms | early stops | pushdown p50 / p95 ms | early stops |
+| --- | --- | --- | --- | --- |
+| 1% documents (6,000 eligible) | 3,915 / 4,528 | 4 `work_budget` | **618 / 827** | **0** |
+| 10% documents (60,000 eligible) | 1,665 / 2,158 | 1 `work_budget` | 4,743 / 4,997 | 0 |
+
+So the pushdown limit is 20,000 eligible rows; broad filters use the loop.
+
+Public operation (`search_chunks`, 40 queries), adapter terminations:
+
+| stratum (eligible current chunks) | p50 / p95 ms | terminations | truncation |
+| --- | --- | --- | --- |
+| current (600,000) | 389 / 2,330 | 39 `k_filled`, 1 `work_budget` | 2.5% |
+| history | 253 / 438 | 39 `k_filled`, 1 `work_budget` | 2.5% |
+| 0.1% documents (600, exact tier) | 328 / 422 | 40 `exhausted` | 0 |
+| 1% documents (6,000, pushdown) | 816 / 3,071 | 17 `exhausted`, 23 `k_filled` | **0** |
+| 4,990 rows (exact tier) | 1,434 / 2,195 | 40 `exhausted` | 0 |
+| 5,010 rows (pushdown) | 684 / 2,582 | 18 `exhausted`, 22 `k_filled` | 0 |
+| 10% documents (60,000, pushdown at 100k limit) | 4,883 / 6,406 | 40 `k_filled` | 0 |
+
+(The 10% row predates lowering the limit to 20,000.) The public envelopes
+were `known_empty` with every candidate dropped at hydration: the synthetic
+seed carries no hydratable chunk bodies, so public latency includes
+confirmation of every candidate but not result rendering. That is a harness
+limit, not a product finding.
+
+**Gate status.** Completeness now passes for the measured filtered strata:
+no early stop in the 1% stratum (it was 25%). The latency half does **not**:
+the retrieval design's interactive budget is p95 ≈ 300 ms, and at 3M chunks
+unfiltered `current` measures p95 2.3 s and the 1% stratum 0.8 s
+(adapter) to 3.1 s (public). A design-level answer for the owner, not
+implemented: (1) keep the immutable `doc_id` on `chunk_search` (lineage
+identity, not visibility — D94's objection was to copied visibility) so a
+document filter becomes an index-scan predicate without enumeration or a
+large parameter array; (2) the distinct-text proposal for duplicated
+editions; (3) an explicit owner budget for filtered ranked search at the
+target size. The 50M target and the semantic, claim, fact and context
+channels were not swept.
+
 ## 9. Out of scope
 
 - **Reranking.** A precise reranker (for example TypeSafe AI's Jev model,

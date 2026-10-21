@@ -6935,9 +6935,13 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
 - **Document-filtered chunk searches (post-approval additions, 2026-10-21,
   review r1 P1-9).** The search enumerates its eligible rows from the
   matching versions: at most the exact-tier threshold are scored exactly
-  (design §8.4); up to 100,000 are pushed into the index scan as a
+  (design §8.4); up to 20,000 are pushed into the index scan as a
   membership filter (design §8.3), so the cursor streams eligible rows only;
-  above that the plain loop runs.
+  above that the plain loop runs. **Post-approval design change, for review.**
+  Measured at 3M chunks it removes the 1% stratum's early stops (25% → 0%),
+  but neither that stratum (p95 0.8–3.1 s) nor unfiltered `current` (p95
+  2.3 s) meets the interactive p95 ≈ 300 ms budget on the test VM; the
+  scaling gate's latency half stays open for the owner (analysis §8.1).
 - **One operation context (review r1 P1-3/P1-4/P1-7).** Every ranked
   operation owns one read-only REPEATABLE READ snapshot with one absolute
   deadline and one pinned authority instant; readiness, entity checks,

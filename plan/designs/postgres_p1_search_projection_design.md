@@ -331,13 +331,13 @@ the index is used and eligibility stays exact. For each target and channel:
    fetched with; nothing is rescored.
    **Filter pushdown (post-approval design change, review r1 P1-9).** A
    document-filtered chunk search first enumerates its eligible rows from
-   the matching versions (at most 100,000, a starting point). Up to the
+   the matching versions (at most 20,000, a measured starting point). Up to the
    exact-tier threshold they are scored exactly (§8.4); above it the
    enumerated set is pushed into the index scan as a membership filter
    (`chunk_id = ANY(:eligible)`, hashed by PostgreSQL), so the cursor
    streams eligible rows only, still in the index's order and one scoring
    generation, under the same stop rules; an HNSW exhaustion count is
-   filtered alike. Above 100,000 eligible rows the plain loop runs. Claim
+   filtered alike. Above 20,000 eligible rows the plain loop runs. Claim
    searches with a document filter use the plain loop (their filter is per
    occurrence).
 3. **Confirm the batch.** A confirmation query applies the target's complete

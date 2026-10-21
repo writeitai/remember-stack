@@ -62,8 +62,16 @@ nomination cut (§8.5, P1-5), and the restated owner-invariant scope (D142).
    `scope_pending.complete` false even when nothing was found.
 9. **Scaling stratum.** Filter pushdown (post-approval design change): a
    document-filtered chunk search enumerates its eligible rows from the
-   matching versions; up to 5,000 are scored exactly, up to 100,000 are
-   pushed into the index scan as a membership filter. Results: SWEEP_RESULTS.
+   matching versions; up to 5,000 are scored exactly, up to 20,000 are
+   pushed into the index scan as a membership filter (limit 20,000, measured).
+   At 3M chunks the 1% stratum's early stops fall from 25% to 0 (adapter p50
+   618 ms / p95 827 ms, against 3.9 s / 4.5 s in the plain loop). **The
+   latency half of the binding gate still fails**: p95 ≈ 300 ms is not met
+   by the 1% stratum (0.8–3.1 s) nor by unfiltered `current` (2.3 s) at 3M on
+   the test VM. Analysis §8.2 proposes design-level answers for the owner
+   (immutable `doc_id` on `chunk_search` as an index-scan predicate; the
+   distinct-text index; an explicit budget for filtered ranked search); none
+   is implemented.
 
 ## P2
 

@@ -115,11 +115,14 @@ WORK_BUDGET_PER_K = 200
 EXACT_TIER_THRESHOLD = 5_000
 """Entity tiers at or below this many items are scored exactly (D142 §8.4)."""
 
-FILTER_PUSHDOWN_LIMIT = 100_000
+FILTER_PUSHDOWN_LIMIT = 20_000
 """Most enumerated eligible rows pushed into an index scan as a filter (§8.3).
 
-A starting point to measure: above it a document-filtered search uses the
-plain loop."""
+Measured at 3M chunks (BM25, k=20, 20 queries): a 1% filter (6,000 rows)
+took p50 618 ms / p95 827 ms with no early stop under the pushdown against
+3.9 s / 4.5 s and 4 of 20 work-budget stops in the plain loop; a 10% filter
+(60,000 rows) took 4.7 s under the pushdown against 1.7 s in the loop.
+Above the limit the plain loop runs."""
 
 ENTITY_WORK_BUDGET = 50_000
 """Most scoped items an entity-coverage computation may read (D142 §8.4)."""
