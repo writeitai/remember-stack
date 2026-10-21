@@ -908,6 +908,7 @@ class PostgresP1Index:
             parameters=parameters,
             nomination=nomination,
             coverage_sql=coverage_sql,
+            selective=documents is not None and not is_empty(documents),
         )
 
     def _run_testimony(
@@ -935,6 +936,22 @@ class PostgresP1Index:
                 )
             if entity_ids:
                 return _entity_tiers(connection, query=query, k=k)
+            if query.selective:
+                eligible = _small_eligible_set(connection, query=query)
+                if eligible is not None:
+                    rows = _exact_testimony(
+                        connection, query=query, ids=eligible, limit=k
+                    )
+                    return p1_ranked.as_result(
+                        rows,
+                        account=P1SearchAccount(
+                            termination=P1Termination.EXHAUSTED,
+                            fetched=len(eligible),
+                            confirmed=len(rows),
+                            coverage_rows=len(eligible),
+                        ),
+                        channel=query.channel,
+                    )
             candidates, account = p1_ranked.nominate_and_confirm(
                 connection,
                 statement=query.nomination,
@@ -2168,6 +2185,8 @@ class _TestimonyQuery:
     parameters: Mapping[str, Any]
     nomination: p1_ranked.NominationStatement
     coverage_sql: str | None
+    selective: bool = False
+    """A document filter narrows eligibility; try the small-set exact tier."""
 
 
 def _confirm_by_candidate(relation_where: str, id_expression: str) -> str:
@@ -2202,6 +2221,30 @@ def _confirm_testimony(
         {**query.parameters, "batch_ids": _uuid_strings(tuple(ids))},
     ).mappings()
     return {str(row["item_id"]): None for row in rows}
+
+
+def _small_eligible_set(
+    connection: Connection, *, query: _TestimonyQuery
+) -> tuple[str, ...] | None:
+    """The whole eligible set when a filter makes it small, else ``None``.
+
+    A selective document filter leaves few eligible rows among many index
+    matches, so nomination would fetch up to the work budget and still stop
+    short (the scaling sweep's 1% document stratum). At or below the exact-tier
+    threshold the eligible rows are scored exactly instead, as entity tiers
+    are (D142 §8.4); the probe reads at most threshold + 1 rows.
+    """
+    rows = connection.execute(
+        text(
+            f"SELECT indexed.{query.id_column}::text AS item_id"
+            f" {query.relation} {query.where} LIMIT :tier_limit"
+        ),
+        {**query.parameters, "tier_limit": p1_ranked.EXACT_TIER_THRESHOLD + 1},
+    ).scalars()
+    eligible = tuple(str(item) for item in rows)
+    if len(eligible) > p1_ranked.EXACT_TIER_THRESHOLD:
+        return None
+    return eligible
 
 
 def _exact_testimony(

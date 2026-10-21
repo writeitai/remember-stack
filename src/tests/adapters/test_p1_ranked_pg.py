@@ -142,9 +142,15 @@ def _oracle(
     return matching[:k]
 
 
-def test_bm25_loop_equals_the_canonical_oracle(database_engine: Engine) -> None:
+@pytest.mark.parametrize("exact_tier", [False, True], ids=["loop", "exact_tier"])
+def test_bm25_loop_equals_the_canonical_oracle(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch, exact_tier: bool
+) -> None:
     """With a restrictive filter (low eligible share) the loop keeps fetching
-    until it returns exactly the oracle's top k, scores included."""
+    until it returns exactly the oracle's top k, scores included; the
+    small-eligible-set exact tier returns the same rows."""
+    if not exact_tier:
+        monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
     generator = random.Random(142)
     doc_ids: list[UUID] = []
     for _ in range(12):
@@ -169,7 +175,9 @@ def test_bm25_loop_equals_the_canonical_oracle(database_engine: Engine) -> None:
         assert [item.item_id for item in result] == [item for item, _ in expected]
         for item, (_, score) in zip(result, expected, strict=True):
             assert item.score == pytest.approx(score, rel=1e-12)
-        assert search_account(result).termination.complete
+        account = search_account(result)
+        assert account.termination.complete
+        assert (account.coverage_rows > 0) is exact_tier
 
 
 def test_absent_and_empty_queries_return_no_lexical_rows(
@@ -277,9 +285,10 @@ def _unit(axis: int, *, tilt: float = 0.0) -> str:
 
 
 def test_semantic_loop_returns_eligible_neighbours_and_proves_exhaustion(
-    database_engine: Engine,
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """HNSW nomination with confirmation; a drained small corpus is counted."""
+    monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)  # force the loop
     allowed_doc, allowed = _seed_chunks(database_engine, ["a", "b", "c"])
     _, others = _seed_chunks(database_engine, ["d", "e", "f"])
     with database_engine.begin() as connection:
