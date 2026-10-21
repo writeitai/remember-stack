@@ -6,10 +6,26 @@ as specified in [the P1 search design §8–§9 and §12](../designs/postgres_p1
 Architecture lives in the design; this file only sequences it. Issue
 [#504](https://github.com/writeitai/remember-stack/issues/504).
 
-**Where the work lands.** This pull request contains the design corpus only.
-Implementation follows after design approval, in the same pull request or a
-follow-up as the owner decides. Nothing below ships before it is implemented,
-tested and reviewed.
+**Where the work lands.** By the owner's decision (precedent: D140), the
+implementation is added to the same pull request (#505) after design approval
+(review round 3, 2026-10-21) and the PR is reviewed again as a whole.
+
+**Status (2026-10-21, implementation commits on #505):**
+
+| WP | Status |
+| --- | --- |
+| WP-RS.0 | **pending** — harness `benchmarks/p1_ranked/explain_real.py` ready; runs on a copy of a real deployment after the current LoCoMo run |
+| WP-RS.1 | done — pg_textsearch v1.5.1 pinned, D98 patch retired, no scorer patch (design §8.3 margin); writers reject zero-norm and non-finite vectors |
+| WP-RS.2 | done — ranked-read connection (read-only REPEATABLE READ); SQL sandbox snapshot export/import; `claims_and_sources_context` P1 reads in one pool snapshot (claim/chunk hydration still uses its own connection — gap, see PR) |
+| WP-RS.3 | done — `adapters/p1_ranked.py` loop; chunk and claim searches |
+| WP-RS.4 | done — `P1SearchResult`/`P1SearchIds` accounts; envelopes, testimony lists, sandbox invocations, `scope_pending.complete` |
+| WP-RS.5 | done — coverage tiers for testimony searches; entity budget on testimony nomination |
+| WP-RS.6 | done — deployment-wide fact and entity search on the loop; entity-scoped fact searches remain exact bounded scans |
+| WP-RS.7 | done — unit proofs and Postgres proofs (`test_p1_ranked.py`, `test_p1_ranked_pg.py`) |
+| WP-RS.8 | harness ready — `benchmarks/p1_ranked/sweep.py`; **not yet run** at scale |
+| WP-RS.9 | harnesses ready — `recall.py`, `locomo_gate.py`; **pending** (recall run needs a vector corpus; LoCoMo runs are paid and wait for the current run) |
+| WP-RS.10 | done — retrieval concepts, result types and versions-in-force pages |
+
 
 **Operational constraint (2026-10-21).** A full LoCoMo run is in progress. No
 work package may connect to, query or `EXPLAIN` against its database or
