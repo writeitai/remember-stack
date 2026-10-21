@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime
 from datetime import UTC
 import math
@@ -583,7 +584,7 @@ class PostgresP1Index:
                 k=k,
                 kind=kind,
                 time=CurrentFactTime(),
-                evaluated_at=datetime.now(UTC),
+                evaluated_at=self._instant(),
             )
         )
 
@@ -770,6 +771,7 @@ class PostgresP1Index:
         query_text: str | None = None,
     ) -> "_TestimonyQuery":
         """Build the eligibility relation and the index nomination for one search."""
+        time = time or TextScope.of(time=None, evaluated_at=self._instant())
         parameters: dict[str, Any] = {"deployment_id": UUID(deployment_id)}
         versions_sql: str | None = None
         if target == "claims":
@@ -838,16 +840,20 @@ class PostgresP1Index:
             hnsw_index = "ix_chunk_search_embedding_hnsw"
             partial = ""
         coverage_sql = None
+        mentions_sql = None
         if entity_ids:
             parameters["entity_ids"] = _uuid_strings(entity_ids)
-            coverage_sql = (
-                "SELECT scope." + id_column + "::text AS item_id,"
-                " count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
+            mentions_from = (
                 " FROM memory_v1.mentions_live AS scope"
                 " WHERE scope.deployment_id = :deployment_id"
                 "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
                 f"   AND scope.{id_column} IS NOT NULL"
-                f" GROUP BY scope.{id_column}"
+            )
+            mentions_sql = "SELECT 1" + mentions_from
+            coverage_sql = (
+                "SELECT scope." + id_column + "::text AS item_id,"
+                " count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
+                f"{mentions_from} GROUP BY scope.{id_column}"
             )
         if channel == "semantic":
             assert vector is not None and model is not None and policy is not None
@@ -919,6 +925,7 @@ class PostgresP1Index:
             nomination=nomination,
             coverage_sql=coverage_sql,
             versions_sql=versions_sql,
+            mentions_sql=mentions_sql,
         )
 
     def _run_testimony(
@@ -930,7 +937,8 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...],
     ) -> P1SearchResult:
         """Execute one testimony search: exact, entity tiers, or the D142 loop."""
-        with self._ranked_connection() as connection:
+        deadline = self._deadline()
+        with self._ranked_connection(deadline=deadline) as connection:
             if candidate_ids is not None:
                 rows = _exact_testimony(
                     connection, query=query, ids=tuple(candidate_ids), limit=k
@@ -945,7 +953,7 @@ class PostgresP1Index:
                     channel=query.channel,
                 )
             if entity_ids:
-                return _entity_tiers(connection, query=query, k=k)
+                return _entity_tiers(connection, query=query, k=k, deadline=deadline)
             if query.versions_sql is not None:
                 eligible = _small_eligible_set(connection, query=query)
                 if eligible is not None:
@@ -969,6 +977,7 @@ class PostgresP1Index:
                 confirm=lambda conn, ids: _confirm_testimony(
                     conn, query=query, ids=ids
                 ),
+                deadline=deadline,
             )
             return p1_ranked.as_result(
                 candidates, account=account, channel=query.channel
@@ -989,6 +998,22 @@ class PostgresP1Index:
             )
         with self._read_pool.snapshot(deadline=deadline, import_snapshot=snapshot_id):
             yield
+
+    def _instant(self) -> datetime:
+        """The operation's pinned authority instant, else now (D142 §8.2)."""
+        operation = self._read_pool.operation() if self._read_pool else None
+        return operation.evaluated_at if operation else datetime.now(UTC)
+
+    def _deadline(self, deadline: float | None = None) -> float | None:
+        """The earlier of a call's deadline and its operation's (D142 §8.6)."""
+        operation = self._read_pool.operation() if self._read_pool else None
+        if operation is None:
+            return deadline
+        return (
+            operation.deadline
+            if deadline is None
+            else min(deadline, operation.deadline)
+        )
 
     @contextmanager
     def _ranked_connection(
@@ -1044,9 +1069,7 @@ class PostgresP1Index:
             raise ValueError("scoped testimony nomination requires entity_ids")
         if grain == "claim":
             table = "claims"
-            id_column = "claim_id"
             mention_column = "claim_id"
-            search_column = "claim_text"
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
@@ -1071,9 +1094,7 @@ class PostgresP1Index:
             current_predicate = "AND indexed.is_current_testimony AND " + selected
         elif grain == "chunk":
             table = "chunk_search"
-            id_column = "chunk_id"
             mention_column = "chunk_id"
-            search_column = "search_text"
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
@@ -1104,7 +1125,7 @@ class PostgresP1Index:
             "pending_doc_ids": _uuid_strings(pending_doc_ids or ()),
             "limit": k,
             **(
-                time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
+                time or TextScope.of(time=None, evaluated_at=self._instant())
             ).parameters(),
         }
         if channel == "semantic":
@@ -1118,8 +1139,6 @@ class PostgresP1Index:
                 policy=policy,
                 model=model if grain == "chunk" else None,
             )
-            score_sql = "1.0 - (indexed.embedding <=> CAST(:query_vector AS vector))"
-            order_sql = "indexed.embedding <=> CAST(:query_vector AS vector)"
             search_predicate = """
               AND indexed.embedding IS NOT NULL
               AND indexed.embedding_model = :embedding_model
@@ -1138,16 +1157,9 @@ class PostgresP1Index:
             self._require_channel(
                 deployment_id=deployment_id, target=target, channel="bm25", policy=None
             )
-            index_name = (
-                "ix_claims_current_bm25" if grain == "claim" else "ix_chunk_search_bm25"
-            )
-            distance_sql = (
-                f"indexed.{search_column} <@> to_bm25query(:query, '{index_name}')"
-            )
-            score_sql = f"-({distance_sql})::double precision"
-            order_sql = distance_sql
-            # D142 §8.1: only positive matches are lexical results.
-            search_predicate = f"AND {score_sql} > 0"
+            # D142 §8.1: only positive matches are lexical results (the
+            # shared tiers apply it to exact scoring and the loop alike).
+            search_predicate = ""
             parameters["query"] = query
         else:
             raise ValueError(f"unknown testimony channel {channel!r}")
@@ -1177,43 +1189,41 @@ class PostgresP1Index:
                 GROUP BY item_id
             )
         """
-        # D142 §8.4: the coverage set is bounded by the entity work budget;
-        # beyond it the ranking would rest on partial coverage.
-        scoped = self._engine_rows(
-            f"{scope_ctes} SELECT count(*) AS items FROM ("
-            "SELECT 1 FROM coverage LIMIT :entity_budget) AS bounded",
-            {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+        # D142 §8.4 and review r1 P1-6: the same coverage-tier execution as
+        # every entity-scoped search — the mention-row budget first, exact
+        # scoring for small tiers, the index loop within large ones.
+        base = self._testimony_query(
+            target=target,
+            channel=channel,
+            deployment_id=deployment_id,
+            current_only=grain == "claim",
+            equality_filters=None,
+            entity_ids=entity_ids,
+            documents=None,
+            time=time,
+            vector=vector,
+            model=model if channel == "semantic" else None,
+            policy=policy if channel == "semantic" else None,
+            query_text=query,
         )
-        coverage_rows = int(scoped[0]["items"]) if scoped else 0
-        if coverage_rows > p1_ranked.ENTITY_WORK_BUDGET:
-            raise p1_ranked.P1EntityScopeTooBroadError(
-                "the requested entities are mentioned by more items than the"
-                f" entity work budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
-            )
-        statement = f"""
-            {scope_ctes}
-            SELECT indexed.{id_column}::text AS item_id,
-                   {score_sql} AS score
-            FROM {table} AS indexed
-            JOIN coverage ON coverage.item_id = indexed.{id_column}
-            WHERE indexed.deployment_id = :deployment_id
-              {current_predicate}
-              {search_predicate}
-            ORDER BY coverage.coverage DESC, {order_sql}, indexed.{id_column}
-            LIMIT :limit
-        """
-        rows = _nominations(self._engine_rows(statement, parameters), channel=channel)
-        return P1SearchResult(
-            rows,
-            account=P1SearchAccount(
-                termination=P1Termination.K_FILLED
-                if len(rows) >= k
-                else P1Termination.EXHAUSTED,
-                confirmed=len(rows),
-                coverage_rows=coverage_rows,
-                limits={"entity_work_budget": float(p1_ranked.ENTITY_WORK_BUDGET)},
+        attestation = search_predicate
+        scoped_query = replace(
+            base,
+            relation=f"FROM {table} AS indexed",
+            where=(
+                "WHERE indexed.deployment_id = :deployment_id"
+                f" {current_predicate} {attestation}"
             ),
+            parameters={**base.parameters, **parameters},
+            coverage_sql=(
+                f"{scope_ctes} SELECT item_id::text AS item_id, coverage FROM coverage"
+            ),
+            mentions_sql=f"{scope_ctes} SELECT 1 FROM scoped_items",
+            versions_sql=None,
         )
+        deadline = self._deadline()
+        with self._ranked_connection(deadline=deadline) as connection:
+            return _entity_tiers(connection, query=scoped_query, k=k, deadline=deadline)
 
     def chunk_texts(
         self,
@@ -1298,7 +1308,7 @@ class PostgresP1Index:
                 deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
-        evaluation = evaluated_at or datetime.now(UTC)
+        evaluation = evaluated_at or self._instant()
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
@@ -1374,14 +1384,17 @@ class PostgresP1Index:
             return self._fact_loop(
                 required=required,
                 parameters=parameters,
-                relation=(
-                    " JOIN memory_v1.facts_visible_history AS fact"
-                    "   ON fact.deployment_id = indexed.deployment_id"
-                    "  AND fact.fact_kind = '{fact_kind}'"
-                    "  AND fact.fact_id = indexed.{id_column}"
-                ),
+                relation=_FACT_AUTHORITY_JOIN,
                 predicates=f"{time_sql} {filter_sql} {supporting_sql}",
                 k=k,
+                deadline=deadline,
+            )
+        if entity_ids:
+            self._require_fact_scope_budget(
+                required=required,
+                scope_sql="",
+                endpoint_sql="CAST(:entity_ids AS uuid[])",
+                parameters=parameters,
                 deadline=deadline,
             )
         branches: list[str] = []
@@ -1426,6 +1439,42 @@ class PostgresP1Index:
             ),
             k=k,
         )
+
+    def _require_fact_scope_budget(
+        self,
+        *,
+        required: tuple[str, ...],
+        scope_sql: str,
+        endpoint_sql: str,
+        parameters: Mapping[str, Any],
+        deadline: float | None,
+    ) -> None:
+        """Bound an entity-scoped exact fact scan by its input rows (r1 P1-6).
+
+        Each fact table's rows with an endpoint in the scope are counted, at
+        most the entity work budget plus one, before any is scored; a hub
+        beyond the budget is the typed ``entity_scope_too_broad`` boundary.
+        """
+        read = 0
+        for table in required:
+            endpoints = f"indexed.subject_entity_id = ANY({endpoint_sql})" + (
+                f" OR indexed.object_entity_id = ANY({endpoint_sql})"
+                if table == "relations"
+                else ""
+            )
+            rows = self._engine_rows(
+                f"{scope_sql}SELECT count(*) AS n FROM (SELECT 1 FROM {table} AS indexed"
+                f" WHERE indexed.deployment_id = :deployment_id AND ({endpoints})"
+                " LIMIT :entity_budget) AS bounded",
+                {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+                deadline=deadline,
+            )
+            read += int(rows[0]["n"]) if rows else 0
+        if read > p1_ranked.ENTITY_WORK_BUDGET:
+            raise p1_ranked.P1EntityScopeTooBroadError(
+                "the requested entities are endpoints of more facts than the entity"
+                f" work budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
+            )
 
     def _fact_loop(
         self,
@@ -1545,7 +1594,7 @@ class PostgresP1Index:
                 deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
-        evaluation = evaluated_at or datetime.now(UTC)
+        evaluation = evaluated_at or self._instant()
         time_sql, parameters = _fact_time(
             selected_time, evaluated_at=evaluation, alias="indexed"
         )
@@ -1578,13 +1627,22 @@ class PostgresP1Index:
                 ),
             """
             result_order = "coverage DESC, distance, qualifier, item_id"
+            self._require_fact_scope_budget(
+                required=required,
+                scope_sql=f"WITH {scope_cte.strip().rstrip(',')} ",
+                endpoint_sql="ARRAY(SELECT entity_id FROM scoped_entities)",
+                parameters=parameters,
+                deadline=deadline,
+            )
         else:
             # D142 §8.5: without anchors, nominate per fact table from its HNSW
             # index; the D140 gate and time window confirm each batch.
+            # Review r1 P1-5: confirmation applies the full fact authority
+            # (facts_visible_history) before a row counts toward the cut.
             return self._fact_loop(
                 required=required,
                 parameters=parameters,
-                relation="",
+                relation=_FACT_AUTHORITY_JOIN,
                 predicates=time_sql,
                 k=k,
                 deadline=deadline,
@@ -1654,6 +1712,7 @@ class PostgresP1Index:
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
                  {scope_join}
+                 {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
                    AND indexed.embedding_model = :embedding_model
@@ -2191,6 +2250,8 @@ class _TestimonyQuery:
     coverage_sql: str | None
     versions_sql: str | None = None
     """Matching versions of a document-filtered chunk search (small-set tier)."""
+    mentions_sql: str | None = None
+    """The mention rows behind ``coverage_sql``; the entity budget counts them."""
 
 
 def _confirm_by_candidate(relation_where: str, id_expression: str) -> str:
@@ -2300,25 +2361,53 @@ def _exact_testimony(
     ]
 
 
-def _entity_tiers(
-    connection: Connection, *, query: _TestimonyQuery, k: int
-) -> P1SearchResult:
-    """Coverage-first ranking by coverage tiers (D142 §8.4)."""
-    assert query.coverage_sql is not None
-    rows = connection.execute(
-        text(f"{query.coverage_sql} LIMIT :entity_budget"),
-        {**query.parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
-    ).mappings()
-    tiers: dict[int, list[str]] = {}
-    read = 0
-    for row in rows:
-        read += 1
-        tiers.setdefault(int(row["coverage"]), []).append(str(row["item_id"]))
+_FACT_AUTHORITY_JOIN = (
+    " JOIN memory_v1.facts_visible_history AS fact"
+    "   ON fact.deployment_id = indexed.deployment_id"
+    "  AND fact.fact_kind = '{fact_kind}'"
+    "  AND fact.fact_id = indexed.{id_column}"
+)
+"""Full fact authority (survivors, claim-coordinate visibility; D87, D142 §8.5)."""
+
+
+def _require_entity_budget(
+    connection: Connection, *, mentions_sql: str, parameters: Mapping[str, Any]
+) -> int:
+    """Count the scope's mention rows, reading at most the budget plus one.
+
+    Review r1 P1-6: the budget bounds mention rows read, not grouped items —
+    a few items with millions of mentions must not pass a grouped LIMIT.
+    """
+    read = int(
+        connection.execute(
+            text(f"SELECT count(*) FROM ({mentions_sql} LIMIT :entity_budget) AS m"),
+            {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+        ).scalar_one()
+    )
     if read > p1_ranked.ENTITY_WORK_BUDGET:
         raise p1_ranked.P1EntityScopeTooBroadError(
-            "the requested entities are mentioned by more items than the entity"
-            f" work budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
+            "the requested entities have more mentions than the entity work"
+            f" budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
         )
+    return read
+
+
+def _entity_tiers(
+    connection: Connection,
+    *,
+    query: _TestimonyQuery,
+    k: int,
+    deadline: float | None = None,
+) -> P1SearchResult:
+    """Coverage-first ranking by coverage tiers (D142 §8.4)."""
+    assert query.coverage_sql is not None and query.mentions_sql is not None
+    read = _require_entity_budget(
+        connection, mentions_sql=query.mentions_sql, parameters=query.parameters
+    )
+    rows = connection.execute(text(query.coverage_sql), query.parameters).mappings()
+    tiers: dict[int, list[str]] = {}
+    for row in rows:
+        tiers.setdefault(int(row["coverage"]), []).append(str(row["item_id"]))
     results: list[p1_ranked.Candidate] = []
     fetched = rejected = rounds = 0
     termination = P1Termination.EXHAUSTED
@@ -2345,7 +2434,11 @@ def _entity_tiers(
             )
 
         candidates, account = p1_ranked.nominate_and_confirm(
-            connection, statement=query.nomination, k=need, confirm=confirm_tier
+            connection,
+            statement=query.nomination,
+            k=need,
+            confirm=confirm_tier,
+            deadline=deadline,
         )
         fetched += account.fetched
         rejected += account.rejected
