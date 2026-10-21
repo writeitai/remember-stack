@@ -303,7 +303,7 @@ def main() -> None:
             print(f"Warning: GCS client unavailable ({exc})", file=sys.stderr)
 
     ocr_settings = MistralOcrSettings()
-    desc_settings = ImageDescriptionSettings()
+    desc_settings = ImageDescriptionSettings(max_image_bytes=25_000_000)
     print(f"OCR: {ocr_settings.model} @ {ocr_settings.base_url}", flush=True)
     print(f"Vision: {desc_settings.model} @ {desc_settings.base_url}", flush=True)
 
