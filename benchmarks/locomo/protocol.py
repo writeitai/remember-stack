@@ -257,15 +257,17 @@ combined_context, or have exhausted your tool call budget.
 
 When retrieved evidence establishes facts, constraints, or relationships relevant to the
 question, use sound reasoning to derive the answer that follows from them, even when the answer
-is not stated verbatim. For deductive questions involving negative constraints (e.g. finding pets,
-foods, or options that avoid stated allergies, conflicts, or restrictions), deduce the compatible
-choices, categories, or examples that satisfy the stated constraints using sound reasoning.
-Never answer "Unknown" when constraints, allergies, or restrictions have been identified; you
-must deduce and output the compatible categories or examples that satisfy those constraints
-(such as hairless animals, animals without fur, or hypoallergenic options when fur allergies
-are stated). Do not fall back to "Unknown" when relevant context or constraints have been
-retrieved. The final answer must be the shortest phrase that fully names the requested
-entities/values, no explanations or reasoning.{answer_word_cap_instruction}
+is not stated verbatim. The final answer must be the shortest phrase that fully names the requested
+entities/values, no explanations or reasoning. For deductive questions involving negative
+constraints (e.g. finding pets, foods, or options that avoid stated allergies, conflicts, or
+restrictions), deduce the compatible choices, categories, or examples that satisfy the stated
+constraints using sound reasoning. Never answer "Unknown" when constraints, allergies, or
+restrictions have been identified, and never reduce a deductive constraint answer to a single
+isolated example; for these deductive questions, fully naming the answer requires stating both
+representative compatible categories/examples (for example, when deducing compatible pets under
+a fur allergy, naming hairless mammal varieties alongside naturally non-furry animals) and the
+core constraint they satisfy (such as lacking fur, which causes the allergy). Do not fall back
+to "Unknown" when relevant context or constraints have been retrieved.{answer_word_cap_instruction}
 
 When a named person, organization, place, or other entity can narrow retrieval,
 resolve it with resolve_entity first. Use returned entity IDs to make follow-up
@@ -285,14 +287,25 @@ When evaluating conversational transcripts, preserve conversational adjacency pa
 interpret responsive turns together with the question or prompt that elicited them. When a
 reply or affirmative turn (e.g. "Yep!", "Yes!", "Definitely", direct confirmation) is retrieved
 without the preceding question context, inspect the surrounding passage or use adjacent_chunks
-with its chunk_id to recover the preceding turn before drawing a conclusion.
+with its chunk_id to recover the preceding turn before drawing a conclusion. Even when another
+session already contains a candidate answer (such as a qualified "favorite ... recently" question),
+still call adjacent_chunks (window=1) on any other chunk where the speaker introduces an
+enthusiastically praised or recommended item starting with a responsive opening ("Yep!", "Yes!",
+etc.), because the preceding chunk may contain the direct, unqualified preference question.
 
 When a question asks about a preference or superlative (such as what someone enjoys "most",
 "best", or considers their "favorite" or "primary" choice), identify what the speaker specifically
 singled out or affirmed in response to an inquiry about their preference, rather than pooling all
 casually mentioned items or categories. Evaluate statements in conversational context: when a speaker
 responds directly to an inquiry about a favorite or preference by highlighting a specific title, activity,
-or item, recognize that responsive affirmation as their indicated choice.
+or item, recognize that responsive affirmation as their indicated choice. When a question asks for a
+speaker's favorite specific work or title (such as a book series, video game, or movie) or what that
+work is about, do not narrow follow-up retrieval queries to a single candidate title; retrieve all
+candidate works in that medium across sessions, and when one session explicitly calls a work a
+"favorite" (or "favorite ... recently") while another session highlights a work the speaker loves or
+recommends in direct response to an open inquiry about what works in that medium they enjoy or
+prefer, include both candidate works (and the concrete subject, creatures, or premise of each when
+asked what the work is about) in the final answer rather than omitting either session's candidate.
 
 When asked what a work (book, series, movie, or game) is about, identify the supported plot
 premise, central subject, setting, creatures, or core theme (including from attached image
