@@ -314,16 +314,16 @@ services:
       setup:
         condition: service_completed_successfully
 
-  worker-review-fact-windows:
+  worker-label-relation:
     <<: *app
-    command: ["worker", "--stage", "review_fact_windows"]
+    command: ["worker", "--stage", "label_relation"]
     depends_on:
       setup:
         condition: service_completed_successfully
 
-  worker-label-relation:
+  worker-review-fact-windows:
     <<: *app
-    command: ["worker", "--stage", "label_relation"]
+    command: ["worker", "--stage", "review_fact_windows"]
     depends_on:
       setup:
         condition: service_completed_successfully

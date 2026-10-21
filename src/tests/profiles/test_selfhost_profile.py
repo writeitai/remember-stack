@@ -77,12 +77,15 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.EMBED_CLAIM,
         PipelineStage.RECONCILE,
         PipelineStage.LABEL_RELATION,
+        PipelineStage.REVIEW_FACT_WINDOWS,
     )
-    # crossref work is per reference generation, so readiness never waits on it
+    # crossref work is per reference generation and window reviews per lineage
+    # and fact (D140), so readiness never waits on either
     assert tuple(_expected_components()) == tuple(
         stage
         for stage in _SUPPORTED_WORKER_STAGES
-        if stage is not PipelineStage.CROSSREF
+        if stage
+        not in (PipelineStage.CROSSREF, PipelineStage.REVIEW_FACT_WINDOWS)
     )
 
 
@@ -173,7 +176,7 @@ def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
     workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
     api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
     ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
-    assert ceiling == 231
+    assert ceiling == 247
     assert int(limits[0]) >= ceiling + 50
 
 

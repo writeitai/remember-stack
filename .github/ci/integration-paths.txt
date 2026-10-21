@@ -73,3 +73,4 @@ src/tests/spine/test_d140_migration.py
 src/tests/spine/test_section_history.py
 src/tests/spine/test_document_references.py
 src/tests/surfaces/test_d140_scoped_retrieval.py
+src/tests/spine/test_d140_period_adjudication_pg.py
