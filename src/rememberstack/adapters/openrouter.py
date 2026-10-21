@@ -724,10 +724,13 @@ class OpenRouterModelProvider:
             if isinstance(body_error, dict):
                 error_code = body_error.get("code")
                 error_msg = str(body_error.get("message", "Unknown OpenRouter error"))
+                lowered_msg = error_msg.lower()
                 if (
-                    error_code == 429
-                    or "rate" in error_msg.lower()
-                    or "overload" in error_msg.lower()
+                    error_code in (429, 500, 502, 503, 504, 529)
+                    or "rate" in lowered_msg
+                    or "overload" in lowered_msg
+                    or "temporarily unavailable" in lowered_msg
+                    or "try again" in lowered_msg
                 ):
                     last_error = (
                         f"OpenRouter /chat/completions returned 429 in body: {error_msg}"
