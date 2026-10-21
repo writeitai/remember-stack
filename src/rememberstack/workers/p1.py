@@ -193,9 +193,9 @@ class LabelFactsHandler:
                     "fact projection repair requires a profile refresher"
                 )
             if work.target_kind is ProcessingTarget.RELATION:
-                relation_ids = (work.target_id,)
+                relation_ids = (_payload_uuid(work=work, field="relation_id"),)
             else:
-                observation_ids = (work.target_id,)
+                observation_ids = (_payload_uuid(work=work, field="observation_id"),)
             doc_id = None
         else:
             doc_id = _payload_uuid(work=work, field="doc_id")

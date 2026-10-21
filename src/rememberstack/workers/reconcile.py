@@ -238,7 +238,9 @@ class ReconcileHandler:
                     deployment_id=deployment_id,
                     doc_id=doc_id,
                     reason="version_completed",
-                    content_hash=f"reconcile:{reconciliation_id.hex}",
+                    request_id=uuid5(
+                        NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
+                    ),
                 ),
                 EnqueueWork(
                     deployment_id=work.deployment_id,
@@ -914,7 +916,7 @@ def _window_review(
     deployment_id: UUID,
     doc_id: UUID,
     reason: str,
-    content_hash: str,
+    request_id: UUID,
 ) -> tuple[EnqueueWork, ...]:
     """A D140 §8.2 lineage review job, only for a lineage that had periods."""
     from rememberstack.spine.period_adjudication import review_request
@@ -926,6 +928,6 @@ def _window_review(
             deployment_id=deployment_id,
             doc_id=doc_id,
             reason=reason,
-            content_hash=content_hash,
+            request_id=request_id,
         ),
     )

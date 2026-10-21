@@ -447,6 +447,7 @@ def _enqueue_projection_repair(
         target_kind=ProcessingTarget.FACT_APPLICATION,
         target_id=application_id,
         content_hash=application_id.hex,
+        payload={"application_id": str(application_id)},
     )
 
 
@@ -459,17 +460,19 @@ def enqueue_fact_projection_repair(
     target_kind: Any,
     target_id: UUID,
     content_hash: str,
+    payload: dict[str, object],
 ) -> None:
     """Invalidate the changed facts' entity profiles and queue their relabeling.
 
     ``target_kind`` is ``fact_application`` for an ordinary application (the
     label stage recovers the changed facts from its receipt) or the fact's own
-    kind for a single-fact change such as a D140 window review.
+    kind for a single-fact change such as a D140 window review, whose payload
+    names the fact. A work row is unique per target, so ``target_id`` must be
+    new for every change that needs relabeling.
     """
     from rememberstack.model import EnqueueWork
     from rememberstack.model import PipelineStage
     from rememberstack.model import ProcessingLane
-    from rememberstack.model import ProcessingTarget
     from rememberstack.spine.work_ledger import enqueue_on
     from rememberstack.workers.p1 import label_relation_component_version
     from rememberstack.workers.p1 import P1Settings
@@ -512,10 +515,6 @@ def enqueue_fact_projection_repair(
             ),
             content_hash=content_hash,
             lane=ProcessingLane.STEADY,
-            payload={
-                "application_id"
-                if target_kind is ProcessingTarget.FACT_APPLICATION
-                else f"{kind}_id": str(target_id)
-            },
+            payload=payload,
         ),
     )

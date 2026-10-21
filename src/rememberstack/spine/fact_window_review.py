@@ -25,8 +25,10 @@ from hashlib import sha256
 from typing import Any
 from typing import Literal
 from typing import Self
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -523,8 +525,10 @@ def _apply_review(
             target_kind=ProcessingTarget.RELATION
             if kind == "relation"
             else ProcessingTarget.OBSERVATION,
-            target_id=fact_id,
-            content_hash=f"window-review:{inputs['digest']}",
+            # one relabel per applied review: work rows are unique per target
+            target_id=uuid5(NAMESPACE_URL, f"fact-window-review:{inputs['digest']}"),
+            content_hash=inputs["digest"],
+            payload={f"{kind}_id": str(fact_id)},
         )
         return "replaced"
     return "kept"

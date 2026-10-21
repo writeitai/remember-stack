@@ -259,26 +259,29 @@ def lineage_ever_periodised_on(
 
 
 def review_request(
-    *, deployment_id: UUID, doc_id: UUID, reason: str, content_hash: str | None = None
+    *, deployment_id: UUID, doc_id: UUID, reason: str, request_id: UUID | None = None
 ) -> Any:
     """The lineage fan-out job: find this lineage's facts whose basis moved.
 
-    Without ``content_hash`` each request is a new job: the fan-out is a cheap
-    query, and the per-fact reviews it creates are no-ops for facts whose basis
-    did not change. A caller that may retry passes a stable hash instead.
+    A work row is unique per target, so every request is its own target: a
+    fresh id, or ``request_id`` from a caller that may retry (a reconcile run
+    derives it from its own id). The lineage is in the payload. The fan-out is
+    a cheap query, and the reviews it queues are no-ops for facts whose basis
+    did not change.
     """
     from rememberstack.model import EnqueueWork
     from rememberstack.model import PipelineStage
     from rememberstack.model import ProcessingLane
     from rememberstack.model import ProcessingTarget
 
+    target = request_id or uuid4()
     return EnqueueWork(
         deployment_id=deployment_id,
         target_kind=ProcessingTarget.DOCUMENT,
-        target_id=doc_id,
+        target_id=target,
         stage=PipelineStage.REVIEW_FACT_WINDOWS,
         component_version=FACT_WINDOW_REVIEW_VERSION,
-        content_hash=content_hash or uuid4().hex,
+        content_hash=target.hex,
         lane=ProcessingLane.STEADY,
         payload={"doc_id": str(doc_id), "reason": reason},
     )

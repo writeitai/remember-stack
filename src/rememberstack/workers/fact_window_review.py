@@ -13,6 +13,10 @@ Two kinds of job share the stage:
   A fact whose basis already matches is a no-op, so duplicate jobs are free.
 """
 
+from uuid import NAMESPACE_URL
+from uuid import UUID
+from uuid import uuid5
+
 from sqlalchemy.engine import Engine
 
 from rememberstack.model import ClaimedWork
@@ -57,18 +61,17 @@ class FactWindowReviewHandler:
         self._reviewer.review(
             deployment_id=work.deployment_id,
             kind=kind,  # type: ignore[arg-type]
-            fact_id=work.target_id,
+            fact_id=_payload_uuid(work=work, field="fact_id"),
             meter=meter,
             call_key=f"fact_window_review:{work.processing_id}",
         )
         return HandlerOutcome()
 
     def _fan_out(self, *, work: ClaimedWork) -> HandlerOutcome:
+        doc_id = _payload_uuid(work=work, field="doc_id")
         with self._engine.connect() as connection:
             moved = facts_needing_review_on(
-                connection=connection,
-                deployment_id=work.deployment_id,
-                doc_id=work.target_id,
+                connection=connection, deployment_id=work.deployment_id, doc_id=doc_id
             )
         return HandlerOutcome(
             follow_up=tuple(
@@ -77,15 +80,29 @@ class FactWindowReviewHandler:
                     target_kind=ProcessingTarget.RELATION
                     if kind == "relation"
                     else ProcessingTarget.OBSERVATION,
-                    target_id=fact_id,
+                    # A work row is unique per target: one review per lineage
+                    # job and fact, so a later change (even back to an earlier
+                    # basis) reviews again, and a retried fan-out does not.
+                    target_id=uuid5(
+                        NAMESPACE_URL,
+                        f"fact-window-review:{work.processing_id}:{fact_id}",
+                    ),
                     stage=PipelineStage.REVIEW_FACT_WINDOWS,
                     component_version=FACT_WINDOW_REVIEW_VERSION,
-                    # One review per lineage job and basis: a later job (a
-                    # later change, even back to an earlier basis) reviews again.
-                    content_hash=f"{work.processing_id.hex}:{basis or 'none'}",
+                    content_hash=basis or "none",
                     lane=work.lane or ProcessingLane.STEADY,
-                    payload={"doc_id": str(work.target_id)},
+                    payload={"fact_id": str(fact_id), "doc_id": str(doc_id)},
                 )
                 for kind, fact_id, basis in moved
             )
         )
+
+
+def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
+    """Read a required UUID from the claimed payload; absence is non-retryable."""
+    value = (work.payload or {}).get(field)
+    if not isinstance(value, str):
+        raise NonRetryableHandlerError(
+            f"stage {work.stage} work {work.processing_id} carries no {field!r} payload"
+        )
+    return UUID(value)
