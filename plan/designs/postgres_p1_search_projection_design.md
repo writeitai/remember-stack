@@ -472,13 +472,14 @@ D140's `scope_pending` probe replays this same nomination with pending
 lineages widened; it never has its own copy of the ranking logic.
 
 **Small document-filtered sets (post-approval addition, 2026-10-21).** A
-testimony search with a document filter first reads its eligible rows up to
-the exact-tier threshold plus one. When the filter leaves at most the
-threshold, those rows are scored exactly and the search is `exhausted`;
-otherwise the loop runs as usual. The scaling sweep motivated it: with a 1%
-document filter the loop fetched up to the work budget and stopped short on
-5% of queries at 30k chunks and 30% at 300k, which §9's scaling gate counts as
-a failure (rising truncation).
+document-filtered **chunk** search enumerates its eligible rows from the
+matching versions (§8.3 filter pushdown). When the filter leaves at most the
+exact-tier threshold, those rows are scored exactly and the search is
+`exhausted`; larger sets go to the pushdown. Claim searches with a document
+filter (a per-occurrence predicate) always use the loop. The scaling sweep
+motivated it: with a 1% document filter the plain loop stopped at the work
+budget on 5% of queries at 30k chunks and 30% at 300k, which §9's scaling
+gate counts as a failure (rising truncation).
 
 ### 8.5 Facts
 
