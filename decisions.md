@@ -6921,8 +6921,10 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   by bitwise equality; equality with today's ordering is measured. Because
   pg_textsearch 1.5.1's index order uses raw memtable lengths, the cursor
   stops only past a proven margin (`index ≤ canonical ≤ index/(1−1/9)`, so
-  stop when the `k`-th canonical score exceeds `(1+ε)²/(1−1/9)` × the last
-  fetched one); a scorer-bound gate checks the bound on every image build.
+  stop when the `k`-th canonical score exceeds `(1+ε(n))⁴/(1−1/9)` × the last
+  fetched one, with `ε(n) = 2(n+16)·2⁻²⁴` bounded by the query's analyzed-term
+  count — review r1 P1-2); a scorer-bound gate checks the bound on every image
+  build.
   **Post-approval design change (2026-10-21, after the round-3 approval;
   for the dual review to judge):** this margin replaces the approved design's
   local scorer patch, because bitwise-equal scorers would have meant patching
@@ -6930,12 +6932,19 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   keeps exactness at the cost of fetching rows within ≈12.5% of the `k`-th
   score; the gate is a test pinning the extension revision the bound was
   verified on, plus the counterexample proofs on the built image.
-- **Small document-filtered sets (post-approval addition, 2026-10-21).** A
-  document-filtered chunk search scores its eligible rows exactly when they
-  number at most the exact-tier threshold (design §8.4). Measured at 3M
-  chunks, a 1% document filter above the threshold still stops at the work
-  budget on a quarter of queries (analysis §8.1); that stratum fails the
-  scaling gate and is open.
+- **Document-filtered chunk searches (post-approval additions, 2026-10-21,
+  review r1 P1-9).** The search enumerates its eligible rows from the
+  matching versions: at most the exact-tier threshold are scored exactly
+  (design §8.4); up to 100,000 are pushed into the index scan as a
+  membership filter (design §8.3), so the cursor streams eligible rows only;
+  above that the plain loop runs.
+- **One operation context (review r1 P1-3/P1-4/P1-7).** Every ranked
+  operation owns one read-only REPEATABLE READ snapshot with one absolute
+  deadline and one pinned authority instant; readiness, entity checks,
+  nomination, confirmation, hydration and pending/freshness reads all use it,
+  and nested reads clamp their statement timeout to the time left. The SQL
+  sandbox exports its snapshot with its transaction instant and its request
+  deadline; the import spans hydration.
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
   compatibility is a local image gate; no local patch.
 - **Gates.** Scaling (latency with returned-`k` and truncation rates and

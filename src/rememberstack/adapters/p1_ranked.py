@@ -239,7 +239,12 @@ def nominate_and_confirm(
             text("SELECT set_config('hnsw.max_scan_tuples', :value, true)"),
             {"value": str(max_scan)},
         )
+        connection.execute(
+            text("SELECT set_config('hnsw.ef_search', :value, true)"),
+            {"value": str(HNSW_EF_SEARCH)},
+        )
         limits["hnsw_max_scan_tuples"] = float(max_scan)
+        limits["hnsw_ef_search"] = float(HNSW_EF_SEARCH)
     previous = {
         name: str(
             connection.execute(
@@ -351,6 +356,13 @@ def nominate_and_confirm(
     )
     return confirmed[:k], account
 
+
+HNSW_EF_SEARCH = 200
+"""HNSW candidate-list size for the semantic loop (design §9 recall gate).
+
+Measured on a clustered 100k-vector corpus (1,536 dimensions, 500 clusters):
+mean recall@10 0.887 at pgvector's default 40, 0.959 at 100, 0.999 at 200
+and 400, unfiltered and with a 1,000-document filter alike."""
 
 P1_HNSW_MIN_SCAN_TUPLES = 20_000
 """Floor for one iterative HNSW scan's visited-tuple bound (D94 reference)."""

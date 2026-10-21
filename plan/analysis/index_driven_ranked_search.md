@@ -349,7 +349,9 @@ Options considered:
   proven margin: quantization rounds lengths down by less than 1/9, so for
   every row `index ≤ canonical ≤ index/(1−1/9)` (plus float slack). The loop
   stops when the `k`-th confirmed canonical score exceeds
-  `(1+ε)²/(1−1/9) ≈ 1.125` times the last fetched canonical score. No
+  `(1+ε(n))⁴/(1−1/9)` times the last fetched canonical score, `ε(n)`
+  bounding float4 accumulation over the query's `n` terms (≈ 1.126 for a
+  4,096-character query; review r1 P1-2). No
   extension change; a scorer-bound gate re-verifies the bound in CI on every image
   build (design §8.3, §9).
 

@@ -329,6 +329,17 @@ the index is used and eligibility stays exact. For each target and channel:
    capped by the remaining work budget). Batches are **disjoint**: each fetch
    continues the same ordered stream. Every fetched row keeps the score it was
    fetched with; nothing is rescored.
+   **Filter pushdown (post-approval design change, review r1 P1-9).** A
+   document-filtered chunk search first enumerates its eligible rows from
+   the matching versions (at most 100,000, a starting point). Up to the
+   exact-tier threshold they are scored exactly (§8.4); above it the
+   enumerated set is pushed into the index scan as a membership filter
+   (`chunk_id = ANY(:eligible)`, hashed by PostgreSQL), so the cursor
+   streams eligible rows only, still in the index's order and one scoring
+   generation, under the same stop rules; an HNSW exhaustion count is
+   filtered alike. Above 100,000 eligible rows the plain loop runs. Claim
+   searches with a document filter use the plain loop (their filter is per
+   occurrence).
 3. **Confirm the batch.** A confirmation query applies the target's complete
    eligibility predicates — the same predicate builders the adapter already
    uses for every filter, scope and gate — to each candidate of the batch. It
@@ -394,9 +405,16 @@ row, without patching the extension:
    `(A + c·raw) / (A + c·quantized) ≤ raw / quantized < 1 / (1 − 1/9)`, and a
    sum of positive terms keeps the bound, so **canonical ≤ index ÷ (1 − 1/9)**.
 
-With `ε = 10⁻⁴` relative slack for float accumulation differences, every
-unfetched row `u` satisfies `canonical(u) ≤ M · canonical(last)` where `last`
-is the most recently fetched row and `M = (1+ε)² / (1 − 1/9) ≈ 1.125`. The loop
+Floating point is bounded per query, not by a fixed slack (review r1 P1-2: a
+fixed `10⁻⁴` fails for 40,000 single-occurrence terms in one long document,
+ratio 1.12533 against 1.12523). Each scorer sums `n` positive float4 terms,
+each computed with at most 16 rounded operations, so a computed score is
+within `1 ± γ(n+16)` of its real value (`γ(m) = m·u/(1−m·u)`, `u = 2⁻²⁴`,
+recursive summation); the implementation uses `ε(n) = 2(n+16)u` with `n`
+bounded by the query's length (`⌊(len+1)/2⌋`: no parser finds more tokens).
+Chaining the unfetched row's two scores, the index order and the last row's
+two scores gives `canonical(u) ≤ M · canonical(last)` with
+`M = (1+ε(n))⁴ / (1 − 1/9)` (≈ 1.1261 for a 4,096-character query). The loop
 stops `k_filled` only when the `k`-th confirmed canonical score is strictly
 greater than `M · canonical(last)`: no unfetched row can enter the result or
 tie with its last member. In the reviewer's single-term example (lengths 48,
@@ -603,18 +621,19 @@ materially. All numbers are starting points for the owner to confirm:
   decision. The rule, seed and question set are fixed before the first run;
 - **scorer bound** (every CI run, on the built engine image) — the margin is
   re-verified whenever the extension changes, and the loop is checked against
-  an exact canonical oracle. Two parts exist today: a unit gate fails when the
-  image pins a `pg_textsearch` revision other than the one whose length table
-  and scorers the margin was verified on (`BM25_BOUND_VERIFIED_REVISION`), and
-  checks the quantization error against that table; Postgres proofs on the
-  built image check the loop against the oracle under a restrictive filter,
-  the three-length single-term counterexample (48, 50, 67 over average length
-  100), and 40- and 41-token documents with equal term frequency and reversed
-  stable IDs (a canonical tie). **Not built yet:** randomized corpora with
-  mixed spilled and unspilled rows and multi-term near-ties that compare every
-  streamed row's index score with its canonical score
-  (`index ≤ canonical·(1+ε)`, `canonical ≤ index·(1+ε)/(1 − 1/9)`). A failure
-  blocks the image; it would mean the extension changed its length
+  an exact canonical oracle. A unit gate fails when the image pins a
+  `pg_textsearch` revision other than the one whose length table and scorers
+  the margin was verified on (`BM25_BOUND_VERIFIED_REVISION`), checks the
+  quantization error against that table, and emulates the float32
+  long-query counterexample against `ε(n)`. On the built image, a randomized
+  corpus with half its rows spilled to a segment and half in the memtable,
+  lengths across the exact and quantized ranges, and multi-term queries with
+  repeated terms checks, for every streamed row against
+  `bm25_get_current_score()`, `index ≤ canonical·(1+ε)²`,
+  `canonical ≤ index·(1+ε)²/(1 − 1/9)` and the index order; further proofs
+  check the loop, the filter pushdown and the exact tier against the oracle
+  under a restrictive filter, the 48/50/67 counterexample and the 40/41 tie.
+  A failure blocks the image; it would mean the extension changed its length
   quantization or scoring and the margin must be re-derived;
 - **lexical behaviour** — the BM25 positive-match change (§8.1) and the
   `pg_textsearch` upgrade are
