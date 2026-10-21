@@ -70,6 +70,41 @@ silently. When writing any design or decision:
   point may let a consumer bypass an invariant (ingestion always writes through E0; review always
   appends reversible verdicts; a control plane is never an authority for E/K/P truth).
 
+## Rule 4 — A new version costs only its edit (D56)
+
+The engine's ingestion is built so that **a new version of a document is re-processed only
+where it changed**. Unchanged parts reuse their previous chunk keys, embeddings and extracted
+claims; only the edited chunks, plus at most their immediate neighbours in the same section,
+are re-chunked, re-embedded and re-extracted. Example: in a 200-section contract, rewording
+one paragraph of § 12 must not touch § 1–11 or § 13–200. This is a core product promise —
+extraction is the dominant ingestion cost — and it has been broken by changes that looked
+unrelated. Treat it as an invariant on every change, in code, designs and reviews:
+
+- **Know what the reuse key contains** (D56, refined by D140): the chunk's own block hashes,
+  its previous/next same-section neighbour hashes, the stable header facts (title, document
+  kind, language, file name — D134 — and the chunk's text-origin date, D140), and the
+  extractor and structurer versions. Embeddings carry forward on the content and
+  embedding-input hashes (D80). Chunk boundaries are anchor-stabilized, whole-block runs
+  (D58), so an edit cannot shift boundaries elsewhere in the document.
+- **Do not put anything version-specific into those inputs.** A per-version date, banner,
+  counter, timestamp, generated ID or renumbered heading in the header facts or chunk text
+  changes every key and re-extracts the whole document on every version. Dates belong in
+  D140 text-origin/effective-period metadata, never in the keyed text.
+- **Any change to chunking, the block grid, the reuse key, header facts, text-origin, the
+  embedding-input policy, or the extractor/structurer/parser version strings is a reuse
+  boundary.** Call it out explicitly in the design and PR (what re-processes, once, and
+  why), and get it accepted — never let it happen as a side effect.
+- **Prove it with a test.** A change that can affect ingestion must keep (or add) a
+  regression test that ingests v1 of a multi-section document and then v2 with one
+  paragraph changed, and asserts that only that paragraph's chunk and its immediate
+  same-section neighbours get new extractions and embeddings, while every other chunk
+  reuses its claims and vector.
+- **The same applies to anything that feeds the engine**: connectors and converters must
+  produce byte-identical output for unchanged content across versions (same title and file
+  name for every version of a document, deterministic rendering).
+- **Reviewers check this rule explicitly** on every PR that touches ingestion, chunking,
+  E1/E2, header facts, converters or version handling.
+
 ## Publish work in progress
 
 This applies to the supervising agent and every delegated agent. Push a meaningful
