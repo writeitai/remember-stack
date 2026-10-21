@@ -15,6 +15,11 @@ class PostgresReadPoolPort(Protocol):
         """Return an admitted connection or raise when its budget expires."""
         ...
 
-    def snapshot(self, *, deadline: float) -> AbstractContextManager[Connection]:
-        """Bind one read-only repeatable-read connection for nested reads."""
+    def snapshot(
+        self, *, deadline: float, import_snapshot: str | None = None
+    ) -> AbstractContextManager[Connection]:
+        """Bind one read-only repeatable-read connection for nested reads.
+
+        ``import_snapshot`` adopts another transaction's exported snapshot.
+        """
         ...

@@ -44,13 +44,24 @@ class BoundedPostgresReadPool:
             yield connection
 
     @contextmanager
-    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
-        """Hold one bounded read-only MVCC snapshot across nested retrieval reads."""
+    def snapshot(
+        self, *, deadline: float, import_snapshot: str | None = None
+    ) -> Iterator[Connection]:
+        """Hold one bounded read-only MVCC snapshot across nested retrieval reads.
+
+        ``import_snapshot`` (D142 §8.2) adopts another transaction's exported
+        snapshot, so the SQL sandbox's request and its P1 nominations read one
+        database state; the import is the transaction's first statement.
+        """
         if self._snapshot_connection.get() is not None:
             raise RuntimeError("retrieval snapshots cannot be nested")
         with self._admitted_connection(
             deadline=deadline, isolation_level="REPEATABLE READ"
         ) as connection:
+            if import_snapshot is not None:
+                connection.exec_driver_sql(
+                    "SET TRANSACTION SNAPSHOT " + _quote_snapshot_id(import_snapshot)
+                )
             connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             # REPEATABLE READ fixes its MVCC cut at the first query, not at
             # checkout. Establish it before embedding/provider work or any
@@ -93,3 +104,10 @@ class BoundedPostgresReadPool:
                 yield connection
         finally:
             self._slots.release()
+
+
+def _quote_snapshot_id(value: str) -> str:
+    """Quote an exported snapshot id; ``SET TRANSACTION`` takes no parameters."""
+    if not value or any(not (ch.isalnum() or ch == "-") for ch in value):
+        raise ValueError("an exported snapshot id is hexadecimal digits and dashes")
+    return "'" + value + "'"

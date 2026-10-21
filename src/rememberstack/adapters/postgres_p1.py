@@ -948,6 +948,22 @@ class PostgresP1Index:
             )
 
     @contextmanager
+    def imported_snapshot(self, *, snapshot_id: str, deadline: float) -> Iterator[None]:
+        """Run nested P1 reads in another transaction's exported snapshot.
+
+        D142 §8.2: the SQL sandbox exports its request snapshot and every
+        nomination, fetch and confirmation of its P1 calls reads that state.
+        Without bounded read admission there is no shared connection to bind,
+        so the call fails rather than reading an independent snapshot.
+        """
+        if self._read_pool is None:
+            raise P1SearchUnavailableError(
+                "the P1 adapter has no bounded read pool to share a snapshot"
+            )
+        with self._read_pool.snapshot(deadline=deadline, import_snapshot=snapshot_id):
+            yield
+
+    @contextmanager
     def _ranked_connection(
         self, *, deadline: float | None = None
     ) -> Iterator[Connection]:

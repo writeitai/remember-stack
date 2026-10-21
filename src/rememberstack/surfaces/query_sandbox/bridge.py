@@ -13,17 +13,23 @@ complete one.
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
+from time import monotonic
 from typing import Any
+from typing import cast
 from typing import Final
 from typing import Protocol
 
 import psycopg
 
 from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.ports.p1_index import search_account
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.nomination import BODY_COLUMNS
@@ -342,7 +348,8 @@ def _resolve_one(
         embedder_generation=embedder_generation,
     )
     try:
-        nominations = nominate(query_text, k, filters)
+        with _shared_snapshot(connection=connection, search=search):
+            nominations = nominate(query_text, k, filters)
     except SandboxRejection:
         raise
     except LookupError as error:  # a pin the projection cannot honour
@@ -405,9 +412,55 @@ def _resolve_one(
             embedder_generation=embedder_generation,
             generation=embedder_generation or policy_generation,
             pg_confirmed_at=confirmation.pg_confirmed_at,
-            termination_reason="completed",
+            termination_reason=_termination_reason(nominations),
         ),
     )
+
+
+def _termination_reason(nominations: Sequence[Any]) -> str:
+    """The invocation's D142 termination: ``completed`` or the early stop."""
+    account = search_account(nominations)
+    if account.termination.complete:
+        return "completed"
+    return f"p1_{account.termination.value}"
+
+
+@contextmanager
+def _shared_snapshot(
+    *, connection: psycopg.Connection, search: object
+) -> Iterator[None]:
+    """Nominate in the request transaction's own snapshot (D142 §8.2).
+
+    The executor's request transaction is READ ONLY, REPEATABLE READ; its
+    snapshot is exported and the P1 adapter imports it, so nomination,
+    continuation and the executor's D48 confirmation read one database state.
+    A projection without snapshot import (a test double) nominates as before.
+    """
+    imported = cast(
+        Callable[..., AbstractContextManager[None]] | None,
+        getattr(search, "imported_snapshot", None),
+    )
+    if not callable(imported):
+        yield
+        return
+    try:
+        row = connection.execute("SELECT pg_export_snapshot()").fetchone()
+    except psycopg.Error as error:
+        raise SandboxRejection(
+            code=QueryErrorCode.P1_UNAVAILABLE,
+            message="the request snapshot could not be shared with the projection",
+        ) from error
+    if row is None:
+        raise SandboxRejection(
+            code=QueryErrorCode.P1_UNAVAILABLE,
+            message="the request snapshot could not be shared with the projection",
+        )
+    with imported(snapshot_id=str(row[0]), deadline=monotonic() + _SNAPSHOT_BUDGET_S):
+        yield
+
+
+_SNAPSHOT_BUDGET_S = 30.0
+"""Upper bound on one imported-snapshot P1 call; the statement budget is lower."""
 
 
 def _hydrate(

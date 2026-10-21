@@ -250,8 +250,11 @@ class _TimedOutReadPool:
         yield cast(Connection, None)  # pragma: no cover - generator typing only
 
     @contextmanager
-    def snapshot(self, *, deadline: float) -> Iterator[Connection]:
+    def snapshot(
+        self, *, deadline: float, import_snapshot: str | None = None
+    ) -> Iterator[Connection]:
         """Reject the outer compound snapshot at the same admission boundary."""
+        del import_snapshot
         self.deadlines.append(deadline)
         raise SQLAlchemyTimeoutError("test retrieval admission expired")
         yield cast(Connection, None)  # pragma: no cover - generator typing only
