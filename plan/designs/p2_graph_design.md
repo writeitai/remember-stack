@@ -613,9 +613,9 @@ There are no user databases to preserve. Until GA:
 
 The reference image pins pgvector and pg_partman packages. `pg_textsearch` is
 pinned to an upstream release of 1.5.1 or later (D142), which supports
-PostgreSQL 19 upstream, so the earlier 1.3.1 compatibility patch is retired; until
-an upstream release scores memtable and segment rows identically, the image carries
-the small reviewed scorer-identity patch defined in the P1 search design §6/§8.3.
+PostgreSQL 19 upstream, so the earlier 1.3.1 compatibility patch is retired and no
+local patch is carried (the P1 search design §8.3 bounds the extension's
+memtable-versus-segment scoring difference instead of patching it).
 Upstream treats PostgreSQL 19 as best-effort with non-blocking CI, so the image
 build runs the extension's upstream SQL tests on the pinned PostgreSQL 19 image
 as a local gate. Its PostgreSQL License permits use, modification, and

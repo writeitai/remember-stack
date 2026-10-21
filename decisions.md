@@ -4378,9 +4378,8 @@ query path, envelope grain, or hydration (D48–D49).
 
 > **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
-> which supports PostgreSQL 19 and fills post-filtered top-k scans, plus a
-> small reviewed scorer-identity patch until upstream scores memtable and
-> segment rows identically. The rest of D98 stands.
+> which supports PostgreSQL 19 and fills post-filtered top-k scans; no local
+> patch is carried. The rest of D98 stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
@@ -6916,18 +6915,21 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   loop within large ones; facts merge by `(coverage DESC, distance,
   fact_kind, fact_id)`.
 - **Lexical semantics.** BM25 results are positive matches only on every
-  path, ranked by **one canonical BM25 score** (fieldnorm-quantized length,
-  float4 per-term scores accumulated in float8 in query-term order by one
-  shared routine, bitwise-equal on index and standalone paths, ties by
-  bitwise equality; equality with today's ordering is measured, not assumed); a scorer-identity gate checks it on every image build.
+  path, ranked by **one canonical BM25 score**: the standalone `<@>`
+  operator's (fieldnorm-quantized length, float4 terms accumulated in float8
+  in query-term order), evaluated in the nomination cursor's executor; ties
+  by bitwise equality; equality with today's ordering is measured. Because
+  pg_textsearch 1.5.1's index order uses raw memtable lengths, the cursor
+  stops only past a proven margin (`index ≤ canonical ≤ index/(1−1/9)`, so
+  stop when the `k`-th canonical score exceeds `(1+ε)²/(1−1/9)` × the last
+  fetched one); a scorer-bound gate checks the bound on every image build.
+  (Implementation decision 2026-10-21: this replaces the reviewed design's
+  local scorer patch; it needs no extension change.)
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
-  compatibility is a local image gate. 1.5.1 scores unspilled (memtable) rows
-  with raw length, unlike segments and the standalone operator, so until an
-  upstream release unifies them the image carries a small reviewed patch that
-  does.
+  compatibility is a local image gate; no local patch.
 - **Gates.** Scaling (latency with returned-`k` and truncation rates and
   index-internal work, by stratum), HNSW recall (mean recall@10 ≥ 0.95, no
-  stratum below 0.90), scorer identity, LoCoMo answer accuracy by a
+  stratum below 0.90), scorer bound, LoCoMo answer accuracy by a
   predeclared paired non-inferiority test (question as unit, three runs per
   side, paired bootstrap one-sided 95% bound, fixed 1.0 pp margin,
   inconclusive when underpowered), and separate measurement of the lexical
@@ -6944,7 +6946,9 @@ visibility boolean for time-scoped chunks. A different ANN engine: does not
 address BM25 or authority. Filling the lexical list with zero-score rows by a
 stable-ID walk: preserves a tail with no keyword signal at the cost of an
 unbounded walk. Raw-length index scoring as the canonical score: a row's rank
-would change when a maintenance spill moves it to a segment.
+would change when a maintenance spill moves it to a segment. A local patch
+making index and standalone scores bitwise equal: it touches every BM25
+scoring path of the extension, while the proven margin needs no change.
 
 **Distinct-text index (owner-approved adoption rule, 2026-10-21).** Indexing
 each distinct search input once stays an unchosen proposal

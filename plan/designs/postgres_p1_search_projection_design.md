@@ -179,11 +179,9 @@ tested builds of:
   cursor/scoring-generation tests on that exact image.
   1.5.1 scores unspilled (memtable) rows with raw document length while
   segments and the standalone operator use fieldnorm-quantized length
-  (§8.3). Until an upstream release unifies them, the image carries a small,
-  reviewed patch that makes the memtable scorer quantize length through the
-  same encode/decode and share the standalone scoring routine; the patch is
-  reported upstream, pinned by checksum like the retired D98 patch, and
-  removed when an upstream release passes the scorer-identity gate.
+  (§8.3). The image carries **no local patch** for this: §8.3's stop margin
+  is proven for both scorers, and the §9 scorer-bound gate verifies the
+  bound on every image build.
 
 Startup/readiness verifies PostgreSQL major version, extension availability,
 and the configured **1,536** embedding dimension. Missing requirements fail readiness;
@@ -350,42 +348,65 @@ exact scoring of small entity tiers (§8.4), the open query space SRFs, the
 D140 `scope_pending` probe and every test oracle — uses one score: the
 pg_textsearch BM25 function over the **fieldnorm-quantized** document length
 (the one-byte length encoding segments store) and the scoring generation's
-corpus statistics, computed by one shared scoring routine: each per-term
-score in float4, the total accumulated in float8 in the analyzed query's term
-order (the accumulation the standalone operator uses at 1.5.1), and the
-float8 total is the canonical score. Two rows tie only when their canonical
-scores are bitwise equal.
+corpus statistics, as the **standalone `<@>` operator** computes it: each
+per-term score in float4, the total accumulated in float8 in the analyzed
+query's term order (pg_textsearch 1.5.1), and the float8 total is the
+canonical score. Every path that ranks lexically evaluates that operator; the
+index is used only to *nominate* in an order that is provably close to it
+(below). Two rows tie only when their canonical scores are bitwise equal.
 
-The index path and the standalone `<@>` operator must produce that same score
-for the same row, query and generation. Upstream intends this (the standalone
-operator quantizes length "to ensure the operator produces identical scores to
-index scans"), but **pg_textsearch 1.5.1 does not deliver it**: rows still in
-the in-memory memtable (not yet spilled to a segment) are scored by the index
-with their raw length, while segments and the standalone operator use the
-quantized length. A row's index score — and therefore the index order — would
-then change when maintenance spills it, and the index order can disagree with
-standalone scoring: with one query term, a row of length 67 can lose to a row
-of length 48 in the index yet win under quantized scoring, so a cursor can
-stop `k_filled` without ever fetching the true winner. The image therefore
-requires an upstream release, or a small reviewed patch (§6), in which the
-memtable scorer quantizes length through the same encode/decode and both paths
-call the same scoring routine with the same per-term and accumulation types
-and order. This is enforced, not
-assumed: the §9 **scorer-identity gate** runs on every image build.
+The canonical score is the standalone `<@>` operator's score, evaluated in
+the nomination cursor's own executor (so in the same scoring generation): the
+cursor projects `-(text <@> query)` while ordering by the raw `<@>`
+expression, which pg_textsearch's planner hook serves from the index's own
+score. **The index order is therefore not the canonical order**, and the
+stopping rule must not assume it is. Upstream intends the two scores to agree
+(the standalone operator quantizes length "to ensure the operator produces
+identical scores to index scans"), but in pg_textsearch 1.5.1 rows still in
+the in-memory memtable are scored by the index with their raw length, while
+segments and the standalone operator use the quantized length; per-term
+float4 scores are also accumulated differently (float4 in index order versus
+float8 in query-term order).
 
-Raw-length index scoring is not adopted as the canonical score instead: it
-would make a row's rank depend on whether a storage-maintenance spill has
-happened, and the exact small tier could not compute it.
+**Bounded reconciliation (implementation decision, 2026-10-21; replaces the
+earlier plan of a local scorer patch).** Two facts bound the gap for every
+row, without patching the extension:
 
-**Exactness.** With one canonical scorer and one scoring generation,
-pg_textsearch's ordered scan streams matching rows in non-increasing canonical
-score (Block-Max WAND for the leading top-k, then its batch growth until the
-cursor is drained). With the §8.1 positive-match rule, continuation until `k`
-eligible rows and the tie rule, a BM25 result equals canonical scoring of the
-same eligible matching rows under the same generation. It is *intended* to
-match today's standalone-scored ordering of those rows; that is not assumed —
-the upgrade comparison in §9 (which includes the scorer patch) measures it.
-HNSW is approximate (§9).
+1. Quantization only rounds a length down (largest table entry ≤ length), so
+   quantized length ≤ raw length. BM25's per-term weight
+   `tf·(k1+1) / (tf + k1·(1 − b + b·len/avg))` decreases with length, so
+   **index score ≤ canonical score** (up to float rounding).
+2. The quantization error is below 1/9 of the length for every length in
+   pg_textsearch 1.5.1's `FIELDNORM_DECODE_TABLE` (worst case 0.11111). For
+   `A = tf + k1·(1−b) > 0` and `c = k1·b/avg`, the per-term ratio
+   `(A + c·raw) / (A + c·quantized) ≤ raw / quantized < 1 / (1 − 1/9)`, and a
+   sum of positive terms keeps the bound, so **canonical ≤ index ÷ (1 − 1/9)**.
+
+With `ε = 10⁻⁴` relative slack for float accumulation differences, every
+unfetched row `u` satisfies `canonical(u) ≤ M · canonical(last)` where `last`
+is the most recently fetched row and `M = (1+ε)² / (1 − 1/9) ≈ 1.125`. The loop
+stops `k_filled` only when the `k`-th confirmed canonical score is strictly
+greater than `M · canonical(last)`: no unfetched row can enter the result or
+tie with its last member. In the reviewer's single-term example (lengths 48,
+50, 67; average 100) the loop keeps fetching past the 50-token row until the
+67-token winner is fetched. The cost is fetching rows whose canonical score is
+within about 12.5% of the `k`-th, reported in the counters.
+
+Raw-length index scoring is not adopted as the canonical score: it would make
+a row's rank depend on whether a storage-maintenance spill has happened, and
+exact small tiers could not compute it. A local scorer patch was considered
+and set aside: making the index's accumulation bitwise equal to the
+standalone operator touches every BM25 scoring path in the extension
+(memtable, segment WAND, single-term fast path, top-k heap), whereas the
+margin needs no extension change and stays valid if upstream unifies the
+scorers.
+
+**Exactness.** Within one scoring generation, with positive-match semantics,
+continuation until the margin condition and the tie rule, a BM25 result equals
+canonical (standalone) scoring of the same eligible matching rows, which is
+also how exact small tiers and every oracle score. It is *intended* to match
+today's standalone-scored ordering of those rows; the upgrade comparison in §9
+measures it. HNSW is approximate (§9).
 
 ### 8.4 Entity-scoped nomination (coverage first)
 
@@ -412,7 +433,7 @@ indexed by entity:
 2. Tiers are taken from the highest coverage down. A tier at or below the
    exact-scoring threshold (a **starting point of 5,000 items**, to be
    measured) is scored exactly — `<=>` for semantic, the canonical BM25
-   score (`<@>` under the scorer-identity gate, positive matches only) for
+   score (`<@>`, positive matches only) for
    lexical — and sorted by score, then ID.
 3. A larger tier runs the §8.3 cursor loop with tier membership added to
    confirmation.
@@ -559,18 +580,19 @@ materially. All numbers are starting points for the owner to confirm:
   bound is below −1.0 pp; otherwise the result is **inconclusive** — an
   underpowered result never passes; the owner then chooses more runs or a
   decision. The rule, seed and question set are fixed before the first run;
-- **scorer identity** (every image build) — on randomized corpora with
-  mixed spilled and unspilled rows, multi-term queries and near-ties, every row
-  an index-ordered scan streams carries a projected score bitwise equal to the
-  standalone operator's score for that row and generation, and the stream is
-  non-increasing in that score, including multi-term queries where float8
-  accumulation order matters. Fixtures include 40- and 41-token documents
-  with equal term frequency and reversed stable IDs (a canonical tie), the
-  three-length single-term counterexample of §8.3 (lengths 48, 50 and 67 over
-  a corpus of average length 100), and both sides of the exact-tier
-  threshold. Failure blocks the image;
+- **scorer bound** (every image build) — on randomized corpora with mixed
+  spilled and unspilled rows, multi-term queries and near-ties, for every row
+  an index-ordered scan streams, the index score (the ORDER BY value) and the
+  projected canonical score satisfy `index ≤ canonical·(1+ε)` and
+  `canonical ≤ index·(1+ε)/(1 − 1/9)`, and the loop's BM25 results equal an
+  exact canonical oracle. Fixtures include 40- and 41-token documents with
+  equal term frequency and reversed stable IDs (a canonical tie), the
+  three-length single-term counterexample (48, 50, 67 over average length
+  100), multi-term near-ties, and both sides of the exact-tier threshold. A
+  failure blocks the image; it would mean the extension changed its length
+  quantization or scoring and the margin must be re-derived;
 - **lexical behaviour** — the BM25 positive-match change (§8.1) and the
-  `pg_textsearch` upgrade **together with the scorer-identity patch** are
+  `pg_textsearch` upgrade are
   measured separately against today's answers on the same corpus, so their
   effects are attributable; the upgrade comparison reports whether the
   canonical ordering of matching rows equals today's standalone ordering,

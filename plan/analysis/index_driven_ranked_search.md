@@ -337,14 +337,23 @@ Options considered:
   reproduce it;
 - **rescore the fetched prefix with the standalone operator** — rejected:
   the index order is still wrong, so the true winner may never be fetched;
-- **one canonical scorer (chosen)** — quantized length everywhere, one shared
-  scoring routine, bitwise-equal scores on every path, verified by a
-  scorer-identity gate on every image build; supplied by an upstream release
-  or, until then, a small reviewed patch to the memtable scorer (design §6,
-  §8.3, §9).
+- **a local patch making both scorers bitwise equal** — set aside during
+  implementation (2026-10-21): the index's float4 accumulation in index
+  order differs from the operator's float8 accumulation in query-term order
+  on every BM25 scoring path (memtable, segment WAND, single-term fast path,
+  top-k heap), so the patch would be broad and need rebasing on every
+  upgrade;
+- **bounded reconciliation (chosen)** — keep the standalone operator as the
+  canonical score, evaluated in the cursor's executor, and stop only past a
+  proven margin: quantization rounds lengths down by less than 1/9, so for
+  every row `index ≤ canonical ≤ index/(1−1/9)` (plus float slack). The loop
+  stops when the `k`-th confirmed canonical score exceeds
+  `(1+ε)²/(1−1/9) ≈ 1.125` times the last fetched canonical score. No
+  extension change; a scorer-bound gate re-verifies the bound on every image
+  build (design §8.3, §9).
 
-With the canonical scorer and one scoring generation, the ordered scan
-streams matching rows in non-increasing canonical score (Block-Max WAND for
+With one scoring generation, the ordered scan streams matching rows in
+non-increasing *index* score, which the margin relates to the canonical score (Block-Max WAND for
 the leading top-k, then batch growth until the cursor is drained). With
 positive-match semantics, continuation and the tie rule, a BM25 result equals
 canonical scoring of the same eligible matching rows under that generation.
@@ -354,7 +363,7 @@ accumulation in query-term order — the standalone operator's accumulation at
 [accumulation](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L1056-L1067)).
 It is intended to reproduce today's standalone ordering; whether multi-term
 rounding and tie sets are unchanged is measured by the upgrade comparison
-(which includes the scorer patch), not assumed.
+not assumed.
 
 HNSW is approximate. Today's semantic search is accidentally exact because the
 planner scans everything; moving to the index trades recall for speed. How
@@ -422,7 +431,7 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
 2. **Equivalence (BM25):** for randomized corpora with deletions, periods,
    entity scopes and ties, the loop's results equal exact scoring of the same
    eligible matching rows **under the same extension version and scoring
-   generation**, with the scorer-identity fixtures of design §9 (40/41-token
+   generation**, with the scorer-bound fixtures of design §9 (40/41-token
    ties with reversed stable IDs, mixed spilled/unspilled rows, multi-term
    near-ties, the 48/50/67 single-term counterexample, both sides of the
    exact-tier threshold). Absent terms, empty analyzed queries, fewer-than-`k` matches
@@ -452,7 +461,7 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
    0.90; LoCoMo answer accuracy by the predeclared paired non-inferiority test
    of design §9 (question as sampling unit, three runs per side, paired
    bootstrap one-sided 95% bound, fixed 1.0 pp margin, inconclusive when
-   underpowered). The scorer-identity gate (design §9) runs on every image
+   underpowered). The scorer-bound gate (design §9) runs on every image
    build. The positive-match lexical change and the
    `pg_textsearch` upgrade are measured separately against today's answers.
    The LoCoMo part is a paid run and waits until the in-progress run has
