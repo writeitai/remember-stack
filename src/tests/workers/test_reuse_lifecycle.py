@@ -664,11 +664,13 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     v2 of a three-section document changes one paragraph in section B. Only
     the changed chunk and its immediate same-section neighbours may be
     re-extracted or re-embedded; every other chunk — all of sections A and C
-    and the rest of B — reattaches its v1 claims and carries its v1 vector.
+    and the rest of B — keeps its extraction input identity (so it replays its
+    frozen v1 Selection with no model call) and carries its v1 vector.
     """
     first = rig.observe(content=_sectioned(edited=False))
     rig.drain()
     baseline_embeds = len(rig.provider.embedded_texts)
+    baseline_selection = rig.selection_calls()
 
     second = rig.observe(content=_sectioned(edited=True))
     assert second.created
@@ -679,7 +681,7 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
             connection.execute(
                 text(
                     "SELECT c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
-                    " s.embedding::text AS vector"
+                    " c.extraction_input_hash AS extraction, s.embedding::text AS vector"
                     " FROM chunks c JOIN chunk_search s"
                     "   ON s.deployment_id = c.deployment_id AND s.chunk_id = c.chunk_id"
                     " WHERE c.version_id = :v"
@@ -694,7 +696,7 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
                 text(
                     "SELECT c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
                     " c.section_id::text AS section_id, c.ordinal AS ordinal,"
-                    " s.embedding::text AS vector"
+                    " c.extraction_input_hash AS extraction, s.embedding::text AS vector"
                     " FROM chunks c JOIN chunk_search s"
                     "   ON s.deployment_id = c.deployment_id AND s.chunk_id = c.chunk_id"
                     " WHERE c.version_id = :v ORDER BY c.ordinal"
@@ -704,31 +706,6 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
             .mappings()
             .all()
         )
-        v1_ids = [row["chunk_id"] for row in v1]
-        v2_ids = [row["chunk_id"] for row in v2]
-        fresh = {
-            str(row[0])
-            for row in connection.execute(
-                text(
-                    "SELECT DISTINCT chunk_id::text FROM claims"
-                    " WHERE chunk_id = ANY(CAST(:ids AS uuid[]))"
-                ),
-                {"ids": v2_ids},
-            )
-        }
-        reused_links = {
-            str(row[0])
-            for row in connection.execute(
-                text(
-                    "SELECT DISTINCT cc.chunk_id::text FROM chunk_claims cc"
-                    " JOIN claims cl ON cl.claim_id = cc.claim_id"
-                    " WHERE cc.chunk_id = ANY(CAST(:v2 AS uuid[]))"
-                    "   AND cl.chunk_id = ANY(CAST(:v1 AS uuid[]))"
-                ),
-                {"v2": v2_ids, "v1": v1_ids},
-            )
-        }
-
     assert len(v1) >= 9 and len(v2) >= 9  # a real multi-chunk, multi-section doc
     v1_vector_by_hash = {row["hash"]: row["vector"] for row in v1}
     changed = [row for row in v2 if row["hash"] not in v1_vector_by_hash]
@@ -747,11 +724,17 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
             ):
                 allowed.add(v2[neighbour]["chunk_id"])
 
-    assert fresh <= allowed, "only the edited neighbourhood is re-extracted"
+    # A chunk is re-extracted exactly when its D56 extraction input identity
+    # is new; the rest replay the frozen v1 Selection without a model call.
+    v1_extractions = {row["extraction"] for row in v1}
+    extracted = {
+        row["chunk_id"] for row in v2 if row["extraction"] not in v1_extractions
+    }
+    assert extracted <= allowed, "only the edited neighbourhood is re-extracted"
+    assert rig.selection_calls() - baseline_selection == len(extracted)
     untouched = [row for row in v2 if row["chunk_id"] not in allowed]
     assert len(untouched) >= len(v2) - 4
     for row in untouched:
-        assert row["chunk_id"] in reused_links, "unchanged chunk reattaches v1 claims"
         assert row["vector"] == v1_vector_by_hash[row["hash"]], (
             "unchanged chunk carries its v1 vector forward"
         )

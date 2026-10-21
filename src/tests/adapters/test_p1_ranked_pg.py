@@ -73,6 +73,9 @@ def fresh_deployment(database_engine: Engine) -> None:
             corpusfs_bucket="mem://corpusfs",
         )
     )
+    PostgresP1Index(engine=database_engine, embedding_model=_MODEL).configure_channels(
+        deployment_id=_DEPLOYMENT_ID
+    )
 
 
 def _seed_chunks(
