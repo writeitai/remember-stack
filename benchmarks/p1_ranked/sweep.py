@@ -50,10 +50,8 @@ K = 20
 
 def _reset(engine: Engine) -> None:
     with engine.begin() as connection:
-        connection.execute(
-            text("DELETE FROM deployments WHERE deployment_id = :d"),
-            {"d": d140.DEPLOYMENT},
-        )
+        # isolated benchmark database only: empties every deployment
+        connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
 
 
 def _duplicate_versions(engine: Engine, *, share: float, versions: int) -> int:
