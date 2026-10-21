@@ -326,6 +326,9 @@ def _corpus_hash(engine: Engine) -> str:
 
 def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
     """Every stratum through the public operation, plus corpus/query identity."""
+    PostgresP1Index(engine=engine, embedding_model=d140.MODEL).configure_channels(
+        deployment_id=d140.DEPLOYMENT
+    )
     sample = _queries(queries)
     with engine.connect() as connection:
         ordered = [
