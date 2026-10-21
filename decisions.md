@@ -6973,10 +6973,15 @@ demonstrated benefit and passed gates, through its own design update.
 changes only the query path. It does not change anchor-stabilized chunking
 (D58), the inputs of `extraction_input_hash` or `reuse_identity_hash`,
 search text versus embedding input, header facts, normalization, text origin
-(D140) or embedding carry-forward (D80). A one-paragraph edit still
-re-extracts and re-embeds at most the changed chunk and its immediate
-same-section neighbours; a CI regression test asserts it per chunk across
-sections.
+(D140) or embedding carry-forward (D80); the reuse boundary is unchanged.
+What the CI regression proves, per input and for both a living undated and a
+dated snapshot lineage: after a one-paragraph edit, Selection and embedding
+run only for the changed chunk and its immediate same-section neighbours;
+every other chunk keeps its extraction identity, embedding input and v1
+vector, and where Claimify is reused it reattaches exactly its v1 claim ids.
+Claimify's input also hashes the previous eight Selection producers, so it
+can re-run on later chunks — a known Rule 4 gap that D142 neither causes nor
+fixes, pinned by an expected-failure test.
 
 **Consequences.** In the common case fetched-candidate and confirmation work
 scales with `k` over the eligible share of top candidates, not with corpus
