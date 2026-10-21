@@ -946,7 +946,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "3e3fbb7e7c3721fa6a8e667fad7b4275906b18db7c7512f19012323964a28355"
+        == "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
     )
 
 

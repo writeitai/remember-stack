@@ -43,6 +43,10 @@ class BoundedPostgresReadPool:
         ) as connection:
             yield connection
 
+    def in_snapshot(self) -> bool:
+        """Whether the current context already holds a bound snapshot."""
+        return self._snapshot_connection.get() is not None
+
     @contextmanager
     def snapshot(
         self, *, deadline: float, import_snapshot: str | None = None

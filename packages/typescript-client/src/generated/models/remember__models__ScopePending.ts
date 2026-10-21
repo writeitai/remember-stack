@@ -6,6 +6,7 @@
  * Documents whose in-force text for the scope is still processing (D140 §3.7).
  */
 export type remember__models__ScopePending = {
+    complete?: boolean;
     count: number;
     doc_ids: Array<string>;
 };

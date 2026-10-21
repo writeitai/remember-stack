@@ -12,6 +12,7 @@ import base64
 import binascii
 from collections import Counter
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
@@ -367,6 +368,25 @@ class QueryEngine:
         )
 
     @contextmanager
+    def _ranked_read_context(self) -> Iterator[None]:
+        """Hold one read-only repeatable-read P1 snapshot for an operation.
+
+        D142 §8.2: every P1 nomination, continuation and confirmation of one
+        operation reads the same database state through the shared retrieval
+        pool. Without a pool (test doubles) each call reads its own snapshot.
+        """
+        snapshot = cast(
+            Callable[..., AbstractContextManager[Connection]] | None,
+            getattr(self._fact_read_pool, "snapshot", None),
+        )
+        in_snapshot = getattr(self._fact_read_pool, "in_snapshot", None)
+        if not callable(snapshot) or (callable(in_snapshot) and in_snapshot()):
+            yield  # no pool, or an enclosing operation already holds the snapshot
+            return
+        with snapshot(deadline=monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS):
+            yield
+
+    @contextmanager
     def _fact_snapshot(self, *, deadline: float) -> Iterator[Connection]:
         """Open the common read-only repeatable-read cut for a compound recipe."""
         if self._fact_read_pool is None:
@@ -460,6 +480,7 @@ class QueryEngine:
         )
         readable = TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at)
         touched: dict[UUID, None] = {}
+        complete = True
         for grain, channel, k in probes:
             method = getattr(index, methods[(grain, channel)], None)
             if not callable(method):
@@ -492,13 +513,19 @@ class QueryEngine:
                 tuple[P1Nomination, ...],
                 method(**arguments, documents=documents, time=scope),
             )
+            probed = cast(
+                tuple[P1Nomination, ...],
+                method(**arguments, documents=restricted, time=readable),
+            )
+            complete = (
+                complete
+                and search_account(answered).termination.complete
+                and search_account(probed).termination.complete
+            )
             floor = answered[-1].score if len(answered) >= k else None
             hits = [
                 item.item_id
-                for item in cast(
-                    tuple[P1Nomination, ...],
-                    method(**arguments, documents=restricted, time=readable),
-                )
+                for item in probed
                 if (channel != "bm25" or item.score > 0)
                 and (floor is None or item.score >= floor)
             ]
@@ -510,7 +537,7 @@ class QueryEngine:
                     {"deployment_id": deployment_id, "ids": hits},
                 ).scalars():
                     touched[doc_id] = None
-        return tuple(touched)
+        return _Touched(touched, complete=complete)
 
     def _touched_by_testimony(
         self,
@@ -537,6 +564,7 @@ class QueryEngine:
         """
         pending = tuple(str(doc_id) for doc_id in candidates)
         touched: dict[UUID, None] = {}
+        complete = True
         for grain, channel, k in probes:
             arguments: dict[str, Any] = {
                 "deployment_id": str(deployment_id),
@@ -561,10 +589,9 @@ class QueryEngine:
                 )
             else:
                 arguments["query"] = query
-            hits = [
-                item.item_id
-                for item in cast(tuple[P1Nomination, ...], testimony(**arguments))
-            ]
+            replayed = cast(tuple[P1Nomination, ...], testimony(**arguments))
+            complete = complete and search_account(replayed).termination.complete
+            hits = [item.item_id for item in replayed]
             if not hits:
                 continue
             with self._engine.connect() as connection:
@@ -574,13 +601,22 @@ class QueryEngine:
                 ).scalars():
                     if doc_id in candidates:
                         touched[doc_id] = None
-        return tuple(touched)
+        return _Touched(touched, complete=complete)
 
     def _scoped_freshness(
-        self, *, deployment_id: UUID, scope: TextScope, doc_ids: Sequence[UUID]
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        doc_ids: Sequence[UUID],
+        pending_complete: bool = True,
     ) -> Freshness:
-        """Freshness of a time-scoped read, with its pending lineages (§3.7)."""
-        if not doc_ids:
+        """Freshness of a time-scoped read, with its pending lineages (§3.7).
+
+        ``pending_complete`` (D142 §8.6) is false when a probe stopped on a
+        bound; the reported count is then a lower bound.
+        """
+        if not doc_ids and pending_complete:
             return _freshness()
         with self._engine.connect() as connection:
             pending = _scope_pending(
@@ -588,6 +624,7 @@ class QueryEngine:
                 deployment_id=deployment_id,
                 scope=scope,
                 doc_ids=doc_ids,
+                complete=pending_complete,
             )
         return _freshness(scope_pending=pending)
 
@@ -1489,6 +1526,31 @@ class QueryEngine:
                         evaluated_at=evaluation,
                         temporal_scope=_text_temporal_scope(scope=scope),
                     )
+        with self._ranked_read_context():
+            return self._claims_and_sources_context_in_snapshot(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                candidate_k=candidate_k,
+                entity_ids=entity_ids,
+                scope=scope,
+                evaluation=evaluation,
+                nominate_in_scope=time is not None,
+            )
+
+    def _claims_and_sources_context_in_snapshot(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int,
+        candidate_k: int,
+        entity_ids: tuple[UUID, ...],
+        scope: TextScope,
+        evaluation: datetime,
+        nominate_in_scope: bool,
+    ) -> Envelope:
+        """The body of ``claims_and_sources_context`` inside one P1 snapshot."""
         answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
             query=query,
@@ -1496,7 +1558,7 @@ class QueryEngine:
             candidate_k=candidate_k,
             entity_ids=entity_ids,
             scope=scope,
-            nominate_in_scope=time is not None,
+            nominate_in_scope=nominate_in_scope,
         )
         touched = self._touched_pending(
             deployment_id=deployment_id,
@@ -1519,6 +1581,7 @@ class QueryEngine:
                 *(record.doc_id for record in answer.chunks),
                 *touched,
             ),
+            pending_complete=_touched_complete(touched),
         )
         return answer.model_copy(
             update={
@@ -1755,6 +1818,7 @@ class QueryEngine:
                     *(documents.doc_ids if documents is not None else ()),
                     *touched,
                 ),
+                pending_complete=_touched_complete(touched),
             ),
             dropped_by_hydration=dropped,
             negative=None
@@ -1849,6 +1913,7 @@ class QueryEngine:
                     *(documents.doc_ids if documents is not None else ()),
                     *touched,
                 ),
+                pending_complete=_touched_complete(touched),
             ),
             dropped_by_hydration=dropped,
             negative=None
@@ -5385,11 +5450,12 @@ def _scope_pending(
     deployment_id: UUID,
     scope: TextScope,
     doc_ids: Sequence[UUID],
+    complete: bool = True,
 ) -> ScopePending | None:
     """Touched lineages whose in-force version for the scope is not ready (§3.7)."""
     touched = tuple(dict.fromkeys(doc_ids))
     if not touched:
-        return None
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
     pending = tuple(
         connection.execute(
             _SCOPE_PENDING,
@@ -5401,8 +5467,12 @@ def _scope_pending(
         ).scalars()
     )
     if not pending:
-        return None
-    return ScopePending(doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS], count=len(pending))
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
+    return ScopePending(
+        doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS],
+        count=len(pending),
+        complete=complete,
+    )
 
 
 def _text_temporal_scope(*, scope: TextScope) -> object:
@@ -5949,3 +6019,20 @@ _OPEN_SUPPORT_FLAGS = text(
       AND (candidate ->> 'fact_id') = ANY(:fact_ids)
     """
 )
+
+
+class _Touched(tuple[UUID, ...]):
+    """Touched pending lineages plus whether every probe was complete (§8.6)."""
+
+    complete: bool
+
+    def __new__(cls, ids: Iterable[UUID], *, complete: bool) -> "_Touched":
+        """Build from the lineages found and the probes' completeness."""
+        result = super().__new__(cls, tuple(ids))
+        result.complete = complete
+        return result
+
+
+def _touched_complete(touched: Sequence[UUID]) -> bool:
+    """Whether a pending probe ran to completion (plain tuples: yes)."""
+    return bool(getattr(touched, "complete", True))
