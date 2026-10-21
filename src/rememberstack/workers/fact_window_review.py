@@ -2,12 +2,15 @@
 
 Two kinds of job share the stage:
 
-- **A lineage job** (target ``document``) is queued whenever a lineage that
-  ever declared effective periods may have moved its in-force intervals: a
-  period write or clear, the completion of one of its versions, a deletion. It
-  finds the live facts whose evidence occurs in any version of the lineage and
-  whose period basis differs from the one their window was adjudicated against,
-  and queues one fact job for each. It makes no model call.
+- **A lineage job** (target ``document``, a fresh request id; the lineage is in
+  the payload) is queued, in the transaction of the change, whenever a lineage
+  that ever declared effective periods may have moved its in-force intervals:
+  a period write or clear, a period declared on an existing version at ingest,
+  the completion of one of its versions, a deletion. Its first page passes the
+  deployment's period-fence barrier; it then walks the lineage's live facts in
+  bounded pages, queues one fact job for each fact whose period basis differs
+  from the one its window was adjudicated against, and continues in a new job
+  when a page is full. It makes no model call.
 - **A fact job** (target ``relation`` or ``observation``) reviews that fact's
   window (:class:`~rememberstack.spine.fact_window_review.FactWindowReviewer`).
   A fact whose basis already matches is a no-op, so duplicate jobs are free.

@@ -1872,7 +1872,7 @@ CREATE TABLE relations (
   -- bi-temporality (concepts §5): two clocks, different questions.
   valid_from      timestamptz,                 -- VALID-time start: when the fact began holding in the world (NULL = unknown/always)
   valid_until     timestamptz,                 -- VALID-time end: closed by supersession when the fact stops holding ("Alice left Acme")
-  period_basis    text,                        -- D140 §8.2: fingerprint of the evidence claims' in-force periods when this window was last adjudicated (NULL = never against a declared period); a differing current fingerprint queues a window review
+  period_basis    text,                        -- D140 §8.2: fingerprint of the periodised evidence claims and their in-force periods when this window was last adjudicated (NULL = that evidence had no periodised claim); a differing current fingerprint queues a window review
   ingested_at     timestamptz NOT NULL DEFAULT now(), -- TRANSACTION-time: when the system first believed this fact
   invalidated_at  timestamptz,                 -- TRANSACTION-time: when the system learned it was superseded (NULL = still believed)
   evidence_count  integer NOT NULL DEFAULT 0,  -- cached count of DISTINCT DOCUMENT LINEAGES with current-testimony supporting claims (D54 — invariant under re-extraction/version churn/intra-doc repetition); confidence/salience signal (D2 refined)
@@ -2040,6 +2040,21 @@ The contrast with `relations` is deliberate and is the whole point of D43:
 -- valid-time when superseded; a MEASUREMENT / FIXED-PERIOD figure ("FY2023 revenue") is NEVER capped —
 -- it doesn't stop being true at period-end, stays open, and conflicting same-period figures coexist.
 -- ─────────────────────────────────────────────────────────────────────────
+-- D140 §8.2: one claimed fact window review per fact and input fingerprint, with the completed
+-- model answer once it exists; reused by retries and duplicate jobs, deleted when applied, and
+-- deleted for the touched facts by hard forget (which also clears their period_basis).
+CREATE TABLE fact_window_review_attempts (
+  deployment_id uuid NOT NULL REFERENCES deployments ON DELETE CASCADE,
+  fact_kind     text NOT NULL CHECK (fact_kind IN ('relation', 'observation')),
+  fact_id       uuid NOT NULL,
+  input_digest  text NOT NULL,
+  claimed_at    timestamptz NOT NULL DEFAULT now(),
+  answer        jsonb,
+  answered_at   timestamptz,
+  PRIMARY KEY (deployment_id, fact_kind, fact_id, input_digest),
+  CHECK ((answer IS NULL) = (answered_at IS NULL))
+);
+
 CREATE TABLE observations (
   observation_id  uuid PRIMARY KEY,            -- the observation's identity; provenance handle in P1
   deployment_id   uuid NOT NULL REFERENCES deployments,

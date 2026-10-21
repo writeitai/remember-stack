@@ -941,11 +941,18 @@ text is in force) and when they are not (an event the text merely reports keeps 
 date); a later version stating a different value ends the earlier fact at that version's
 in-force start, never at publication time.
 
+**The first fact is adjudicated too.** Ordinary adjudication skips the model when an entity
+has no candidate fact (the D118 novelty gate records a new, undated fact). That shortcut is
+kept only for attempts with no periodised claim: an attempt whose claims carry
+`source_in_force` goes to adjudication even with no candidates, so its first fact gets a
+window decision grounded in the periods. Otherwise a single-edition rule ("the allowance is
+45 per day") would be recorded undated and, its basis already current, never reviewed.
+
 The deterministic adjudication engine (D121 `jev`) uses the same input in its existing
-`use_claim` window action: a claim with no dates of its own whose text was in force over
-exactly one interval is dated by that interval (midnight bounds at day precision; an open
-interval as `open`). Several intervals (text that left and came back) are left unchanged —
-that engine cannot choose among them.
+`use_claim` window action and in every new fact it records, including the first: a claim
+with no dates of its own whose text was in force over exactly one interval is dated by that
+interval (midnight bounds at day precision; an open interval as `open`). Several intervals
+(text that left and came back) are left unchanged — that engine cannot choose among them.
 
 Example (a price list, or a statute): the 2015 and 2020 editions say "VAT on books is 15%",
 the 2024 edition says 10%. When the 10% claim arrives, the adjudicator sees the 15% claim
@@ -961,37 +968,73 @@ application would ever reach the adjudicator again. A **window review** closes t
 
 - **Period basis.** Each relation and observation stores `period_basis`, a fingerprint of its
   evidence claims (both stances) that occur in periodised lineages, with their in-force
-  intervals and `also_undated` flags, as they were when the fact's window was last adjudicated.
-  It is recorded in the transaction that applies an ordinary adjudication (for every fact the
-  application changed) and by every review. A fact with no periodised evidence has `NULL`.
+  intervals (rendered in UTC) and `also_undated` flags, as they were when the fact's window was
+  last adjudicated. It is computed set-wise in the database, so a fact with many evidence
+  claims is never materialised in a worker. It is recorded in the transaction that applies an
+  ordinary adjudication (for every fact the application changed) and by every review. A fact
+  with no periodised evidence has `NULL`.
+- **The period fence.** Every writer of a window or basis — ordinary adjudication apply and
+  review apply — takes a per-deployment advisory lock *shared* after the entity adjudication
+  lock and before its final input validation, and holds it through commit (lock order:
+  hard-forget fence, identity epoch, entity lock, period fence). A lineage fan-out takes the
+  same lock *exclusively*, holding nothing else, before it reads stored bases. Every change a
+  fan-out reacts to committed before the fan-out was queued, so a decision validated on older
+  inputs has either committed by then (its stale basis is seen and reviewed) or validates after
+  the change (and sees it). Without the fence a review could validate basis B, a writer revert
+  the periods to A, the writer's fan-out see the still-stored A and skip the fact, and the
+  review then commit B's window. The barrier is taken once per fan-out; inference never runs
+  under it.
 - **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
-  recorded an effective-time event — by a period write that changed anything, by `clear`, by
-  the completion of any of its versions (the reconcile stage, so a new edition is reviewed once
-  its claims exist, not while it is still being processed), by an operator version deletion
-  and by a document deletion. A request is a `review_fact_windows` job targeting the lineage
-  request (its id is fresh per request, or derived from the reconcile run so a retried run does
-  not duplicate it).
-- **Fan-out.** The lineage job finds the live facts with evidence in any version of the
-  lineage (deleted versions included, since deleting one changes the intervals) whose current
-  basis differs from the stored one, and queues one review job per fact. It makes no model
-  call.
+  recorded an effective-time event, and never while a hard forget is honored (D74 scrubs the
+  touched facts itself) — in the transaction of the change: a period write that changed
+  anything, `clear`, an ingest that declares or corrects a period on an existing version (a D55
+  no-op ingest, which no processing follows), an operator version deletion, a lineage
+  deletion (public delete, operator delete, source-deletion finalisation), and late testimony
+  retired from a deleted version. A **new** version declared at ingest is reviewed when its
+  processing completes (the reconcile stage), not at ingest: until then its reused claims have
+  no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
+  version whose processing never completes (no route, dead letter) is reviewed when it is
+  reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
+  is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
+  duplicate it.
+- **Fan-out.** The lineage job walks the live facts with evidence in any version of the
+  lineage (deleted versions included, since deleting one changes the intervals) in pages of a
+  bounded size (500, a starting value to tune), each page one bounded transaction; a full page
+  queues a continuation job carrying its cursor. It queues one review job per fact whose
+  current basis differs from the stored one, skipping a fact left with neither periodised nor
+  live evidence (its only source was deleted; the lifecycle cascade settled it). It makes no
+  model call.
 - **Review.** A fact review shows the adjudicator the fact, its current window and window
-  claims, and up to 40 evidence claims (window claims first, then supports, newest first) with
-  their own dates and in-force intervals, and asks one question: keep the window, or replace
-  it with a complete window grounded in supplied claims. It runs like ordinary adjudication:
-  inputs are read under the entity's adjudication lock, the model is called with no lock held,
-  and the answer is applied only if a re-read under the lock (with the fact row locked) yields
-  the same input fingerprint; otherwise the job retries. A replacement below the adjudication
-  confidence floor is not applied. Every review — kept or replaced — appends an
+  claims, and up to 40 evidence claims (window claims first, then claims from periodised
+  lineages, then supports, newest first — selected in the database) with their own dates and
+  in-force intervals, and asks one question: keep the window, or replace it with a complete
+  window grounded in supplied claims. Inputs are read under the entity's adjudication lock;
+  the model is called with no lock held; the answer is applied only if a re-read under the
+  entity lock and the shared period fence (with the fact row locked) yields the same input
+  fingerprint, otherwise the job retries. A replacement below the adjudication confidence floor
+  is not applied. Every review — kept or replaced — appends an
   `{relation,observation}_adjudications` row (`outcome` `update` or `noop`, method
   `small_model`, version `fact-window-review-…`) with the before/after window and both bases,
-  stores the new basis, and on a replacement clears the fact's label and embedding and queues
-  its relabeling and entity-profile repair. The review uses the generative adjudication model
-  for both adjudication engines.
+  and stores the new basis. The review uses the generative adjudication model for both
+  adjudication engines.
+- **Only the window changes.** A fact's label and vector are computed from its statement
+  (the vector attests only the label text), never from its window, so a review never clears,
+  relabels or re-embeds the fact. Entity profiles render fact windows, so a replacement
+  repairs the endpoint entities' profiles; that repair job is keyed by the review's
+  adjudication receipt, so a correction cycle that repeats an earlier input (A → B → A → B)
+  still repairs every time.
+- **Paid answers are reused.** Before calling the model a review claims its fact and input
+  fingerprint in `fact_window_review_attempts`; the completed answer is stored there before it
+  is applied. A retry after a failed apply, or a duplicate job for the same moved basis, reuses
+  the stored answer; a job that finds a fresh claim without an answer retries later instead of
+  paying again (a claim older than 15 minutes, a starting value, may be taken over). The row is
+  deleted when its answer is applied, and hard forget deletes the rows of the facts it touches
+  (and clears their `period_basis`).
 - **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
   stored basis already matches returns without a model call, so duplicate triggers are free.
   An undated deployment never queues a request and never computes a basis beyond one indexed
-  existence probe per applied adjudication.
+  existence probe per applied adjudication; its only other new work is one shared advisory
+  lock statement per applied adjudication.
 
 Belief time is the current belief: a review answers "given what is now believed about the
 periods, is this window right?", and windows change through the normal mutable-window path,
