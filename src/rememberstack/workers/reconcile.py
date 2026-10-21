@@ -342,7 +342,19 @@ class ReconcileHandler:
                 "stale cache remains empty",
                 reconciliation_id,
             )
-        return HandlerOutcome()
+        # D140 §8.2: late testimony retired from a deleted version changes
+        # the lineage's evidence; review its facts (only if it had periods)
+        return HandlerOutcome(
+            follow_up=_window_review(
+                catalog=self._catalog,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="deleted_testimony_retired",
+                request_id=uuid5(
+                    NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
+                ),
+            )
+        )
 
     def _flag_transcription_only(
         self,
@@ -469,6 +481,17 @@ class CycleFinalizer:
                     catalog.rebuild_live_document_bindings(
                         deployment_id=deployment_id, doc_id=doc_id
                     )
+                # D140 §8.2: queued in the cascade's transaction (crash-safe)
+                catalog.request_window_review(
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="source_deleted",
+                    # one request per deletion episode, however many passes
+                    request_id=uuid5(
+                        NAMESPACE_URL,
+                        f"fact-window-review:source-deleted:{doc_id}:{episode_at}",
+                    ),
+                )
                 cascade_lineage_removal(
                     catalog=catalog,
                     deployment_id=deployment_id,
@@ -569,10 +592,6 @@ class DeletionService:
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
-        # D140 §8.2: the lineage continues with different in-force intervals
-        self._catalog.request_window_review(
-            deployment_id=deployment_id, doc_id=doc_id, reason="version_deleted"
-        )
         return delta
 
     def delete_lineage(
@@ -729,16 +748,8 @@ class DocumentDeleter:
         if already_deleted and not changed:
             # Nothing was left to finish: the document was already gone.
             raise DocumentNotFoundError(str(doc_id))
-        # D140 §8.2: facts that also rest on other sources lose this lineage's
-        # in-force periods; review their windows (only if it ever had periods).
-        from rememberstack.spine.period_adjudication import request_window_review_on
-
-        request_window_review_on(
-            connection=connection,
-            deployment_id=deployment_id,
-            doc_id=doc_id,
-            reason="lineage_deleted",
-        )
+        # D140 §8.2: catalog.delete_lineage queued the window review in this
+        # transaction (only for a lineage that ever had periods)
         return delta, deleted_at
 
 

@@ -258,8 +258,10 @@ def declare_at_ingest_on(
     versioning_mode: str,
     effective_from: datetime,
     effective_until: datetime | None,
-) -> None:
+) -> bool:
     """Declare one period for the ingested version (new or D55 no-op).
+
+    Returns whether a declaration was written (False for an identical one).
 
     Runs with the lineage row locked, in the ingest's transaction. A
     declaration identical to a live one of the same version is a no-op; one
@@ -282,7 +284,7 @@ def declare_at_ingest_on(
             effective_from=effective_from, version_id=holder["version_id"]
         )
     if holder is not None and holder["effective_until"] == effective_until:
-        return
+        return False
     instant = _instant(connection=connection, deployment_id=deployment_id)
     period_id = uuid4()
     if holder is not None:
@@ -313,6 +315,7 @@ def declare_at_ingest_on(
         doc_id=doc_id,
         instant=instant,
     )
+    return True
 
 
 def _lock_version(

@@ -668,10 +668,18 @@ def _scrub_mutable_fact_payloads(
         connection.execute(
             text(f"""UPDATE {table} SET {label_clear}
           embedding=NULL,embedding_model=NULL,embedding_input_policy_version=NULL,
-          embedding_text_hash=NULL,updated_at=now()
+          embedding_text_hash=NULL,period_basis=NULL,updated_at=now()
           WHERE deployment_id=:deployment_id AND {kind}_id=ANY(:affected_fact_ids)
         """),
             {**parameters, "affected_fact_ids": [row[0] for row in rows]},
+        )
+        # D140 §8.2: a stored review answer may quote forgotten claims
+        connection.execute(
+            text("""DELETE FROM fact_window_review_attempts
+          WHERE deployment_id=:deployment_id AND fact_kind=:kind
+            AND fact_id=ANY(:affected_fact_ids)
+        """),
+            {**parameters, "kind": kind, "affected_fact_ids": [row[0] for row in rows]},
         )
         connection.execute(
             text(f"""UPDATE {kind}_adjudications SET

@@ -29,6 +29,9 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine.fact_window_review import FactWindowReviewer
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import facts_needing_review_on
+from rememberstack.spine.period_adjudication import period_fence_barrier_on
+from rememberstack.spine.period_adjudication import REVIEW_PAGE_SIZE
+from rememberstack.spine.period_adjudication import review_request
 from rememberstack.workers.base import HandlerOutcome
 
 _FACT_TARGETS = {
@@ -40,10 +43,17 @@ _FACT_TARGETS = {
 class FactWindowReviewHandler:
     """Fan a lineage out to its moved facts, or review one fact's window."""
 
-    def __init__(self, *, engine: Engine, reviewer: FactWindowReviewer) -> None:
-        """Bind the spine (for the lineage query) and the reviewer."""
+    def __init__(
+        self,
+        *,
+        engine: Engine,
+        reviewer: FactWindowReviewer,
+        page_size: int = REVIEW_PAGE_SIZE,
+    ) -> None:
+        """Bind the spine (for the lineage query), the reviewer and the page size."""
         self._engine = engine
         self._reviewer = reviewer
+        self._page_size = page_size
 
     def handle(self, *, work: ClaimedWork, meter: CostMeterPort) -> HandlerOutcome:
         """Dispatch on the job's target kind."""
@@ -68,34 +78,70 @@ class FactWindowReviewHandler:
         return HandlerOutcome()
 
     def _fan_out(self, *, work: ClaimedWork) -> HandlerOutcome:
+        """One page of the lineage: queue reviews for moved facts, then continue.
+
+        The first page passes the deployment's period-fence barrier, so every
+        window decision validated on inputs older than the change that queued
+        this job has committed before stored bases are read. Each page is one
+        bounded transaction; a full page queues a continuation job with its
+        cursor, so progress is durable and memory stays bounded.
+        """
         doc_id = _payload_uuid(work=work, field="doc_id")
-        with self._engine.connect() as connection:
-            moved = facts_needing_review_on(
-                connection=connection, deployment_id=work.deployment_id, doc_id=doc_id
-            )
-        return HandlerOutcome(
-            follow_up=tuple(
-                EnqueueWork(
-                    deployment_id=work.deployment_id,
-                    target_kind=ProcessingTarget.RELATION
-                    if kind == "relation"
-                    else ProcessingTarget.OBSERVATION,
-                    # A work row is unique per target: one review per lineage
-                    # job and fact, so a later change (even back to an earlier
-                    # basis) reviews again, and a retried fan-out does not.
-                    target_id=uuid5(
-                        NAMESPACE_URL,
-                        f"fact-window-review:{work.processing_id}:{fact_id}",
-                    ),
-                    stage=PipelineStage.REVIEW_FACT_WINDOWS,
-                    component_version=FACT_WINDOW_REVIEW_VERSION,
-                    content_hash=basis or "none",
-                    lane=work.lane or ProcessingLane.STEADY,
-                    payload={"fact_id": str(fact_id), "doc_id": str(doc_id)},
+        payload = work.payload or {}
+        after_kind, after_id = payload.get("after_kind"), payload.get("after_id")
+        after = (
+            (str(after_kind), str(after_id))
+            if isinstance(after_kind, str) and isinstance(after_id, str)
+            else None
+        )
+        with self._engine.begin() as connection:
+            if after is None:
+                period_fence_barrier_on(
+                    connection=connection, deployment_id=work.deployment_id
                 )
-                for kind, fact_id, basis in moved
+            moved, next_after = facts_needing_review_on(
+                connection=connection,
+                deployment_id=work.deployment_id,
+                doc_id=doc_id,
+                after=after,
+                limit=self._page_size,
+            )
+        reviews = tuple(
+            EnqueueWork(
+                deployment_id=work.deployment_id,
+                target_kind=ProcessingTarget.RELATION
+                if kind == "relation"
+                else ProcessingTarget.OBSERVATION,
+                # A work row is unique per target: one review per lineage
+                # job and fact, so a later change (even back to an earlier
+                # basis) reviews again, and a retried fan-out does not.
+                target_id=uuid5(
+                    NAMESPACE_URL, f"fact-window-review:{work.processing_id}:{fact_id}"
+                ),
+                stage=PipelineStage.REVIEW_FACT_WINDOWS,
+                component_version=FACT_WINDOW_REVIEW_VERSION,
+                content_hash=basis or "none",
+                lane=work.lane or ProcessingLane.STEADY,
+                payload={"fact_id": str(fact_id), "doc_id": str(doc_id)},
+            )
+            for kind, fact_id, basis in moved
+        )
+        continuation = (
+            ()
+            if next_after is None
+            else (
+                review_request(
+                    deployment_id=work.deployment_id,
+                    doc_id=doc_id,
+                    reason=str(payload.get("reason") or "continuation"),
+                    request_id=uuid5(
+                        NAMESPACE_URL, f"fact-window-review-next:{work.processing_id}"
+                    ),
+                    after=next_after,
+                ),
             )
         )
+        return HandlerOutcome(follow_up=(*reviews, *continuation))
 
 
 def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:

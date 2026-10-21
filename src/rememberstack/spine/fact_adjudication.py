@@ -43,6 +43,7 @@ from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
 from rememberstack.spine.period_adjudication import record_period_basis_on
+from rememberstack.spine.period_adjudication import share_period_fence_on
 
 _logger = logging.getLogger(__name__)
 
@@ -402,7 +403,19 @@ class FactAdjudicator:
     ) -> FactApplicationDecision:
         """Adjudicate incoming assertion against candidate facts using TypeSafe System One Jev."""
         if not presentation.get("facts"):
-            return _sole_new_fact(application_id=UUID(str(prepared.application_id)))
+            if not _presented_periods(presentation):
+                return _sole_new_fact(application_id=UUID(str(prepared.application_id)))
+            # D140 §8.2: a first fact from periodised text is dated by the
+            # incoming claim's single in-force period, like a NEW match below
+            return translate_prompt_decision(
+                response=_jev_new_fact(
+                    presentation=presentation,
+                    mapping=mapping,
+                    confidence=1.0,
+                    rationale="Jev System One: no candidate facts; new proposition.",
+                ),
+                mapping=mapping,
+            )
 
         criteria_match: dict[str, str | None] = {}
         for fact in presentation.get("facts", []):
@@ -559,16 +572,9 @@ class FactAdjudicator:
                 ),
             )
         elif match_choice == "NEW":
-            prompt_decision = PromptFactDecision(
-                target="N1",
-                new_facts=(
-                    PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),
-                ),
-                stance="supports",
-                window=None,
-                updates=(),
-                support_moves=(),
-                contradict_with=(),
+            prompt_decision = _jev_new_fact(
+                presentation=presentation,
+                mapping=mapping,
                 confidence=match_confidence,
                 rationale=f"Jev System One: new proposition (confidence {match_confidence:.2f})",
             )
@@ -729,7 +735,7 @@ class FactAdjudicator:
             # call, under the same attempt, fingerprint and re-read checks.
             decision = (
                 None
-                if snapshot["facts"]
+                if snapshot["facts"] or _periodised(snapshot["claims"])
                 else _sole_new_fact(application_id=UUID(str(app["application_id"])))
             )
             connection.execute(
@@ -813,6 +819,9 @@ class FactAdjudicator:
                 return None
             if app["decision"] is None:
                 return None
+            # D140 §8.2: from the final input validation through commit, no
+            # lineage fan-out can read stored period bases (they would be stale)
+            share_period_fence_on(connection=connection, deployment_id=deployment_id)
             snapshot = application_snapshot(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -859,7 +868,9 @@ class FactAdjudicator:
                         connection=connection,
                         snapshot=snapshot,
                         decision=decision,
-                        method="small_model" if snapshot["facts"] else "novelty_gate",
+                        method="small_model"
+                        if snapshot["facts"] or _periodised(snapshot["claims"])
+                        else "novelty_gate",
                     )
                     # D140 §8.2: these windows were just adjudicated against the
                     # evidence's current in-force periods (none for undated facts).
@@ -926,4 +937,64 @@ def _single_in_force_window(claim_row: Mapping[str, Any] | None) -> FactWindow |
         valid_precision=ClaimValidPrecision.DAY
         if midnight
         else ClaimValidPrecision.INSTANT,
+    )
+
+
+def _periodised(claims: Any) -> bool:
+    """Whether any snapshot claim occurs in a lineage with declared periods."""
+    return any("in_force" in claim for claim in claims)
+
+
+def _presented_periods(presentation: Mapping[str, Any]) -> bool:
+    return any("source_in_force" in claim for claim in presentation.get("claims", ()))
+
+
+def _jev_new_fact(
+    *, presentation: Mapping[str, Any], mapping: Any, confidence: float, rationale: str
+) -> PromptFactDecision:
+    """A new fact for the incoming assertion, dated by one in-force period if any.
+
+    The ``jev`` engine's deterministic dating rule (D140 §8.2): an incoming
+    claim with no dates of its own whose text was in force over exactly one
+    interval gets that interval as its window, citing the claim.
+    """
+    window: PromptGroundedWindow | None = None
+    incoming = next(
+        (
+            item
+            for item in presentation.get("assertions", ())
+            if item.get("handle") == presentation.get("incoming_assertion")
+        ),
+        None,
+    )
+    handle = None if incoming is None else incoming.get("claim")
+    if handle is not None and handle in mapping.claims:
+        claim_row = next(
+            (
+                row
+                for row in presentation.get("claims", ())
+                if row.get("handle") == handle
+            ),
+            None,
+        )
+        period_window = _single_in_force_window(claim_row)
+        if (
+            period_window is not None
+            and claim_row is not None
+            and claim_row.get("source_world_precision")
+            in (None, ClaimValidPrecision.UNKNOWN.value)
+        ):
+            window = PromptGroundedWindow(
+                window=period_window, supporting_claims=(handle,)
+            )
+    return PromptFactDecision(
+        target="N1",
+        new_facts=(PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),),
+        stance="supports",
+        window=window,
+        updates=(),
+        support_moves=(),
+        contradict_with=(),
+        confidence=confidence,
+        rationale=rationale,
     )

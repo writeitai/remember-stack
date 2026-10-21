@@ -12,6 +12,7 @@ or embedding call.
 
 from datetime import datetime
 from datetime import UTC
+import json
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
@@ -19,16 +20,24 @@ from uuid import uuid4
 from sqlalchemy import text
 
 from remember.models import EffectivePeriodInput
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import NoopCostMeter
+from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimedWork
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.ports.p1_index import FACT_INPUT_POLICY
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.spine import FactCatalog
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_window_review import FactWindowReviewer
-from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
+from rememberstack.spine.lifecycle import LifecycleCatalog
+from rememberstack.spine.period_adjudication import record_period_basis_on
+from rememberstack.workers import LabelFactsHandler
+from rememberstack.workers import P1Settings
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from tests.workers.test_d140_text_origin_pg import _observe
 from tests.workers.test_reuse_lifecycle import _canned
@@ -91,20 +100,29 @@ def _pending_pipeline_work(rig: _ReuseRig) -> int:
         ).scalar_one()
 
 
-def _fact_on_unchanged_claim(rig: _ReuseRig) -> UUID:
-    """An observation whose evidence is a claim both versions share (reused, unedited)."""
+def _fact_on_v1_only_claim(rig: _ReuseRig, *, v1: UUID) -> tuple[UUID, UUID]:
+    """An observation on a claim that only version 1 carries (the edit removed it).
+
+    Its text was in force from version 1's start until version 2's start, so
+    moving version 2's start moves this fact's evidence period. The fact gets a
+    label and a current vector, and its basis is recorded as adjudicated.
+    """
     fact_id, entity_id = uuid4(), uuid4()
     with rig.engine.begin() as connection:
         claim = (
             connection.execute(
                 text(
                     "SELECT cl.claim_id, cl.doc_id FROM claims cl"
-                    " WHERE cl.deployment_id = :d AND (SELECT count(DISTINCT ch.version_id)"
-                    "   FROM chunk_claims cc JOIN chunks ch ON ch.chunk_id = cc.chunk_id"
-                    "   WHERE cc.claim_id = cl.claim_id) = 2"
+                    " WHERE cl.deployment_id = :d"
+                    " AND EXISTS (SELECT 1 FROM chunk_claims cc JOIN chunks ch"
+                    "   ON ch.chunk_id = cc.chunk_id"
+                    "   WHERE cc.claim_id = cl.claim_id AND ch.version_id = :v1)"
+                    " AND NOT EXISTS (SELECT 1 FROM chunk_claims cc JOIN chunks ch"
+                    "   ON ch.chunk_id = cc.chunk_id"
+                    "   WHERE cc.claim_id = cl.claim_id AND ch.version_id <> :v1)"
                     " ORDER BY cl.claim_id LIMIT 1"
                 ),
-                {"d": _DEPLOYMENT_ID},
+                {"d": _DEPLOYMENT_ID, "v1": v1},
             )
             .mappings()
             .one()
@@ -112,22 +130,31 @@ def _fact_on_unchanged_claim(rig: _ReuseRig) -> UUID:
         connection.execute(
             text(
                 "INSERT INTO entities(entity_id, deployment_id, canonical_name,"
-                " normalized_name) VALUES (:e, :d, 'Topic 2', 'topic 2')"
+                " normalized_name) VALUES (:e, :d, 'Topic 12', 'topic 12')"
             ),
             {"e": entity_id, "d": _DEPLOYMENT_ID},
         )
         connection.execute(
             text(
                 "INSERT INTO observations(observation_id, deployment_id,"
-                " subject_entity_id, statement, normalizer_version, valid_precision,"
-                " window_claim_ids) VALUES (:f, :d, :e, 'Topic 2 has fact 2', :n,"
-                " 'unknown', '{}')"
+                " subject_entity_id, statement, obs_label, normalizer_version,"
+                " valid_from, valid_precision, window_claim_ids, embedding,"
+                " embedding_model, embedding_input_policy_version, embedding_text_hash)"
+                " VALUES (:f, :d, :e, 'Topic 12 has fact 12', 'Topic 12 has fact 12',"
+                " :n, :start, 'open', CAST(:claims AS uuid[]),"
+                " CAST(array_fill(0.01, ARRAY[:dims]) AS vector), :model, :policy,"
+                " 'hash-of-the-label')"
             ),
             {
                 "f": fact_id,
                 "d": _DEPLOYMENT_ID,
                 "e": entity_id,
                 "n": FACT_NORMALIZER_VERSION,
+                "start": _IN_FORCE_V1,
+                "claims": [str(claim["claim_id"])],
+                "dims": P1_VECTOR_DIMENSIONS,
+                "model": P1Settings().embedding_model,
+                "policy": FACT_INPUT_POLICY,
             },
         )
         connection.execute(
@@ -144,7 +171,48 @@ def _fact_on_unchanged_claim(rig: _ReuseRig) -> UUID:
                 "n": FACT_NORMALIZER_VERSION,
             },
         )
-    return fact_id
+        record_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT_ID,
+            kind="observation",
+            fact_ids=(fact_id,),
+        )
+    return fact_id, UUID(str(claim["claim_id"]))
+
+
+def _vector_state(rig: _ReuseRig, fact_id: UUID) -> tuple[Any, ...]:
+    with rig.engine.connect() as connection:
+        return tuple(
+            connection.execute(
+                text(
+                    "SELECT obs_label, embedding::text, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash, period_basis"
+                    " FROM observations WHERE observation_id = :id"
+                ),
+                {"id": fact_id},
+            ).one()
+        )
+
+
+def _claimed(job: Any) -> ClaimedWork:
+    """Claim a queued job (a ledger row dict or an ``EnqueueWork``) as a worker would."""
+    fields: dict[str, Any] = (
+        dict(job)
+        if isinstance(job, dict)
+        else {**job.model_dump(), "processing_id": uuid4()}
+    )
+    return ClaimedWork(
+        processing_id=fields["processing_id"],
+        deployment_id=_DEPLOYMENT_ID,
+        target_kind=ProcessingTarget(fields["target_kind"]),
+        target_id=fields["target_id"],
+        stage=PipelineStage(fields["stage"]),
+        component_version=fields["component_version"],
+        content_hash=fields["content_hash"],
+        lane=ProcessingLane.STEADY,
+        attempt=1,
+        payload=fields["payload"],
+    )
 
 
 def _review_jobs(rig: _ReuseRig) -> list[dict[str, Any]]:
@@ -153,7 +221,8 @@ def _review_jobs(rig: _ReuseRig) -> list[dict[str, Any]]:
             dict(row)
             for row in connection.execute(
                 text(
-                    "SELECT processing_id, target_id, content_hash, payload"
+                    "SELECT processing_id, target_kind::text AS target_kind, target_id,"
+                    " stage::text AS stage, component_version, content_hash, payload"
                     " FROM processing_state WHERE deployment_id = :d"
                     " AND stage = 'review_fact_windows' AND target_kind = 'document'"
                     " ORDER BY enqueued_at"
@@ -189,21 +258,7 @@ def test_periodised_new_version_reextracts_only_the_edit_and_a_period_change_non
     assert 1 - selection_v2 / v2_chunks >= 0.7
     assert embeds_v2 <= selection_v2 + 1
 
-    fact_id = _fact_on_unchanged_claim(rig)
-    rows_before = _rows(rig)
-    prompts_before = len(rig.provider.generated_prompts)
-    embeds_before = len(rig.provider.embedded_texts)
-
-    # a retroactive correction of version 2's start
-    _declare(rig, doc_id=doc_id, version_id=second.version_id, start=_CORRECTED_V2)
-    assert _pending_pipeline_work(rig) == 0  # nothing is re-chunked or re-extracted
-    rig.drain()
-    assert _rows(rig) == rows_before
-    assert len(rig.provider.generated_prompts) == prompts_before
-    assert len(rig.provider.embedded_texts) == embeds_before
-
-    # the correction's lineage review finds the fact and reviews only its window
-    job = _review_jobs(rig)[-1]
+    fact_id, claim_id = _fact_on_v1_only_claim(rig, v1=first.version_id)
     handler = FactWindowReviewHandler(
         engine=rig.engine,
         reviewer=FactWindowReviewer(
@@ -212,54 +267,104 @@ def test_periodised_new_version_reextracts_only_the_edit_and_a_period_change_non
             settings=FactAdjudicationSettings(),
         ),
     )
+    # before any change the fact's basis is current: a lineage review finds nothing
+    assert LifecycleCatalog(engine=rig.engine).request_window_review(
+        deployment_id=_DEPLOYMENT_ID, doc_id=doc_id, reason="test"
+    )
+    assert (
+        handler.handle(
+            work=_claimed(_review_jobs(rig)[-1]), meter=NoopCostMeter()
+        ).follow_up
+        == ()
+    )
+
+    rows_before = _rows(rig)
+    prompts_before = len(rig.provider.generated_prompts)
+    embeds_before = len(rig.provider.embedded_texts)
+    vector_before = _vector_state(rig, fact_id)
+
+    # a retroactive correction of version 2's start moves the claim's period end
+    _declare(rig, doc_id=doc_id, version_id=second.version_id, start=_CORRECTED_V2)
+    assert _pending_pipeline_work(rig) == 0  # nothing is re-chunked or re-extracted
+    rig.drain()
+    assert _rows(rig) == rows_before
+    assert len(rig.provider.generated_prompts) == prompts_before
+    assert len(rig.provider.embedded_texts) == embeds_before
+
     fan_out = handler.handle(
-        work=ClaimedWork(
-            processing_id=job["processing_id"],
-            deployment_id=_DEPLOYMENT_ID,
-            target_kind=ProcessingTarget.DOCUMENT,
-            target_id=job["target_id"],
-            stage=PipelineStage.REVIEW_FACT_WINDOWS,
-            component_version=FACT_WINDOW_REVIEW_VERSION,
-            content_hash=job["content_hash"],
-            lane=ProcessingLane.STEADY,
-            attempt=1,
-            payload=job["payload"],
-        ),
-        meter=NoopCostMeter(),
+        work=_claimed(_review_jobs(rig)[-1]), meter=NoopCostMeter()
     ).follow_up
     assert [UUID(str((work.payload or {})["fact_id"])) for work in fan_out] == [fact_id]
 
     def review_or_extract(prompt: str, type_name: str) -> dict[str, object]:
         if type_name == "PromptWindowReview":
+            presentation = json.loads(prompt.split("INPUT JSON:\n", 1)[1])
+            (claim,) = presentation["claims"]
+            assert claim["source_in_force"] == [
+                {"from": _IN_FORCE_V1.isoformat(), "until": _CORRECTED_V2.isoformat()}
+            ]
             return {
-                "decision": "keep",
-                "window": None,
+                "decision": "replace",
+                "window": {
+                    "window": {
+                        "valid_from": _IN_FORCE_V1.isoformat(),
+                        "valid_until": _CORRECTED_V2.isoformat(),
+                        "valid_precision": "day",
+                    },
+                    "supporting_claims": [claim["handle"]],
+                },
                 "confidence": 0.9,
-                "rationale": "k",
+                "rationale": "The text was in force until version 2 began.",
             }
         return _canned(prompt, type_name)
 
     rig.provider._generate_router = review_or_extract  # noqa: SLF001
-    review = fan_out[0]
-    handler.handle(
-        work=ClaimedWork(
-            processing_id=uuid4(),
-            deployment_id=_DEPLOYMENT_ID,
-            target_kind=review.target_kind,
-            target_id=review.target_id,
-            stage=review.stage,
-            component_version=review.component_version,
-            content_hash=review.content_hash,
-            lane=ProcessingLane.STEADY,
-            attempt=1,
-            payload=review.payload,
-        ),
-        meter=NoopCostMeter(),
-    )
+    handler.handle(work=_claimed(fan_out[0]), meter=NoopCostMeter())
     new_requests = rig.provider.generated_requests[prompts_before:]
     assert len(new_requests) == 1  # one window review, no extraction call
     assert "Review ONE stored fact" in new_requests[0].prompt
+    with rig.engine.connect() as connection:
+        window = connection.execute(
+            text(
+                "SELECT valid_from, valid_until, valid_precision::text, window_claim_ids"
+                " FROM observations WHERE observation_id = :id"
+            ),
+            {"id": fact_id},
+        ).one()
+    assert tuple(window) == (_IN_FORCE_V1, _CORRECTED_V2, "day", [claim_id])
+    # only the window and basis changed: no relabel, no re-embedding of the fact
+    vector_after = _vector_state(rig, fact_id)
+    assert vector_after[:5] == vector_before[:5]
+    assert vector_after[5] != vector_before[5]
+
+    # the queued projection repair runs: profiles refresh, the fact is not re-embedded
+    with rig.engine.connect() as connection:
+        repair = (
+            connection.execute(
+                text(
+                    "SELECT processing_id, target_kind::text AS target_kind, target_id,"
+                    " stage::text AS stage, component_version, content_hash, payload"
+                    " FROM processing_state WHERE deployment_id = :d"
+                    " AND stage = 'label_relation'"
+                    " AND payload->>'observation_id' = CAST(:id AS text)"
+                ),
+                {"d": _DEPLOYMENT_ID, "id": fact_id},
+            )
+            .mappings()
+            .one()
+        )
+    profiles = RecordingProfileRefresher()
+    LabelFactsHandler(
+        facts=FactCatalog(engine=rig.engine),
+        model_provider=rig.provider,
+        fact_index=PostgresP1Index(
+            engine=rig.engine, embedding_model=P1Settings().embedding_model
+        ),
+        settings=P1Settings(),
+        profile_refresher=profiles,
+    ).handle(work=_claimed(dict(repair)), meter=NoopCostMeter())
     assert len(rig.provider.embedded_texts) == embeds_before
+    assert _vector_state(rig, fact_id)[:5] == vector_before[:5]
     assert _rows(rig) == rows_before
     rig.drain()
     assert _rows(rig) == rows_before

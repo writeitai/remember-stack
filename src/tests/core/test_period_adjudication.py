@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from datetime import UTC
-from uuid import uuid4
 
 from pydantic import ValidationError
 import pytest
@@ -14,7 +13,6 @@ from rememberstack.spine.fact_adjudication import render_fact_prompt
 from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_window_review import PromptWindowReview
 from rememberstack.spine.fact_window_review import review_prompt
-from rememberstack.spine.period_adjudication import basis_of
 
 _START = datetime(2015, 1, 1, tzinfo=UTC)
 _END = datetime(2024, 1, 1, tzinfo=UTC)
@@ -91,32 +89,3 @@ def test_review_answer_shape_is_enforced() -> None:
     )
     assert kept.window is None
     assert "IN-FORCE PERIODS" in review_prompt(presentation={"claims": []})
-
-
-def test_basis_ignores_undated_evidence_and_is_order_independent() -> None:
-    """Only periodised evidence counts; the fingerprint does not depend on row order."""
-    claim_a, claim_b = uuid4(), uuid4()
-    periods = [{"from": _START.isoformat(), "until": None}]
-    rows = [
-        {
-            "claim_id": claim_a,
-            "stance": "supports",
-            "in_force": periods,
-            "also_undated": False,
-        },
-        {
-            "claim_id": claim_b,
-            "stance": "supports",
-            "in_force": None,
-            "also_undated": False,
-        },
-    ]
-    assert basis_of(rows) == basis_of(list(reversed(rows)))
-    assert basis_of([rows[1]]) is None
-    moved = [
-        {
-            **rows[0],
-            "in_force": [{"from": _START.isoformat(), "until": _END.isoformat()}],
-        }
-    ]
-    assert basis_of(moved) != basis_of([rows[0]])

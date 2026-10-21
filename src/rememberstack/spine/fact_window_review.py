@@ -25,10 +25,8 @@ from hashlib import sha256
 from typing import Any
 from typing import Literal
 from typing import Self
-from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
-from uuid import uuid5
 
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -49,10 +47,11 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_json
-from rememberstack.spine.period_adjudication import basis_of
 from rememberstack.spine.period_adjudication import claim_in_force_on
+from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import FactKind
+from rememberstack.spine.period_adjudication import share_period_fence_on
 
 _CLAIM_LIMIT = 40
 """Evidence claims shown to one review; window claims first. A bound on model
@@ -155,6 +154,10 @@ def review_prompt(*, presentation: dict[str, Any]) -> str:
     return _REVIEW_PROMPT.format(inputs=canonical_json(presentation))
 
 
+_CLAIM_STALE_AFTER_S = 900
+"""A claimed review attempt without an answer for this long may be taken over."""
+
+
 class FactWindowReviewer:
     """Review one fact's window against its evidence's current in-force periods."""
 
@@ -179,7 +182,12 @@ class FactWindowReviewer:
         meter: CostMeterPort,
         call_key: str,
     ) -> ReviewOutcome:
-        """Review one fact; idempotent, and free when its basis did not move."""
+        """Review one fact; idempotent, and free when its basis did not move.
+
+        A completed answer is stored per fact and input fingerprint before it is
+        applied, so a retry after a failed apply, or a duplicate job for the
+        same moved basis, reuses it instead of paying for another call.
+        """
         subject = self._subject(deployment_id=deployment_id, kind=kind, fact_id=fact_id)
         if subject is None:
             return "gone"
@@ -197,10 +205,74 @@ class FactWindowReviewer:
                 kind=kind,
                 fact_id=fact_id,
             )
-        if inputs is None:
-            return "gone"
-        if inputs["basis"] == inputs["stored_basis"]:
-            return "unchanged"
+            if inputs is None:
+                return "gone"
+            if inputs["basis"] == inputs["stored_basis"]:
+                return "unchanged"
+            stored = _claim_attempt_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=kind,
+                fact_id=fact_id,
+                digest=inputs["digest"],
+            )
+        answer = (
+            PromptWindowReview.model_validate(stored)
+            if stored is not None
+            else self._infer(
+                inputs=inputs, meter=meter, call_key=call_key, fact_id=fact_id
+            )
+        )
+        if stored is None:
+            with self._engine.begin() as connection:
+                _store_answer_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    kind=kind,
+                    fact_id=fact_id,
+                    digest=inputs["digest"],
+                    answer=answer,
+                )
+        with (
+            self._engine.begin() as connection,
+            application_block(
+                connection=connection,
+                deployment_id=deployment_id,
+                subject_entity_id=subject,
+            ),
+        ):
+            share_period_fence_on(connection=connection, deployment_id=deployment_id)
+            current = _review_inputs(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=kind,
+                fact_id=fact_id,
+                lock=True,
+            )
+            if current is None:
+                return "gone"
+            if current["digest"] != inputs["digest"]:
+                raise ApplicationInputChanged(
+                    "fact window review inputs changed during inference"
+                )
+            return _apply_review(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=kind,
+                fact_id=fact_id,
+                inputs=current,
+                answer=answer,
+                floor=self._settings.confidence_floor,
+            )
+
+    def _infer(
+        self,
+        *,
+        inputs: dict[str, Any],
+        meter: CostMeterPort,
+        call_key: str,
+        fact_id: UUID,
+    ) -> PromptWindowReview:
         receipt_key = f"{call_key}:{fact_id}:{inputs['digest']}"
         try:
             call = self._provider.generate(
@@ -221,36 +293,7 @@ class FactWindowReviewer:
                 )
             raise
         meter.record(call_key=receipt_key, tier="fact_adjudication", usage=call.usage)
-        with (
-            self._engine.begin() as connection,
-            application_block(
-                connection=connection,
-                deployment_id=deployment_id,
-                subject_entity_id=subject,
-            ),
-        ):
-            current = _review_inputs(
-                connection=connection,
-                deployment_id=deployment_id,
-                kind=kind,
-                fact_id=fact_id,
-                lock=True,
-            )
-            if current is None:
-                return "gone"
-            if current["digest"] != inputs["digest"]:
-                raise ApplicationInputChanged(
-                    "fact window review inputs changed during inference"
-                )
-            return _apply_review(
-                connection=connection,
-                deployment_id=deployment_id,
-                kind=kind,
-                fact_id=fact_id,
-                inputs=current,
-                answer=call.output,
-                floor=self._settings.confidence_floor,
-            )
+        return call.output
 
     def _subject(
         self, *, deployment_id: UUID, kind: FactKind, fact_id: UUID
@@ -268,6 +311,90 @@ class FactWindowReviewer:
         return None if value is None else UUID(str(value))
 
 
+def _claim_attempt_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: FactKind,
+    fact_id: UUID,
+    digest: str,
+) -> dict[str, Any] | None:
+    """Claim this fingerprint's review, or return its stored answer.
+
+    Raises ``ApplicationInputChanged`` (retried later) while another job holds
+    a fresh claim without an answer, so two jobs never pay for one review.
+    """
+    params = {
+        "deployment_id": deployment_id,
+        "kind": kind,
+        "fact_id": fact_id,
+        "digest": digest,
+        "stale": _CLAIM_STALE_AFTER_S,
+    }
+    claimed = connection.execute(
+        text(
+            "INSERT INTO fact_window_review_attempts"
+            " (deployment_id, fact_kind, fact_id, input_digest)"
+            " VALUES (:deployment_id, :kind, :fact_id, :digest)"
+            " ON CONFLICT DO NOTHING RETURNING fact_id"
+        ),
+        params,
+    ).scalar_one_or_none()
+    if claimed is not None:
+        return None
+    row = (
+        connection.execute(
+            text(
+                "SELECT answer, claimed_at < now() - make_interval(secs => :stale)"
+                " AS stale FROM fact_window_review_attempts"
+                " WHERE deployment_id = :deployment_id AND fact_kind = :kind"
+                " AND fact_id = :fact_id AND input_digest = :digest FOR UPDATE"
+            ),
+            params,
+        )
+        .mappings()
+        .one()
+    )
+    if row["answer"] is not None:
+        return dict(row["answer"])
+    if not row["stale"]:
+        raise ApplicationInputChanged("another job is reviewing this fact window")
+    connection.execute(
+        text(
+            "UPDATE fact_window_review_attempts SET claimed_at = now()"
+            " WHERE deployment_id = :deployment_id AND fact_kind = :kind"
+            " AND fact_id = :fact_id AND input_digest = :digest"
+        ),
+        params,
+    )
+    return None
+
+
+def _store_answer_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: FactKind,
+    fact_id: UUID,
+    digest: str,
+    answer: PromptWindowReview,
+) -> None:
+    connection.execute(
+        text(
+            "UPDATE fact_window_review_attempts SET answer = CAST(:answer AS jsonb),"
+            " answered_at = now() WHERE deployment_id = :deployment_id"
+            " AND fact_kind = :kind AND fact_id = :fact_id AND input_digest = :digest"
+        ),
+        {
+            "deployment_id": deployment_id,
+            "kind": kind,
+            "fact_id": fact_id,
+            "digest": digest,
+            "answer": answer.model_dump_json(),
+        },
+    )
+
+
 def _review_inputs(
     *,
     connection: Connection,
@@ -276,7 +403,11 @@ def _review_inputs(
     fact_id: UUID,
     lock: bool = False,
 ) -> dict[str, Any] | None:
-    """The fact, its evidence and their in-force periods, as one fingerprinted input."""
+    """The fact, its evidence and their in-force periods, as one fingerprinted input.
+
+    The basis covers every evidence claim and is computed in the database; only
+    the bounded set of claims shown to the model is fetched.
+    """
     table, id_column, evidence, content, joins = _FACT_COLUMNS[kind]
     fact = (
         connection.execute(
@@ -294,58 +425,67 @@ def _review_inputs(
     )
     if fact is None:
         return None
-    window_claims = {str(value) for value in fact["window_claim_ids"] or ()}
-    all_evidence = [
+    basis = fact_period_basis_on(
+        connection=connection,
+        deployment_id=deployment_id,
+        kind=kind,
+        fact_ids=(fact_id,),
+    )[fact_id]
+    window_claims = sorted(str(value) for value in fact["window_claim_ids"] or ())
+    params = {
+        "deployment_id": deployment_id,
+        "fact_id": fact_id,
+        "window_claims": window_claims,
+        "limit": _CLAIM_LIMIT,
+    }
+    total = connection.execute(
+        text(
+            f"SELECT count(*) FROM {evidence} e"
+            f" WHERE e.deployment_id = :deployment_id AND e.{id_column} = :fact_id"
+        ),
+        params,
+    ).scalar_one()
+    # window claims first, then claims from periodised lineages, then supports,
+    # newest first: the model sees the evidence the review is about
+    claims = [
         dict(row)
         for row in connection.execute(
             text(
-                f"SELECT e.claim_id, e.stance::text AS stance FROM {evidence} e"
+                "SELECT c.claim_id, c.claim_text, c.asserted_at, c.claim_valid_from,"
+                " c.claim_valid_until,"
+                " c.claim_valid_precision::text AS claim_valid_precision,"
+                " c.claim_valid_kind::text AS claim_valid_kind, c.is_current_testimony,"
+                " e.stance::text AS stance"
+                f" FROM {evidence} e JOIN claims c"
+                " ON c.deployment_id = e.deployment_id AND c.claim_id = e.claim_id"
                 f" WHERE e.deployment_id = :deployment_id AND e.{id_column} = :fact_id"
-                " ORDER BY e.claim_id"
+                " ORDER BY (c.claim_id = ANY(CAST(:window_claims AS uuid[]))) DESC,"
+                " EXISTS (SELECT 1 FROM chunk_claims cc JOIN chunks ch"
+                "   ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id"
+                "   JOIN document_version_scope s ON s.deployment_id = ch.deployment_id"
+                "   AND s.version_id = ch.version_id"
+                "   WHERE cc.deployment_id = e.deployment_id AND cc.claim_id = c.claim_id"
+                "   AND s.periodised) DESC,"
+                " (e.stance = 'supports') DESC, c.asserted_at DESC NULLS LAST, c.claim_id"
+                " LIMIT :limit"
             ),
-            {"deployment_id": deployment_id, "fact_id": fact_id},
+            params,
         ).mappings()
     ]
     intervals = claim_in_force_on(
         connection=connection,
         deployment_id=deployment_id,
-        claim_ids=(row["claim_id"] for row in all_evidence),
+        claim_ids=(row["claim_id"] for row in claims),
     )
-    for row in all_evidence:
-        found = intervals.get(str(row["claim_id"]))
-        row["in_force"] = found["in_force"] if found else None
-        row["also_undated"] = found["also_undated"] if found else False
-    basis = basis_of(all_evidence)
-    stance_of = {str(row["claim_id"]): row["stance"] for row in all_evidence}
-    claims = [
-        dict(row)
-        for row in connection.execute(
-            text(
-                "SELECT claim_id, claim_text, asserted_at, claim_valid_from,"
-                " claim_valid_until, claim_valid_precision::text AS claim_valid_precision,"
-                " claim_valid_kind::text AS claim_valid_kind, is_current_testimony"
-                " FROM claims WHERE deployment_id = :deployment_id"
-                " AND claim_id = ANY(CAST(:claim_ids AS uuid[]))"
-            ),
-            {"deployment_id": deployment_id, "claim_ids": sorted(stance_of)},
-        ).mappings()
-    ]
-    claims.sort(
-        key=lambda row: (
-            str(row["claim_id"]) not in window_claims,
-            stance_of[str(row["claim_id"])] != "supports",
-            -(row["asserted_at"].timestamp() if row["asserted_at"] else 0.0),
-            str(row["claim_id"]),
-        )
-    )
-    shown = claims[:_CLAIM_LIMIT]
-    handles = {str(row["claim_id"]): f"C{index + 1}" for index, row in enumerate(shown)}
+    handles = {
+        str(row["claim_id"]): f"C{index + 1}" for index, row in enumerate(claims)
+    }
     presented_claims = []
-    for row in shown:
+    for row in claims:
         claim_id = str(row["claim_id"])
         item: dict[str, Any] = {
             "handle": handles[claim_id],
-            "stance": stance_of[claim_id],
+            "stance": row["stance"],
             "claim_text": row["claim_text"],
             "source_said_at": _iso(row["asserted_at"]),
             "source_world_from": _iso(row["claim_valid_from"]),
@@ -372,7 +512,7 @@ def _review_inputs(
             ),
         },
         "claims": presented_claims,
-        "claims_truncated": len(claims) > len(shown),
+        "claims_truncated": total > len(claims),
     }
     digest = sha256(
         canonical_json(
@@ -394,7 +534,7 @@ def _review_inputs(
             "valid_from": _iso(fact["valid_from"]),
             "valid_until": _iso(fact["valid_until"]),
             "valid_precision": fact["valid_precision"],
-            "window_claim_ids": sorted(window_claims),
+            "window_claim_ids": window_claims,
         },
     }
 
@@ -409,7 +549,13 @@ def _apply_review(
     answer: PromptWindowReview,
     floor: float,
 ) -> ReviewOutcome:
-    """Record the review; replace the window only on a confident grounded answer."""
+    """Record the review; replace the window only on a confident grounded answer.
+
+    Only the window changes. A fact's label and vector are computed from its
+    statement, never from its window, so they are left as they are: a period
+    correction never relabels or re-embeds a fact. Entity profiles render
+    fact windows, so a replacement repairs the endpoint entities' profiles.
+    """
     table, id_column, *_ = _FACT_COLUMNS[kind]
     replaced = answer.decision == "replace" and answer.confidence >= floor
     if replaced:
@@ -447,20 +593,6 @@ def _apply_review(
                 else [],
             },
         )
-        label_clear = (
-            "fact_label = NULL, fact_label_version = NULL,"
-            if kind == "relation"
-            else "obs_label = NULL,"
-        )
-        connection.execute(
-            text(
-                f"UPDATE {table} SET {label_clear} embedding = NULL,"
-                " embedding_model = NULL, embedding_input_policy_version = NULL,"
-                " embedding_text_hash = NULL, updated_at = now()"
-                f" WHERE deployment_id = :deployment_id AND {id_column} = :fact_id"
-            ),
-            {"deployment_id": deployment_id, "fact_id": fact_id},
-        )
     connection.execute(
         text(
             f"UPDATE {table} SET period_basis = :basis"
@@ -480,6 +612,7 @@ def _apply_review(
         .mappings()
         .one()
     )
+    adjudication_id = uuid4()
     features = {
         "review": "period_window",
         "decision": answer.model_dump(mode="json"),
@@ -504,7 +637,7 @@ def _apply_review(
             " NULL, CAST(:features AS jsonb), :version, :consumed)"
         ),
         {
-            "adjudication_id": uuid4(),
+            "adjudication_id": adjudication_id,
             "deployment_id": deployment_id,
             "fact_id": fact_id,
             "outcome": "update" if replaced else "noop",
@@ -513,6 +646,14 @@ def _apply_review(
             "version": FACT_WINDOW_REVIEW_VERSION,
             "consumed": sorted(inputs["handles"].values(), key=str),
         },
+    )
+    # the answer is applied: nothing will reuse it again
+    connection.execute(
+        text(
+            "DELETE FROM fact_window_review_attempts WHERE deployment_id = :deployment_id"
+            " AND fact_kind = :kind AND fact_id = :fact_id"
+        ),
+        {"deployment_id": deployment_id, "kind": kind, "fact_id": fact_id},
     )
     if replaced:
         from rememberstack.model import ProcessingTarget
@@ -525,8 +666,9 @@ def _apply_review(
             target_kind=ProcessingTarget.RELATION
             if kind == "relation"
             else ProcessingTarget.OBSERVATION,
-            # one relabel per applied review: work rows are unique per target
-            target_id=uuid5(NAMESPACE_URL, f"fact-window-review:{inputs['digest']}"),
+            # one repair per applied review (its adjudication receipt): work
+            # rows are unique per target, and digests can repeat (A -> B -> A)
+            target_id=adjudication_id,
             content_hash=inputs["digest"],
             payload={f"{kind}_id": str(fact_id)},
         )

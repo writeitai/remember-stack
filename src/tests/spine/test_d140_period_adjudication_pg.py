@@ -14,11 +14,15 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
+import hashlib
 import json
 from pathlib import Path
+import threading
 from typing import Any
+from uuid import NAMESPACE_URL
 from uuid import UUID
 from uuid import uuid4
+from uuid import uuid5
 
 from alembic import command
 from alembic.config import Config
@@ -37,14 +41,20 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import UploadRecord
 from rememberstack.model.relations import NormalizationResponse
+from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import fact_window_review as review_module
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import _FACT_PROMPT
 from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
+from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION_JEV
+from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_window_review import FactWindowReviewer
@@ -52,6 +62,7 @@ from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.period_adjudication import claim_in_force_on
 from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
+from rememberstack.spine.period_adjudication import period_fence_barrier_on
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from rememberstack.workers.reconcile import DeletionService
@@ -242,7 +253,13 @@ def _claim(rig: _Rig, *, doc_id: UUID, body: str, chunks: tuple[UUID, ...]) -> U
     return claim_id
 
 
-def _stage(rig: _Rig, *, claim_id: UUID, statement: str) -> UUID:
+def _stage(
+    rig: _Rig,
+    *,
+    claim_id: UUID,
+    statement: str,
+    adjudicator_version: str = OBSERVATION_APPLICATION_VERSION,
+) -> UUID:
     """Freeze one observation assertion of the claim and stage its application."""
     rig.catalog.publish_normalization(
         deployment_id=_DEPLOYMENT,
@@ -267,18 +284,21 @@ def _stage(rig: _Rig, *, claim_id: UUID, statement: str) -> UUID:
         normalizer_version=FACT_NORMALIZER_VERSION,
         kind="observation",
         ordinal=0,
-        adjudicator_version=OBSERVATION_APPLICATION_VERSION,
+        adjudicator_version=adjudicator_version,
         subject_entity_id=rig.subject,
         object_entity_id=None,
         version_ids=(rig.unit_version,),
     )
 
 
-def _drain(rig: _Rig) -> tuple[UUID, ...]:
+def _drain(
+    rig: _Rig, settings: FactAdjudicationSettings | None = None, systemone: Any = None
+) -> tuple[UUID, ...]:
     return FactAdjudicator(
         engine=rig.engine,
         model_provider=rig.provider,
-        settings=FactAdjudicationSettings(),
+        settings=settings or FactAdjudicationSettings(),
+        systemone_provider=systemone,
     ).drain(
         deployment_id=_DEPLOYMENT,
         subject_entity_id=rig.subject,
@@ -367,12 +387,41 @@ def _handler(rig: _Rig) -> FactWindowReviewHandler:
     )
 
 
+def _new_fact_answer(*, body: str, window: dict[str, object]) -> Router:
+    """A canned adjudication: the incoming assertion is a new fact with this window."""
+
+    def answer(prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "PromptFactDecision"
+        assert "IN-FORCE PERIODS" in prompt
+        presentation = _inputs(prompt)
+        return {
+            "target": "N1",
+            "stance": "supports",
+            "new_facts": [
+                {"handle": "N1", "assertion": presentation["incoming_assertion"]}
+            ],
+            "window": {
+                "window": window,
+                "supporting_claims": [_claim_handle(presentation, body)],
+            },
+            "updates": [],
+            "support_moves": [],
+            "contradict_with": [],
+            "confidence": 0.95,
+            "rationale": "Dated by the periods its text was in force.",
+        }
+
+    return answer
+
+
 def _vat_rig(rig: _Rig) -> dict[str, Any]:
     """Three editions: 15% in 2015 and 2020, 10% from 2024. Both facts formed.
 
-    The first adjudication has no candidates (no model call). The second shows
-    the model both claims; the canned answer records the 10% rate from its
-    edition's start and ends the 15% fact there, citing each claim.
+    The first fact has no candidate to compare with, but its claim carries
+    in-force periods, so it is still adjudicated (a model call): the canned
+    answer dates it 2015-01-01..2024-01-01 from its periods. The second shows
+    the model both claims; the answer records the 10% rate from its edition's
+    start, citing its claim.
     """
     doc_id, editions = _lineage(rig, label="vat-rates", editions=3)
     for edition, start in zip(editions, (_Y2015, _Y2020, _Y2024), strict=True):
@@ -386,37 +435,14 @@ def _vat_rig(rig: _Rig) -> dict[str, Any]:
     new = _claim(
         rig, doc_id=doc_id, body="VAT on books is 10%", chunks=(editions[2].chunk_id,)
     )
+    rig.answers.append(
+        _new_fact_answer(body="VAT on books is 15%", window=_window(_Y2015, _Y2024))
+    )
     _stage(rig, claim_id=old, statement="VAT on books is 15%")
     (old_fact,) = _drain(rig)
-
-    def answer(prompt: str, type_name: str) -> dict[str, object]:
-        assert type_name == "PromptFactDecision"
-        presentation = _inputs(prompt)
-        old_c = _claim_handle(presentation, "VAT on books is 15%")
-        new_c = _claim_handle(presentation, "VAT on books is 10%")
-        return {
-            "target": "N1",
-            "stance": "supports",
-            "new_facts": [
-                {"handle": "N1", "assertion": presentation["incoming_assertion"]}
-            ],
-            "window": {"window": _window(_Y2024, None), "supporting_claims": [new_c]},
-            "updates": [
-                {
-                    "target": "F1",
-                    "window": {
-                        "window": _window(_Y2015, _Y2024),
-                        "supporting_claims": [old_c],
-                    },
-                }
-            ],
-            "support_moves": [],
-            "contradict_with": [],
-            "confidence": 0.95,
-            "rationale": "The 2024 edition replaced the rate.",
-        }
-
-    rig.answers.append(answer)
+    rig.answers.append(
+        _new_fact_answer(body="VAT on books is 10%", window=_window(_Y2024, None))
+    )
     _stage(rig, claim_id=new, statement="VAT on books is 10%")
     (new_fact,) = _drain(rig)
     return {
@@ -796,3 +822,332 @@ def test_deleting_the_closing_edition_reviews_the_fact_it_ended(rig: _Rig) -> No
     assert found[str(vat["old_claim"])]["in_force"] == [
         {"from": _Y2015.isoformat(), "until": None}
     ]
+
+
+def _review(rig: _Rig, fact_id: UUID) -> str:
+    return FactWindowReviewer(
+        engine=rig.engine,
+        model_provider=rig.provider,
+        settings=FactAdjudicationSettings(),
+    ).review(
+        deployment_id=_DEPLOYMENT,
+        kind="observation",
+        fact_id=fact_id,
+        meter=NoopCostMeter(),
+        call_key="t",
+    )
+
+
+def _one_edition_rule(rig: _Rig, *, body: str) -> tuple[UUID, UUID, UUID]:
+    """A single periodised edition (in force from 2015, no successor) stating one rule."""
+    doc_id, (edition,) = _lineage(rig, label="allowance", editions=1)
+    _declare(rig, doc_id, edition, _Y2015)
+    claim = _claim(rig, doc_id=doc_id, body=body, chunks=(edition.chunk_id,))
+    return doc_id, edition.version_id, claim
+
+
+def test_first_periodised_fact_is_adjudicated_with_its_periods(rig: _Rig) -> None:
+    """With no candidate fact, periodised evidence still reaches adjudication (R1 P1-1)."""
+    doc_id, _, claim = _one_edition_rule(rig, body="Allowance is 45 per day")
+    rig.answers.append(
+        _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, None))
+    )
+    _stage(rig, claim_id=claim, statement="Allowance is 45 per day")
+    (fact,) = _drain(rig)
+    assert len(rig.provider.generated_prompts) == 1
+    row = _fact(rig, fact)
+    assert (row["valid_from"], row["valid_until"], row["valid_precision"]) == (
+        _Y2015,
+        None,
+        "open",
+    )
+    assert row["period_basis"] is not None
+    # the basis matches: a completion review finds nothing to do
+    assert LifecycleCatalog(engine=rig.engine).request_window_review(
+        deployment_id=_DEPLOYMENT, doc_id=doc_id, reason="test"
+    )
+    assert _run_fan_out(rig, _jobs(rig, target_kind="document")[-1]) == []
+
+
+class _NoSystemOne:
+    """A System One provider that must not be called."""
+
+    def evaluate(self, **_: object) -> object:
+        raise AssertionError("the first fact needs no System One call")
+
+
+def test_jev_first_periodised_fact_is_dated_by_its_single_period(rig: _Rig) -> None:
+    """The deterministic engine dates a first fact from one in-force interval."""
+    _, _, claim = _one_edition_rule(rig, body="Allowance is 45 per day")
+    _stage(
+        rig,
+        claim_id=claim,
+        statement="Allowance is 45 per day",
+        adjudicator_version=OBSERVATION_APPLICATION_VERSION_JEV,
+    )
+    (fact,) = _drain(
+        rig, settings=FactAdjudicationSettings(engine="jev"), systemone=_NoSystemOne()
+    )
+    row = _fact(rig, fact)
+    assert (row["valid_from"], row["valid_until"], row["valid_precision"]) == (
+        _Y2015,
+        None,
+        "open",
+    )
+    assert row["window_claim_ids"] == [claim]
+    assert rig.provider.generated_prompts == []
+
+
+def _ingest(
+    rig: _Rig, *, content: bytes, ref: str, start: datetime, until: datetime | None
+) -> Any:
+    content_hash = hashlib.sha256(content).hexdigest()
+    doc_id = uuid5(NAMESPACE_URL, f"wpet7:{ref}")
+    return DocumentCatalog(engine=rig.engine).record_upload(
+        record=UploadRecord(
+            deployment_id=_DEPLOYMENT,
+            doc_id=doc_id,
+            source_kind="intranet",
+            source_ref=ref,
+            source_uri=ref,
+            title="Rates",
+            content_hash=content_hash,
+            mime="text/markdown",
+            byte_size=len(content),
+            raw_uri=f"{doc_id}/{content_hash}/original.md",
+            versioning_mode="snapshot",
+            effective_from=start,
+            effective_until=until,
+        ),
+        convert_component_version="wpet7-test",
+    )
+
+
+def test_ingest_period_correction_on_an_existing_version_queues_review(
+    rig: _Rig,
+) -> None:
+    """A D55 no-op ingest that changes a period reviews now; a new version waits (R1 P1-3)."""
+    first = _ingest(rig, content=b"rates", ref="rates", start=_Y2015, until=None)
+    assert first.created
+    assert _jobs(rig, target_kind="document") == []  # completion will review it
+    again = _ingest(rig, content=b"rates", ref="rates", start=_Y2015, until=None)
+    assert not again.created
+    assert _jobs(rig, target_kind="document") == []  # identical declaration
+    corrected = _ingest(rig, content=b"rates", ref="rates", start=_Y2015, until=_Y2024)
+    assert not corrected.created
+    (job,) = _jobs(rig, target_kind="document")
+    assert job["payload"]["reason"] == "ingest_period_declared"
+    with rig.engine.connect() as connection:
+        pipeline = connection.execute(
+            text(
+                "SELECT count(*) FROM processing_state WHERE deployment_id = :d"
+                " AND stage <> 'review_fact_windows'"
+            ),
+            {"d": _DEPLOYMENT},
+        ).scalar_one()
+    assert pipeline == 1  # only the first version's convert job: nothing reprocessed
+
+
+def _replace_answer(*, body: str, window: dict[str, object]) -> Router:
+    return _review_answer(decision="replace", window=window, cite=body)
+
+
+def test_every_applied_review_repairs_its_profiles_and_never_reembeds_the_fact(
+    rig: _Rig,
+) -> None:
+    """A -> B -> A -> B corrections: each replacement queues its own repair (R1 P1-4),
+    and none clears or recomputes the fact's label or vector (R1 P1-5)."""
+    vat = _vat_rig(rig)
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET obs_label = statement, embedding ="
+                " CAST(array_fill(0.01, ARRAY[:dims]) AS vector), embedding_model = 'm',"
+                " embedding_input_policy_version = 'p', embedding_text_hash = 'h'"
+                " WHERE observation_id = :id"
+            ),
+            {"id": vat["old_fact"], "dims": P1_VECTOR_DIMENSIONS},
+        )
+    before = _vector_state(rig, vat["old_fact"])
+    edition = vat["editions"][2]
+    for start, end in ((_MID2023, _MID2023), (_Y2024, _Y2024), (_MID2023, _MID2023)):
+        _declare(rig, vat["doc_id"], edition, start)
+        rig.answers.append(
+            _replace_answer(body="VAT on books is 15%", window=_window(_Y2015, end))
+        )
+        assert _review(rig, vat["old_fact"]) == "replaced"
+        assert _fact(rig, vat["old_fact"])["valid_until"] == end
+        assert _vector_state(rig, vat["old_fact"]) == before
+    with rig.engine.connect() as connection:
+        repairs = connection.execute(
+            text(
+                "SELECT count(DISTINCT target_id) FROM processing_state"
+                " WHERE deployment_id = :d AND stage = 'label_relation'"
+                " AND payload->>'observation_id' = CAST(:id AS text)"
+            ),
+            {"d": _DEPLOYMENT, "id": vat["old_fact"]},
+        ).scalar_one()
+    assert repairs == 3
+
+
+def _vector_state(rig: _Rig, fact_id: UUID) -> tuple[Any, ...]:
+    with rig.engine.connect() as connection:
+        return tuple(
+            connection.execute(
+                text(
+                    "SELECT obs_label, embedding::text, embedding_model,"
+                    " embedding_input_policy_version, embedding_text_hash"
+                    " FROM observations WHERE observation_id = :id"
+                ),
+                {"id": fact_id},
+            ).one()
+        )
+
+
+def test_lineage_fan_out_pages_and_continues(rig: _Rig) -> None:
+    """A full page queues its reviews and a continuation with its cursor (R1 P1-6)."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+    job = _jobs(rig, target_kind="document")[-1]
+    handler = FactWindowReviewHandler(
+        engine=rig.engine,
+        reviewer=FactWindowReviewer(
+            engine=rig.engine,
+            model_provider=rig.provider,
+            settings=FactAdjudicationSettings(),
+        ),
+        page_size=1,
+    )
+    first = handler.handle(
+        work=_claimed(job, target_kind=ProcessingTarget.DOCUMENT), meter=NoopCostMeter()
+    ).follow_up
+    reviews = [
+        work for work in first if work.target_kind is ProcessingTarget.OBSERVATION
+    ]
+    (continuation,) = [
+        work for work in first if work.target_kind is ProcessingTarget.DOCUMENT
+    ]
+    assert len(reviews) == 1
+    second = handler.handle(
+        work=ClaimedWork(
+            processing_id=uuid4(),
+            deployment_id=_DEPLOYMENT,
+            target_kind=ProcessingTarget.DOCUMENT,
+            target_id=continuation.target_id,
+            stage=PipelineStage.REVIEW_FACT_WINDOWS,
+            component_version=FACT_WINDOW_REVIEW_VERSION,
+            content_hash=continuation.content_hash,
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload=continuation.payload,
+        ),
+        meter=NoopCostMeter(),
+    ).follow_up
+    seen = {
+        UUID(str((work.payload or {})["fact_id"]))
+        for work in (*reviews, *second)
+        if work.target_kind is ProcessingTarget.OBSERVATION
+    }
+    assert seen == {vat["old_fact"], vat["new_fact"]}
+
+
+def test_review_apply_waits_for_the_period_fence(rig: _Rig) -> None:
+    """A fan-out barrier blocks a review's final validation and commit (R1 P1-2)."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+    rig.answers.append(
+        _replace_answer(body="VAT on books is 15%", window=_window(_Y2015, _MID2023))
+    )
+    outcome: list[str] = []
+    with rig.engine.connect() as holder:
+        with holder.begin():
+            period_fence_barrier_on(connection=holder, deployment_id=_DEPLOYMENT)
+            worker = threading.Thread(
+                target=lambda: outcome.append(_review(rig, vat["old_fact"]))
+            )
+            worker.start()
+            worker.join(timeout=3)
+            assert worker.is_alive()  # parked on the shared fence
+            assert _fact(rig, vat["old_fact"])["valid_until"] == _Y2024
+        worker.join(timeout=30)
+    assert outcome == ["replaced"]
+    assert _fact(rig, vat["old_fact"])["valid_until"] == _MID2023
+
+
+def test_a_completed_answer_is_reused_and_a_claimed_review_is_not_repeated(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed apply reuses the stored answer; a live claim blocks a duplicate (R1 P2-1)."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+    rig.answers.append(
+        _replace_answer(body="VAT on books is 15%", window=_window(_Y2015, _MID2023))
+    )
+    real_apply = review_module._apply_review
+    calls = {"n": 0}
+
+    def failing_once(**kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("apply failed after inference")
+        return real_apply(**kwargs)
+
+    monkeypatch.setattr(review_module, "_apply_review", failing_once)
+    with pytest.raises(RuntimeError):
+        _review(rig, vat["old_fact"])
+    prompts = len(rig.provider.generated_prompts)
+    assert _review(rig, vat["old_fact"]) == "replaced"  # no new model call
+    assert len(rig.provider.generated_prompts) == prompts
+    with rig.engine.connect() as connection:
+        left = connection.execute(
+            text("SELECT count(*) FROM fact_window_review_attempts WHERE fact_id = :f"),
+            {"f": vat["old_fact"]},
+        ).scalar_one()
+    assert left == 0  # applied answers are not kept
+
+
+def test_a_live_claim_without_an_answer_blocks_a_duplicate_review(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two jobs for one moved basis never both pay for the review (R1 P2-1)."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+
+    def claim_everything(**kwargs: Any) -> Any:
+        # simulate another job that claimed this fingerprint a moment ago
+        connection = kwargs["connection"]
+        connection.execute(
+            text(
+                "INSERT INTO fact_window_review_attempts"
+                " (deployment_id, fact_kind, fact_id, input_digest)"
+                " VALUES (:d, :k, :f, :g) ON CONFLICT DO NOTHING"
+            ),
+            {
+                "d": kwargs["deployment_id"],
+                "k": kwargs["kind"],
+                "f": kwargs["fact_id"],
+                "g": kwargs["digest"],
+            },
+        )
+        return real_claim(**kwargs)
+
+    real_claim = review_module._claim_attempt_on
+    monkeypatch.setattr(review_module, "_claim_attempt_on", claim_everything)
+    with pytest.raises(ApplicationInputChanged):
+        _review(rig, vat["old_fact"])
+    assert all(
+        "Review ONE stored fact" not in prompt
+        for prompt in rig.provider.generated_prompts
+    )
+
+
+def test_deleting_a_lineage_queues_review_in_its_tombstone_transaction(
+    rig: _Rig,
+) -> None:
+    """Operator lineage deletion queues the review with the tombstone (R1 P2-2)."""
+    vat = _vat_rig(rig)
+    before = len(_jobs(rig, target_kind="document"))
+    LifecycleCatalog(engine=rig.engine).delete_lineage(doc_id=vat["doc_id"])
+    jobs = _jobs(rig, target_kind="document")
+    assert len(jobs) == before + 1
+    assert jobs[-1]["payload"]["reason"] == "lineage_deleted"

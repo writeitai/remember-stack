@@ -1641,9 +1641,18 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
             )
         connection.execute(
             text("""UPDATE observations SET valid_from='2022-01-01Z',
-            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[])
+            valid_until='2023-01-01Z',valid_precision='year',window_claim_ids=CAST(:claims AS uuid[]),
+            period_basis='basis-over-forgotten-claims'
             WHERE observation_id=:id"""),
             {"claims": [_TARGET_CLAIM_ID], "id": _SHARED_OBSERVATION_ID},
+        )
+        # D140 §8.2: a stored window-review answer for the touched fact
+        connection.execute(
+            text("""INSERT INTO fact_window_review_attempts
+            (deployment_id,fact_kind,fact_id,input_digest,answer,answered_at)
+            VALUES (:dep,'observation',:id,'digest',
+              jsonb_build_object('rationale',CAST(:phrase AS text)),now())"""),
+            {"dep": _DEPLOYMENT_ID, "id": _SHARED_OBSERVATION_ID, "phrase": _TOKEN},
         )
     catalog.accept_and_enqueue(manifest=manifest)
     catalog.scrub_postgres(manifest=manifest)
@@ -1682,6 +1691,22 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
         ).one()
         assert tuple(row[:4]) == (None, None, "unknown", [])
         assert _TOKEN not in row[4]
+        assert (
+            connection.execute(
+                text("SELECT period_basis FROM observations WHERE observation_id=:id"),
+                {"id": _SHARED_OBSERVATION_ID},
+            ).scalar_one()
+            is None
+        )
+        assert (
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM fact_window_review_attempts WHERE fact_id=:id"
+                ),
+                {"id": _SHARED_OBSERVATION_ID},
+            ).scalar_one()
+            == 0
+        )
 
 
 @pytest.mark.parametrize("phase", ("selection", "claimify"))

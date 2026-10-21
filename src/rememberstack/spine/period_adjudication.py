@@ -20,11 +20,8 @@ them, so an undated corpus adjudicates exactly as before.
 """
 
 from collections.abc import Iterable
-from collections.abc import Mapping
 from datetime import datetime
 from datetime import UTC
-from hashlib import sha256
-import json
 from typing import Any
 from typing import Literal
 from uuid import UUID
@@ -128,35 +125,62 @@ def claim_in_force_on(
     return result
 
 
-def _evidence_sql(kind: str) -> str:
-    _, id_column, evidence = _FACT_TABLES[kind]
-    return f"""
-SELECT e.{id_column} AS fact_id, e.claim_id, e.stance::text AS stance
-FROM {evidence} e
-WHERE e.deployment_id = :deployment_id
-  AND e.{id_column} = ANY(CAST(:fact_ids AS uuid[]))
+# A fact's period basis, computed set-wise in the database so a fact with many
+# evidence claims never materialises them in the worker: per evidence claim
+# (both stances) that occurs in a periodised lineage, its stance, the union of
+# its in-force intervals rendered in UTC, and whether the same claim also occurs
+# undated; hashed in claim order. NULL for a fact with no periodised evidence.
+_FACT_BASIS = """
+WITH evidence AS (
+  SELECT e.{id_column} AS fact_id, e.claim_id, e.stance::text AS stance
+  FROM {evidence} e
+  WHERE e.deployment_id = :deployment_id
+    AND e.{id_column} = ANY(CAST(:fact_ids AS uuid[]))
+),
+occurrence AS (
+  SELECT ev.fact_id, ev.claim_id, ev.stance, s.periodised, s.in_force
+  FROM evidence ev
+  JOIN chunk_claims cc
+    ON cc.deployment_id = :deployment_id AND cc.claim_id = ev.claim_id
+  JOIN chunks ch
+    ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+  JOIN document_versions v
+    ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
+   AND v.current_representation_id = ch.representation_id
+  JOIN document_version_scope s
+    ON s.deployment_id = v.deployment_id AND s.version_id = v.version_id
+),
+per_claim AS (
+  SELECT o.fact_id, o.claim_id, o.stance,
+         bool_or(o.periodised) AS periodised,
+         bool_or(NOT o.periodised) AS also_undated,
+         range_agg(r) FILTER (WHERE o.periodised AND r IS NOT NULL) AS in_force
+  FROM occurrence o
+  LEFT JOIN LATERAL unnest(o.in_force) AS r ON true
+  GROUP BY o.fact_id, o.claim_id, o.stance
+),
+rendered AS (
+  SELECT p.fact_id, p.claim_id, p.stance,
+         p.claim_id::text || '|' || p.stance || '|' || p.also_undated::text || '|' ||
+         coalesce((
+           SELECT string_agg(
+                    to_char(lower(x) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US')
+                    || '/' ||
+                    coalesce(to_char(upper(x) AT TIME ZONE 'UTC',
+                                     'YYYY-MM-DD"T"HH24:MI:SS.US'), ''),
+                    ',' ORDER BY lower(x))
+           FROM unnest(coalesce(p.in_force, '{{}}'::tstzmultirange)) AS x
+         ), '') AS item
+  FROM per_claim p
+  WHERE p.periodised
+)
+SELECT f.fact_id,
+       (SELECT encode(sha256(convert_to(
+                 string_agg(r.item, E'\n' ORDER BY r.claim_id, r.stance), 'UTF8')), 'hex')
+        FROM rendered r WHERE r.fact_id = f.fact_id
+        HAVING count(*) > 0) AS basis
+FROM unnest(CAST(:fact_ids AS uuid[])) AS f(fact_id)
 """
-
-
-def basis_of(evidence: Iterable[Mapping[str, Any]]) -> str | None:
-    """Fingerprint one fact's periodised evidence; None when it has none.
-
-    ``evidence`` rows carry ``claim_id``, ``stance`` and the claim's
-    ``in_force``/``also_undated`` (absent for undated-only claims).
-    """
-    items = sorted(
-        (
-            str(row["claim_id"]),
-            str(row["stance"]),
-            json.dumps(row["in_force"], sort_keys=True),
-            bool(row["also_undated"]),
-        )
-        for row in evidence
-        if row.get("in_force") is not None
-    )
-    if not items:
-        return None
-    return sha256(json.dumps(items).encode()).hexdigest()
 
 
 def fact_period_basis_on(
@@ -170,29 +194,14 @@ def fact_period_basis_on(
     ids = sorted({str(fact_id) for fact_id in fact_ids})
     if not ids:
         return {}
-    evidence = [
-        dict(row)
+    _, id_column, evidence = _FACT_TABLES[kind]
+    return {
+        UUID(str(row["fact_id"])): row["basis"]
         for row in connection.execute(
-            text(_evidence_sql(kind)), {"deployment_id": deployment_id, "fact_ids": ids}
+            text(_FACT_BASIS.format(id_column=id_column, evidence=evidence)),
+            {"deployment_id": deployment_id, "fact_ids": ids},
         ).mappings()
-    ]
-    intervals = claim_in_force_on(
-        connection=connection,
-        deployment_id=deployment_id,
-        claim_ids=(row["claim_id"] for row in evidence),
-    )
-    grouped: dict[UUID, list[dict[str, Any]]] = {UUID(fact): [] for fact in ids}
-    for row in evidence:
-        found = intervals.get(str(row["claim_id"]))
-        grouped[UUID(str(row["fact_id"]))].append(
-            {
-                "claim_id": row["claim_id"],
-                "stance": row["stance"],
-                "in_force": found["in_force"] if found else None,
-                "also_undated": found["also_undated"] if found else False,
-            }
-        )
-    return {fact_id: basis_of(rows) for fact_id, rows in grouped.items()}
+    }
 
 
 def record_period_basis_on(
@@ -204,6 +213,8 @@ def record_period_basis_on(
 ) -> None:
     """Store each fact's current basis: its window was just adjudicated against it.
 
+    The caller holds the shared period fence from its final input validation
+    through commit, so the basis stored is the one the decision was made on.
     A deployment that never declared a period has no basis anywhere, so this is
     one indexed existence probe there.
     """
@@ -212,17 +223,56 @@ def record_period_basis_on(
     ):
         return
     table, id_column, _ = _FACT_TABLES[kind]
-    for fact_id, basis in fact_period_basis_on(
+    bases = fact_period_basis_on(
         connection=connection, deployment_id=deployment_id, kind=kind, fact_ids=fact_ids
-    ).items():
-        connection.execute(
-            text(
-                f"UPDATE {table} SET period_basis = :basis"
-                f" WHERE deployment_id = :deployment_id AND {id_column} = :fact_id"
-                " AND period_basis IS DISTINCT FROM :basis"
-            ),
-            {"deployment_id": deployment_id, "fact_id": fact_id, "basis": basis},
-        )
+    )
+    if not bases:
+        return
+    connection.execute(
+        text(
+            f"UPDATE {table} f SET period_basis = b.basis"
+            " FROM unnest(CAST(:fact_ids AS uuid[]), CAST(:bases AS text[]))"
+            " AS b(fact_id, basis)"
+            f" WHERE f.deployment_id = :deployment_id AND f.{id_column} = b.fact_id"
+            " AND f.period_basis IS DISTINCT FROM b.basis"
+        ),
+        {
+            "deployment_id": deployment_id,
+            "fact_ids": [str(fact_id) for fact_id in bases],
+            "bases": list(bases.values()),
+        },
+    )
+
+
+def share_period_fence_on(*, connection: Connection, deployment_id: UUID) -> None:
+    """Hold the deployment's period fence shared until the transaction ends.
+
+    Taken by every writer of a fact window or ``period_basis`` (ordinary
+    adjudication apply, window review apply) after acquiring the entity
+    adjudication lock and before its final input validation; it is held through
+    commit. Lock order: hard-forget fence, identity epoch, entity lock, period
+    fence.
+    """
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock_shared(hashtextextended(:key, 0))"),
+        {"key": f"period-fence:{deployment_id}"},
+    )
+
+
+def period_fence_barrier_on(*, connection: Connection, deployment_id: UUID) -> None:
+    """Wait for every in-flight window decision of the deployment to commit.
+
+    A lineage fan-out takes the fence exclusively, holding no other lock, before
+    it reads stored bases. Every input change it reacts to committed before the
+    fan-out was queued, so a decision validated on older inputs has either
+    committed by now (and its stale basis is seen and reviewed) or validates
+    after the change (and sees it). The barrier is released when the
+    transaction ends; later pages need no barrier.
+    """
+    connection.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"period-fence:{deployment_id}"},
+    )
 
 
 def deployment_ever_periodised_on(
@@ -259,7 +309,12 @@ def lineage_ever_periodised_on(
 
 
 def review_request(
-    *, deployment_id: UUID, doc_id: UUID, reason: str, request_id: UUID | None = None
+    *,
+    deployment_id: UUID,
+    doc_id: UUID,
+    reason: str,
+    request_id: UUID | None = None,
+    after: tuple[str, str] | None = None,
 ) -> Any:
     """The lineage fan-out job: find this lineage's facts whose basis moved.
 
@@ -283,88 +338,139 @@ def review_request(
         component_version=FACT_WINDOW_REVIEW_VERSION,
         content_hash=target.hex,
         lane=ProcessingLane.STEADY,
-        payload={"doc_id": str(doc_id), "reason": reason},
+        payload={
+            "doc_id": str(doc_id),
+            "reason": reason,
+            **({} if after is None else {"after_kind": after[0], "after_id": after[1]}),
+        },
     )
 
 
 def request_window_review_on(
-    *, connection: Connection, deployment_id: UUID, doc_id: UUID, reason: str
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    doc_id: UUID,
+    reason: str,
+    request_id: UUID | None = None,
 ) -> bool:
     """Queue a lineage fan-out in the caller's transaction, if it ever had periods.
 
-    Returns whether a job was queued.
+    Returns whether a job was queued. Nothing is queued while a hard forget is
+    honored: it scrubs the touched facts' windows and bases itself, and a job
+    naming the forgotten lineage would lose its payload to the same scrub.
     """
+    from rememberstack.spine.admission import active_forget_id_on
+
     if not lineage_ever_periodised_on(
         connection=connection, deployment_id=deployment_id, doc_id=doc_id
     ):
+        return False
+    if active_forget_id_on(connection=connection, deployment_id=deployment_id):
         return False
     from rememberstack.spine.work_ledger import enqueue_on
 
     enqueue_on(
         connection=connection,
-        work=review_request(deployment_id=deployment_id, doc_id=doc_id, reason=reason),
+        work=review_request(
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            reason=reason,
+            request_id=request_id,
+        ),
     )
     return True
 
 
+REVIEW_PAGE_SIZE = 500
+"""Facts examined per lineage fan-out job; a fuller page continues in a new job."""
+
 _LINEAGE_FACTS = """
-SELECT DISTINCT e.{id_column} AS fact_id, f.period_basis AS stored
-FROM {evidence} e
-JOIN {table} f
-  ON f.deployment_id = e.deployment_id AND f.{id_column} = e.{id_column}
-JOIN chunk_claims cc
-  ON cc.deployment_id = e.deployment_id AND cc.claim_id = e.claim_id
-JOIN chunks ch
-  ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
-JOIN document_versions v
-  ON v.deployment_id = ch.deployment_id AND v.version_id = ch.version_id
-WHERE e.deployment_id = :deployment_id
-  AND v.doc_id = :doc_id
+SELECT f.{id_column} AS fact_id, f.period_basis AS stored
+FROM {table} f
+WHERE f.deployment_id = :deployment_id
   AND f.invalidated_at IS NULL
+  AND f.{id_column} > CAST(:after AS uuid)
+  AND EXISTS (
+    SELECT 1 FROM {evidence} e
+    JOIN chunk_claims cc
+      ON cc.deployment_id = e.deployment_id AND cc.claim_id = e.claim_id
+    JOIN chunks ch
+      ON ch.deployment_id = cc.deployment_id AND ch.chunk_id = cc.chunk_id
+    WHERE e.deployment_id = f.deployment_id
+      AND e.{id_column} = f.{id_column}
+      AND ch.doc_id = :doc_id
+  )
+ORDER BY f.{id_column}
+LIMIT :limit
 """
+
+_ORDER: tuple[FactKind, ...] = ("relation", "observation")
+_FIRST_ID = "00000000-0000-0000-0000-000000000000"
 
 
 def facts_needing_review_on(
-    *, connection: Connection, deployment_id: UUID, doc_id: UUID
-) -> list[tuple[FactKind, UUID, str | None]]:
-    """Live facts with evidence in any version of the lineage whose basis moved.
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    doc_id: UUID,
+    after: tuple[str, str] | None = None,
+    limit: int = REVIEW_PAGE_SIZE,
+) -> tuple[list[tuple[FactKind, UUID, str | None]], tuple[str, str] | None]:
+    """One page of live facts with evidence in the lineage whose basis moved.
 
-    Deleted versions count: deleting a version is one way a fact's periodised
-    evidence changes. Returns ``(kind, fact_id, current_basis)``.
+    Pages walk relations then observations in id order from ``after``; the
+    second value is the cursor of the next page, or None when the lineage is
+    done. Deleted versions count: deleting a version is one way a fact's
+    periodised evidence changes. A fact left with neither periodised nor live
+    evidence (its only source was deleted) is skipped: the lifecycle cascade
+    already settled it, and it has nothing to review against.
     """
+    kind_index = 0 if after is None else _ORDER.index(after[0])  # type: ignore[arg-type]
+    cursor = _FIRST_ID if after is None else after[1]
     found: list[tuple[FactKind, UUID, str | None]] = []
-    for kind in ("relation", "observation"):
+    remaining = limit
+    for kind in _ORDER[kind_index:]:
         table, id_column, evidence = _FACT_TABLES[kind]
-        rows = connection.execute(
-            text(
-                _LINEAGE_FACTS.format(
-                    id_column=id_column, evidence=evidence, table=table
-                )
-            ),
-            {"deployment_id": deployment_id, "doc_id": doc_id},
-        ).mappings()
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    _LINEAGE_FACTS.format(
+                        id_column=id_column, evidence=evidence, table=table
+                    )
+                ),
+                {
+                    "deployment_id": deployment_id,
+                    "doc_id": doc_id,
+                    "after": cursor,
+                    "limit": remaining,
+                },
+            ).mappings()
+        ]
         stored = {UUID(str(row["fact_id"])): row["stored"] for row in rows}
         current = fact_period_basis_on(
             connection=connection,
             deployment_id=deployment_id,
-            kind=kind,  # type: ignore[arg-type]
+            kind=kind,
             fact_ids=stored,
         )
         moved = [fact for fact in stored if current[fact] != stored[fact]]
-        # A fact left with no periodised evidence and no live evidence at all
-        # (its only source was deleted) has nothing to review against: the
-        # lifecycle cascade already settled it, so it costs no model call.
         live = _with_live_evidence(
             connection=connection,
             deployment_id=deployment_id,
-            kind=kind,  # type: ignore[arg-type]
+            kind=kind,
             fact_ids=[fact for fact in moved if current[fact] is None],
         )
         for fact_id in sorted(moved, key=str):
             if current[fact_id] is None and fact_id not in live:
                 continue
-            found.append((kind, fact_id, current[fact_id]))  # type: ignore[arg-type]
-    return found
+            found.append((kind, fact_id, current[fact_id]))
+        if len(rows) == remaining:
+            return found, (kind, str(UUID(str(rows[-1]["fact_id"]))))
+        remaining -= len(rows)
+        cursor = _FIRST_ID
+    return found, None
 
 
 def _with_live_evidence(
@@ -388,7 +494,7 @@ def _with_live_evidence(
                 " AND v.current_representation_id = ch.representation_id"
                 " JOIN document_version_scope s ON s.deployment_id = v.deployment_id"
                 " AND s.version_id = v.version_id"
-                f" WHERE e.deployment_id = :deployment_id"
+                " WHERE e.deployment_id = :deployment_id"
                 f" AND e.{id_column} = ANY(CAST(:fact_ids AS uuid[]))"
             ),
             {"deployment_id": deployment_id, "fact_ids": [str(f) for f in fact_ids]},
