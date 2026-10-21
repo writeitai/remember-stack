@@ -48,10 +48,9 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_json
-from rememberstack.spine.period_adjudication import claim_in_force_on
-from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import FactKind
+from rememberstack.spine.period_adjudication import read_period_inputs_on
 from rememberstack.spine.period_adjudication import share_period_fence_on
 
 _CLAIM_LIMIT = 40
@@ -499,12 +498,6 @@ def _review_inputs(
     )
     if fact is None:
         return None
-    basis = fact_period_basis_on(
-        connection=connection,
-        deployment_id=deployment_id,
-        kind=kind,
-        fact_ids=(fact_id,),
-    )[fact_id]
     window_claims = sorted(str(value) for value in fact["window_claim_ids"] or ())
     params = {
         "deployment_id": deployment_id,
@@ -546,11 +539,18 @@ def _review_inputs(
             params,
         ).mappings()
     ]
-    intervals = claim_in_force_on(
+    # the basis certified and the periods shown come from ONE statement, so
+    # they describe the same committed period state (D140 §8.2)
+    periods = read_period_inputs_on(
         connection=connection,
         deployment_id=deployment_id,
-        claim_ids=(row["claim_id"] for row in claims),
+        kind=kind,
+        fact_ids=(fact_id,),
+        shown_ids=(row["claim_id"] for row in claims),
+        with_digest=False,
     )
+    basis = periods.bases[fact_id]
+    intervals = periods.shown
     handles = {
         str(row["claim_id"]): f"C{index + 1}" for index, row in enumerate(claims)
     }

@@ -34,7 +34,8 @@ from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_window_review import FactWindowReviewer
 from rememberstack.spine.lifecycle import LifecycleCatalog
-from rememberstack.spine.period_adjudication import record_period_basis_on
+from rememberstack.spine.period_adjudication import fact_period_basis_on
+from rememberstack.spine.period_adjudication import store_period_bases_on
 from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.workers import LabelFactsHandler
 from rememberstack.workers import P1Settings
@@ -171,11 +172,16 @@ def _fact_on_v1_only_claim(rig: _ReuseRig, *, v1: UUID) -> tuple[UUID, UUID]:
                 "n": FACT_NORMALIZER_VERSION,
             },
         )
-        record_period_basis_on(
+        store_period_bases_on(
             connection=connection,
             deployment_id=_DEPLOYMENT_ID,
             kind="observation",
-            fact_ids=(fact_id,),
+            bases=fact_period_basis_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                kind="observation",
+                fact_ids=(fact_id,),
+            ),
         )
     return fact_id, UUID(str(claim["claim_id"]))
 

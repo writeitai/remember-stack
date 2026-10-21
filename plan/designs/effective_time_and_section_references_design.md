@@ -973,43 +973,70 @@ application would ever reach the adjudicator again. A **window review** closes t
   claims is never materialised in a worker. It is recorded by every review and in the
   transaction that applies an ordinary adjudication. A fact with no periodised evidence has
   `NULL`.
-- **An ordinary application certifies only what it saw.** Period writers (declarations,
-  deletions, new occurrences) do not take the fence below, so one may commit at any point of
-  an application's apply transaction. The protocol binds the recorded basis to the inputs the
-  decision consumed:
-  1. **Watch, before final validation.** One SQL statement reads, from one database snapshot,
-     everything the bases may certify, using the prepared inputs (which the final validation
-     must match):
-     - which candidate facts already have a stale basis (stored ≠ current);
+- **Consistency: certify only one consistent read.** Every period-dependent input is read by
+  **one SQL statement**, so the whole read sees one committed state (READ COMMITTED gives
+  each statement its own snapshot). That covers the current bases, which bases are stale,
+  the shown claims' periods and, for ordinary application, a digest over the periods of all
+  coverable evidence. Two reads that "agree" across separate statements prove nothing: a
+  writer can commit between them, and an A → B → A sequence can repeat the same torn
+  combination. The rule has three parts:
+  1. **Read.** Preparation and final validation each read their period-dependent inputs with
+     that one statement.
+  2. **Certify.** A basis is stored only if it was produced by a validated one-statement read:
+     - a **review** stores the basis from its validated read, which is also the read that
+       produced the periods it showed;
+     - an **ordinary application**'s evidence changes during its writes, so it works in four
+       steps, set out in the next item.
+  3. **Order.** A writer that commits after the certifying read leaves that basis stale. The
+     fence below makes the writer's fan-out wait for the certifying transaction to commit, so
+     the fan-out sees the stale basis and reviews the fact.
+
+  Period writers take no lock. This is deliberate. In-force intervals change not only through
+  declarations, clears and deletions, which all pass through the scope projection's deferred
+  refresh, but also whenever extraction writes `chunk_claims` for a version, since a version's
+  representation becomes current before it is extracted. Freezing periods for the length of
+  a decision would need one of two things:
+  - an exclusive per-deployment lock in every extraction write of a periodised deployment,
+    which would serialise extraction deployment-wide; or
+  - a shared lock per lineage for every lineage a decision's evidence touches, which is
+    unbounded.
+
+  The rule above makes freezing unnecessary: a change is either visible to the certifying
+  read or leaves a stale basis whose review is ordered after the certification.
+- **Ordinary application in four steps.**
+  1. **Watch, before final validation.** One statement reads, from the prepared inputs (which
+     final validation must match), three things:
+     - the candidate facts that are already stale;
      - one digest over the in-force periods of every claim the bases can cover: all evidence
        of the candidate facts, both stances, however many, plus the shown claims;
-     - the shown claims' own periods.
+     - the shown claims' periods.
 
-     The digest is computed in the database. Only the digest, the stale ids (at most the
-     candidate count) and the shown claims' periods (at most 100) reach the worker, so the
-     worker's memory does not grow with a fact's evidence.
-  2. **Validate.** The final input snapshot must match the prepared fingerprint, and its
-     shown periods must equal the watch's. Otherwise a writer committed between the two
-     reads, and the decision is discarded and prepared again.
-  3. **Record.** After the writes, the basis is recorded only for changed facts that were
-     not stale. A stale fact keeps its stale basis: the change that made it stale queued its
-     review.
-  4. **Re-check.** The digest is read again over the same claims. An application only adds
-     or removes evidence of shown claims, so the set is unchanged. A different digest rolls
-     the whole application back for a fresh attempt. A writer that commits after the
-     re-check leaves the old basis stored, which its own fan-out (waiting at the fence for
-     this commit) sees as moved.
-- **The period fence.** Every writer of a window or basis — ordinary adjudication apply and
-  review apply — takes a per-deployment advisory lock *shared* after the entity adjudication
-  lock and before its final input validation, and holds it through commit (lock order:
-  hard-forget fence, identity epoch, entity lock, period fence). A lineage fan-out takes the
-  same lock *exclusively*, holding nothing else, before it reads stored bases. Every change a
-  fan-out reacts to committed before the fan-out was queued, so a decision validated on older
-  inputs has either committed by then (its stale basis is seen and reviewed) or validates after
-  the change (and sees it). Without the fence a review could validate basis B, a writer revert
-  the periods to A, the writer's fan-out see the still-stored A and skip the fact, and the
-  review then commit B's window. The barrier is taken once per fan-out; inference never runs
-  under it.
+     Only the digest, the stale ids (at most the candidate count) and the shown periods (at
+     most 100) reach the worker, so its memory does not grow with a fact's evidence.
+  2. **Validate.** The final snapshot must match the prepared fingerprint, and its shown
+     periods must equal the watch's. Otherwise the decision is discarded and prepared again.
+  3. **Verify.** After the writes, one statement reads the changed facts' bases together with
+     the digest over the same claims. An application only adds or removes evidence of shown
+     claims, so the set is unchanged. A different digest rolls the whole application back
+     for a fresh attempt.
+  4. **Store.** The verified bases are stored, except for facts that were already stale: the
+     change that made such a fact stale queued its review.
+- **The period fence.** Every certifier (ordinary apply and review apply) takes a
+  per-deployment advisory lock *shared*. It takes it after the entity adjudication lock and
+  before its final validation, and holds it through commit. Lock order: hard-forget fence,
+  identity epoch, entity lock, period fence, then row locks.
+
+  A lineage fan-out takes the same lock *exclusively* before its first page. It holds no
+  other lock while doing so, and it reads stored and current bases in one statement.
+  - **No deadlock:** the fence is the last advisory lock a certifier takes, and the fan-out
+    holds nothing else.
+  - **What it costs:** certifiers never wait for each other. A first fan-out page waits for
+    in-flight applies (milliseconds each) and holds back new ones only for one bounded page
+    query. Inference never runs under it.
+
+  Without the fence, a review could certify basis B, a writer could revert the periods to A,
+  that writer's fan-out could see the still-stored A and skip the fact, and only then would
+  the review commit B's window.
 - **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
   recorded an effective-time event, and never while a hard forget is honored (D74 scrubs the
   touched facts itself) — in the transaction of the change: a period write that changed
@@ -1034,10 +1061,12 @@ application would ever reach the adjudicator again. A **window review** closes t
   claims, and up to 40 evidence claims (window claims first, then claims from periodised
   lineages, then supports, newest first — selected in the database) with their own dates and
   in-force intervals, and asks one question: keep the window, or replace it with a complete
-  window grounded in supplied claims. Inputs are read under the entity's adjudication lock;
-  the model is called with no lock held; the answer is applied only if a re-read under the
-  entity lock and the shared period fence (with the fact row locked) yields the same input
-  fingerprint, otherwise the job retries. A replacement below the adjudication confidence floor
+  window grounded in supplied claims. Inputs are read under the entity's adjudication lock,
+  and the fact's basis and the shown claims' periods come from the one period statement. The
+  model is called with no lock held. The answer is applied only if a re-read under the entity
+  lock and the shared period fence (with the fact row locked) yields the same input
+  fingerprint, otherwise the job retries; the basis stored is the one that validated read
+  produced. A replacement below the adjudication confidence floor
   is not applied. Every review — kept or replaced — appends an
   `{relation,observation}_adjudications` row (`outcome` `update` or `noop`, method
   `small_model`, version `fact-window-review-…`) with the before/after window and both bases,

@@ -77,7 +77,7 @@ from rememberstack.spine.period_adjudication import claim_in_force_on
 from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import period_fence_barrier_on
-from rememberstack.spine.period_adjudication import periods_unchanged_on
+from rememberstack.spine.period_adjudication import verified_period_bases_on
 from rememberstack.spine.period_adjudication import watch_periods_on
 from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.settings import load_database_settings
@@ -1288,10 +1288,10 @@ def test_ordinary_apply_never_certifies_periods_its_decision_did_not_see(
     """A period correction committed between validation and the basis write rolls
     the application back; the retry decides on the corrected periods (R2 P1-1)."""
     doc_id, version_id, claim = _one_edition_rule(rig, body="Allowance is 45 per day")
-    real_record = adjudication_module.record_period_basis_on
+    real_record = adjudication_module.verified_period_bases_on
     corrected = {"done": False}
 
-    def correct_then_record(**kwargs: Any) -> None:
+    def correct_then_record(**kwargs: Any) -> Any:
         if not corrected["done"]:
             corrected["done"] = True
             rig.periods.set_effective_periods(  # a separate, committed writer
@@ -1302,10 +1302,10 @@ def test_ordinary_apply_never_certifies_periods_its_decision_did_not_see(
                     EffectivePeriodInput(effective_from=_Y2015, effective_until=_Y2024),
                 ),
             )
-        real_record(**kwargs)
+        return real_record(**kwargs)
 
     monkeypatch.setattr(
-        adjudication_module, "record_period_basis_on", correct_then_record
+        adjudication_module, "verified_period_bases_on", correct_then_record
     )
     rig.answers.append(
         _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, None))
@@ -1351,17 +1351,17 @@ def test_ordinary_apply_never_certifies_evidence_periods_it_was_not_shown(
     )
     # only the incoming claim is shown; the fact's dated evidence is not
     monkeypatch.setattr(inputs_module, "_CLAIM_LIMIT", 1)
-    real_record = adjudication_module.record_period_basis_on
+    real_record = adjudication_module.verified_period_bases_on
     corrected = {"done": False}
 
-    def correct_then_record(**kwargs: Any) -> None:
+    def correct_then_record(**kwargs: Any) -> Any:
         if not corrected["done"]:
             corrected["done"] = True  # a separate, committed writer
             _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
-        real_record(**kwargs)
+        return real_record(**kwargs)
 
     monkeypatch.setattr(
-        adjudication_module, "record_period_basis_on", correct_then_record
+        adjudication_module, "verified_period_bases_on", correct_then_record
     )
 
     def support(prompt: str, type_name: str) -> dict[str, object]:
@@ -1468,26 +1468,27 @@ def test_a_correction_after_final_validation_is_never_certified(
 def test_a_correction_inside_the_watch_is_never_certified(
     rig: _Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A correction to unshown evidence committed while bases are being read leaves
-    the fact's basis stale, so the correction's fan-out reviews it (R3 P1-1,
-    second interleaving: the stale check and the period read are one statement)."""
+    """A correction to unshown evidence committed right after the watch's read is
+    seen by the post-write verification; the retry finds the fact stale, leaves its
+    basis stale and the correction's fan-out reviews it (R3 P1-1; the stale check
+    and the period read are one statement, so nothing can land between them)."""
     vat = _vat_rig(rig)
     memo_doc, (memo,) = _lineage(rig, label="memo", editions=1)
     memo_claim = _claim(
         rig, doc_id=memo_doc, body="VAT on books is 15%", chunks=(memo.chunk_id,)
     )
     monkeypatch.setattr(inputs_module, "_CLAIM_LIMIT", 1)  # evidence is unshown
-    real_basis = period_module.fact_period_basis_on
+    real_read = period_module.read_period_inputs_on
     corrected = {"done": False}
 
     def basis_then_correct(**kwargs: Any) -> Any:
-        found = real_basis(**kwargs)
+        found = real_read(**kwargs)
         if not corrected["done"]:
             corrected["done"] = True  # a separate, committed writer
             _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
         return found
 
-    monkeypatch.setattr(period_module, "fact_period_basis_on", basis_then_correct)
+    monkeypatch.setattr(period_module, "read_period_inputs_on", basis_then_correct)
 
     def support(prompt: str, type_name: str) -> dict[str, object]:
         assert type_name == "PromptFactDecision"
@@ -1578,11 +1579,16 @@ def test_the_period_watch_stays_bounded_over_5001_evidence_claims(rig: _Rig) -> 
             ),
             {"f": vat["old_fact"]},
         )
-        period_module.record_period_basis_on(
+        period_module.store_period_bases_on(
             connection=connection,
             deployment_id=_DEPLOYMENT,
             kind="observation",
-            fact_ids=(vat["old_fact"],),
+            bases=fact_period_basis_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                kind="observation",
+                fact_ids=(vat["old_fact"],),
+            ),
         )
     with rig.engine.connect() as connection:
         tracemalloc.start()
@@ -1602,12 +1608,168 @@ def test_the_period_watch_stays_bounded_over_5001_evidence_claims(rig: _Rig) -> 
     # the unshown evidence is still covered: moving its period end is detected
     _declare(rig, vat["doc_id"], vat["editions"][1], datetime(2019, 1, 1, tzinfo=UTC))
     with rig.engine.connect() as connection:
-        assert not periods_unchanged_on(
+        assert (
+            verified_period_bases_on(
+                connection=connection,
+                deployment_id=_DEPLOYMENT,
+                watch=watch,
+                changed_fact_ids=(),
+            )
+            is None
+        )
+
+
+def _grounded_review(prompt: str, type_name: str) -> dict[str, object]:
+    """A canned reviewer that dates the fact from the periods it is shown."""
+    assert type_name == "PromptWindowReview"
+    presentation = _inputs(prompt)
+    (claim,) = (
+        claim
+        for claim in presentation["claims"]
+        if claim["claim_text"] == presentation["fact"]["statement"]
+    )
+    (period,) = claim["source_in_force"]
+    return {
+        "decision": "replace",
+        "window": {
+            "window": {
+                "valid_from": period["from"],
+                "valid_until": period["until"],
+                "valid_precision": "day" if period["until"] else "open",
+            },
+            "supporting_claims": [claim["handle"]],
+        },
+        "confidence": 0.9,
+        "rationale": "Dated by the periods its text was in force.",
+    }
+
+
+def _assert_settled(rig: _Rig, fact_id: UUID) -> None:
+    """A fact whose stored basis is current has the window its current periods give."""
+    with rig.engine.connect() as connection:
+        current = fact_period_basis_on(
             connection=connection,
             deployment_id=_DEPLOYMENT,
-            watch=watch,
-            changed_fact_ids=(),
+            kind="observation",
+            fact_ids=(fact_id,),
+        )[fact_id]
+        (claim,) = connection.execute(
+            text(
+                "SELECT e.claim_id FROM observation_evidence e"
+                " JOIN observations o ON o.observation_id = e.observation_id"
+                " JOIN claims c ON c.claim_id = e.claim_id"
+                " WHERE o.observation_id = :f AND c.claim_text = o.statement"
+            ),
+            {"f": fact_id},
+        ).scalars()
+        (period,) = claim_in_force_on(
+            connection=connection, deployment_id=_DEPLOYMENT, claim_ids=(claim,)
+        )[str(claim)]["in_force"]
+    row = _fact(rig, fact_id)
+    assert row["period_basis"] == current
+    until = row["valid_until"]
+    assert (None if until is None else until.isoformat()) == period["until"]
+
+
+def test_a_torn_review_read_cannot_certify_a_window_from_another_period(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R4 P1-1, the reviewer's interleaving: corrections A -> B -> A committed around
+    each review input read (preparation and final validation). The basis and the
+    periods shown are one statement, so they always describe one period state, and
+    the window certified is the window those periods give."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)  # A: review is needed
+    b = datetime(2022, 1, 1, tzinfo=UTC)
+    real_basis = getattr(review_module, "fact_period_basis_on", None)
+    real_inputs = review_module._review_inputs
+    reads: list[Any] = []
+
+    def basis_then_b(**kwargs: Any) -> Any:  # the reviewed head's separate read
+        assert real_basis is not None
+        result = real_basis(**kwargs)
+        _declare(rig, vat["doc_id"], vat["editions"][2], b)
+        return result
+
+    def inputs_then_a(**kwargs: Any) -> Any:
+        if real_basis is None:  # one statement: land B mid-review instead
+            _declare(rig, vat["doc_id"], vat["editions"][2], b)
+        result = real_inputs(**kwargs)
+        reads.append(result)
+        _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
+        return result
+
+    if real_basis is not None:
+        monkeypatch.setattr(review_module, "fact_period_basis_on", basis_then_b)
+    monkeypatch.setattr(review_module, "_review_inputs", inputs_then_a)
+    rig.answers.append(_grounded_review)
+    try:
+        _review(rig, vat["old_fact"])
+    except ApplicationInputChanged:
+        pass  # rejected: the validated inputs were not the prepared ones
+    assert len(reads) == 2
+    with rig.engine.connect() as connection:
+        moved, _ = period_module.facts_needing_review_on(
+            connection=connection, deployment_id=_DEPLOYMENT, doc_id=vat["doc_id"]
         )
+    if any(fact == vat["old_fact"] for _, fact, _ in moved):
+        return  # left stale: its review is guaranteed
+    _assert_settled(rig, vat["old_fact"])
+
+
+def test_reviews_racing_real_period_writers_settle_on_the_final_periods(
+    rig: _Rig,
+) -> None:
+    """Separate period-writer transactions keep moving a version's start while the
+    real worker runs reviews; once the writers stop and the queue drains, every
+    fact's stored basis is current and its window is the one the final periods give
+    (no stale window is ever left certified)."""
+    vat = _vat_rig(rig)
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.REVIEW_FACT_WINDOWS, handler=_handler(rig))
+    worker = Worker(
+        ledger=WorkLedger(
+            engine=rig.engine,
+            settings=WorkLedgerSettings(
+                retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
+            ),
+        ),
+        registry=registry,
+    )
+    rig.answers.extend([_grounded_review] * 2000)
+    starts = (_MID2023, datetime(2022, 1, 1, tzinfo=UTC), _Y2023, _MID2023)
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def write_periods() -> None:
+        try:
+            for round_ in range(12):
+                for start in starts:
+                    _declare(rig, vat["doc_id"], vat["editions"][2], start)
+                if round_ % 3 == 0:
+                    done.wait(0.01)
+        except BaseException as error:  # surfaced below
+            errors.append(error)
+        finally:
+            done.set()
+
+    def run_once() -> RunResultOutcome:
+        return worker.run_one(
+            deployment_id=_DEPLOYMENT,
+            stage=PipelineStage.REVIEW_FACT_WINDOWS,
+            lane=ProcessingLane.STEADY,
+        ).outcome
+
+    writer = threading.Thread(target=write_periods)
+    writer.start()
+    while not done.is_set():
+        run_once()  # reviews race the writer
+    writer.join()
+    assert errors == []
+    while run_once() is not RunResultOutcome.NO_WORK:
+        pass
+    for fact_id in (vat["old_fact"], vat["new_fact"]):
+        _assert_settled(rig, fact_id)
 
 
 def test_deleting_a_lineage_queues_review_in_its_tombstone_transaction(

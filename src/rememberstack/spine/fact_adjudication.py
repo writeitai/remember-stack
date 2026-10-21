@@ -42,9 +42,9 @@ from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
-from rememberstack.spine.period_adjudication import periods_unchanged_on
-from rememberstack.spine.period_adjudication import record_period_basis_on
 from rememberstack.spine.period_adjudication import share_period_fence_on
+from rememberstack.spine.period_adjudication import store_period_bases_on
+from rememberstack.spine.period_adjudication import verified_period_bases_on
 from rememberstack.spine.period_adjudication import watch_periods_on
 
 _logger = logging.getLogger(__name__)
@@ -899,27 +899,27 @@ class FactAdjudicator:
                     # evidence's current in-force periods (none for undated facts).
                     # A candidate already stale keeps its stale basis for review.
                     if watch is not None:
-                        record_period_basis_on(
-                            connection=connection,
-                            deployment_id=deployment_id,
-                            kind=snapshot["kind"],
-                            fact_ids=(
-                                UUID(value)
-                                for value in result["changed_fact_ids"]
-                                if UUID(value) not in watch.stale
-                            ),
-                        )
-                        if not periods_unchanged_on(
+                        changed = [UUID(v) for v in result["changed_fact_ids"]]
+                        bases = verified_period_bases_on(
                             connection=connection,
                             deployment_id=deployment_id,
                             watch=watch,
-                            changed_fact_ids=(
-                                UUID(value) for value in result["changed_fact_ids"]
-                            ),
-                        ):
+                            changed_fact_ids=changed,
+                        )
+                        if bases is None:
                             raise ApplicationInputChanged(
                                 "in-force periods changed before the decision committed"
                             )
+                        store_period_bases_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            kind=snapshot["kind"],
+                            bases={
+                                fact_id: basis
+                                for fact_id, basis in bases.items()
+                                if fact_id not in watch.stale
+                            },
+                        )
                     return result
             except ValueError as error:
                 # Roll back all attempted effects, but commit removal of the invalid

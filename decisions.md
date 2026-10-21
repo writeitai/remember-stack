@@ -6786,8 +6786,9 @@ to it.
    fingerprint when a lineage's periods change or one of its versions completes or is
    deleted, serialised with adjudication by a per-deployment period fence; a first fact
    from periodised evidence is adjudicated rather than recorded undated, and a review
-   changes only the window, never the fact's label or vector. An ordinary application
-   records a basis only for facts whose periods it saw unchanged through commit. An entity
+   changes only the window, never the fact's label or vector. Every period-dependent
+   input is read by one SQL statement, and a basis is stored only from such a validated
+   read, so a concurrent period writer leaves a stale basis that its fan-out reviews. An entity
    profile is re-embedded only when its rendered text changed. See the design §8.2.)*
 4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
    key; sections also store deterministic own-block and subtree hashes.
