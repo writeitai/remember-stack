@@ -10,7 +10,8 @@ read it first:
 - `plan/plans/` — *in what order* to build it (sequencing)
 - `decisions.md` (root) — the architecture decision log (D1, D2, …), the canonical record
 
-When editing any of these, three rules are **non-negotiable**.
+When editing any of these, four rules are **non-negotiable** (Rule 4 also governs code,
+tests and reviews).
 Read [the design-corpus skill](.agents/skills/design-corpus/SKILL.md) before
 creating or editing planning and decision documents. Its current-state rule
 means `plan/designs/` must be reconciled when a design changes, and superseded
@@ -72,38 +73,90 @@ silently. When writing any design or decision:
 
 ## Rule 4 — A new version costs only its edit (D56)
 
-The engine's ingestion is built so that **a new version of a document is re-processed only
-where it changed**. Unchanged parts reuse their previous chunk keys, embeddings and extracted
-claims; only the edited chunks, plus at most their immediate neighbours in the same section,
-are re-chunked, re-embedded and re-extracted. Example: in a 200-section contract, rewording
-one paragraph of § 12 must not touch § 1–11 or § 13–200. This is a core product promise —
-extraction is the dominant ingestion cost — and it has been broken by changes that looked
-unrelated. Treat it as an invariant on every change, in code, designs and reviews:
+**The requirement (owner, binding).** When a new version of a document arrives, paid work —
+embedding and extraction model calls — happens only where the document changed. Unchanged
+sections must reuse their embeddings and extracted claims. Example: rewording one paragraph
+of § 12 of a 200-section contract must not re-embed or re-extract § 1–11 or § 13–200.
+Extraction is the dominant ingestion cost, and this promise has been broken before by
+changes that looked unrelated, so check it on every change, in code, designs and reviews.
 
-- **Know what the reuse key contains** (D56, refined by D140): the chunk's own block hashes,
-  its previous/next same-section neighbour hashes, the stable header facts (title, document
-  kind, language, file name — D134 — and the chunk's text-origin date, D140), and the
-  extractor and structurer versions. Embeddings carry forward on the content and
-  embedding-input hashes (D80). Chunk boundaries are anchor-stabilized, whole-block runs
-  (D58), so an edit cannot shift boundaries elsewhere in the document.
-- **Do not put anything version-specific into those inputs.** A per-version date, banner,
-  counter, timestamp, generated ID or renumbered heading in the header facts or chunk text
-  changes every key and re-extracts the whole document on every version. Dates belong in
-  D140 text-origin/effective-period metadata, never in the keyed text.
-- **Any change to chunking, the block grid, the reuse key, header facts, text-origin, the
-  embedding-input policy, or the extractor/structurer/parser version strings is a reuse
-  boundary.** Call it out explicitly in the design and PR (what re-processes, once, and
-  why), and get it accepted — never let it happen as a side effect.
-- **Prove it with a test.** A change that can affect ingestion must keep (or add) a
-  regression test that ingests v1 of a multi-section document and then v2 with one
-  paragraph changed, and asserts that only that paragraph's chunk and its immediate
-  same-section neighbours get new extractions and embeddings, while every other chunk
-  reuses its claims and vector.
-- **The same applies to anything that feeds the engine**: connectors and converters must
-  produce byte-identical output for unchanged content across versions (same title and file
-  name for every version of a document, deterministic rendering).
+**How the engine implements it today.** E1 deterministically re-packs every new
+representation into new chunk rows (fresh `chunk_id`s — that part is cheap); what carries
+over are content identities and the paid products keyed on them
+([e1_chunks_design §4 and §7](plan/designs/e1_chunks_design.md)):
+
+- **Packing (D58).** Chunks are whole-block runs packed per deepest-owner section, so an
+  edit never moves chunk boundaries in another section. Inside the edited section, a
+  length change can shift later boundaries until the next accepted content anchor (a block
+  whose hash satisfies `uint64(block_hash) mod anchor_modulus == 0`, at least
+  `anchor_min_gap_tokens` after the previous one) or the section's end.
+- **Embeddings (D80).** A vector carries forward from an earlier version of the same
+  lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
+  location header + body; it depends on the lineage title, section title and role), the
+  policy generation and the embedding model all match. Neighbours are not part of this key.
+- **Selection (D56, D140).** `extraction_input_hash` = own block hashes + previous/next
+  *same-section* neighbour hashes + header facts (`header_title()`, `source_kind`, the
+  chunk's text-origin date, `language`, `file_name`; plus the eligibility policy for
+  ineligible chunks) + extractor and structurer versions. D140's text origin keeps the date
+  stable for unchanged chunks across dated versions (`reuse_identity_hash` is the same
+  identity without the date).
+- **Claimify (D122).** `claimify_input_hash` = the target's Selection hash + the Selection
+  hashes of the **previous eight chunks in document order** + `REFERENCE_POLICY_VERSION`
+  ([document_reference_context_design](plan/designs/document_reference_context_design.md)).
+- **Span remapping (D119).** Reused cards and claims are re-anchored by relative offset and
+  exact substring match; a failed remap re-extracts.
+
+**Known gaps against the requirement** (not yet fixed; a design to close them is pending
+the owner's decision — do not describe them as solved):
+
+1. The D122 Claimify window crosses section boundaries, so an edit near the end of § 12 can
+   re-run Claimify for up to eight following chunks in § 13 and beyond.
+2. In long sections with few anchors, a length-changing edit can re-pack, and so
+   re-extract and re-embed, the rest of that section.
+3. The E0 section-summary cache key includes block ordinals and `node_path`, so inserting a
+   block re-runs summary calls for every later section (summaries stay out of the
+   extraction and embedding keys).
+4. Model-based structure fallback and title-role classification are not deterministic; a
+   different answer on a new version moves section ownership or roles, which changes
+   packing, neighbours and embedding inputs.
+
+**Rules for every change:**
+
+- **No fabricated volatile data in keyed inputs**: no generated dates, banners, counters,
+  timestamps, IDs or renumbering in header facts, titles, file names or chunk text. Real
+  source content may change: a genuine rename of the title or file name is an intended
+  boundary (D134), and real dates in the text stay.
+- **No model output in an identity** (D56): summaries, prefixes, section paths and offsets
+  never enter a reuse key; committed derived context is carried forward for unchanged
+  regions.
+- **Declare every reuse boundary.** Changing any of these re-keys some stage and must be
+  stated in the design and PR (what re-processes, once, and why) and accepted, never left
+  as a side effect: `BLOCKIZER_VERSION`, `CHUNKER_VERSION` and `ChunkerParams`,
+  `E0_CONVERT_VERSION` and converter routes, `E0_STRUCTURE_VERSION`,
+  `SKELETON_PARSER_VERSION`, `REUSE_IDENTITY_VERSION`,
+  `EXTRACTION_ELIGIBILITY_POLICY_VERSION`, `E2_EXTRACTOR_VERSION` (includes
+  `SECTION_ORIENTATION_VERSION`), `REFERENCE_POLICY_VERSION`,
+  `EMBEDDING_INPUT_POLICY_VERSION`, `E1_EMBED_VERSION` and the embedding model.
+- **Keep lineage identity stable.** Successive versions must arrive under the same
+  connector-native `(source_kind, source_ref)` (D55); never append a revision or hash to
+  `source_ref`. A one-shot upload is identified by its bytes, so an edited file becomes a new
+  document and reuses nothing. Ingest a lineage's versions oldest first, one at a time, and
+  keep their dates consistent: D140 only inherits a text-origin date that is no later than
+  the new version's; an undated version inherits nothing, and nothing inherits from one.
+- **Prove it with a test.** A change that can affect ingestion keeps or extends
+  `src/tests/workers/test_reuse_lifecycle.py` and `test_d140_text_origin_pg.py`, or adds a
+  test that ingests two versions of one lineage, with distinct source dates and stable names,
+  of a document with untouched sections before and after an edited multi-chunk section. It
+  counts provider calls per stage (Selection, Claimify, embedding) and asserts that
+  unchanged chunks keep their content, Selection and text-origin identities, reuse the same
+  `claim_id`s through `chunk_claims`, and cause no embedding calls. Cover a
+  packing-boundary case and a D122 window case. Cases that hit a known gap above are marked
+  expected-failure naming the gap, never silently weakened.
+- **Converters and connectors** must render unchanged content byte-identically across
+  versions (deterministic output, exact whitespace), because the reuse keys and span
+  remapping see their output.
 - **Reviewers check this rule explicitly** on every PR that touches ingestion, chunking,
-  E1/E2, header facts, converters or version handling.
+  E0/E1/E2, header facts, converters, connectors or version handling.
 
 ## Publish work in progress
 
