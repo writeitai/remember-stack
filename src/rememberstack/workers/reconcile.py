@@ -233,6 +233,13 @@ class ReconcileHandler:
             )
         return HandlerOutcome(
             follow_up=(
+                *_window_review(
+                    catalog=self._catalog,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="version_completed",
+                    content_hash=f"reconcile:{reconciliation_id.hex}",
+                ),
                 EnqueueWork(
                     deployment_id=work.deployment_id,
                     target_kind=work.target_kind,
@@ -560,6 +567,10 @@ class DeletionService:
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
+        # D140 §8.2: the lineage continues with different in-force intervals
+        self._catalog.request_window_review(
+            deployment_id=deployment_id, doc_id=doc_id, reason="version_deleted"
+        )
         return delta
 
     def delete_lineage(
@@ -716,6 +727,16 @@ class DocumentDeleter:
         if already_deleted and not changed:
             # Nothing was left to finish: the document was already gone.
             raise DocumentNotFoundError(str(doc_id))
+        # D140 §8.2: facts that also rest on other sources lose this lineage's
+        # in-force periods; review their windows (only if it ever had periods).
+        from rememberstack.spine.period_adjudication import request_window_review_on
+
+        request_window_review_on(
+            connection=connection,
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            reason="lineage_deleted",
+        )
         return delta, deleted_at
 
 
@@ -885,3 +906,26 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
             f"stage {work.stage} work {work.processing_id} carries no {field!r} payload"
         )
     return UUID(value)
+
+
+def _window_review(
+    *,
+    catalog: LifecycleCatalog,
+    deployment_id: UUID,
+    doc_id: UUID,
+    reason: str,
+    content_hash: str,
+) -> tuple[EnqueueWork, ...]:
+    """A D140 §8.2 lineage review job, only for a lineage that had periods."""
+    from rememberstack.spine.period_adjudication import review_request
+
+    if not catalog.lineage_ever_periodised(deployment_id=deployment_id, doc_id=doc_id):
+        return ()
+    return (
+        review_request(
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            reason=reason,
+            content_hash=content_hash,
+        ),
+    )

@@ -42,6 +42,7 @@ from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
+from rememberstack.spine.period_adjudication import record_period_basis_on
 
 _logger = logging.getLogger(__name__)
 
@@ -196,6 +197,43 @@ INPUT JSON:
 """
 
 
+_IN_FORCE_GUIDANCE = """
+IN-FORCE PERIODS
+Some sources are versioned documents whose versions are in force over declared
+periods: a policy, price list, standard or statute amended over time.
+source_in_force lists, for such a claim, the periods during which a version
+containing the claim's text was in force, as UTC bounds with EXCLUSIVE ends; a
+missing until means still in force. source_in_force_also_undated=true means the
+same text also appears in a source without declared periods. When the
+proposition holds BECAUSE the text is in force (a rule, rate, obligation,
+definition or entitlement the document establishes), these periods are world
+dates for it like source_world_*: you may set or bound a window from them,
+citing that claim. A later version stating a different value ends the earlier
+fact at that version's in-force start, never at publication time. Periods do not
+date events the text merely reports: a historical event described in the text
+keeps its own date. An empty list means no version with the text was ever in
+force.
+"""
+
+
+def render_fact_prompt(*, presentation: Mapping[str, Any]) -> str:
+    """The adjudication prompt for one attempt (D140 §8.2 guidance only when used).
+
+    The in-force section is added only when some supplied claim carries
+    ``source_in_force``, so an attempt without declared periods renders
+    byte-for-byte as before.
+    """
+    periodised = any(
+        "source_in_force" in claim for claim in presentation.get("claims", ())
+    )
+    prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+    if not periodised:
+        return prompt
+    marker = "empty windows are invalid.\n"
+    head, tail = prompt.split(marker, 1)
+    return f"{head}{marker}{_IN_FORCE_GUIDANCE}{tail}"
+
+
 class FactAdjudicationSettings(BaseSettings):
     """Model, engine, and conservative confidence floor for the fact adjudicator."""
 
@@ -300,7 +338,7 @@ class FactAdjudicator:
         call_key: str,
     ) -> FactApplicationDecision:
         """Run generative LLM prompt adjudication (baseline engine)."""
-        base_prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+        base_prompt = render_fact_prompt(presentation=presentation)
         base_receipt_key = f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
         # In-delivery translator budget: exactly one retry against this
         # same prepared attempt. The note is a local variable, never
@@ -566,7 +604,21 @@ class FactAdjudicator:
                         if crow.get("handle") == incoming_claim_handle:
                             claim_row = crow
                             break
-                    if claim_row and claim_row.get("source_world_precision"):
+                    period_window = _single_in_force_window(claim_row)
+                    if (
+                        period_window is not None
+                        and claim_row is not None
+                        and claim_row.get("source_world_precision")
+                        in (None, ClaimValidPrecision.UNKNOWN.value)
+                    ):
+                        # D140 §8.2: an undated claim whose text was in force
+                        # over one declared period is dated by that period,
+                        # exactly as its own dates would date it.
+                        grounded_window = PromptGroundedWindow(
+                            window=period_window,
+                            supporting_claims=(incoming_claim_handle,),
+                        )
+                    elif claim_row and claim_row.get("source_world_precision"):
                         valid_from = (
                             datetime.fromisoformat(claim_row["source_world_from"])
                             if claim_row.get("source_world_from")
@@ -803,12 +855,21 @@ class FactAdjudicator:
                 )
             try:
                 with connection.begin_nested():
-                    return apply_fact_decision(
+                    result = apply_fact_decision(
                         connection=connection,
                         snapshot=snapshot,
                         decision=decision,
                         method="small_model" if snapshot["facts"] else "novelty_gate",
                     )
+                    # D140 §8.2: these windows were just adjudicated against the
+                    # evidence's current in-force periods (none for undated facts).
+                    record_period_basis_on(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        kind=snapshot["kind"],
+                        fact_ids=(UUID(value) for value in result["changed_fact_ids"]),
+                    )
+                    return result
             except ValueError as error:
                 # Roll back all attempted effects, but commit removal of the invalid
                 # saved answer so the existing work retry can obtain a fresh one.
@@ -833,4 +894,36 @@ def _sole_new_fact(*, application_id: UUID) -> FactApplicationDecision:
         ),
         confidence=1.0,
         rationale="No candidate facts on this entity; the assertion is a new identity.",
+    )
+
+
+def _single_in_force_window(claim_row: Mapping[str, Any] | None) -> FactWindow | None:
+    """The fact window one contiguous in-force period gives a claim, else None.
+
+    In-force bounds are already canonical half-open instants, so they become the
+    window directly (an end is never advanced). Midnight UTC bounds are day
+    precision; an open end is ``open`` (the version is still in force).
+    """
+    if claim_row is None:
+        return None
+    periods = claim_row.get("source_in_force")
+    if not isinstance(periods, list) or len(periods) != 1:
+        return None
+    start = datetime.fromisoformat(periods[0]["from"])
+    until_raw = periods[0].get("until")
+    end = datetime.fromisoformat(until_raw) if until_raw else None
+    if end is None:
+        return FactWindow(
+            valid_from=start, valid_until=None, valid_precision=ClaimValidPrecision.OPEN
+        )
+    midnight = all(
+        (value.hour, value.minute, value.second, value.microsecond) == (0, 0, 0, 0)
+        for value in (start, end)
+    )
+    return FactWindow(
+        valid_from=start,
+        valid_until=end,
+        valid_precision=ClaimValidPrecision.DAY
+        if midnight
+        else ClaimValidPrecision.INSTANT,
     )

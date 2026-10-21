@@ -369,6 +369,12 @@ def project_concise_inputs(
             "current_testimony": row.get("is_current_testimony"),
             "attributed": row.get("is_attributed"),
         }
+        if row.get("in_force") is not None:
+            # D140 §8.2: only claims from versions with declared periods carry
+            # these keys, so an undated attempt renders exactly as before.
+            item["source_in_force"] = row["in_force"]
+            if row.get("in_force_also_undated"):
+                item["source_in_force_also_undated"] = True
         _put_text(
             item,
             "claim_text",

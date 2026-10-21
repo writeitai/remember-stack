@@ -183,6 +183,20 @@ class LabelFactsHandler:
             if not relation_ids and not observation_ids:
                 return HandlerOutcome()
             doc_id = None
+        elif work.target_kind in (
+            ProcessingTarget.RELATION,
+            ProcessingTarget.OBSERVATION,
+        ):
+            # A single-fact change (a D140 window review) relabels that fact.
+            if self._profile_refresher is None:
+                raise NonRetryableHandlerError(
+                    "fact projection repair requires a profile refresher"
+                )
+            if work.target_kind is ProcessingTarget.RELATION:
+                relation_ids = (work.target_id,)
+            else:
+                observation_ids = (work.target_id,)
+            doc_id = None
         else:
             doc_id = _payload_uuid(work=work, field="doc_id")
         label_generation = FACT_LABEL_VERSION

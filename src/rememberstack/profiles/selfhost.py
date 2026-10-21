@@ -96,6 +96,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.EMBED_CLAIM,
     PipelineStage.RECONCILE,
     PipelineStage.LABEL_RELATION,
+    PipelineStage.REVIEW_FACT_WINDOWS,
 )
 
 
@@ -1386,6 +1387,7 @@ class SelfHostProfile:
         from rememberstack.workers import EmbedChunksHandler
         from rememberstack.workers import EmbedClaimsHandler
         from rememberstack.workers import ExtractClaimsHandler
+        from rememberstack.workers import FactWindowReviewHandler
         from rememberstack.workers import LabelFactsHandler
         from rememberstack.workers import NormalizeRelationsHandler
         from rememberstack.workers import P1Settings
@@ -1447,6 +1449,17 @@ class SelfHostProfile:
                 references=ReferenceCatalog(
                     engine=self._engine, artifact_store=self._artifact_store
                 )
+            )
+        if stage is PipelineStage.REVIEW_FACT_WINDOWS:
+            from rememberstack.spine.fact_window_review import FactWindowReviewer
+
+            return FactWindowReviewHandler(
+                engine=self._engine,
+                reviewer=FactWindowReviewer(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    settings=FactAdjudicationSettings(),
+                ),
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -1675,7 +1688,8 @@ def _expected_components() -> dict[PipelineStage, str]:
     The ``crossref`` worker is composed but not listed: its work is one job per
     supplied reference generation (D140 §6.3), not one per version, so a
     version without references has none and pipeline readiness never waits
-    for it.
+    for it. ``review_fact_windows`` is likewise per lineage and per fact
+    (D140 §8.2), queued only for lineages with declared periods.
     """
     from rememberstack.spine import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION

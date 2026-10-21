@@ -13,6 +13,7 @@ from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_entity
 from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import entity_members
+from rememberstack.spine.period_adjudication import claim_in_force_on
 
 # Bounds limit model input, never certify complete identity/evidence coverage.
 _FACT_LIMIT = 20
@@ -290,6 +291,19 @@ def application_snapshot(
     )
     if application["claim_id"] not in {claim["claim_id"] for claim in claims}:
         raise ApplicationInputChanged("incoming source disappeared")
+    # D140 §8.2: a claim from versions with declared periods carries their
+    # in-force intervals; claims from undated lineages get no new keys, so an
+    # undated snapshot (and its fingerprint) is exactly what it was before.
+    in_force = claim_in_force_on(
+        connection=connection,
+        deployment_id=deployment_id,
+        claim_ids=(claim["claim_id"] for claim in claims),
+    )
+    for claim in claims:
+        found = in_force.get(str(claim["claim_id"]))
+        if found is not None:
+            claim["in_force"] = found["in_force"]
+            claim["in_force_also_undated"] = found["also_undated"]
     supports = _rows(
         connection=connection,
         sql=f"""

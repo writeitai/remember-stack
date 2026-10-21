@@ -43,6 +43,7 @@ from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EffectivePeriodConflictError
 from rememberstack.model import EffectiveTimeNotSupportedError
 from rememberstack.model import VersionKeyConflictError
+from rememberstack.spine.period_adjudication import request_window_review_on
 
 
 class EffectiveTimeCatalog:
@@ -142,6 +143,15 @@ class EffectiveTimeCatalog:
                     doc_id=doc_id,
                     instant=instant,
                 )
+            if replacements or retracted:
+                # D140 §8.2: facts adjudicated against the old periods are
+                # reviewed once this commits and the projection is rewritten.
+                request_window_review_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="periods_set",
+                )
             return EffectivePeriodsSet(
                 doc_id=doc_id,
                 version_id=version_id,
@@ -193,6 +203,12 @@ class EffectiveTimeCatalog:
                     "event_at": instant,
                     "event": "cleared",
                 },
+            )
+            request_window_review_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="effective_time_cleared",
             )
             return EffectiveTimeCleared(
                 doc_id=doc_id, retracted=retracted, cleared_at=instant

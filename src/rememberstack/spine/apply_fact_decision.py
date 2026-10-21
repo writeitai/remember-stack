@@ -437,6 +437,35 @@ def _enqueue_projection_repair(
     changed: tuple[UUID, ...],
 ) -> None:
     """Invalidate profiles and durably reuse label work for this application."""
+    from rememberstack.model import ProcessingTarget
+
+    enqueue_fact_projection_repair(
+        connection=connection,
+        deployment_id=deployment_id,
+        kind=kind,
+        changed=changed,
+        target_kind=ProcessingTarget.FACT_APPLICATION,
+        target_id=application_id,
+        content_hash=application_id.hex,
+    )
+
+
+def enqueue_fact_projection_repair(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: str,
+    changed: tuple[UUID, ...],
+    target_kind: Any,
+    target_id: UUID,
+    content_hash: str,
+) -> None:
+    """Invalidate the changed facts' entity profiles and queue their relabeling.
+
+    ``target_kind`` is ``fact_application`` for an ordinary application (the
+    label stage recovers the changed facts from its receipt) or the fact's own
+    kind for a single-fact change such as a D140 window review.
+    """
     from rememberstack.model import EnqueueWork
     from rememberstack.model import PipelineStage
     from rememberstack.model import ProcessingLane
@@ -475,14 +504,18 @@ def _enqueue_projection_repair(
         connection=connection,
         work=EnqueueWork(
             deployment_id=deployment_id,
-            target_kind=ProcessingTarget.FACT_APPLICATION,
-            target_id=application_id,
+            target_kind=target_kind,
+            target_id=target_id,
             stage=PipelineStage.LABEL_RELATION,
             component_version=label_relation_component_version(
                 embedding_model=P1Settings().embedding_model
             ),
-            content_hash=application_id.hex,
+            content_hash=content_hash,
             lane=ProcessingLane.STEADY,
-            payload={"application_id": str(application_id)},
+            payload={
+                "application_id"
+                if target_kind is ProcessingTarget.FACT_APPLICATION
+                else f"{kind}_id": str(target_id)
+            },
         ),
     )
