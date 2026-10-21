@@ -21,6 +21,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from remember.models import DocumentSearchFilters
 from rememberstack.adapters import p1_ranked
 from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_matching_versions
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
@@ -769,6 +770,7 @@ class PostgresP1Index:
     ) -> "_TestimonyQuery":
         """Build the eligibility relation and the index nomination for one search."""
         parameters: dict[str, Any] = {"deployment_id": UUID(deployment_id)}
+        versions_sql: str | None = None
         if target == "claims":
             id_column = "claim_id"
             published = (
@@ -805,6 +807,9 @@ class PostgresP1Index:
             predicates, filter_parameters = _chunk_filters(equality_filters)
             parameters.update(filter_parameters)
             if documents is not None and not is_empty(documents):
+                versions_sql, _ = live_matching_versions(
+                    filters=documents, prefix="documents_"
+                )
                 version_sql, document_parameters = live_version_matches(
                     filters=documents,
                     version="published.version_id",
@@ -908,7 +913,7 @@ class PostgresP1Index:
             parameters=parameters,
             nomination=nomination,
             coverage_sql=coverage_sql,
-            selective=documents is not None and not is_empty(documents),
+            versions_sql=versions_sql,
         )
 
     def _run_testimony(
@@ -936,7 +941,7 @@ class PostgresP1Index:
                 )
             if entity_ids:
                 return _entity_tiers(connection, query=query, k=k)
-            if query.selective:
+            if query.versions_sql is not None:
                 eligible = _small_eligible_set(connection, query=query)
                 if eligible is not None:
                     rows = _exact_testimony(
@@ -2185,8 +2190,8 @@ class _TestimonyQuery:
     parameters: Mapping[str, Any]
     nomination: p1_ranked.NominationStatement
     coverage_sql: str | None
-    selective: bool = False
-    """A document filter narrows eligibility; try the small-set exact tier."""
+    versions_sql: str | None = None
+    """Matching versions of a document-filtered chunk search (small-set tier)."""
 
 
 def _confirm_by_candidate(relation_where: str, id_expression: str) -> str:
@@ -2232,12 +2237,22 @@ def _small_eligible_set(
     matches, so nomination would fetch up to the work budget and still stop
     short (the scaling sweep's 1% document stratum). At or below the exact-tier
     threshold the eligible rows are scored exactly instead, as entity tiers
-    are (D142 §8.4); the probe reads at most threshold + 1 rows.
+    are (D142 §8.4). The probe starts from the matching versions and reads
+    each one's chunks through a ``LATERAL`` subquery (``OFFSET 0`` keeps the
+    planner from flattening it and starting from every chunk instead: 6 s
+    against 83 ms at 3M chunks), and it reads at most threshold + 1 rows.
     """
+    assert query.versions_sql is not None
     rows = connection.execute(
         text(
+            "SELECT eligible.item_id"
+            f" FROM ({query.versions_sql}) AS matching_version"
+            " CROSS JOIN LATERAL ("
             f"SELECT indexed.{query.id_column}::text AS item_id"
-            f" {query.relation} {query.where} LIMIT :tier_limit"
+            f" {query.relation} {query.where}"
+            " AND published.version_id = matching_version.version_id"
+            " OFFSET 0) AS eligible"
+            " LIMIT :tier_limit"
         ),
         {**query.parameters, "tier_limit": p1_ranked.EXACT_TIER_THRESHOLD + 1},
     ).scalars()

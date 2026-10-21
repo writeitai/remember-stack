@@ -85,6 +85,25 @@ def _rewrite_text(engine: Engine, *, min_words: int, max_words: int) -> None:
         )
 
 
+def _add_metadata(engine: Engine) -> None:
+    """Give every version D134 metadata; document filters match on it.
+
+    The D140 seed writes none, so without this a document filter matches
+    nothing and the filtered stratum measures an empty result.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                " family, metadata_mapping_version)"
+                " SELECT deployment_id, version_id, doc_id, 'markdown', 'bench'"
+                " FROM document_versions WHERE deployment_id = :d"
+                " ON CONFLICT DO NOTHING"
+            ),
+            {"d": d140.DEPLOYMENT},
+        )
+
+
 def _duplicate_versions(engine: Engine, *, share: float, versions: int) -> int:
     """Copy version 1's chunk text to every later version for ``share`` of lineages."""
     if share <= 0:
@@ -252,6 +271,7 @@ def main() -> None:
             semantic_chunks=0,
         )
         _rewrite_text(engine, min_words=args.min_words, max_words=args.max_words)
+        _add_metadata(engine)
         duplicated = _duplicate_versions(
             engine, share=args.duplicate_share, versions=args.versions
         )
