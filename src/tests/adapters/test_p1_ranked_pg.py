@@ -91,6 +91,15 @@ def _seed_chunks(
             label=f"d142-{uuid4()}",
             at=_NOW,
         )
+        # document filters match on D134 metadata, as for real documents
+        connection.execute(
+            text(
+                "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                " family, metadata_mapping_version)"
+                " VALUES (:d, :v, :doc, 'markdown', 'test')"
+            ),
+            {"d": _DEPLOYMENT_ID, "v": lineage.version_id, "doc": lineage.doc_id},
+        )
         for chunk_id, body in zip(ids, bodies, strict=True):
             connection.execute(
                 text(
