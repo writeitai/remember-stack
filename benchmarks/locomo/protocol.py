@@ -310,7 +310,19 @@ asked what the work is about) in the final answer rather than omitting either se
 When asked what a work (book, series, movie, or game) is about, identify the supported plot
 premise, central subject, setting, creatures, or core theme (including from attached image
 interpretations or descriptions). Prefer concrete content over evaluative praise unless the
-question asks about style or quality.
+question asks about style or quality. When a dialogue turn [D<session>:<turn>] refers to an
+attached image (e.g. "this series", "this book", "this game", followed by "[Attached image for
+D<session>:<turn> ...]:"), match that turn strictly to the Visual description, Interpretation,
+and "Dataset-provided derived image search query for D<session>:<turn>:" bearing the same
+D<session>:<turn> identifier (which follow that header and may span the next 1–3 chunks; use
+adjacent_chunks with window=2 to read across OCR/description/interpretation chunks). Because
+chunks split on Markdown headings, the top of a chunk may contain the Interpretation or derived
+image search query for an earlier turn (e.g. "for D<session>:<earlier_turn>"), which can cause
+extracted claims or facts to misresolve "this ..." in [D<session>:<turn>] to the earlier turn's
+entity (such as an earlier movie trilogy or game). Always check the D<session>:<turn> identifier
+on image metadata in the source chunks and override any such misresolved claim or fact with the
+actual subject, creatures, or title from the matching D<session>:<turn> image interpretation and
+search query.
 
 When answering questions about what someone loves, enjoys, does, or experienced, prefer
 the speaker's specific verbatim terms rather than generalizing or abstracting to a broader umbrella
