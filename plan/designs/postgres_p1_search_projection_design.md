@@ -180,8 +180,9 @@ tested builds of:
   1.5.1 scores unspilled (memtable) rows with raw document length while
   segments and the standalone operator use fieldnorm-quantized length
   (§8.3). The image carries **no local patch** for this: §8.3's stop margin
-  is proven for both scorers, and the §9 scorer-bound gate verifies the
-  bound on every image build.
+  is proven for both scorers (a post-approval design change, §8.3), and the
+  §9 scorer-bound gate forces re-verification whenever the pinned revision
+  changes.
 
 Startup/readiness verifies PostgreSQL major version, extension availability,
 and the configured **1,536** embedding dimension. Missing requirements fail readiness;
@@ -368,8 +369,13 @@ segments and the standalone operator use the quantized length; per-term
 float4 scores are also accumulated differently (float4 in index order versus
 float8 in query-term order).
 
-**Bounded reconciliation (implementation decision, 2026-10-21; replaces the
-earlier plan of a local scorer patch).** Two facts bound the gap for every
+**Bounded reconciliation — post-approval design change (2026-10-21).** The
+round-3-approved design bound one canonical scorer by a local patch to
+pg_textsearch. During implementation the patch proved broad (analysis §6.1:
+the index accumulates float4 terms in index order on four separate scoring
+paths, the operator accumulates float8 in query-term order), so this section
+replaces it. The change is submitted to the dual review as a design change,
+not as an implementation detail. Two facts bound the gap for every
 row, without patching the extension:
 
 1. Quantization only rounds a length down (largest table entry ≤ length), so
@@ -580,16 +586,20 @@ materially. All numbers are starting points for the owner to confirm:
   bound is below −1.0 pp; otherwise the result is **inconclusive** — an
   underpowered result never passes; the owner then chooses more runs or a
   decision. The rule, seed and question set are fixed before the first run;
-- **scorer bound** (every image build) — on randomized corpora with mixed
-  spilled and unspilled rows, multi-term queries and near-ties, for every row
-  an index-ordered scan streams, the index score (the ORDER BY value) and the
-  projected canonical score satisfy `index ≤ canonical·(1+ε)` and
-  `canonical ≤ index·(1+ε)/(1 − 1/9)`, and the loop's BM25 results equal an
-  exact canonical oracle. Fixtures include 40- and 41-token documents with
-  equal term frequency and reversed stable IDs (a canonical tie), the
-  three-length single-term counterexample (48, 50, 67 over average length
-  100), multi-term near-ties, and both sides of the exact-tier threshold. A
-  failure blocks the image; it would mean the extension changed its length
+- **scorer bound** (every CI run, on the built engine image) — the margin is
+  re-verified whenever the extension changes, and the loop is checked against
+  an exact canonical oracle. Two parts exist today: a unit gate fails when the
+  image pins a `pg_textsearch` revision other than the one whose length table
+  and scorers the margin was verified on (`BM25_BOUND_VERIFIED_REVISION`), and
+  checks the quantization error against that table; Postgres proofs on the
+  built image check the loop against the oracle under a restrictive filter,
+  the three-length single-term counterexample (48, 50, 67 over average length
+  100), and 40- and 41-token documents with equal term frequency and reversed
+  stable IDs (a canonical tie). **Not built yet:** randomized corpora with
+  mixed spilled and unspilled rows and multi-term near-ties that compare every
+  streamed row's index score with its canonical score
+  (`index ≤ canonical·(1+ε)`, `canonical ≤ index·(1+ε)/(1 − 1/9)`). A failure
+  blocks the image; it would mean the extension changed its length
   quantization or scoring and the margin must be re-derived;
 - **lexical behaviour** — the BM25 positive-match change (§8.1) and the
   `pg_textsearch` upgrade are

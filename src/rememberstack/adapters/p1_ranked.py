@@ -52,6 +52,11 @@ BM25_LENGTH_QUANTIZATION_ERROR = 1.0 / 9.0
 Measured from ``FIELDNORM_DECODE_TABLE``: the worst floor error over all
 lengths is 0.111108…, just under 1/9. A test pins the bound to the table."""
 
+BM25_BOUND_VERIFIED_REVISION = "fa142d049d08eac45a263f5abc250c8877ae076e"
+"""The pg_textsearch revision whose scorers and length table the margin was
+checked against. The scorer-bound gate fails when the image pins another one,
+so an extension upgrade re-verifies the bound before it ships."""
+
 SCORE_EPSILON = 1e-4
 """Relative slack for float4/float8 accumulation differences between scorers."""
 

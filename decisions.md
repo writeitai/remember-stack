@@ -6923,8 +6923,13 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   stops only past a proven margin (`index ≤ canonical ≤ index/(1−1/9)`, so
   stop when the `k`-th canonical score exceeds `(1+ε)²/(1−1/9)` × the last
   fetched one); a scorer-bound gate checks the bound on every image build.
-  (Implementation decision 2026-10-21: this replaces the reviewed design's
-  local scorer patch; it needs no extension change.)
+  **Post-approval design change (2026-10-21, after the round-3 approval;
+  for the dual review to judge):** this margin replaces the approved design's
+  local scorer patch, because bitwise-equal scorers would have meant patching
+  every BM25 scoring path of the extension (design §8.3, analysis §6.1). It
+  keeps exactness at the cost of fetching rows within ≈12.5% of the `k`-th
+  score; the gate is a test pinning the extension revision the bound was
+  verified on, plus the counterexample proofs on the built image.
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
   compatibility is a local image gate; no local patch.
 - **Gates.** Scaling (latency with returned-`k` and truncation rates and

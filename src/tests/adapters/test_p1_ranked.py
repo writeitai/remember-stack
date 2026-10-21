@@ -7,6 +7,8 @@ exhaustion classification, plan attestation, and the structured result.
 
 from collections.abc import Mapping
 import json
+from pathlib import Path
+import re
 from typing import Any
 
 import pytest
@@ -17,9 +19,10 @@ from rememberstack.ports.p1_index import P1SearchAccount
 from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 
-# pg_textsearch v1.5.1 src/segment/fieldnorm.c FIELDNORM_DECODE_TABLE, the
-# boundaries of every bucket up to 2**20 (the full table continues the same
-# 3-bit-mantissa pattern). Encoding takes the largest entry <= length.
+# pg_textsearch src/segment/fieldnorm.c FIELDNORM_DECODE_TABLE at the pinned
+# revision: 0..39 exact, then a 3-bit-mantissa pattern. The first 256 values
+# of this generator equal all 256 table entries (checked 2026-10-21 against
+# BM25_BOUND_VERIFIED_REVISION). Encoding takes the largest entry <= length.
 _EXACT = list(range(40))
 
 
@@ -51,6 +54,18 @@ def test_length_quantization_error_is_below_the_pinned_bound() -> None:
     worst = max(1 - _quantize(length, table) / length for length in range(1, 2_000_000))
     assert worst < p1_ranked.BM25_LENGTH_QUANTIZATION_ERROR
     assert worst > 0.111  # the bound is tight, not a loose guess
+
+
+def test_scorer_bound_was_verified_for_the_pinned_extension() -> None:
+    """Scorer-bound gate: the image pins the revision the margin was checked on.
+
+    Upgrading pg_textsearch fails here until someone re-reads the new
+    revision's length table and both scorers, re-checks the margin, and moves
+    ``BM25_BOUND_VERIFIED_REVISION``."""
+    dockerfile = (Path(__file__).parents[3] / "Dockerfile.postgres").read_text()
+    pinned = re.search(r"^ARG PG_TEXTSEARCH_REVISION=(\w+)$", dockerfile, re.M)
+    assert pinned is not None
+    assert pinned.group(1) == p1_ranked.BM25_BOUND_VERIFIED_REVISION
 
 
 def _bm25(

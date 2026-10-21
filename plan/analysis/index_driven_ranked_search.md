@@ -343,13 +343,14 @@ Options considered:
   on every BM25 scoring path (memtable, segment WAND, single-term fast path,
   top-k heap), so the patch would be broad and need rebasing on every
   upgrade;
-- **bounded reconciliation (chosen)** — keep the standalone operator as the
+- **bounded reconciliation (chosen after the round-3 approval — a
+  post-approval design change submitted to the dual review)** — keep the standalone operator as the
   canonical score, evaluated in the cursor's executor, and stop only past a
   proven margin: quantization rounds lengths down by less than 1/9, so for
   every row `index ≤ canonical ≤ index/(1−1/9)` (plus float slack). The loop
   stops when the `k`-th confirmed canonical score exceeds
   `(1+ε)²/(1−1/9) ≈ 1.125` times the last fetched canonical score. No
-  extension change; a scorer-bound gate re-verifies the bound on every image
+  extension change; a scorer-bound gate re-verifies the bound in CI on every image
   build (design §8.3, §9).
 
 With one scoring generation, the ordered scan streams matching rows in
@@ -461,8 +462,8 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
    0.90; LoCoMo answer accuracy by the predeclared paired non-inferiority test
    of design §9 (question as sampling unit, three runs per side, paired
    bootstrap one-sided 95% bound, fixed 1.0 pp margin, inconclusive when
-   underpowered). The scorer-bound gate (design §9) runs on every image
-   build. The positive-match lexical change and the
+   underpowered). The scorer-bound gate (design §9) runs in CI on the built
+   image (its randomized spill-mixed part is not built yet). The positive-match lexical change and the
    `pg_textsearch` upgrade are measured separately against today's answers.
    The LoCoMo part is a paid run and waits until the in-progress run has
    finished.
