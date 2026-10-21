@@ -166,6 +166,7 @@ def _nomination_buffers(engine: Engine, query: str) -> int | None:
 
 def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
     index = PostgresP1Index(engine=engine, embedding_model=d140.MODEL)
+    index.configure_channels(deployment_id=d140.DEPLOYMENT)
     sample = _queries(engine, queries)
     with engine.connect() as connection:
         doc_ids = [
