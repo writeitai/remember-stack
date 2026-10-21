@@ -27,8 +27,7 @@ Synthetic data; timings only, not a correctness test.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
-from datetime import UTC
+import hashlib
 import json
 import random
 import statistics
@@ -41,11 +40,14 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from benchmarks.d140_scope import run as d140
+from remember.models import HistoryReadTime
 from rememberstack.adapters import PostgresP1Index
-from rememberstack.core.text_scope import TextScope
-from rememberstack.model.assured_operations import HistoryFactTime
+from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.model.client import DocumentSearchFilters
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import search_account
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces.query_engine import QueryEngine
 
 K = 20
 
@@ -130,24 +132,17 @@ def _duplicate_versions(engine: Engine, *, share: float, versions: int) -> int:
         return int(result.rowcount or 0)
 
 
-def _queries(engine: Engine, count: int) -> list[str]:
-    rng = random.Random(142)
-    with engine.connect() as connection:
-        texts = [
-            row[0]
-            for row in connection.execute(
-                text(
-                    "SELECT search_text FROM chunk_search WHERE deployment_id = :d"
-                    " ORDER BY chunk_id LIMIT 2000"
-                ),
-                {"d": d140.DEPLOYMENT},
-            )
-        ]
-    queries = []
-    for _ in range(count):
-        words = rng.choice(texts).split()
-        queries.append(" ".join(rng.sample(words, k=min(2, len(words)))))
-    return queries
+def _queries(count: int, *, seed: int = 142) -> list[str]:
+    """Two-word queries from the corpus's own Zipf word distribution.
+
+    Drawn from the generator's distribution, not from the corpus rows, so the
+    query set is identical at every corpus size (review r1 P2-4).
+    """
+    rng = random.Random(seed)
+    return [
+        " ".join(f"w{int((rng.random() ** 3) * d140.VOCABULARY)}" for _ in range(2))
+        for _ in range(count)
+    ]
 
 
 def _percentiles(samples: list[float]) -> dict[str, float]:
@@ -158,87 +153,212 @@ def _percentiles(samples: list[float]) -> dict[str, float]:
     }
 
 
+class _RecordingIndex:
+    """Delegate to the adapter, keeping the last lexical chunk search's account."""
+
+    def __init__(self, inner: PostgresP1Index) -> None:
+        self._inner = inner
+        self.last: P1SearchAccount | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def search_chunks_lexical(self, **arguments: Any) -> Any:
+        result = self._inner.search_chunks_lexical(**arguments)
+        self.last = search_account(result)
+        return result
+
+
+class _NoEmbedder:
+    """Lexical-only sweep: any embedding request is a harness bug."""
+
+    def embed(self, **_: object) -> Any:
+        raise AssertionError("the lexical sweep must not embed")
+
+
+def _eligible_current(engine: Engine, doc_ids: tuple[UUID, ...] | None) -> int:
+    """Current-scope eligible chunks of a stratum (the filter's real size)."""
+    with engine.connect() as connection:
+        return int(
+            connection.execute(
+                text(
+                    "SELECT count(*) FROM memory_v1.chunks_live AS c"
+                    " WHERE c.deployment_id = :d"
+                    " AND (CAST(:docs AS uuid[]) IS NULL"
+                    "      OR c.doc_id = ANY(CAST(:docs AS uuid[])))"
+                ),
+                {
+                    "d": d140.DEPLOYMENT,
+                    "docs": None
+                    if doc_ids is None
+                    else [str(item) for item in doc_ids],
+                },
+            ).scalar_one()
+        )
+
+
 def _stratum(
-    index: PostgresP1Index, queries: list[str], **arguments: Any
+    engine: Engine,
+    queries: list[str],
+    *,
+    doc_ids: tuple[UUID, ...] | None = None,
+    time_scope: Any = None,
 ) -> dict[str, Any]:
+    """Run the public ``search_chunks`` operation (BM25) for every query."""
+    pool = BoundedPostgresReadPool(
+        engine=engine, max_concurrency=2, pool_wait_seconds=30.0
+    )
+    index = _RecordingIndex(
+        PostgresP1Index(engine=engine, embedding_model=d140.MODEL, read_pool=pool)
+    )
+    surface = QueryEngine(
+        engine=engine,
+        search_index=index,  # type: ignore[arg-type]
+        model_provider=_NoEmbedder(),  # type: ignore[arg-type]
+        embedding_model=d140.MODEL,
+        fact_read_pool=pool,
+    )
+    documents = None if doc_ids is None else DocumentSearchFilters(doc_ids=doc_ids)
     latencies: list[float] = []
-    filled = 0
+    outcomes: dict[str, int] = {}
     terminations: dict[str, int] = {}
     fetched: list[int] = []
+    rounds: list[int] = []
     for query in queries:
         started = time.perf_counter()
-        result = index.search_chunks_lexical_scored(
-            deployment_id=str(d140.DEPLOYMENT), query=query, k=K, **arguments
+        envelope = surface.search_chunks(
+            deployment_id=d140.DEPLOYMENT,
+            query=query,
+            k=K,
+            channel="bm25",
+            documents=documents,
+            time=time_scope,
         )
         latencies.append(time.perf_counter() - started)
-        filled += int(len(result) >= K)
-        account = getattr(result, "account", None)
-        if account is not None:
-            name = str(account.termination.value)
+        if len(envelope.chunks) >= K:
+            outcome = "k_returned"
+        elif envelope.negative is not None:
+            outcome = envelope.negative.kind.value
+        else:
+            outcome = "fewer_than_k"
+        if envelope.truncation is not None and envelope.truncation.reason:
+            outcome += f":{envelope.truncation.reason}"
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        if index.last is not None:
+            name = index.last.termination.value
             terminations[name] = terminations.get(name, 0) + 1
-            fetched.append(int(account.fetched))
+            fetched.append(index.last.fetched)
+            rounds.append(index.last.fetch_rounds)
+    truncated = sum(
+        count
+        for name, count in terminations.items()
+        if name not in {"k_filled", "exhausted"}
+    )
     return {
         **_percentiles(latencies),
-        "returned_k_rate": filled / len(queries),
-        "terminations": terminations or None,
+        "queries": len(queries),
+        "eligible_current_chunks": _eligible_current(engine, doc_ids),
+        "public_outcomes": outcomes,
+        "returned_k_rate": outcomes.get("k_returned", 0) / len(queries),
+        "terminations": terminations,
+        "truncation_rate": truncated / len(queries),
         "mean_fetched": statistics.mean(fetched) if fetched else None,
-        "truncation_rate": (
-            sum(
-                v for k, v in terminations.items() if k not in {"k_filled", "exhausted"}
-            )
-            / len(queries)
-            if terminations
-            else None
-        ),
+        "max_fetched": max(fetched) if fetched else None,
+        "mean_fetch_rounds": statistics.mean(rounds) if rounds else None,
     }
 
 
-def _nomination_buffers(engine: Engine, query: str) -> int | None:
-    """Shared-buffer hits+reads of one join-free BM25 nomination (index work proxy)."""
+def _nomination_work(engine: Engine, query: str, *, fetched: int) -> dict[str, Any]:
+    """EXPLAIN (ANALYZE, BUFFERS) of the production nomination statement.
+
+    The statement the cursor runs (canonical projection, index order), read
+    to ``fetched`` rows — the depth the measured search actually consumed —
+    reporting planning time and shared buffers (index-internal work proxy).
+    """
+    index = PostgresP1Index(engine=engine, embedding_model=d140.MODEL)
+    nomination = index._testimony_query(  # noqa: SLF001 -- the real statement
+        target="chunks",
+        channel="bm25",
+        deployment_id=str(d140.DEPLOYMENT),
+        current_only=False,
+        equality_filters=None,
+        entity_ids=(),
+        documents=None,
+        time=None,
+        query_text=query,
+    ).nomination
     with engine.connect() as connection:
+        for name in ("enable_seqscan", "enable_bitmapscan", "enable_sort"):
+            connection.execute(text(f"SET LOCAL {name} = off"))
         plan = connection.execute(
             text(
-                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)"
-                " SELECT chunk_id FROM chunk_search WHERE deployment_id = :d"
-                " ORDER BY search_text <@> to_bm25query(:q, 'ix_chunk_search_bm25')"
-                " LIMIT :k"
+                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
+                f"{nomination.sql} LIMIT :nomination_limit"
             ),
-            {"d": d140.DEPLOYMENT, "q": query, "k": 4 * K},
+            {**nomination.parameters, "nomination_limit": max(1, fetched)},
         ).scalar_one()
         connection.rollback()
-    root = (json.loads(plan) if isinstance(plan, str) else plan)[0]["Plan"]
-    return int(root.get("Shared Hit Blocks", 0)) + int(
-        root.get("Shared Read Blocks", 0)
-    )
+    document = (json.loads(plan) if isinstance(plan, str) else plan)[0]
+    root = document["Plan"]
+    return {
+        "query": query,
+        "rows": fetched,
+        "planning_ms": document.get("Planning Time"),
+        "execution_ms": document.get("Execution Time"),
+        "shared_blocks": int(root.get("Shared Hit Blocks", 0))
+        + int(root.get("Shared Read Blocks", 0)),
+    }
+
+
+def _corpus_hash(engine: Engine) -> str:
+    """A content hash of the indexed corpus (ids and search text)."""
+    with engine.connect() as connection:
+        return str(
+            connection.execute(
+                text(
+                    "SELECT md5(string_agg(chunk_id::text || md5(search_text), ','"
+                    " ORDER BY chunk_id)) FROM chunk_search WHERE deployment_id = :d"
+                ),
+                {"d": d140.DEPLOYMENT},
+            ).scalar_one()
+        )
 
 
 def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
-    index = PostgresP1Index(engine=engine, embedding_model=d140.MODEL)
-    index.configure_channels(deployment_id=d140.DEPLOYMENT)
-    sample = _queries(engine, queries)
+    """Every stratum through the public operation, plus corpus/query identity."""
+    sample = _queries(queries)
     with engine.connect() as connection:
-        doc_ids = [
+        ordered = [
             UUID(str(row[0]))
             for row in connection.execute(
                 text(
                     "SELECT doc_id FROM documents WHERE deployment_id = :d"
-                    " ORDER BY doc_id LIMIT :n"
+                    " ORDER BY md5(doc_id::text)"
                 ),
-                {"d": d140.DEPLOYMENT, "n": max(1, lineages // 100)},
+                {"d": d140.DEPLOYMENT},
             )
         ]
-    return {
-        "current": _stratum(index, sample),
-        "document_filter_1pct": _stratum(
-            index, sample, documents=DocumentSearchFilters(doc_ids=tuple(doc_ids))
-        ),
-        "history": _stratum(
-            index,
-            sample,
-            time=TextScope.of(time=HistoryFactTime(), evaluated_at=datetime.now(UTC)),
-        ),
-        "nomination_buffers": _nomination_buffers(engine, sample[0]),
+    strata: dict[str, dict[str, Any]] = {
+        "current": {},
+        "history": {"time_scope": HistoryReadTime()},
+        "docs_0.1pct": {"doc_ids": tuple(ordered[: max(1, lineages // 1000)])},
+        "docs_1pct": {"doc_ids": tuple(ordered[: max(1, lineages // 100)])},
+        "docs_10pct": {"doc_ids": tuple(ordered[: max(1, lineages // 10)])},
+        # 10 current chunks per lineage: both sides of the 5,000-row tier
+        "docs_4990_rows": {"doc_ids": tuple(ordered[:499])},
+        "docs_5010_rows": {"doc_ids": tuple(ordered[:501])},
     }
+    report: dict[str, Any] = {
+        "query_sha256": hashlib.sha256("\n".join(sample).encode()).hexdigest(),
+        "corpus_md5": _corpus_hash(engine),
+        "strata": {},
+    }
+    for name, arguments in strata.items():
+        report["strata"][name] = _stratum(engine, sample, **arguments)
+    report["nomination_work"] = _nomination_work(
+        engine, sample[0], fetched=int(report["strata"]["current"]["max_fetched"] or K)
+    )
+    return report
 
 
 def main() -> None:
@@ -253,12 +373,33 @@ def main() -> None:
     parser.add_argument("--max-words", type=int, default=300)
     parser.add_argument("--maintenance-work-mem", default="1GB")
     parser.add_argument("--out", default="p1_ranked_sweep.json")
+    parser.add_argument(
+        "--measure-only",
+        action="store_true",
+        help="measure the corpus already in the database (one size, no reseed)",
+    )
     args = parser.parse_args()
     engine = create_engine(
         load_database_settings().database_url.get_secret_value(), pool_size=2
     )
     d140.MAINTENANCE_WORK_MEM[0] = args.maintenance_work_mem
     report: dict[str, Any] = {"arguments": vars(args), "sizes": {}}
+    if args.measure_only:
+        with engine.connect() as connection:
+            lineages = int(
+                connection.execute(
+                    text("SELECT count(*) FROM documents WHERE deployment_id = :d"),
+                    {"d": d140.DEPLOYMENT},
+                ).scalar_one()
+            )
+        report["sizes"]["existing"] = {
+            "lineages": lineages,
+            "latency": measure(engine, queries=args.queries, lineages=lineages),
+        }
+        with open(args.out, "w", encoding="utf-8") as handle:
+            json.dump(report, handle, indent=2, default=str)
+        print(json.dumps(report, indent=2, default=str))
+        return
     for size in (int(item) for item in args.sizes.split(",")):
         lineages = max(1, size // (args.versions * args.chunks))
         _reset(engine)
