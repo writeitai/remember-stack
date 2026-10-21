@@ -194,12 +194,13 @@ same fields as §3. It restricts results to evidence from matching documents:
   supporting claim from a matching document; the returned evidence is limited
   to those claims.
 
-The filter is applied inside the ranked statement, before the top results
-are cut (the existing D94 rule), never by filtering a finished top-k.
+The filter is applied in the ranked search's confirmation step, before the
+top results are cut (D94, executed as D142's nominate–confirm–refill loop),
+never by filtering a finished top-k.
 
 `search` also takes the D140 `time` scope. It selects which versions of
 lineages with declared effective periods contribute chunks and claim
-occurrences, in the same statement as the `documents` filter; for other
+occurrences, in the same confirmation step as the `documents` filter; for other
 lineages the current version contributes, as before. For scoped reads of
 periodised lineages the returned claim evidence is the claim's **occurrence
 in the selected version** (its chunk, version and per-occurrence spans), not

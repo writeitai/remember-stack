@@ -90,8 +90,9 @@ D54, D80, and D87 remain controlling.*
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies` validate the one
    ready configured embedding-input-policy/embedder state per invocation.
-   Ranked P1 scans join target-specific authority
-   views in the same PostgreSQL statement before exposing rows or bytes.
+   Ranked P1 scans confirm every index nomination against target-specific
+   authority views in the same PostgreSQL transaction snapshot before exposing
+   rows or bytes ([D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot)).
    `lexical_facts` is
    absent until the §10 P1 indexing trigger is met.
 9. **Customer semantics stay customer-owned.** Ad-hoc and saved SQL inherit the
@@ -530,7 +531,7 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 |---|---|
 | Public views | Apply the full live lineage/version/representation chain before projection or aggregation |
 | SQL helpers | Read only invariant-bearing public views or equivalent private subqueries covered by the same tests |
-| PostgreSQL P1 SRFs | Rank `chunk_search` or private in-row embeddings and apply target-specific authority joins/predicates in one statement before exposing rows |
+| PostgreSQL P1 SRFs | Nominate from the `chunk_search` or in-row embedding index and confirm with target-specific authority joins/predicates in one transaction snapshot, refilling until `k` eligible rows (D142), before exposing rows |
 | SQL/PGQ fixed patterns | Match only invariant-bearing deployment-keyed graph views at the caller's statement clock; explicitly reject repeated element UUIDs when simple-path semantics are required |
 | Recursive graph helpers | Apply authority predicates during expansion and drop a path as one unit when any member fails |
 | Saved queries and assured operations | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
@@ -599,7 +600,8 @@ independently of an outer `LIMIT`. PostgreSQL-only `facts_as_of`,
 `SECURITY INVOKER` functions owned by the no-login view owner. Projection-backed
 semantic, lexical, and body calls are recognized from the validated statement.
 For semantic calls, the trusted executor computes the query embedding once and
-passes it as a bound vector to one private PostgreSQL ranked statement; lexical
+passes it as a bound vector to the private P1 adapter's ranked search (D142:
+index nomination and authority confirmation in one snapshot); lexical
 and body calls remain PostgreSQL-native. No untrusted language, filesystem or
 network authority is loaded into PostgreSQL. The executor preserves each
 invocation's caps, generation pin, authority-join point, telemetry, and
@@ -686,7 +688,8 @@ facts permit `fact_kind`, `predicate`, `subject_entity_id`,
 user-authored predicates are rejected. Fact `support_state` is exactly
 `current` or `withdrawn`; stance filters, where exposed, are exactly `supports`
 or `contradicts`. P1 applies these filters through indexed normalized authority
-joins inside the ranked statement; it does not copy them into search rows. In
+joins in the confirmation step, before the `k` cut (D142); it does not copy
+them into search rows. In
 v1 `source_shape` is a derived D80 location-fact filter only: it is not
 authorization-relevant and remains on its typed location-fact authority.
 
@@ -708,8 +711,8 @@ nomination position; `score` is the raw pg_textsearch BM25 relevance score
 (the SQL operator orders its negative distance ascending, while the public
 score is rendered as relevance where larger is better). A lexical score is neither
 normalized nor comparable to a semantic score. Score ties break by stable item
-ID. Both lexical SRFs perform the same target-specific authority join as their
-semantic siblings inside the ranked statement.
+ID. Both lexical SRFs perform the same target-specific authority confirmation
+as their semantic siblings (D142).
 
 `semantic_entities` embeds the query once and reaches the canonical entity or
 profile row only through the shared P1 search port's entity-nomination method.
@@ -723,9 +726,10 @@ embedding model/policy and target-channel readiness before any query embedding
 or search. There is no caller-selectable historical search generation. An
 unready configured generation fails with `generation_unavailable`; it never
 falls forward. Results are ranked deterministically by score, then stable item ID.
-The function performs ranking and target-specific authority confirmation in
-one PostgreSQL statement. That statement snapshot is the D48 linearization
-point and is emitted as `pg_confirmed_at`.
+The function performs index nomination and target-specific authority
+confirmation in one read-only `REPEATABLE READ` transaction (D142). That
+transaction's snapshot is the D48 linearization point and is emitted as
+`pg_confirmed_at`.
 A deletion committed before that snapshot removes the row; a commit after it is
 a normal later state change. Lexical invocation skips query embedding but
 reports the same current search-configuration attestation and freshness.

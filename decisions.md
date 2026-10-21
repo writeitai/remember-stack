@@ -4115,6 +4115,13 @@ projection. Does not amend D9 query path or D48 hydration.
 
 ## D94. P1 search is PostgreSQL-native
 
+> **D142 refinement (2026-10-21, proposed).** Ranking and authority
+> confirmation stay in PostgreSQL but run as an index nomination plus a
+> primary-key confirmation, refilled until `k` eligible rows, in one
+> read-only `REPEATABLE READ` snapshot instead of one statement; the image
+> pins `pg_textsearch` 1.5.1 or later; index-driven execution requires a
+> scaling benchmark and an HNSW quality gate. Everything else below stands.
+>
 > **D98 amendment (2026-08-27).** PostgreSQL 19 replaces the PostgreSQL 18
 > image baseline. P1 remains pgvector/pg_textsearch PostgreSQL state, while the
 > former P2/deep-hydration split is replaced by live graph traversal in the
@@ -4367,6 +4374,11 @@ union of all types named X; collapse every edge to unlabeled
 query path, envelope grain, or hydration (D48–D49).
 
 ## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
+
+> **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
+> and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
+> which supports PostgreSQL 19 and fills post-filtered top-k scans. The rest
+> of D98 stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
@@ -6848,3 +6860,63 @@ only through D118 adjudication.
 - **Consequences:** No new server/tenant store. Node runtime validation/default filling and explicit numeric-precision refusals protect correctness. One-way issuer compatibility checks belong to providers. Merge does not publish npm or activate connectors. Full CLI/MCP designs/reviews precede their implementation.
 - **Companion design/evidence:** [design](plan/designs/typescript_client_design.md), [inventory](plan/designs/typescript_client_parity.json), [analysis](plan/analysis/typescript_client_parity.md), [delivery](plan/plans/typescript_client.md), [421 transport evidence](plan/analysis/typescript_transport_421.md) (measured 2026-10-02); issue #501; D136 amended only as stated above.
 
+
+## D142. Ranked search nominates from the index and confirms in one snapshot
+
+**Status:** proposed (design under review, 2026-10-21); binding on approved
+design merge. Issue
+[#504](https://github.com/writeitai/remember-stack/issues/504).
+
+**Context.** D94 put ranking and authority confirmation into one PostgreSQL
+statement per channel. On the D140 benchmark (synthetic corpora, 30,000 and
+500,000 chunks) the planner answered those statements by scoring every chunk
+of the deployment and sorting: p95 1.3 s (BM25) and 0.7 s (semantic) at
+30,000 chunks, 2.8 s BM25 at 500,000, growing linearly. Forcing an index plan
+is not a fix: post-filtered index scans return fewer rows than asked without
+saying why (pgvector stops at `hnsw.max_scan_tuples`; the pinned
+`pg_textsearch` 1.3.1 returns its top-k before filtering), which would turn a
+slow correct answer into a fast truncated one. A real-deployment plan check
+is pending (a LoCoMo run occupies the database on 2026-10-21).
+
+**Decision.** Each ranked P1 search (chunks, claims, facts; semantic and
+BM25) runs a **nominate → confirm → refill** loop in one read-only
+`REPEATABLE READ` transaction: a trivial index query returns the next batch of
+IDs in score order; a confirmation query applies the unchanged eligibility
+predicates (authority views, D140 scope and evidence gate, documents, entity,
+fact time, SRF filters) by primary key; batches double until `k` eligible
+rows are confirmed past any run of equal scores, the index is exhausted, or a
+declared work budget is spent — the last disclosed as truncation (D49). The
+transaction snapshot is the D48 linearization point. Entity-scoped
+(coverage-first) nomination ranks coverage tiers from the mention tables,
+scores small tiers exactly and runs the loop within large ones. The image
+moves to `pg_textsearch` ≥ 1.5.1, retiring the D98 patch. Index-driven
+execution ships only with a size-sweep scaling benchmark and an HNSW quality
+gate (recall@k and LoCoMo answer accuracy before/after).
+
+**Rejected.** Steering the one-statement plan (hints, `enable_seqscan`,
+rewritten joins): still estimate-dependent and cannot tell a capped scan from
+an exhausted one. Copying visibility onto search rows: rejected by D94 and
+incompatible with D140's retroactive, instant-evaluated periods. Partial or
+partitioned indexes as the general answer: no stable visibility boolean for
+time-scoped chunks. A different ANN engine: does not address BM25 or
+authority; its proposal is unchanged.
+
+**Open.** Indexing each distinct search input once is designed but unchosen
+([proposal](plan/proposals/distinct_text_search_index.md)); the owner decides
+on the LegalIt pilot's measured effective duplication factor.
+
+**Consequences.** Search work scales with `k` over the eligible share of top
+candidates, not with corpus size; one or more extra round trips per channel;
+semantic search becomes approximate (HNSW) where it was accidentally exact,
+under the quality gate. No public parameter changes.
+
+**Refines/amends.** Refines D94 (the one-statement execution and the "no
+scale benchmark" scope) and its D48 amendment (confirmation stays in
+PostgreSQL, in one snapshot rather than one statement). Preserves D9
+(independent channels, RRF, zero LLM calls), D87 (eligibility before the
+relevance cut) and D140 (scope, evidence gate, `scope_pending`). Amends D98's
+`pg_textsearch` patch pin.
+
+**Authority:** [design](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
+[analysis](plan/analysis/index_driven_ranked_search.md),
+[delivery](plan/plans/index_driven_ranked_search.md).

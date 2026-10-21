@@ -7,7 +7,10 @@
 [postgres_p1_search_projection_analysis.md](../analysis/postgres_p1_search_projection_analysis.md)
 **Supersedes:** D8's LanceDB placement, D93, and the removed D93 maintenance design
 **Amends:** D9, D23, D37, D48, D61, D63, and D80 as recorded in D94;
-PostgreSQL version/runtime amended by D98
+PostgreSQL version/runtime amended by D98; ranked-query execution (§8–§9),
+the `pg_textsearch` pin (§6) and the benchmark scope (§3) amended by
+[D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot)
+([analysis](../analysis/index_driven_ranked_search.md))
 
 ## 1. Problem
 
@@ -42,8 +45,9 @@ duplicated search tables:
 - a future media representation is searchable only on its accepted natural
   segment/representation row; this decision does not create `p1_media`;
 - eligibility, entity membership, temporal state, and lineage are not copied
-  into search rows. Search joins the normalized authority tables/views in the
-  same PostgreSQL statement.
+  into search rows. Search confirms every index nomination against the
+  normalized authority tables/views in the same PostgreSQL transaction
+  snapshot (§8).
 
 LanceDB is removed completely from the active system. It is not a fallback,
 compatibility store, optional backend, or migration source after cutover.
@@ -63,7 +67,9 @@ It does not:
 - add lexical fact/entity/media APIs that are not already admitted;
 - add copied filter columns merely to avoid ordinary indexed joins;
 - adopt pgvectorscale or a PostgreSQL graph extension;
-- run a storage-engine, scale, or retrieval-quality benchmark; or
+- run a storage-engine comparison (the D94 cutover itself ran no scale or
+  quality benchmark; D142's index-driven execution is accepted only with the
+  scaling benchmark and HNSW quality gate in §9); or
 - add RLS. D68's authenticated deployment binding and explicit predicates
   remain the security perimeter.
 
@@ -160,10 +166,14 @@ latest proven beta/RC image digest and replay from disposable storage; after
 GA, they track the current patched 19.x minor. The image carries pinned and
 tested builds of:
 
-- `vector`; and
-- `pg_textsearch`, including its required preload configuration. Until an
-  upstream PostgreSQL 19 artifact exists, build pinned 1.3.1 source plus the
-  reviewed D98 compatibility patch that passed 71/71 upstream SQL tests.
+- `vector` (0.8 or later, for iterative index scans); and
+- `pg_textsearch`, including its required preload configuration, at **1.5.1
+  or later** (D142). 1.5.0 added upstream PostgreSQL 19 beta support, so the
+  D98 compatibility patch is retired; it also made post-filtered BM25 index
+  scans grow their internal batch until the `LIMIT` is filled or matches are
+  exhausted and fixed silent truncation in deep scans. Releases before 1.4.0
+  return the index's top-k *before* filtering, which §8 must never rely on.
+  The image build still runs the extension's upstream SQL tests.
 
 Startup/readiness verifies PostgreSQL major version, extension availability,
 and the configured **1,536** embedding dimension. Missing requirements fail readiness;
@@ -207,35 +217,97 @@ No request path writes, repairs, builds indexes, or calls an LLM.
 
 ## 8. Query and filtering contract
 
+### 8.1 What a ranked search must return
+
+A ranked search returns the `k` best **eligible** rows of one target and
+channel, ordered by score, then stable item ID. "Eligible" means every
+authority rule holds: live lineage/version/representation (D48), the D140
+time scope and occurrence rules, the requested entity scope, documents
+filter, fact time and D140 fact evidence gate, and any public SRF filter.
+Eligibility constrains the candidates *before* the relevance cut — a global
+top-k followed by filtering is forbidden (D87). Any work bound that stops the
+search early is disclosed by the envelope's truncation marker and counters;
+it never looks like "no more results" (D49).
+
 A semantic query is embedded once per syntactic invocation by the configured
-embedding provider. PostgreSQL then executes a bounded ranked statement that:
+embedding provider. BM25 queries use pg_textsearch against the admitted text
+column. Hybrid search ranks the semantic and BM25 lists independently and
+fuses their one-based ranks by RRF; raw vector distances and BM25 scores are
+never added or treated as calibrated equivalents.
 
-1. applies `deployment_id` before candidate rows can escape;
-2. searches the target's HNSW index;
-3. joins the target's invariant-bearing authority view/tables;
-4. applies requested entity, temporal, lineage, eligibility, and current/history
-   predicates using their normalized indexed columns; and
-5. returns only authority-confirmed stable IDs and retrieval metadata.
+### 8.2 How it is executed: nominate, confirm, refill (D142)
 
-BM25 follows the same contract against the admitted text column. Hybrid search
-runs semantic and BM25 candidate subqueries independently and fuses their
-one-based ranks by RRF. Raw vector distance and BM25 scores are never added or
-treated as calibrated equivalents.
+Ranking and eligibility are **separate statements in one snapshot**, so that
+the index is always used and eligibility is always exact. For each target and
+channel, the shared P1 adapter runs a loop inside one `READ ONLY`
+transaction at `REPEATABLE READ` isolation:
 
-The current-testimony claim BM25 index is partial. Queries name it explicitly
-with pg_textsearch `to_bm25query()` while repeating
-`is_current_testimony = true`; implicit index discovery is not used for that
-path. Chunk BM25 uses the full `chunk_search` index. Both use the binding
-`simple` text configuration from §4.1.
+1. **Nominate.** An *index query* reads only the search table, the
+   deployment predicate, any predicate that names a partial index
+   (`is_current_testimony` for claims), and the channel's distance expression:
+   `… WHERE deployment_id = :d ORDER BY <distance> LIMIT :n`. It contains no
+   joins, no authority views, and no additional sort keys, so its only sensible
+   plan is the HNSW or BM25 index scan. It returns IDs and scores in score
+   order.
+2. **Confirm.** A *confirmation query* applies the target's complete
+   eligibility predicates — the same predicate builders the adapter uses for
+   every filter, scope and gate — to `item_id = ANY(:candidate_ids)` for the
+   newly nominated IDs only. It is a primary-key probe per candidate.
+3. **Refill.** Confirmed rows accumulate in score order. If fewer than `k` are
+   confirmed, the next index query asks for the next batch (doubling `n`,
+   starting from `4·k`) and step 2 confirms only IDs not seen before. The loop
+   ends when `k` rows are confirmed **and** the next nominated score is worse
+   than the `k`-th confirmed score (so a run of equal scores is never cut in
+   the middle and ties order by stable ID), or when the index returns fewer
+   rows than asked (exhausted), or when the operation's work budget (§12) is
+   spent (truncated, disclosed).
 
-Optional entity filtering is a normal SQL join through the canonical
-entity-target association. The implementation SHALL NOT first materialize tens
-of thousands of candidate IDs in application memory or send a giant `IN` list
-to the vector search. PostgreSQL plans the filter and ranked search together.
+PostgreSQL takes the transaction snapshot at the first statement; every
+round sees exactly that database state, and read-only `REPEATABLE READ`
+transactions cannot fail with serialization errors. A deletion committed
+before the snapshot is never returned; one committed later is a normal later
+state change. That snapshot is the D48 linearization point (reported by the
+open query space as `pg_confirmed_at`).
 
-D48 confirmation therefore remains mandatory in meaning, but it is no longer a
-remote “search Lance, then ask PostgreSQL” hop. Ranking and authority
-confirmation occur in one PostgreSQL statement and one transaction snapshot.
+The semantic and BM25 loops of one hybrid search are independent and may run
+concurrently on separate pooled connections before RRF; each loop is
+internally consistent. The D97 operation deadline and bounded read admission
+govern every transaction.
+
+**Exactness.** BM25 index scans use Block-Max WAND, an exact top-k
+algorithm over the same index statistics the full scan uses; with refill to
+`k` and the tie rule, a BM25 result equals an exact full scan of the eligible
+rows. HNSW is approximate (§9); its recall is a measured quality property.
+
+### 8.3 Entity-scoped nomination (coverage first)
+
+Entity-scoped searches rank by entity coverage (how many requested entities
+the item mentions) before score. No text index produces that order, but the
+mention tables are indexed by entity:
+
+1. coverage for every scoped item is computed from survivor-resolved mentions
+   (counts only, no scoring), within an entity-mention work budget;
+2. tiers are taken from the highest coverage down; a tier at or below the
+   exact-scoring threshold (starting point 5,000 items, to be measured) is
+   scored exactly with the standalone operators (`<=>`, `<@>`) and sorted;
+3. a larger tier (a hub entity) runs the §8.2 loop with tier membership added
+   to confirmation.
+
+D140's `scope_pending` probe replays the same nomination with pending
+lineages widened; it never has its own copy of the ranking logic.
+
+### 8.4 Facts
+
+Fact search runs one §8.2 loop per fact table (relations, observations), each
+on its own HNSW index, with the fact authority view, fact-time and entity
+predicates and the D140 evidence gate in confirmation. The branches merge by
+distance, then qualifier and ID, as before.
+
+D48 confirmation therefore remains mandatory in meaning, and it is not a
+remote hop: nomination and confirmation read one PostgreSQL snapshot. The
+implementation SHALL NOT materialize an unbounded candidate list in
+application memory; every round is bounded by its batch size and the work
+budget.
 
 ## 9. Index and planner contract
 
@@ -244,24 +316,38 @@ standard PostgreSQL telemetry own routine cleanup; there is no P1 compaction
 ticker, fragment ledger, or application-managed index tail.
 
 Each indexed vector column has one fixed dimension and compatible distance
-operator. Deployment-bound filters and the authority join need conventional
-indexes on their existing join/filter keys. The implementation may add a
-specific missing B-tree index demonstrated by a query plan, but this design does
-not pre-emptively denormalize data or create a generic indexing framework.
+operator. Authority joins in confirmation need conventional indexes on their
+existing primary/join keys; confirmation probes are by primary key. This
+design does not denormalize authority data into search rows or create a
+generic indexing framework. Index queries are deliberately trivial so that
+their plan does not depend on cost estimates; a regression test asserts that
+each index query's plan is an index scan.
 
-ANN remains approximate. Functional tests prove contracts and structural
-completeness, not a benchmark score. Query-time search parameters are bounded,
+ANN remains approximate. The HNSW index query runs with pgvector's iterative
+scan in strict-order mode (`hnsw.iterative_scan = strict_order`) and a
+transaction-local `hnsw.max_scan_tuples` sized to the round's batch within
+the operation's work budget, so a round is not cut short by the default
+`ef_search`. If an HNSW index query returns fewer rows than requested while
+the deployment still has unvisited rows, the result is reported as truncated,
+never as exhausted. Query-time search parameters are bounded,
 transaction-local, and observable; public requests cannot set arbitrary GUCs.
 
-Filtered HNSW uses pgvector's transaction-local iterative scan in strict-order
-mode (`hnsw.iterative_scan = strict_order`) with an operator-owned
-`hnsw.max_scan_tuples` bound. The authority/entity/temporal predicates precede
-the final result limit, so PostgreSQL continues the ANN scan until it finds the
-requested eligible rows or reaches that bound; it does not take an unfiltered
-top-k and then silently return the survivors. A selective plan may use an exact
-filtered scan instead. If the bounded iterative scan cannot fill `k`, the
-existing candidate/eligible/drop counters and truncation disclosure report the
-shortfall. The library pins a pgvector release that supports iterative scans.
+Index-driven execution is accepted only with two measurements, recorded in
+the analysis and repeated when the search code changes materially:
+
+- **scaling** — p95 per channel and for the context operations across a size
+  sweep (30k → 300k → 3M chunks and the 50M target), `main` against the
+  change; p95 must stay roughly flat as the corpus grows and meet the
+  retrieval design's interactive budget at the target size;
+- **HNSW quality** — recall@k against exact search on sampled real queries,
+  and LoCoMo answer accuracy before and after on identical data. A drop
+  beyond run-to-run noise blocks release until `ef_search`/iterative-scan
+  tuning closes it.
+
+Index each distinct search input once (one entry per identical text and
+embedding input, shared by the per-version chunks that carry it) is a
+designed, **unchosen** option with an evidence-based adoption trigger:
+[distinct-text search index proposal](../proposals/distinct_text_search_index.md).
 
 ## 10. Rebuild and incompatible embedding changes
 
@@ -318,7 +404,12 @@ because it would add a second implicit authorization system and undermine the
 explicit, reviewable deployment-predicate contract.
 
 Public operations retain bounded `k`, candidate depth, query length, entity
-count, timeout, and output budgets. Query strings, source text, vectors, and
+count, timeout, and output budgets. Each §8.2 search additionally has a
+**work budget**: a maximum number of nominated candidates (starting point
+`max(200·k, 20,000)`, to be measured) and the operation deadline. Reaching it
+ends the loop with the truncation marker set and the envelope's
+candidate/eligible/drop counters filled, so the caller can see that more
+eligible rows may exist. Query strings, source text, vectors, and
 credentials are not emitted to logs. Explain plans and index diagnostics remain
 operator-only.
 
@@ -375,3 +466,16 @@ Costs:
 
 These costs are accepted. The normalized chunk text is the minimum searchable
 copy required for BM25; the other targets avoid redundant text copies entirely.
+
+D142's nominate–confirm–refill execution (§8.2) adds:
+
+- **benefit:** search work grows with `k` divided by the share of
+  eligible candidates near the top of the ranking, not with corpus size;
+  plans no longer depend on the planner's estimate for a large join;
+  truncation is detectable and disclosed;
+- **cost:** one or more extra round trips per channel (typically one or two
+  rounds; more when most near-top candidates are ineligible, for example many
+  superseded editions of unchanged text — the case the distinct-text proposal
+  addresses), a transaction that spans several statements, and semantic
+  search that is approximate (HNSW) instead of an accidental exact scan,
+  guarded by the §9 quality gate.
