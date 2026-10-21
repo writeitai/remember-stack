@@ -902,6 +902,7 @@ class PostgresP1Index:
                 ),
                 parameters=parameters,
                 expected_index=bm25_index,
+                query_terms=p1_ranked.analyzed_terms_bound(query_text),
             )
         where = " ".join(f"AND {item}" for item in predicates)
         return _TestimonyQuery(

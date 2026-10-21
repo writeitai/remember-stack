@@ -9,6 +9,7 @@ from collections.abc import Mapping
 import json
 from pathlib import Path
 import re
+import struct
 from typing import Any
 
 import pytest
@@ -79,7 +80,7 @@ def test_reviewer_counterexample_is_within_the_stop_margin() -> None:
 
     Index scores with raw lengths 48/50/67 order A, C, B; canonical scores use
     quantized lengths and make B (67 → 64) the winner. The canonical score of
-    any row is at most BM25_STOP_MARGIN times its index score, so a loop that
+    any row is at most bm25_stop_margin times its index score, so a loop that
     has fetched C cannot stop while B's canonical score could still beat the
     k-th confirmed score.
     """
@@ -94,8 +95,8 @@ def test_reviewer_counterexample_is_within_the_stop_margin() -> None:
     assert sorted(index, key=index.__getitem__, reverse=True) == ["A", "C", "B"]
     assert max(canonical, key=canonical.__getitem__) == "B"
     for name in rows:
-        assert index[name] <= canonical[name] * (1 + p1_ranked.SCORE_EPSILON)
-        assert canonical[name] <= p1_ranked.BM25_STOP_MARGIN * index[name]
+        assert index[name] <= canonical[name] * (1 + p1_ranked.score_epsilon(1))
+        assert canonical[name] <= p1_ranked.bm25_stop_margin(1) * index[name]
     # k = 1 after fetching A, A, A and C: the k-th canonical score is A's; the
     # last fetched is C. B is unfetched, so the loop must not stop.
     statement = p1_ranked.NominationStatement(
@@ -263,3 +264,43 @@ def test_structured_result_keeps_rows_ranks_and_account() -> None:
 def test_work_budget_is_the_documented_starting_point() -> None:
     assert p1_ranked.work_budget(10) == 20_000
     assert p1_ranked.work_budget(500) == 100_000
+
+
+def _f32(value: float) -> float:
+    return struct.unpack("f", struct.pack("f", value))[0]
+
+
+def test_float_slack_grows_with_query_terms() -> None:
+    """Review r1 P1-2: 40,000 single-occurrence terms in one long document.
+
+    IEEE float32 emulation of pg_textsearch 1.5.1's memtable scorer (raw
+    length, float4 accumulation) against the standalone operator (quantized
+    length, float8 accumulation of float4 terms). The ratio exceeds a fixed
+    ``1e-4`` slack's margin but not the query-dependent one.
+    """
+    idf, avg = _f32(17.32206916809082), _f32(1.0014749765396118)
+    k1, b = _f32(1.2), _f32(0.75)
+
+    def term(length: int) -> float:
+        norm = _f32(_f32(1.0) - b + _f32(b * _f32(_f32(length) / avg)))
+        return _f32(idf * _f32(_f32(k1 + 1) / _f32(_f32(1.0) + _f32(k1 * norm))))
+
+    index_term, canonical_term = term(73_751), term(65_560)
+    index = _f32(0.0)
+    for _ in range(40_000):
+        index = _f32(index + index_term)
+    canonical = sum(canonical_term for _ in range(40_000))
+    ratio = canonical / index
+    fixed = (1 + 1e-4) ** 2 / (1 - p1_ranked.BM25_LENGTH_QUANTIZATION_ERROR)
+    assert ratio > fixed
+    query = " ".join(f"t{n:03d}" for n in range(40_000))
+    assert ratio <= p1_ranked.bm25_stop_margin(p1_ranked.analyzed_terms_bound(query))
+
+
+def test_analyzed_terms_bound_covers_every_parser_split() -> None:
+    """Single-character tokens separated by single characters are the densest."""
+    assert p1_ranked.analyzed_terms_bound("a b c") == 3
+    assert p1_ranked.analyzed_terms_bound("a-b-c-d") == 4
+    assert p1_ranked.analyzed_terms_bound("") == 1
+    with pytest.raises(ValueError, match="too long"):
+        p1_ranked.score_epsilon(2**23)

@@ -349,3 +349,59 @@ def test_imported_snapshot_hides_rows_committed_after_export(
     finally:
         exporter.rollback()
         exporter.close()
+
+
+def test_scorer_bound_holds_for_spilled_and_memtable_rows(
+    database_engine: Engine,
+) -> None:
+    """Scorer-bound gate (design §9, review r1 P1-2) on the built image.
+
+    Half the corpus is spilled to a segment, half stays in the memtable; for
+    multi-term queries (repeated terms included) every row the index-ordered
+    scan streams satisfies ``index ≤ canonical·(1+ε)²`` and
+    ``canonical ≤ index·(1+ε)²/(1−e)``, and the stream is non-increasing in
+    the index score (``bm25_get_current_score()``).
+    """
+    generator = random.Random(1421)
+    words = [f"w{index}" for index in range(120)]
+    weights = [1.0 / (rank + 1) for rank in range(len(words))]
+
+    def body() -> str:
+        length = generator.choice([1, 7, 39, 40, 41, 64, 73, 200, 333, 900])
+        return " ".join(generator.choices(words, weights=weights, k=length))
+
+    _seed_chunks(database_engine, [body() for _ in range(150)])
+    with database_engine.begin() as connection:
+        connection.execute(text("SELECT bm25_spill_index('ix_chunk_search_bm25')"))
+    _seed_chunks(database_engine, [body() for _ in range(150)])
+    queries = [
+        " ".join(generator.choices(words, k=generator.randint(1, 6))) for _ in range(25)
+    ] + ["w0 w0 w0 w1", "w119", "w3 w50 w99 w7 w7"]
+    with database_engine.begin() as connection:
+        for name in ("enable_seqscan", "enable_bitmapscan", "enable_sort"):
+            connection.execute(text(f"SET LOCAL {name} = off"))
+        for query in queries:
+            rows = connection.execute(
+                text(
+                    "SELECT abs(bm25_get_current_score()) AS indexed,"
+                    " -(search_text <@> to_bm25query(:q, 'ix_chunk_search_bm25'))"
+                    "::double precision AS canonical"
+                    " FROM chunk_search WHERE deployment_id = :d"
+                    " ORDER BY search_text <@> to_bm25query(:q, 'ix_chunk_search_bm25')"
+                    " LIMIT 1000"
+                ),
+                {"q": query, "d": _DEPLOYMENT_ID},
+            ).all()
+            epsilon = p1_ranked.score_epsilon(p1_ranked.analyzed_terms_bound(query))
+            slack = (1 + epsilon) ** 2
+            previous = float("inf")
+            assert rows, query
+            for indexed, canonical in rows:
+                assert indexed <= previous * slack, query  # index order
+                previous = indexed
+                if canonical <= 0:
+                    continue
+                assert indexed <= canonical * slack, (query, indexed, canonical)
+                assert canonical <= indexed * slack / (
+                    1 - p1_ranked.BM25_LENGTH_QUANTIZATION_ERROR
+                ), (query, indexed, canonical)

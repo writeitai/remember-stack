@@ -21,9 +21,9 @@ canonical score every result carries — uses the length after one-byte
 quantization (``decode_fieldnorm(encode_fieldnorm(len))``). Quantization only
 rounds a length *down*, by at most 1/9 of it, and BM25's per-term weight is
 decreasing in length, so for every row ``index ≤ canonical ≤ index / (1 - 1/9)``
-(up to float rounding ``SCORE_EPSILON``). The stream is non-increasing in the
-index score, so every unfetched row has a canonical score of at most
-``BM25_STOP_MARGIN`` times the canonical score of the last fetched row. The
+(up to float rounding, :func:`score_epsilon`). The stream is non-increasing in
+the index score, so every unfetched row has a canonical score of at most
+:func:`bm25_stop_margin` times the canonical score of the last fetched row. The
 loop stops only once the ``k``-th confirmed canonical score is strictly above
 that bound — no unfetched row can reach the result or tie with its last member.
 """
@@ -57,11 +57,51 @@ BM25_BOUND_VERIFIED_REVISION = "fa142d049d08eac45a263f5abc250c8877ae076e"
 checked against. The scorer-bound gate fails when the image pins another one,
 so an extension upgrade re-verifies the bound before it ships."""
 
-SCORE_EPSILON = 1e-4
-"""Relative slack for float4/float8 accumulation differences between scorers."""
+FLOAT4_UNIT_ROUNDOFF = 2.0**-24
+"""IEEE binary32 unit roundoff ``u``; both scorers compute each term in float4."""
 
-BM25_STOP_MARGIN = (1.0 + SCORE_EPSILON) ** 2 / (1.0 - BM25_LENGTH_QUANTIZATION_ERROR)
-"""Upper bound on (unfetched canonical score) / (last fetched canonical score)."""
+TERM_OPERATIONS = 16
+"""Upper bound on rounded float4 operations in one term's score, idf included
+(pg_textsearch 1.5.1 computes about ten); per-term error is at most ``γ_16``."""
+
+
+def analyzed_terms_bound(query: str) -> int:
+    """An upper bound on the terms a text search parser can find in ``query``.
+
+    Every token is at least one character and adjacent tokens are separated
+    by at least one character, so no parser finds more than
+    ``(len(query) + 1) // 2`` tokens; repeated terms are counted each time.
+    """
+    return max(1, (len(query) + 1) // 2)
+
+
+def score_epsilon(terms: int) -> float:
+    """Relative rounding bound on one computed BM25 score of ``terms`` terms.
+
+    A sum of ``n`` positive float4 terms, each computed with at most
+    ``TERM_OPERATIONS`` roundings, is within a factor ``1 ± γ_(n + 16)`` of its
+    real value (``γ_m = m·u / (1 - m·u)``, Higham, recursive summation); float8
+    accumulation of float4 terms is tighter. Doubling ``m·u`` covers the
+    ``1 - m·u`` denominator while ``m·u ≤ 1/2``. A fixed slack cannot hold for
+    every query: 40,000 terms in a single long document reach a canonical/index
+    ratio of 1.12533 against a fixed-``1e-4`` margin of 1.12523 (review r1).
+    """
+    m = max(1, terms) + TERM_OPERATIONS
+    if m * FLOAT4_UNIT_ROUNDOFF > 0.5:
+        raise ValueError("query too long for a float4 BM25 error bound")
+    return 2.0 * m * FLOAT4_UNIT_ROUNDOFF
+
+
+def bm25_stop_margin(terms: int) -> float:
+    """Upper bound on (unfetched canonical score) / (last fetched canonical score).
+
+    Four rounding factors: the unfetched row's canonical and index scores
+    (``C(u) ≤ I(u)·(1+ε)²/(1-e)``) and the last row's index and canonical
+    scores (``I(last) ≤ C(last)·(1+ε)²``), with ``I(u) ≤ I(last)`` from the
+    index order and ``e`` the length-quantization bound.
+    """
+    return (1.0 + score_epsilon(terms)) ** 4 / (1.0 - BM25_LENGTH_QUANTIZATION_ERROR)
+
 
 INITIAL_FETCH_FACTOR = 4
 """The first fetch reads ``4·k`` candidates; each later fetch doubles (D142 §8.3)."""
@@ -112,6 +152,8 @@ class NominationStatement:
     parameters: Mapping[str, Any]
     expected_index: str
     count_sql: str | None = None
+    query_terms: int = 1
+    """BM25: an upper bound on analyzed query terms (:func:`analyzed_terms_bound`)."""
 
 
 @dataclass(frozen=True)
@@ -310,7 +352,7 @@ def _filled(
         return last_sort > kth
     kth_score = -kth
     last_score = -last_sort
-    return kth_score > BM25_STOP_MARGIN * last_score
+    return kth_score > bm25_stop_margin(statement.query_terms) * last_score
 
 
 def _drained(
