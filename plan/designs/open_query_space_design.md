@@ -718,8 +718,8 @@ as their semantic siblings (D142).
 `semantic_entities` embeds the query once and reaches the canonical entity or
 profile row only through the shared P1 search port's entity-nomination method.
 It searches the description/profile vector rather than aliases, then confirms
-survivor identity and `entity_type` against `entities_current` in the same
-statement. Direct access to private embedding columns from caller SQL is
+survivor identity and `entity_type` against `entities_current` in the
+request's ranked-read context (D142). Direct access to private embedding columns from caller SQL is
 forbidden.
 
 Each semantic or lexical nomination invocation validates the one configured
@@ -951,7 +951,7 @@ objects or any base table; (c) pool discipline — checkout resets session
 state and binds one login to one deployment, and check-in discards the
 session on reset failure. The §3.4 executor-side projection bridge derives the
 deployment from its authenticated, deployment-bound executor (never from SQL
-text or parameters) and passes it explicitly to every P1 ranked statement;
+text or parameters) and passes it explicitly to every P1 ranked-read context (D142);
 a missing or mismatched binding fails before any projection access. The §9.5
 adversarial suite targets this
 model: routing, grants, pool reuse, and bridge-derivation — not policies.
@@ -1655,42 +1655,7 @@ for the shipping surface pass before release.
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |
 | Saved-query registry import/export | Portable registry bytes need a format, trust boundary, and compatibility rule that local registry v1 does not yet need | First customer migration between deployments requiring registry transfer. Adoption requires a versioned interchange format, explicit trust/signing model, and source/target manifest-hash pinning and compatibility validation before activation. |
 
-## 11. Implementation sequence (binding)
+## 11. Delivery
 
-1. **Batch A — schema contract:** machine-readable manifest, full DDL note,
-   invariant views, comments, canonicalizer/hash, D41/D48/D54 tests.
-2. **Batch B — safe execution:** roles/grants tenancy, parser/allowlists, limits,
-   QueryResult, discovery, audit/cost controls, adversarial suite.
-3. **Batch C — PostgreSQL-native P1 operations:** `semantic_claims`,
-   `semantic_chunks`, `semantic_facts`, `semantic_entities`,
-   `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies`; shared P1-port
-   paths, D80 current-attestation readiness, snapshot-shared authority confirmation (D142), body
-   verification, rank/score and drop disclosure, caps, cancellation/telemetry,
-   manifest signatures, and per-surface OSS pages. `lexical_facts` remains only
-   the §10 recorded alternative.
-4. **Batch D — live graph:** deployment-keyed invariant vertex/edge views,
-   exact PostgreSQL 19 property-graph DDL and grants, semantic-catalog readiness,
-   server-owned fixed one-hop SQL/PGQ templates, and level-at-a-time bounded
-   recursive helpers. It includes endpoint indexes; depth/frontier/examined-edge/
-   result/temp/time budgets; deterministic shortest-hop behavior; explicit
-   repeated-element exclusion where required; truncation telemetry; and the
-   PGQ/recursive parity, tenancy, catalog, privilege, fault, and cap proofs in
-   §9.1–§9.10. P1/PostgreSQL remain the authorities inside
-   `claims_and_sources_context` and `facts_context`.
-5. **Batch E — customer space:** immutable registry, governance, all 18
-   `examples.*` mappings (17 demoted plus citation path), drift and deletion behavior.
-6. **Batch F — integrated surface:** API/SDK/CLI/MCP additions, exactly four
-   assured operation descriptors, consumption-skill/docs rewrite led by the
-   verbatim two-layer headline and all four bound facts-layer examples. The 17
-   demoted patterns ship only as `examples.*`; no automatic paid run or
-   deprecation telemetry is part of delivery.
-
-A later batch cannot merge around a failed dependency gate. Each behavioral
-change ships with same-change OSS documentation, manifest/version updates, and
-the relevant §9 evidence. Batch F integrates and leads with the rewrite; it
-does not substitute for the per-surface documentation in earlier batches.
-
-Batch D depends on Batches A and B and has no Batch C dependency. Assured context
-operations depend on Batch C because they reuse the shared PostgreSQL D48/D41
-authority and P1 nomination/body machinery; they cannot merge around a failed
-Batch C confirmation gate.
+Build order (batches A–F and their dependency gates) lives in
+[the delivery plan](../plans/open_query_space_delivery.md).

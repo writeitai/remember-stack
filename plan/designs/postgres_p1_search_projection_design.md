@@ -177,6 +177,13 @@ tested builds of:
   CI, so compatibility on the pinned PostgreSQL 19 image is a **local gate**:
   the image build runs the extension's upstream SQL tests and the §8.3
   cursor/scoring-generation tests on that exact image.
+  1.5.1 scores unspilled (memtable) rows with raw document length while
+  segments and the standalone operator use fieldnorm-quantized length
+  (§8.3). Until an upstream release unifies them, the image carries a small,
+  reviewed patch that makes the memtable scorer quantize length through the
+  same encode/decode and share the standalone scoring routine; the patch is
+  reported upstream, pinned by checksum like the retired D98 patch, and
+  removed when an upstream release passes the scorer-identity gate.
 
 Startup/readiness verifies PostgreSQL major version, extension availability,
 and the configured **1,536** embedding dimension. Missing requirements fail readiness;
@@ -338,12 +345,41 @@ the index is used and eligibility stays exact. For each target and channel:
    - `work_budget`, `deadline` or `ann_scan_bound` — work stopped early;
      disclosed as truncation.
 
-**Exactness.** Within one BM25 scoring generation, pg_textsearch's ordered
-scan returns matching rows in exact BM25 order (Block-Max WAND for the
-leading top-k, then its batch growth until the cursor is drained). With the
-§8.1 positive-match rule, continuation until `k` eligible rows and the tie
-rule, a BM25 result equals an exact scoring of the same eligible matching rows
-under the same scoring generation. HNSW is approximate (§9).
+**One canonical BM25 score.** Every lexical ranking — index nomination, the
+exact scoring of small entity tiers (§8.4), the open query space SRFs, the
+D140 `scope_pending` probe and every test oracle — uses one score: the
+pg_textsearch BM25 function over the **fieldnorm-quantized** document length
+(the one-byte length encoding segments store), the scoring generation's
+corpus statistics, and float4 arithmetic computed by one shared scoring
+routine. Two rows tie only when their canonical scores are bitwise equal.
+
+The index path and the standalone `<@>` operator must produce that same score
+for the same row, query and generation. Upstream intends this (the standalone
+operator quantizes length "to ensure the operator produces identical scores to
+index scans"), but **pg_textsearch 1.5.1 does not deliver it**: rows still in
+the in-memory memtable (not yet spilled to a segment) are scored by the index
+with their raw length, while segments and the standalone operator use the
+quantized length. A row's index score — and therefore the index order — would
+then change when maintenance spills it, and the index order can disagree with
+standalone scoring: with one query term, a row of length 67 can lose to a row
+of length 48 in the index yet win under quantized scoring, so a cursor can
+stop `k_filled` without ever fetching the true winner. The image therefore
+requires an upstream release, or a small reviewed patch (§6), in which the
+memtable scorer quantizes length through the same encode/decode and both paths
+call the same scoring routine with the same types. This is enforced, not
+assumed: the §9 **scorer-identity gate** runs on every image build.
+
+Raw-length index scoring is not adopted as the canonical score instead: it
+would make a row's rank depend on whether a storage-maintenance spill has
+happened, and the exact small tier could not compute it.
+
+**Exactness.** With one canonical scorer and one scoring generation,
+pg_textsearch's ordered scan streams matching rows in non-increasing canonical
+score (Block-Max WAND for the leading top-k, then its batch growth until the
+cursor is drained). With the §8.1 positive-match rule, continuation until `k`
+eligible rows and the tie rule, a BM25 result equals canonical scoring of the
+same eligible matching rows under the same generation, and equals today's
+standalone-scored ordering of those rows. HNSW is approximate (§9).
 
 ### 8.4 Entity-scoped nomination (coverage first)
 
@@ -369,8 +405,9 @@ indexed by entity:
    `entity_scope_too_broad`) instead of a ranking built on partial coverage.
 2. Tiers are taken from the highest coverage down. A tier at or below the
    exact-scoring threshold (a **starting point of 5,000 items**, to be
-   measured) is scored exactly with the standalone operators (`<=>`, and
-   `<@>` restricted to positive matches) and sorted by score, then ID.
+   measured) is scored exactly — `<=>` for semantic, the canonical BM25
+   score (`<@>` under the scorer-identity gate, positive matches only) for
+   lexical — and sorted by score, then ID.
 3. A larger tier runs the §8.3 cursor loop with tier membership added to
    confirmation.
 
@@ -496,16 +533,35 @@ materially. All numbers are starting points for the owner to confirm:
   returned-`k` rate, truncation rate, fetched candidates, coverage rows read
   and plan-attestation cost. Strata: fixed and declining eligible fractions,
   long tie runs, superseded editions, rare and hub entities, `current`/`at`/
-  `history` scopes. Pass: p95 within the retrieval design's interactive
+  `history` scopes. Index-internal work (§9.1) is reported next to fetched
+  counts. Pass: p95 within the retrieval design's interactive
   budget at the target size for the common strata, **without** a rising
   truncation rate; adversarial strata are reported, not hidden;
 - **HNSW recall** — recall@k of the HNSW path against exact scoring, per
   stratum above, on sampled real queries; acceptance threshold: mean
   recall@10 ≥ 0.95 and no stratum below 0.90;
-- **answer quality** — LoCoMo answer accuracy, `main` against the change,
-  same data, at least three runs per side; the change passes when its mean is
-  not lower than `main`'s by more than the larger of one percentage point and
-  the two-sided 95% confidence interval of the difference;
+- **answer quality (paired non-inferiority, predeclared)** — LoCoMo answer
+  accuracy, `main` against the change, on identical ingested data and the same
+  question set. *Sampling unit:* the question. *Runs:* three answer runs per
+  side; each question's score per side is its mean correctness over that
+  side's runs. *Estimator:* the mean over questions of the paired difference
+  (change − `main`). *Test:* a one-sided 95% lower confidence bound on that
+  mean by paired bootstrap over questions (10,000 resamples, fixed seed,
+  recorded). *Margin:* a fixed non-inferiority margin of 1.0 percentage point
+  (a starting point the owner confirms before the run). *Decision:* pass when
+  the lower bound is above −1.0 pp; fail when the one-sided 95% **upper**
+  bound is below −1.0 pp; otherwise the result is **inconclusive** — an
+  underpowered result never passes; the owner then chooses more runs or a
+  decision. The rule, seed and question set are fixed before the first run;
+- **scorer identity** (every image build) — on randomized corpora with
+  mixed spilled and unspilled rows, multi-term queries and near-ties, every row
+  an index-ordered scan streams carries a projected score bitwise equal to the
+  standalone operator's score for that row and generation, and the stream is
+  non-increasing in that score. Fixtures include 40- and 41-token documents
+  with equal term frequency and reversed stable IDs (a canonical tie), the
+  three-length single-term counterexample of §8.3 (lengths 48, 50 and 67 over
+  a corpus of average length 100), and both sides of the exact-tier
+  threshold. Failure blocks the image;
 - **lexical behaviour** — the BM25 positive-match change (§8.1) and the
   `pg_textsearch` upgrade are measured separately against today's answers on
   the same corpus, so their effect is attributable.
@@ -517,10 +573,24 @@ designed, **unchosen** option with an evidence-based investigation trigger:
 
 ### 9.1 Cost model and its limits
 
-Search work is bounded by the work budget, and in the **common case** it is
-proportional to `k` divided by the share `s` of eligible candidates near the
-top of the ranking, independent of corpus size. That assumption fails in
-three named cases, which are reported rather than hidden:
+Two kinds of work must not be confused.
+
+- **Fetched-candidate and confirmation work** — rows fetched from the cursor
+  and probed by confirmation. In the common case this is proportional to `k`
+  divided by the share `s` of eligible candidates near the top of the ranking,
+  independent of corpus size. The candidate counters and the work budget
+  measure and bound it.
+- **Index-internal work** — what the extension does to produce those rows:
+  BM25 posting and block traversal, memtable scoring, and pg_textsearch's
+  internal re-execution of scoring when it grows its batch during
+  continuation; HNSW graph visits. A fixed `k/s` does not bound it, and the
+  candidate counters do not see it. The operation **deadline** bounds it; the
+  benchmark reports it separately (buffer reads and, where the extensions
+  expose them, posting/block/scoring-pass counts and visited HNSW tuples)
+  alongside fetched counts and completeness.
+
+The common-case assumption fails in three named cases, which are reported
+rather than hidden:
 
 - **declining eligible share** — when a fixed small eligible set sits among a
   growing number of ineligible rows (for example many superseded editions of
@@ -638,9 +708,11 @@ copy required for BM25; the other targets avoid redundant text copies entirely.
 D142's ranked-read context and nominate–confirm–continue execution (§8.2–§8.6)
 adds:
 
-- **benefit:** in the common case search work grows with `k` divided by the
-  share of eligible candidates near the top of the ranking, not with corpus
-  size (§9.1 names the cases where it does not); nomination plans are enforced
+- **benefit:** in the common case fetched-candidate and confirmation work
+  grows with `k` divided by the share of eligible candidates near the top of
+  the ranking, not with corpus size; index-internal work is bounded by the
+  deadline and measured separately (§9.1, which also names the cases where the
+  common case fails); nomination plans are enforced
   and attested; every early stop is reported with its reason;
 - **cost:** cursor fetches and confirmation queries instead of one statement;
   one snapshot shared by the whole operation (including the SQL sandbox, via

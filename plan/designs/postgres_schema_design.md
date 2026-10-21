@@ -1582,8 +1582,8 @@ CREATE INDEX ix_chunks_section ON chunks (section_id);
 -- D94 chunk_search is the ONLY P1 sidecar. The reference profile pins
 -- Qwen3-Embedding-8B and pgvector HNSW to 1,536 float32 dimensions.
 -- pg_textsearch creates the BM25 index on search_text. No entity/time/lineage
--- filter fields are copied here; ranked queries join chunks and their authority
--- associations in the same statement.
+-- filter fields are copied here; ranked searches confirm index nominations against
+-- chunks and their authority associations in one ranked-read snapshot (D142).
 CREATE TABLE chunk_search (
   deployment_id uuid NOT NULL,
   chunk_id uuid NOT NULL,
@@ -1727,7 +1727,7 @@ CREATE INDEX ix_claims_flagged  ON claims (deployment_id) WHERE kept_flagged = t
 CREATE INDEX ix_claims_current  ON claims (deployment_id, doc_id) WHERE is_current_testimony; -- the D54 hot filter (counts; default claim search)
 CREATE INDEX ix_claims_audit    ON claims (deployment_id) WHERE audit_status = 'sampled_fail'; -- grounding regressions
 -- D41 claim validity remains on claims; ranked retrieval filters it through the
--- normalized row in the same statement as the HNSW/BM25 candidate scan. Retrieval Batch B
+-- normalized row in the confirmation step of the HNSW/BM25 nomination loop (D142). Retrieval Batch B
 -- supersedes the original no-default-index stance: `claims_as_of(from,to)` first filters in the
 -- authoritative Postgres spine, then optionally ranks only that bounded set semantically. Stamped
 -- claims are the minority, so the default is the partial btree below. This evidence-grain recipe

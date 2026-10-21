@@ -263,7 +263,12 @@ fetch *j* the cursor has delivered 80·(2ʲ − 1) rows.
 | entity filter with a rare entity | ≪ 0.01 | exact scoring of the entity's items (design §8.4) |
 
 Each fetch costs one cursor fetch plus one confirmation query over the new
-IDs. **In the common case** work grows with `k/s`, not with corpus size. That
+IDs. **In the common case** fetched-candidate and confirmation work grows
+with `k/s`, not with corpus size. Index-internal work — BM25 posting/block
+traversal and pg_textsearch's internal rescoring when it grows its batch
+([scan.c at v1.5.1](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/access/scan.c#L579-L627)),
+and HNSW graph visits — is not bounded by `k/s`; the deadline bounds it and
+the benchmark measures it separately. That
 assumption fails in named cases (design §9.1): when a fixed small eligible set
 sits among a growing number of ineligible rows, `s` itself falls as the
 corpus grows and work grows until the budget stops it; long runs of equal
@@ -309,11 +314,42 @@ In brief:
 
 ### 6.1 Exactness
 
-BM25 nomination streams matching rows in exact score order within one scoring
-generation (pg_textsearch uses Block-Max WAND for the leading top-k and grows
-its batch afterwards). With positive-match semantics, continuation and the tie
-rule, a BM25 result equals exact scoring of the same eligible matching rows
-under that generation.
+**Round-2 finding: two BM25 scorers.** pg_textsearch 1.5.1 (commit
+`fa142d04`) does not score a row identically on all paths. The index scorer
+for rows still in the in-memory memtable uses the **raw** document length
+([bmw.c L438–L454](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/bmw.c#L438-L454));
+segments and the standalone `<@>` operator use the **fieldnorm-quantized**
+length ([query.c L959–L966](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L959-L966),
+whose comment says the quantization exists "to ensure the operator produces
+identical scores to index scans"; [fieldnorm.c L52–L69](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/segment/fieldnorm.c#L52-L69)
+maps 40 and 41 tokens to 40). Holding one scoring generation does not fix
+this. The reviewer's single-term example over a corpus of average length 100
+(three rows of length 48, one of 50, one of 67) orders 48, 48, 48, 50, 67 in
+the index, while quantized scoring makes the 67-token row (length 64 after
+quantization) the winner; at `k = 1` the loop would stop after seeing a
+strictly worse 50-token row and never fetch the winner.
+
+Options considered:
+
+- **make raw-length index scoring canonical** — rejected: a row's score, and
+  so its rank, would change when a storage-maintenance spill moves it from
+  memtable to segment; the exact small tier and any oracle could not
+  reproduce it;
+- **rescore the fetched prefix with the standalone operator** — rejected:
+  the index order is still wrong, so the true winner may never be fetched;
+- **one canonical scorer (chosen)** — quantized length everywhere, one shared
+  scoring routine, bitwise-equal scores on every path, verified by a
+  scorer-identity gate on every image build; supplied by an upstream release
+  or, until then, a small reviewed patch to the memtable scorer (design §6,
+  §8.3, §9).
+
+With the canonical scorer and one scoring generation, the ordered scan
+streams matching rows in non-increasing canonical score (Block-Max WAND for
+the leading top-k, then batch growth until the cursor is drained). With
+positive-match semantics, continuation and the tie rule, a BM25 result equals
+canonical scoring of the same eligible matching rows under that generation —
+which is also today's standalone scoring of those rows, so the canonical
+scorer adds no ranking change beyond the positive-match rule and the upgrade.
 
 HNSW is approximate. Today's semantic search is accidentally exact because the
 planner scans everything; moving to the index trades recall for speed. How
@@ -381,7 +417,10 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
 2. **Equivalence (BM25):** for randomized corpora with deletions, periods,
    entity scopes and ties, the loop's results equal exact scoring of the same
    eligible matching rows **under the same extension version and scoring
-   generation**. Absent terms, empty analyzed queries, fewer-than-`k` matches
+   generation**, with the scorer-identity fixtures of design §9 (40/41-token
+   ties with reversed stable IDs, mixed spilled/unspilled rows, multi-term
+   near-ties, the 48/50/67 single-term counterexample, both sides of the
+   exact-tier threshold). Absent terms, empty analyzed queries, fewer-than-`k` matches
    and both sides of the exact-tier threshold are covered. Concurrent
    term-skewed inserts with spills/compaction between fetches must not change
    a running nomination's scores.
@@ -405,10 +444,11 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
    with a rising truncation rate is a failure, not a pass.
 5. **Quality gates** (design §9; starting points for the owner to confirm):
    HNSW mean recall@10 ≥ 0.95 against exact scoring with no stratum below
-   0.90; LoCoMo answer accuracy, at least three runs per side on identical
-   data, passes when the change's mean is not lower than `main`'s by more than
-   the larger of one percentage point and the two-sided 95% confidence
-   interval of the difference. The positive-match lexical change and the
+   0.90; LoCoMo answer accuracy by the predeclared paired non-inferiority test
+   of design §9 (question as sampling unit, three runs per side, paired
+   bootstrap one-sided 95% bound, fixed 1.0 pp margin, inconclusive when
+   underpowered). The scorer-identity gate (design §9) runs on every image
+   build. The positive-match lexical change and the
    `pg_textsearch` upgrade are measured separately against today's answers.
    The LoCoMo part is a paid run and waits until the in-progress run has
    finished.
@@ -427,10 +467,23 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
 
 ## 10. Sources
 
-- `pg_textsearch` README at the pinned revision `578ff529` (v1.3.1, 2026-06-23)
-  and at tags v1.4.0/v1.5.0/v1.5.1; release notes v1.4.0 (2026-08-18), v1.5.0
-  (2026-10-01), v1.5.1 (2026-10-02), github.com/timescale/pg_textsearch,
-  read 2026-10-21.
-- pgvector README "Filtering" and "Iterative Index Scans",
-  github.com/pgvector/pgvector, read 2026-10-21 (image pins 0.8.6; latest
-  tag 0.8.7).
+All read 2026-10-21; links are pinned to immutable commits or tags.
+
+- pg_textsearch, pinned revision `578ff529` (v1.3.1, 2026-06-23):
+  [README, "Filtering with WHERE clauses"](https://github.com/timescale/pg_textsearch/blob/578ff529894992fb9e67cae4c69424e65c84868e/README.md#filtering-with-where-clauses).
+- pg_textsearch release notes:
+  [v1.4.0](https://github.com/timescale/pg_textsearch/releases/tag/v1.4.0) (2026-08-18),
+  [v1.5.0](https://github.com/timescale/pg_textsearch/releases/tag/v1.5.0) (2026-10-01),
+  [v1.5.1](https://github.com/timescale/pg_textsearch/releases/tag/v1.5.1) (2026-10-02).
+- pg_textsearch v1.5.1 source at commit `fa142d049d08eac45a263f5abc250c8877ae076e`:
+  [README, PostgreSQL version compatibility](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/README.md#postgresql-version-compatibility),
+  [executor-scoped scoring snapshot](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/snapshot.c#L128-L215),
+  [memtable BMW scorer](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/bmw.c#L438-L454),
+  [standalone scorer](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L959-L966),
+  [fieldnorm table](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/segment/fieldnorm.c#L52-L69),
+  [continuation and internal rescoring](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/access/scan.c#L579-L627),
+  [cursor generation test](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/test/scripts/standalone_snapshot.sh#L305-L341).
+- pgvector v0.8.6 (the pinned version):
+  [README, iterative scan options](https://github.com/pgvector/pgvector/tree/v0.8.6#iterative-scan-options),
+  [HNSW scan implementation](https://github.com/pgvector/pgvector/blob/v0.8.6/src/hnswscan.c#L247-L318).
+- PostgreSQL 19, [repeatable read isolation](https://www.postgresql.org/docs/19/transaction-iso.html#XACT-REPEATABLE-READ).

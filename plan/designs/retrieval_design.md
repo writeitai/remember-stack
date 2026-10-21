@@ -316,7 +316,8 @@ relevance and before the candidate cut. The operation contains no fact or entity
 `facts_context` is the fact-grain counterpart: semantic facts nomination followed by
 PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
 applies entity and time eligibility before its internal candidate depth by
-joining the normalized fact authority in the ranked PostgreSQL statement; the current-only public
+confirming against the normalized fact authority in the operation's ranked-read context
+(D142); the current-only public
 `semantic_facts` SRF is not the historical implementation. It returns facts with their
 supporting and contradicting evidence associations. `combined_context`
 does not add a retrieval path; it returns the complete claims-and-sources and fact responses as separate
@@ -689,8 +690,8 @@ implementation consequences are:
 1. **P1 filtered hybrid search:** D94 supersedes the historical Lance/IVFFlat
    spike result as implementation authority. Pgvector HNSW and pg_textsearch
    BM25 use one private `chunk_search` sidecar plus embeddings/indexes on natural
-   PostgreSQL rows. Filters use normalized authority joins in the ranked
-   statement. The prior Lance measurements remain historical only; D94 requires
+   PostgreSQL rows. Filters are applied by authority confirmation in one
+   ranked-read snapshot (D142; originally the ranked statement under D94). The prior Lance measurements remain historical only; D94 requires
    focused functional contract checks, not a parity or scale benchmark before
    the direct replacement.
 2. **Hub pagination:** 500 neighbors fit below the battery's 64 KiB operational starting target

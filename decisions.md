@@ -4378,8 +4378,9 @@ query path, envelope grain, or hydration (D48–D49).
 
 > **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
-> which supports PostgreSQL 19 and fills post-filtered top-k scans. The rest
-> of D98 stands.
+> which supports PostgreSQL 19 and fills post-filtered top-k scans, plus a
+> small reviewed scorer-identity patch until upstream scores memtable and
+> segment rows identically. The rest of D98 stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
@@ -6870,7 +6871,7 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
-**Status:** proposed (design under review, round 2, 2026-10-21); binding on
+**Status:** proposed (design under review, round 3, 2026-10-21); binding on
 approved design merge. Issue
 [#504](https://github.com/writeitai/remember-stack/issues/504).
 
@@ -6915,14 +6916,22 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   loop within large ones; facts merge by `(coverage DESC, distance,
   fact_kind, fact_id)`.
 - **Lexical semantics.** BM25 results are positive matches only on every
-  path.
+  path, ranked by **one canonical BM25 score** (fieldnorm-quantized length,
+  one shared routine, bitwise-equal on index and standalone paths, ties by
+  bitwise equality); a scorer-identity gate checks it on every image build.
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
-  compatibility is a local image gate.
-- **Gates.** Scaling (latency with returned-`k` and truncation rates, by
-  stratum), HNSW recall (mean recall@10 ≥ 0.95, no stratum below 0.90),
-  LoCoMo answer accuracy (≥ 3 runs per side, no drop beyond max(1 pp, 95% CI)),
-  and separate measurement of the lexical change and the upgrade. Thresholds
-  are starting points for the owner to confirm.
+  compatibility is a local image gate. 1.5.1 scores unspilled (memtable) rows
+  with raw length, unlike segments and the standalone operator, so until an
+  upstream release unifies them the image carries a small reviewed patch that
+  does.
+- **Gates.** Scaling (latency with returned-`k` and truncation rates and
+  index-internal work, by stratum), HNSW recall (mean recall@10 ≥ 0.95, no
+  stratum below 0.90), scorer identity, LoCoMo answer accuracy by a
+  predeclared paired non-inferiority test (question as unit, three runs per
+  side, paired bootstrap one-sided 95% bound, fixed 1.0 pp margin,
+  inconclusive when underpowered), and separate measurement of the lexical
+  change and the upgrade. Thresholds and margin are starting points for the
+  owner to confirm.
 
 **Rejected.** Steering the one-statement plan (hints, `enable_seqscan`,
 rewritten joins): still estimate-dependent for the whole statement and cannot
@@ -6933,14 +6942,17 @@ periods. Partial or partitioned indexes as the general answer: no stable
 visibility boolean for time-scoped chunks. A different ANN engine: does not
 address BM25 or authority. Filling the lexical list with zero-score rows by a
 stable-ID walk: preserves a tail with no keyword signal at the cost of an
-unbounded walk.
+unbounded walk. Raw-length index scoring as the canonical score: a row's rank
+would change when a maintenance spill moves it to a segment.
 
 **Open.** Indexing each distinct search input once is designed but unchosen
 ([proposal](plan/proposals/distinct_text_search_index.md)); an isolated
 prototype on LegalIt pilot data measures it before the owner decides.
 
-**Consequences.** In the common case search work scales with `k` over the
-eligible share of top candidates, not with corpus size; declining eligible
+**Consequences.** In the common case fetched-candidate and confirmation work
+scales with `k` over the eligible share of top candidates, not with corpus
+size; index-internal work (posting traversal, internal rescoring passes, HNSW
+visits) is bounded by the deadline and measured separately; declining eligible
 shares, long tie runs and broad entity scopes remain bounded but not
 size-independent, and are reported. More statements per channel and one
 snapshot per operation. Semantic search becomes approximate (HNSW) where it
@@ -6959,4 +6971,5 @@ patch pin.
 **Authority:** [design](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
 [analysis](plan/analysis/index_driven_ranked_search.md),
 [delivery](plan/plans/index_driven_ranked_search.md),
-[review](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md).
+reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
+[r2](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r2_2026-10-21.md).
