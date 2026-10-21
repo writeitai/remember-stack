@@ -122,7 +122,13 @@ _PLANNER_CONTROLS = (
     ("enable_seqscan", "off"),
     ("enable_sort", "off"),
     ("enable_bitmapscan", "off"),
-    ("cursor_tuple_fraction", "0.001"),
+    # EXPLAIN cannot plan a DECLARE; with fraction 1.0 a cursor is planned
+    # exactly like the attested SELECT (its LIMIT already bounds the rows),
+    # so the attestation covers the plan the cursor runs (review r1 nit).
+    ("cursor_tuple_fraction", "1"),
+    # A prepared statement must not switch to a generic plan the attestation
+    # never saw.
+    ("plan_cache_mode", "force_custom_plan"),
 )
 
 
@@ -228,6 +234,14 @@ def nominate_and_confirm(
             {"value": str(max_scan)},
         )
         limits["hnsw_max_scan_tuples"] = float(max_scan)
+    previous = {
+        name: str(
+            connection.execute(
+                text("SELECT current_setting(:name)"), {"name": name}
+            ).scalar_one()
+        )
+        for name, _value in _PLANNER_CONTROLS
+    }
     for name, value in _PLANNER_CONTROLS:
         connection.execute(
             text("SELECT set_config(:name, :value, true)"),
@@ -247,8 +261,12 @@ def nominate_and_confirm(
             text(sql), parameters, execution_options={"stream_results": True}
         )
     finally:
-        for name, _value in _PLANNER_CONTROLS:
-            connection.exec_driver_sql(f"SET LOCAL {name} TO DEFAULT")
+        # Restore the caller's own values, not the defaults (review r1 nit).
+        for name, value in previous.items():
+            connection.execute(
+                text("SELECT set_config(:name, :value, true)"),
+                {"name": name, "value": value},
+            )
 
     confirmed: list[Candidate] = []
     fetched = rejected = rounds = 0

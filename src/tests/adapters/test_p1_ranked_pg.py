@@ -9,6 +9,7 @@ from datetime import datetime
 from datetime import UTC
 from pathlib import Path
 import random
+from time import monotonic
 from uuid import UUID
 from uuid import uuid4
 
@@ -405,3 +406,98 @@ def test_scorer_bound_holds_for_spilled_and_memtable_rows(
                 assert canonical <= indexed * slack / (
                     1 - p1_ranked.BM25_LENGTH_QUANTIZATION_ERROR
                 ), (query, indexed, canonical)
+
+
+def test_planner_controls_restore_the_callers_settings_across_prepared_runs(
+    database_engine: Engine,
+) -> None:
+    """Review r1 nit: the loop restores the caller's own planner settings, and
+    repeated (auto-prepared) executions keep attesting the index plan."""
+    _seed_chunks(database_engine, ["alpha beta", "alpha", "gamma alpha alpha"])
+    index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
+    query = index._testimony_query(  # noqa: SLF001
+        target="chunks",
+        channel="bm25",
+        deployment_id=str(_DEPLOYMENT_ID),
+        current_only=False,
+        equality_filters=None,
+        entity_ids=(),
+        documents=None,
+        time=None,
+        query_text="alpha",
+    )
+    with database_engine.begin() as connection:
+        connection.execute(text("SET LOCAL cursor_tuple_fraction = 0.25"))
+        connection.execute(text("SET LOCAL enable_sort = off"))
+        for _ in range(8):  # past psycopg's prepare threshold
+            rows, account = p1_ranked.nominate_and_confirm(
+                connection,
+                statement=query.nomination,
+                k=2,
+                confirm=lambda conn, ids: {item: None for item in ids},
+            )
+            assert len(rows) == 2
+            assert account.termination.complete
+        settings = {
+            name: connection.execute(
+                text("SELECT current_setting(:name)"), {"name": name}
+            ).scalar_one()
+            for name in ("cursor_tuple_fraction", "enable_sort", "enable_seqscan")
+        }
+    assert settings == {
+        "cursor_tuple_fraction": "0.25",
+        "enable_sort": "off",
+        "enable_seqscan": "on",
+    }
+
+
+def test_deadline_between_fetches_stops_with_a_disclosed_deadline(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r1 P1-7: the loop checks the operation deadline before every
+    fetch; time spent on one round stops the next with ``deadline``."""
+    _seed_chunks(database_engine, [f"alpha filler{n}" for n in range(40)])
+    index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
+    query = index._testimony_query(  # noqa: SLF001
+        target="chunks",
+        channel="bm25",
+        deployment_id=str(_DEPLOYMENT_ID),
+        current_only=False,
+        equality_filters=None,
+        entity_ids=(),
+        documents=None,
+        time=None,
+        query_text="alpha",
+    )
+    clock = iter([0.0] + [5.0] * 100)
+    monkeypatch.setattr(p1_ranked, "monotonic", lambda: next(clock))
+    with database_engine.begin() as connection:
+        rows, account = p1_ranked.nominate_and_confirm(
+            connection,
+            statement=query.nomination,
+            k=1,
+            confirm=lambda conn, ids: {},  # nothing confirms: keep fetching
+            deadline=1.0,
+        )
+    assert rows == []
+    assert account.termination is P1Termination.DEADLINE
+    assert account.fetch_rounds == 1
+
+
+def test_operation_snapshot_bounds_nested_statements(database_engine: Engine) -> None:
+    """Review r1 P1-7: a nested read inside an operation runs under a
+    statement timeout clamped to the operation's remaining time."""
+    pool = BoundedPostgresReadPool(
+        engine=database_engine, max_concurrency=1, pool_wait_seconds=1.0
+    )
+    with pool.snapshot(deadline=monotonic() + 30.0):
+        with pool.connect(deadline=None) as connection:
+            timeout = connection.execute(text("SHOW statement_timeout")).scalar_one()
+    shown = str(timeout)
+    if shown.endswith("ms"):
+        millis = int(shown[:-2])
+    elif shown.endswith("s"):
+        millis = int(shown[:-1]) * 1000
+    else:
+        millis = int(shown)
+    assert 0 < millis <= 30_000
