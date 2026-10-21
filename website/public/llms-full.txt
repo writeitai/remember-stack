@@ -6668,7 +6668,7 @@ The migrations create these extensions:
 | Extension | Version | Used for |
 |---|---|---|
 | `vector` (pgvector) | 0.8.6 | Semantic search vectors and HNSW indexes |
-| `pg_textsearch` | 1.3.1 | BM25 keyword search |
+| `pg_textsearch` | 1.5.1 | BM25 keyword search |
 | `pg_partman` | 5.5.0 | Monthly partitioning of large tables |
 | `pgcrypto` | contrib | UUID generation and digests |
 | `pg_trgm` | contrib | Fuzzy name matching during entity resolution |
@@ -6677,9 +6677,8 @@ The migrations create these extensions:
 | `btree_gist` | contrib | The time-range exclusion constraint on relations |
 
 `pg_textsearch` has no PostgreSQL 19 package yet. `Dockerfile.postgres`
-downloads a pinned source revision from `timescale/pg_textsearch`, applies
-a small compatibility patch (`docker/pg_textsearch-pg19.patch`) and
-compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
+downloads the pinned `v1.5.1` source revision from `timescale/pg_textsearch`
+(which supports PostgreSQL 19 upstream) and compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
 archive at the exact versions above. `remember ops graph-catalog ensure`
 checks these three versions (see [Operating the pipeline](https://remember.dev/docs/self-hosting/operating)).
 

@@ -16,7 +16,7 @@ GRAPH_HELPER_CONTRACT_VERSION: Final = (
 
 _EXPECTED_EXTENSION_VERSIONS: Final = {
     "pg_partman": "5.5.0",
-    "pg_textsearch": "1.3.1",
+    "pg_textsearch": "1.5.1",
     "vector": "0.8.6",
 }
 

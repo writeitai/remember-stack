@@ -1,8 +1,7 @@
 FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572 AS pg_textsearch_builder
 
-ARG PG_TEXTSEARCH_REVISION=578ff529894992fb9e67cae4c69424e65c84868e
-ARG PG_TEXTSEARCH_SOURCE_SHA256=8632f91231251dc3e19395ef6a0d4d158d5f5920ba420691471771418e2a7cc7
-ARG PG_TEXTSEARCH_PATCH_SHA256=a8c97f39714ab0193c82fcda3709d3e4df54bcc7f2804fde8f970710484dbdc6
+ARG PG_TEXTSEARCH_REVISION=fa142d049d08eac45a263f5abc250c8877ae076e
+ARG PG_TEXTSEARCH_SOURCE_SHA256=445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0
 ARG PG_TEXTSEARCH_LICENSE_SHA256=d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5
 ARG PG_TEXTSEARCH_NOTICE_SHA256=ff70cf4336c579957368a71c6b6b66ee8954011deef2b3d2c7a11f931080851d
 
@@ -46,12 +45,8 @@ RUN set -eux; \
     echo "${PG_TEXTSEARCH_NOTICE_SHA256}  /src/pg_textsearch/NOTICE" | sha256sum --check --strict; \
     rm -rf /var/lib/apt/lists/*
 
-COPY docker/pg_textsearch-pg19.patch /tmp/pg_textsearch-pg19.patch
-
 RUN set -eux; \
-    echo "${PG_TEXTSEARCH_PATCH_SHA256}  /tmp/pg_textsearch-pg19.patch" | sha256sum --check --strict; \
     cd /src/pg_textsearch; \
-    patch --batch --forward --strip=1 < /tmp/pg_textsearch-pg19.patch; \
     make -j"$(nproc)"; \
     make install; \
     { \
@@ -62,9 +57,8 @@ RUN set -eux; \
 
 FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572
 
-# pg_textsearch uses the PostgreSQL License at the source revision pinned above. The local
-# compatibility delta follows upstream PR 460 while PostgreSQL 19 support is
-# unmerged: https://github.com/timescale/pg_textsearch/pull/460
+# pg_textsearch uses the PostgreSQL License at the source revision pinned above
+# (v1.5.1, which supports PostgreSQL 19 upstream; no local patch, D142).
 COPY --from=pg_textsearch_builder /usr/lib/postgresql/19/lib/pg_textsearch.so /usr/lib/postgresql/19/lib/pg_textsearch.so
 COPY --from=pg_textsearch_builder /usr/share/postgresql/19/extension/pg_textsearch* /usr/share/postgresql/19/extension/
 COPY --from=pg_textsearch_builder /src/pg_textsearch/LICENSE /usr/share/doc/pg_textsearch/LICENSE
