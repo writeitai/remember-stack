@@ -468,6 +468,56 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
    The LoCoMo part is a paid run and waits until the in-progress run has
    finished.
 
+### 8.1 Scaling sweep results (WP-RS.8, 2026-10-21)
+
+`benchmarks/p1_ranked/sweep.py` ran on an isolated GCE VM (n2-highmem-8, one
+PostgreSQL 19 container per side built from that side's `Dockerfile.postgres`:
+`main` with pg_textsearch 1.3.1 + the D98 patch, the branch with 1.5.1).
+The corpus is the D140 seed (lineages × 5 versions × 10 chunks, half
+periodised) with chunk text rewritten to Zipf-skewed words of 20–300 words,
+half of the lineages repeating their text across versions, and D134 metadata
+on every version. BM25 chunk search, `k = 20`, 40 two-word queries sampled
+from the corpus (8 on `main` at 300k: each `main` query scores every chunk).
+Latency is p50 / p95 in ms.
+
+| chunks | stratum | `main` | branch | branch terminations (of 40) |
+| --- | --- | --- | --- | --- |
+| 30k | current | 4,644 / 4,668 | 82 / 609 | `k_filled` 30, `exhausted` 10 |
+| 30k | history | 14,540 / 14,572 | 34 / 83 | `k_filled` 38, `exhausted` 2 |
+| 300k | current | 49,599 / 49,959 | 88 / 183 | `k_filled` 40 |
+| 300k | history | 148,045 / 148,325 | 66 / 96 | `k_filled` 40 |
+| 3M | current | not run (linear: ≈ 500 s) | 415 / 1,581 | `k_filled` 40 |
+| 3M | history | not run | 98 / 291 | `k_filled` 40 |
+| 3M | 6 documents (exact tier) | — | 107 / 109 | `exhausted` 40 |
+| 3M | 60 documents (exact tier) | — | 511 / 518 | `exhausted` 40 |
+| 3M | 600 documents (1%, loop) | — | 3,809 / 5,026 | `k_filled` 14, `exhausted` 16, **`work_budget` 10** |
+
+The 3M branch rows were measured right after the index rebuild; a warm
+re-run gave `current` 165 / 396 and `history` 99 / 288. `main`'s 1% document
+stratum is not comparable (its run predates the metadata fix, so the filter
+matched nothing).
+
+Readings:
+
+- Unfiltered `current` and `history` searches no longer grow with the corpus:
+  mean fetched candidates stay in the hundreds (328 at 300k, 824 at 3M for
+  `current`), and no query stops short. `main` grows linearly.
+- Small document filters are exact and fast through the small-set tier.
+- **A 1% document filter at 3M chunks (about 6,000 eligible chunks, above the
+  5,000 exact-tier threshold) still fails the scaling gate:** 25% of queries
+  stop at the work budget (disclosed as `p1_work_budget`), with p50 3.8 s.
+  Nominating from the BM25 index cannot reach rows that are 1% of a large
+  match set within the budget, and exact scoring above the threshold costs
+  about 0.5 ms a row. This is the case the distinct-text proposal and a
+  filter-first plan would have to address; it is reported, not solved.
+- Three harness problems were found and fixed on the way: the D140 seed's
+  text is degenerate (every word is `w0`, because `hashint8` returns a 32-bit
+  hash that the seed divides by 2⁶³), the seed writes no D134 metadata (a
+  document filter matched nothing), and confirmation by `= ANY(:batch_ids)`
+  let the planner start from every eligible row (17 s for one 4,000-ID batch
+  at 30k chunks; now a per-candidate `LATERAL` probe). The D140 benchmark's
+  own BM25 numbers were measured on the degenerate text.
+
 ## 9. Out of scope
 
 - **Reranking.** A precise reranker (for example TypeSafe AI's Jev model,

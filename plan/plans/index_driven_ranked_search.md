@@ -19,10 +19,10 @@ implementation is added to the same pull request (#505) after design approval
 | WP-RS.2 | done — ranked-read connection (read-only REPEATABLE READ); SQL sandbox snapshot export/import; `claims_and_sources_context` P1 reads in one pool snapshot (claim/chunk hydration still uses its own connection — gap, see PR) |
 | WP-RS.3 | done — `adapters/p1_ranked.py` loop; chunk and claim searches |
 | WP-RS.4 | done — `P1SearchResult`/`P1SearchIds` accounts; envelopes, testimony lists, sandbox invocations, `scope_pending.complete` |
-| WP-RS.5 | done — coverage tiers for testimony searches; entity budget on testimony nomination |
+| WP-RS.5 | done — coverage tiers for testimony searches; entity budget on testimony nomination; small document-filtered chunk sets scored exactly (post-approval addition, design §8.4) |
 | WP-RS.6 | done — deployment-wide fact and entity search on the loop; entity-scoped fact searches remain exact bounded scans |
 | WP-RS.7 | done except the randomized spill-mixed scorer-bound corpus — unit proofs with the revision-pinned scorer-bound gate, Postgres proofs (`test_p1_ranked.py`, `test_p1_ranked_pg.py`), and the owner's incremental-ingestion regression (`test_reuse_lifecycle.py`) |
-| WP-RS.8 | harness ready — `benchmarks/p1_ranked/sweep.py`; **not yet run** at scale |
+| WP-RS.8 | run 2026-10-21 at 30k/300k/3M (analysis §8.1): unfiltered searches flat (3M `current` p50 415 ms vs `main` 50 s at 300k), small document filters exact; **the 1% document filter at 3M fails the gate** (25% `work_budget`) — reported, not solved |
 | WP-RS.9 | harnesses ready — `recall.py`, `locomo_gate.py`; **pending** (recall run needs a vector corpus; LoCoMo runs are paid and wait for the current run) |
 | WP-RS.10 | done — retrieval concepts, result types and versions-in-force pages |
 

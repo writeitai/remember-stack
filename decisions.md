@@ -6930,6 +6930,12 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   keeps exactness at the cost of fetching rows within ≈12.5% of the `k`-th
   score; the gate is a test pinning the extension revision the bound was
   verified on, plus the counterexample proofs on the built image.
+- **Small document-filtered sets (post-approval addition, 2026-10-21).** A
+  document-filtered chunk search scores its eligible rows exactly when they
+  number at most the exact-tier threshold (design §8.4). Measured at 3M
+  chunks, a 1% document filter above the threshold still stops at the work
+  budget on a quarter of queries (analysis §8.1); that stratum fails the
+  scaling gate and is open.
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
   compatibility is a local image gate; no local patch.
 - **Gates.** Scaling (latency with returned-`k` and truncation rates and
