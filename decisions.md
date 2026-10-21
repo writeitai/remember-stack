@@ -4116,11 +4116,12 @@ projection. Does not amend D9 query path or D48 hydration.
 ## D94. P1 search is PostgreSQL-native
 
 > **D142 refinement (2026-10-21, proposed).** Ranking and authority
-> confirmation stay in PostgreSQL but run as an index nomination plus a
-> primary-key confirmation, refilled until `k` eligible rows, in one
-> read-only `REPEATABLE READ` snapshot instead of one statement; the image
-> pins `pg_textsearch` 1.5.1 or later; index-driven execution requires a
-> scaling benchmark and an HNSW quality gate. Everything else below stands.
+> confirmation stay in PostgreSQL but run as index-cursor nomination plus
+> primary-key confirmation, continued until `k` eligible rows or a disclosed
+> stop, in one read-only `REPEATABLE READ` ranked-read context instead of one
+> statement; BM25 results are positive matches only; the image pins
+> `pg_textsearch` 1.5.1 or later; index-driven execution requires the D142
+> scaling and quality gates. Everything else below stands.
 >
 > **D98 amendment (2026-08-27).** PostgreSQL 19 replaces the PostgreSQL 18
 > image baseline. P1 remains pgvector/pg_textsearch PostgreSQL state, while the
@@ -6748,6 +6749,12 @@ tests cover born-digital, scanned and mixed PDFs without a text-layer escape.
 
 ## D140. Declared effective periods, section keys, and version-aware references
 
+> **D142 refinement (2026-10-21, proposed).** "Scoping is a predicate inside the ranked
+> statement" is executed as a predicate of the eligibility (confirmation) step of D142's
+> nominate–confirm–continue loop, before the `k` cut, in one ranked-read snapshot. Scope,
+> occurrence selection, the evidence gate and `scope_pending` semantics are unchanged, except
+> that `scope_pending` gains `complete` (false when a replayed nomination stopped on a bound).
+
 **Status:** accepted when merged. **Date:** 2026-09-30. **Refines:** D36, D55, D56,
 D79, D134 (in-entry notes mark each); D118 is unchanged and gains one adjudication
 input.
@@ -6863,8 +6870,8 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
-**Status:** proposed (design under review, 2026-10-21); binding on approved
-design merge. Issue
+**Status:** proposed (design under review, round 2, 2026-10-21); binding on
+approved design merge. Issue
 [#504](https://github.com/writeitai/remember-stack/issues/504).
 
 **Context.** D94 put ranking and authority confirmation into one PostgreSQL
@@ -6872,51 +6879,84 @@ statement per channel. On the D140 benchmark (synthetic corpora, 30,000 and
 500,000 chunks) the planner answered those statements by scoring every chunk
 of the deployment and sorting: p95 1.3 s (BM25) and 0.7 s (semantic) at
 30,000 chunks, 2.8 s BM25 at 500,000, growing linearly. Forcing an index plan
-is not a fix: post-filtered index scans return fewer rows than asked without
-saying why (pgvector stops at `hnsw.max_scan_tuples`; the pinned
-`pg_textsearch` 1.3.1 returns its top-k before filtering), which would turn a
-slow correct answer into a fast truncated one. A real-deployment plan check
-is pending (a LoCoMo run occupies the database on 2026-10-21).
+alone is not a fix: post-filtered index scans can stop short without saying
+why (pgvector at `hnsw.max_scan_tuples` or its memory limit; the pinned
+`pg_textsearch` 1.3.1 returns its top-k before filtering). A real-deployment
+plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
 
-**Decision.** Each ranked P1 search (chunks, claims, facts; semantic and
-BM25) runs a **nominate → confirm → refill** loop in one read-only
-`REPEATABLE READ` transaction: a trivial index query returns the next batch of
-IDs in score order; a confirmation query applies the unchanged eligibility
-predicates (authority views, D140 scope and evidence gate, documents, entity,
-fact time, SRF filters) by primary key; batches double until `k` eligible
-rows are confirmed past any run of equal scores, the index is exhausted, or a
-declared work budget is spent — the last disclosed as truncation (D49). The
-transaction snapshot is the D48 linearization point. Entity-scoped
-(coverage-first) nomination ranks coverage tiers from the mention tables,
-scores small tiers exactly and runs the loop within large ones. The image
-moves to `pg_textsearch` ≥ 1.5.1, retiring the D98 patch. Index-driven
-execution ships only with a size-sweep scaling benchmark and an HNSW quality
-gate (recall@k and LoCoMo answer accuracy before/after).
+**Decision.**
+
+- **Ranked-read context.** Every ranked operation reads P1 and authority in one
+  `READ ONLY`, `REPEATABLE READ` transaction with pinned `evaluated_at`/
+  `believed_at` parameters — readiness, nominations, confirmations, coverage,
+  both fact branches, the D140 `scope_pending` probe and final confirmation.
+  The SQL sandbox shares its request snapshot with the adapter by snapshot
+  export/import; a failed import fails the invocation.
+- **Nominate, confirm, continue.** Per target and channel, one server-side
+  cursor over a join-free index statement streams IDs and scores in index
+  order — one BM25 scoring generation, one continuing HNSW scan; disjoint
+  doubling fetches; each batch confirmed by primary key with the unchanged
+  eligibility predicates; scores never recomputed. It stops at `k_filled`
+  (past any equal-score run), `exhausted` (channel-specific proof), or a
+  disclosed bound (`work_budget`, `deadline`, `ann_scan_bound`,
+  `plan_rejected`).
+- **Plans enforced and attested.** Planner controls apply to the nomination
+  cursor only and are restored before confirmation; an `EXPLAIN` of the exact
+  nomination statement must show the expected index, otherwise the call
+  fails with `p1_unavailable` before fetching.
+- **Honest results.** Port calls return a structured search result (rows,
+  termination, counters, limits, attestation) that propagates through RRF,
+  the fact merge, envelopes, `QueryResult.semantic_invocations[]` and
+  `scope_pending.complete`; an empty result is `known_empty` only when every
+  channel was exhausted.
+- **Coverage first.** Entity-scoped testimony and facts rank coverage tiers
+  computed from mentions or survivor-resolved fact endpoints within an entity
+  work budget (exceeded → `boundary`), score small tiers exactly and run the
+  loop within large ones; facts merge by `(coverage DESC, distance,
+  fact_kind, fact_id)`.
+- **Lexical semantics.** BM25 results are positive matches only on every
+  path.
+- **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
+  compatibility is a local image gate.
+- **Gates.** Scaling (latency with returned-`k` and truncation rates, by
+  stratum), HNSW recall (mean recall@10 ≥ 0.95, no stratum below 0.90),
+  LoCoMo answer accuracy (≥ 3 runs per side, no drop beyond max(1 pp, 95% CI)),
+  and separate measurement of the lexical change and the upgrade. Thresholds
+  are starting points for the owner to confirm.
 
 **Rejected.** Steering the one-statement plan (hints, `enable_seqscan`,
-rewritten joins): still estimate-dependent and cannot tell a capped scan from
-an exhausted one. Copying visibility onto search rows: rejected by D94 and
-incompatible with D140's retroactive, instant-evaluated periods. Partial or
-partitioned indexes as the general answer: no stable visibility boolean for
-time-scoped chunks. A different ANN engine: does not address BM25 or
-authority; its proposal is unchanged.
+rewritten joins): still estimate-dependent for the whole statement and cannot
+attribute a short result. Re-running a growing `LIMIT` per round: rescores BM25
+under newer statistics and repeats work. Copying visibility onto search rows:
+rejected by D94 and incompatible with D140's retroactive, instant-evaluated
+periods. Partial or partitioned indexes as the general answer: no stable
+visibility boolean for time-scoped chunks. A different ANN engine: does not
+address BM25 or authority. Filling the lexical list with zero-score rows by a
+stable-ID walk: preserves a tail with no keyword signal at the cost of an
+unbounded walk.
 
 **Open.** Indexing each distinct search input once is designed but unchosen
-([proposal](plan/proposals/distinct_text_search_index.md)); the owner decides
-on the LegalIt pilot's measured effective duplication factor.
+([proposal](plan/proposals/distinct_text_search_index.md)); an isolated
+prototype on LegalIt pilot data measures it before the owner decides.
 
-**Consequences.** Search work scales with `k` over the eligible share of top
-candidates, not with corpus size; one or more extra round trips per channel;
-semantic search becomes approximate (HNSW) where it was accidentally exact,
-under the quality gate. No public parameter changes.
+**Consequences.** In the common case search work scales with `k` over the
+eligible share of top candidates, not with corpus size; declining eligible
+shares, long tie runs and broad entity scopes remain bounded but not
+size-independent, and are reported. More statements per channel and one
+snapshot per operation. Semantic search becomes approximate (HNSW) where it
+was accidentally exact, under the quality gates. **Behaviour change:**
+non-matching rows no longer appear as lexical results or take RRF ranks.
+No public parameter changes; `Freshness.scope_pending` gains `complete`.
 
-**Refines/amends.** Refines D94 (the one-statement execution and the "no
-scale benchmark" scope) and its D48 amendment (confirmation stays in
-PostgreSQL, in one snapshot rather than one statement). Preserves D9
+**Refines/amends.** Refines D94 (one-statement execution and the cutover's
+"no benchmark" scope) and its D48 amendment (confirmation stays in
+PostgreSQL, in one snapshot rather than one statement). Refines D140's
+ranked-statement wording (scope semantics unchanged). Preserves D9
 (independent channels, RRF, zero LLM calls), D87 (eligibility before the
-relevance cut) and D140 (scope, evidence gate, `scope_pending`). Amends D98's
-`pg_textsearch` patch pin.
+relevance cut) and D49 (honest truncation). Amends D98's `pg_textsearch`
+patch pin.
 
 **Authority:** [design](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
 [analysis](plan/analysis/index_driven_ranked_search.md),
-[delivery](plan/plans/index_driven_ranked_search.md).
+[delivery](plan/plans/index_driven_ranked_search.md),
+[review](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md).

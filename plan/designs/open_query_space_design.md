@@ -69,7 +69,8 @@ D54, D80, and D87 remain controlling.*
    currently holds.
 5. **D48 is fail-closed at each stated time boundary.** Each live
    lineage-derived row has a surviving live-document provenance path. P1
-   nominations receive same-statement authority joins; SQL/PGQ patterns and
+   nominations receive authority confirmation in the request's snapshot
+   (D142 ranked-read context); SQL/PGQ patterns and
    recursive traversal expand only invariant-bearing live edge views; graph
    paths fail as units; chunk bodies confirm their current coordinate and hashes.
    Missing, orphaned, mismatched, or incompletely forgotten state is absent from
@@ -531,7 +532,7 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 |---|---|
 | Public views | Apply the full live lineage/version/representation chain before projection or aggregation |
 | SQL helpers | Read only invariant-bearing public views or equivalent private subqueries covered by the same tests |
-| PostgreSQL P1 SRFs | Nominate from the `chunk_search` or in-row embedding index and confirm with target-specific authority joins/predicates in one transaction snapshot, refilling until `k` eligible rows (D142), before exposing rows |
+| PostgreSQL P1 SRFs | Nominate from the `chunk_search` or in-row embedding index and confirm with target-specific authority joins/predicates in one transaction snapshot, continuing until `k` eligible rows or a disclosed stop (D142), before exposing rows |
 | SQL/PGQ fixed patterns | Match only invariant-bearing deployment-keyed graph views at the caller's statement clock; explicitly reject repeated element UUIDs when simple-path semantics are required |
 | Recursive graph helpers | Apply authority predicates during expansion and drop a path as one unit when any member fails |
 | Saved queries and assured operations | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
@@ -625,7 +626,7 @@ optimization.
 | `lexical_chunks` | `(query text, k int, filters jsonb DEFAULT '{}')` → the same confirmed chunk result columns as `semantic_chunks`, with lexical-channel rank/score semantics below |
 | `fetch_chunk_bodies` | `(chunk_ids uuid[])` → `input_ordinal`, confirmed `chunk_id`, current document/version/representation/section coordinate, source/embedding hashes, separately labeled `source_text` and D80 `location_header`, policy/embedder generations, and freshness columns; no nomination or ranking columns |
 | `semantic_facts` | `(query text, k int, filters jsonb DEFAULT '{}')` → confirmed `(fact_kind, fact_id)`, rank, score, channel and current embedding/freshness columns; confirmation is against the requested current/history fact authority |
-| `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over the existing canonical entity/profile row, returning authority-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and current embedding/freshness columns; confirmation is against `entities_current` in the same statement. The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
+| `semantic_entities` | `(query text, k int, filters jsonb DEFAULT '{}')` → description/profile-vector search over the existing canonical entity/profile row, returning authority-confirmed survivor `entity_id`, entity type/name/profile orientation fields, rank, score, channel and current embedding/freshness columns; confirmation is against `entities_current` in the request's snapshot (D142). The scored entity-nomination method does not exist on the shared P1 port today and is ADDED by this change (the port exposes only id-addressed `entity_vectors`), parallel to the lexical score extension |
 | `graph_neighborhood` | `(deployment_id uuid, start_entity_id uuid, max_depth int DEFAULT 2, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_results int DEFAULT 100, expansion_budget int DEFAULT 2000, frontier_budget int DEFAULT 1000, time_budget_ms int DEFAULT 1000)` → deterministic complete path rows plus exactly one terminal status row. Every row has `row_kind`; the status carries `truncated`, `truncation_reason`, `examined_edges`, `returned_paths`, and every effective depth/work/result/time budget |
 | `graph_path` | `(deployment_id uuid, from_entity_id uuid, to_entity_id uuid, max_depth int DEFAULT 4, predicates text[] DEFAULT NULL, valid_at timestamptz DEFAULT NULL, believed_at timestamptz DEFAULT NULL, max_paths int DEFAULT 3, expansion_budget int DEFAULT 2000, frontier_budget int DEFAULT 1000, time_budget_ms int DEFAULT 1000)` → zero or more deterministic complete **equal-length shortest-tier** path rows plus the same terminal status; it never returns longer paths after a target-bearing level |
 | `versions_in_scope` | `(deployment_id uuid, mode text, at timestamptz DEFAULT NULL, range_start timestamptz DEFAULT NULL, range_end timestamptz DEFAULT NULL, evaluated_at timestamptz DEFAULT now(), believed_at timestamptz DEFAULT NULL, doc_ids uuid[] DEFAULT NULL)` → `(doc_id, version_id, representation_id, effective_from, effective_until)`: the non-deleted ready versions a D140 time scope selects — versions in force under `current`/`at`/`overlap`/`history` for periodised lineages, the served version for every other live lineage. Without `believed_at` it reads the current-belief projection (optionally restricted to `doc_ids`); with `believed_at`, `doc_ids` is required and the declaration and mode ledgers are evaluated as known then for those lineages only |
@@ -977,7 +978,10 @@ timeouts, memory, temp, parallelism, and read-only transaction state before use;
 every check-in rolls back and discards the session on reset failure. Query
 transactions use `READ ONLY, REPEATABLE READ`: bounded nomination confirmation
 and the caller statement share one PostgreSQL snapshot even when one public
-request needs several internal statements. The caller still submits exactly one
+request needs several internal statements. The executor exports that snapshot
+at the start of the request and the P1 adapter's ranked-read context imports it
+(P1 search design §8.2, D142); a failed import fails the invocation with
+`p1_unavailable` rather than nominating from a different snapshot. The caller still submits exactly one
 statement.
 
 The adversarial CI suite runs under the real query and graph roles. It MUST
@@ -1415,7 +1419,7 @@ never grants raw tables or bypasses deployment/time/provenance predicates.
 | Property-graph catalog or grants disagree with the graph contract | Typed graph operations and graph helpers fail `graph_unavailable`; unrelated relational SQL and assured operations remain available |
 | Traversal reaches a declared work/result/depth cap | The closed graph result reports the reached boundary and `truncated=true`; it makes no absence or shortest-path claim beyond the explored boundary |
 | Artifact/chunk body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
-| P1 state and authority disagree | For chunks, the same-statement authority join rejects an ineligible `chunk_search` row. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
+| P1 state and authority disagree | For chunks, authority confirmation in the request's snapshot (D142) rejects an ineligible `chunk_search` row; the rejection is counted in the invocation's drop disclosure. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
 | Body coordinate/hash/prefix disagrees | Candidate drops; no bytes return; systemic mismatch marks the chunk channel unready and schedules repair |
 | Runtime public interface shape disagrees with the manifest | Open SQL and saved queries fail `schema_version_mismatch`. Exact semantic view-definition disagreement fails the deploy/CI same-server comparison. The four core operations remain available only if their own descriptors/invariants verify |
 | Forget is pending or incomplete | Live SQL/core lineage and graph paths fail closed under D48/D74; no copied graph or older generation exists to retain forgotten content |
@@ -1660,7 +1664,7 @@ for the shipping surface pass before release.
 3. **Batch C — PostgreSQL-native P1 operations:** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies`; shared P1-port
-   paths, D80 current-attestation readiness, same-statement authority joins, body
+   paths, D80 current-attestation readiness, snapshot-shared authority confirmation (D142), body
    verification, rank/score and drop disclosure, caps, cancellation/telemetry,
    manifest signatures, and per-surface OSS pages. `lexical_facts` remains only
    the §10 recorded alternative.

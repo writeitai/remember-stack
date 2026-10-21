@@ -122,7 +122,7 @@ Consequences, spelled out (S42, S43):
   the authority confirmation in the same snapshot, D142). Graph expansion itself is live and has
   no generation lag. P1 lag is reported (§5); correctness is live, always.
 - P1 authority rejection is ordinary filtering in the confirmation step of the
-  ranked search (index nomination, then confirmation and refill in one
+  ranked search (index-cursor nomination, then confirmation, continued in one
   snapshot, D142) and is reported through candidate/eligible counters; a
   search stopped by its work budget sets the truncation marker. Deep source-body hydration
   can still lose a candidate at a later eligibility/locator boundary; the
@@ -171,9 +171,11 @@ For claims and chunks, `semantic` embeds the query once and searches a pgvector
 HNSW index; `bm25` searches a pg_textsearch BM25 index over the same canonical
 text and stable ID. RRF combines ranks, never raw vector/BM25 scores.
 
-Both channels join the invariant-bearing authority view inside the ranked
-PostgreSQL statement. Projection lag can omit a new row, but an invalidated,
-wrong-lineage or wrong-generation row cannot leave the statement. Ordinary DML
+Both channels confirm every index nomination against the invariant-bearing
+authority view in the operation's one PostgreSQL snapshot (D142's ranked-read
+context; P1 search design §8). Projection lag can omit a new row, but an
+invalidated, wrong-lineage or wrong-generation row cannot be returned. BM25
+returns positive matches only (D142). Ordinary DML
 maintains both indexes and autovacuum cleans dead rows; index creation belongs
 to migrations/backfill and evidence-driven reindexing, not reads or a P1
 maintenance ticker. The analyzer/text configuration is versioned rather than
@@ -639,8 +641,9 @@ labels, same trust model (§9).
   clamped to the same absolute operation deadline; expiry is a typed boundary,
   never an unbounded general-pool fallback.
 - **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
-  filtered ANN/BM25 search (index nomination plus confirmation and refill, D142 — work grows with
-  `k` over the eligible share of top candidates, not with corpus size); multi-hop as-of path predicates
+  filtered ANN/BM25 search (index-cursor nomination plus confirmation, D142 — in the common case work
+  grows with `k` over the eligible share of top candidates, not with corpus size;
+  P1 search design §9.1 names the exceptions); multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).
 - **Scaling shape:** query nodes are stateless-plus-replicas → horizontal; the spine scales
   reads via the by-ID discipline (no fuzzy scans on the hot path — D23's index philosophy).

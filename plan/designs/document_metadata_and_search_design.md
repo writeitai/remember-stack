@@ -195,7 +195,7 @@ same fields as §3. It restricts results to evidence from matching documents:
   to those claims.
 
 The filter is applied in the ranked search's confirmation step, before the
-top results are cut (D94, executed as D142's nominate–confirm–refill loop),
+top results are cut (D94, executed as D142's nominate–confirm–continue loop),
 never by filtering a finished top-k.
 
 `search` also takes the D140 `time` scope. It selects which versions of

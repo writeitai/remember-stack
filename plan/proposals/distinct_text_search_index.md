@@ -1,9 +1,9 @@
 # Proposal: index each distinct search input once
 
-**Status:** not chosen (2026-10-21). Fully designed option for
+**Status:** not chosen (2026-10-21; revised after D142 review round 1). Fully designed option for
 [D142](../../decisions.md#d142-ranked-search-nominates-from-the-index-and-confirms-in-one-snapshot);
 adoption is an **open owner decision** taken on the evidence named under
-"Adoption trigger". **Analysis:**
+"Investigation trigger and adoption prerequisites". **Analysis:**
 [index-driven ranked search §7](../analysis/index_driven_ranked_search.md#7-duplicate-text-in-versioned-corpora).
 
 ## The problem it solves
@@ -60,31 +60,40 @@ does **not** merge — those are different contexts and must stay separately
 findable. The case the proposal targets — an unchanged paragraph in the next
 edition of the same document under the same heading — does merge.
 
-**Search.** D142's loop runs on `search_texts`:
+**Search — the chunk result grain does not change.** D142's loop runs on
+`search_texts`, but every nominated entry is **fanned out to its member chunks
+before the relevance cut**:
 
-1. the index returns the next batch of `text_id`s in score order;
-2. confirmation expands each `text_id` to its member chunks and applies the
-   unchanged chunk predicates (live lineage, D140 scope, documents filter,
-   entity scope) to the members;
-3. an entry is **visible if at least one member chunk passes**;
-4. the hit is reported as a chunk: for `current` and `at`, the member in the
-   version D140 selects; for `history`, the representative edition plus the
-   matching editions, the rule D140 already defines for
-   `search_documents` (`matching_editions`).
+1. the index cursor returns the next batch of `text_id`s in score order;
+2. each entry expands to all of its member chunk IDs; every member carries the
+   entry's score;
+3. confirmation applies the unchanged chunk predicates (live lineage, D140
+   scope, documents filter, entity scope) to each **member**, exactly as it
+   applies them to chunk candidates today;
+4. confirmed members are ranked at member grain — coverage (when entity
+   scoped), score, then the member's stable chunk ID — and the `k` cut, the
+   tie rule and RRF membership all apply to members.
 
-Ranking stays score, then stable ID — the stable ID of the reported chunk.
+So a query returns the same chunk identities it returns today: separate chunk
+results for separate eligible editions, in every scope (`current`, `at`,
+`overlap`, `history`, and concurrent editions under overlapping declarations).
+Edition aggregation (a representative plus `matching_editions`) stays a
+`search_documents` concern. The work budget counts every **member row
+examined**, not only entries returned, so an entry with thousands of members
+cannot make a search unbounded. Any future change to the chunk result grain
+would need its own design decision.
 
 **Worked example.** § 5 of an act has text A in 2015–2023 (nine versions) and
 text B from 2024.
 
-| query | entry A (members: 2015…2023) | entry B (member: 2024) | answer |
+| query | index entries read | members confirmed | chunk results |
 | --- | --- | --- | --- |
-| `current` (2026) | no member in force → skip | 2024 in force → hit | B, cited in the 2024 edition |
-| `at 2019-06-01` | 2019 member in force → hit | not yet in force → skip | A, cited in the 2019 edition |
-| `history` | hit | hit | both; A lists its nine editions |
+| `current` (2026) | A, B | A: none in force; B: 2024 | the 2024 § 5 chunk |
+| `at 2019-06-01` | A, B | A: 2019; B: none | the 2019 § 5 chunk |
+| `history` | A, B | all ten | ten chunk results (nine A editions, one B), ordered by score then chunk ID |
 
-These are exactly today's answers; the index simply holds A once instead of
-nine times.
+These are today's results. What changes is index work: A is read once instead
+of nine times, and its nine copies no longer fill a fetch batch.
 
 ## Invariants and failure behaviour
 
@@ -99,6 +108,9 @@ nine times.
   forgotten content must not survive in any index.
 - **Text that returns (A → B → A).** The 2025 chunk with text A joins entry A
   again. No special case.
+- **Tests.** History, overlap and concurrent-edition scopes return every
+  eligible member; duplicate chunks and deletion of one member leave the
+  others findable; the work budget counts member rows.
 - **Reachability check.** A database-wide invariant test: every live chunk
   with search text has exactly one membership, and every `search_texts` row
   has at least one member that is not hard-forgotten.
@@ -108,30 +120,46 @@ nine times.
 ## Consequences
 
 - **BM25 scores shift.** BM25 weights a term by how many indexed rows contain
-  it. Twenty copies of one paragraph inflate those counts today; one entry
-  per distinct text removes the inflation. Rankings therefore differ slightly
-  from `main` — arguably more faithful — and the equivalence test in D142
-  becomes "equal to an exact full scan over `search_texts`", not over
-  `chunk_search`.
+  it. Copies of one paragraph raise those counts today; one entry per distinct
+  input removes them. Rankings therefore differ from `main`. Whether that is
+  better or worse is not known: adoption requires lexical and hybrid quality
+  measurements (the D142 §9 gates) on the prototype, and the D142 BM25
+  equivalence oracle becomes "exact scoring over `search_texts` under one
+  scoring generation".
 - **One more join on the result path** (entry → members), bounded by the
   member count of returned entries.
 - **No change** to chunk rows, claims, occurrences, provenance, the public
   API, or results for corpora without repeated text.
 
-## Adoption trigger
+## Investigation trigger and adoption prerequisites
 
-The LegalIt pilot (20–50 heavily amended Czech acts with every consolidated
-version) measures the **effective duplication factor**: for a set of
-realistic `current`-scope queries, the number of index candidates D142's loop
-examines per result returned, plus the length of BM25 tie runs at the cut.
+The question is decided with evidence from real versioned data, not from the
+D142 loop's own counters alone, because candidates examined per result also
+include deletions, entity/document/time rejections and batch over-fetch, and a
+high value can stay high after deduplication.
 
-Starting decision rule, for the owner to confirm before D142 implementation
-starts:
+1. **Isolated prototype (prerequisite).** On a copy of the LegalIt pilot
+   corpus (20–50 heavily amended Czech acts with every consolidated version),
+   with a fixed set of realistic queries (keyword and semantic, `current`,
+   `at` and `history` scopes, with and without entity filters), measure for
+   D142 alone and for a prototype of this proposal:
+   - candidates examined per returned result, broken down by rejection reason;
+   - the share of examined candidates whose indexed input key
+     (`search_text_hash`, `embedding_text_hash`, model, policy) is shared with
+     another candidate — the work deduplication can actually remove;
+   - BM25 tie-run lengths at the cut;
+   - p95 latency, returned-`k` rate and truncation rate;
+   - lexical/hybrid answer quality per the D142 §9 gates.
+   Artifacts (dataset manifest, query set, raw results) are stored with the
+   analysis.
+2. **Investigation thresholds** (starting points, owner to confirm): a median
+   of ≥ 5 examined candidates per result **attributable to shared inputs**, or
+   p95 outside the interactive budget when extrapolated to the full corpus.
+3. **Adoption** requires the prototype to show a latency or completeness
+   benefit at equal or better quality. The adopting change then reconciles
+   the binding corpus (P1 search design, schema design, forget/D74, E1) in the
+   same pull request.
 
-- **median factor ≥ 5**, or p95 latency over the D9/§10 interactive budget
-  when the pilot's numbers are extrapolated to the full corpus → adopt this
-  proposal into the #504 delivery;
-- otherwise → leave it unchosen; D142 alone suffices.
-
-The thresholds are starting points, not commitments: the real cut-off is
-wherever measured latency or LoCoMo-style answer quality becomes unacceptable.
+LegalIt is the motivating corpus; the mechanism and its trigger are general
+(any corpus with many versions of mostly unchanged documents), and no
+LegalIt-specific behaviour enters the engine.

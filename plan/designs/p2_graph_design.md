@@ -611,15 +611,15 @@ There are no user databases to preserve. Until GA:
 - GA is another tested image replacement, after which ordinary supported
   major/minor upgrade policy resumes.
 
-The reference image pins pgvector and pg_partman packages. `pg_textsearch`
-1.3.1 needs the small reviewed PostgreSQL 19 source compatibility patch proven
-by 71/71 upstream regression tests; the image builds it from a pinned source
-commit and patch checksum until upstream publishes a PostgreSQL 19 build. Its
-PostgreSQL License permits use, modification, and distribution when the
-required notices accompany copies. OSS release engineering owns rebasing and
-retiring the patch, links the upstream compatibility issue before release, and
-records source, patch, notice, compiler/toolchain, and per-architecture binary
-checksums. No floating `main` branches enter the image.
+The reference image pins pgvector and pg_partman packages. `pg_textsearch` is
+pinned to an upstream release of 1.5.1 or later (D142), which supports
+PostgreSQL 19 upstream, so the earlier 1.3.1 compatibility patch is retired.
+Upstream treats PostgreSQL 19 as best-effort with non-blocking CI, so the image
+build runs the extension's upstream SQL tests on the pinned PostgreSQL 19 image
+as a local gate. Its PostgreSQL License permits use, modification, and
+distribution when the required notices accompany copies. OSS release
+engineering records source, notice, compiler/toolchain, and per-architecture
+binary checksums. No floating `main` branches enter the image.
 
 ## 10. Failure, recovery, forget, and upgrade
 

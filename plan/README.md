@@ -79,8 +79,8 @@ and its [analysis](analysis/version_effective_time_and_section_references.md); t
 [delivery plan](plans/effective_time_and_section_references.md) says which parts ship
 together. It also makes D56's version reuse hold for dated versions (text origin time).
 
-For why ranked search must use its indexes and how it stays exact while doing
-so, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
+For why ranked search must use its indexes, how it keeps eligibility exact and
+reports every early stop, and how semantic recall is measured, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
 its [analysis](analysis/index_driven_ranked_search.md), the unchosen
 [distinct-text index proposal](proposals/distinct_text_search_index.md) and the
 [delivery plan](plans/index_driven_ranked_search.md).
