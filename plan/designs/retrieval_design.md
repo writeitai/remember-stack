@@ -91,7 +91,7 @@ query engine**:
 
 > **Stale projections may nominate candidates; only authoritative PostgreSQL
 > rows confirm truth.** P1 nomination and confirmation share one PostgreSQL
-> statement/MVCC snapshot. Live graph traversal reads the same invariant-bearing
+> ranked-read transaction snapshot (D142). Live graph traversal reads the same invariant-bearing
 > PostgreSQL authority views directly and therefore has no nominate-then-confirm
 > boundary. Validity, invalidation, and contradiction state never come from a
 > copied projection row.

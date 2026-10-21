@@ -6871,7 +6871,7 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
-**Status:** proposed (design under review, round 3, 2026-10-21); binding on
+**Status:** proposed (design approved by review round 3, 2026-10-21; implementation in progress); binding on
 approved design merge. Issue
 [#504](https://github.com/writeitai/remember-stack/issues/504).
 
@@ -6917,8 +6917,9 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   fact_kind, fact_id)`.
 - **Lexical semantics.** BM25 results are positive matches only on every
   path, ranked by **one canonical BM25 score** (fieldnorm-quantized length,
-  one shared routine, bitwise-equal on index and standalone paths, ties by
-  bitwise equality); a scorer-identity gate checks it on every image build.
+  float4 per-term scores accumulated in float8 in query-term order by one
+  shared routine, bitwise-equal on index and standalone paths, ties by
+  bitwise equality; equality with today's ordering is measured, not assumed); a scorer-identity gate checks it on every image build.
 - **Image.** `pg_textsearch` ≥ 1.5.1, retiring the D98 patch; PostgreSQL 19
   compatibility is a local image gate. 1.5.1 scores unspilled (memtable) rows
   with raw length, unlike segments and the standalone operator, so until an
@@ -6972,4 +6973,5 @@ patch pin.
 [analysis](plan/analysis/index_driven_ranked_search.md),
 [delivery](plan/plans/index_driven_ranked_search.md),
 reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
-[r2](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r2_2026-10-21.md).
+[r2](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r2_2026-10-21.md),
+[r3](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r3_2026-10-21.md).

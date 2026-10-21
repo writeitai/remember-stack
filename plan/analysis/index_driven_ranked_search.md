@@ -347,9 +347,14 @@ With the canonical scorer and one scoring generation, the ordered scan
 streams matching rows in non-increasing canonical score (Block-Max WAND for
 the leading top-k, then batch growth until the cursor is drained). With
 positive-match semantics, continuation and the tie rule, a BM25 result equals
-canonical scoring of the same eligible matching rows under that generation —
-which is also today's standalone scoring of those rows, so the canonical
-scorer adds no ranking change beyond the positive-match rule and the upgrade.
+canonical scoring of the same eligible matching rows under that generation.
+The canonical score pins per-term float4 scores **and** their float8
+accumulation in query-term order — the standalone operator's accumulation at
+1.5.1 ([declaration](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L811-L815),
+[accumulation](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L1056-L1067)).
+It is intended to reproduce today's standalone ordering; whether multi-term
+rounding and tie sets are unchanged is measured by the upgrade comparison
+(which includes the scorer patch), not assumed.
 
 HNSW is approximate. Today's semantic search is accidentally exact because the
 planner scans everything; moving to the index trades recall for speed. How

@@ -349,9 +349,12 @@ the index is used and eligibility stays exact. For each target and channel:
 exact scoring of small entity tiers (§8.4), the open query space SRFs, the
 D140 `scope_pending` probe and every test oracle — uses one score: the
 pg_textsearch BM25 function over the **fieldnorm-quantized** document length
-(the one-byte length encoding segments store), the scoring generation's
-corpus statistics, and float4 arithmetic computed by one shared scoring
-routine. Two rows tie only when their canonical scores are bitwise equal.
+(the one-byte length encoding segments store) and the scoring generation's
+corpus statistics, computed by one shared scoring routine: each per-term
+score in float4, the total accumulated in float8 in the analyzed query's term
+order (the accumulation the standalone operator uses at 1.5.1), and the
+float8 total is the canonical score. Two rows tie only when their canonical
+scores are bitwise equal.
 
 The index path and the standalone `<@>` operator must produce that same score
 for the same row, query and generation. Upstream intends this (the standalone
@@ -366,7 +369,8 @@ of length 48 in the index yet win under quantized scoring, so a cursor can
 stop `k_filled` without ever fetching the true winner. The image therefore
 requires an upstream release, or a small reviewed patch (§6), in which the
 memtable scorer quantizes length through the same encode/decode and both paths
-call the same scoring routine with the same types. This is enforced, not
+call the same scoring routine with the same per-term and accumulation types
+and order. This is enforced, not
 assumed: the §9 **scorer-identity gate** runs on every image build.
 
 Raw-length index scoring is not adopted as the canonical score instead: it
@@ -378,8 +382,10 @@ pg_textsearch's ordered scan streams matching rows in non-increasing canonical
 score (Block-Max WAND for the leading top-k, then its batch growth until the
 cursor is drained). With the §8.1 positive-match rule, continuation until `k`
 eligible rows and the tie rule, a BM25 result equals canonical scoring of the
-same eligible matching rows under the same generation, and equals today's
-standalone-scored ordering of those rows. HNSW is approximate (§9).
+same eligible matching rows under the same generation. It is *intended* to
+match today's standalone-scored ordering of those rows; that is not assumed —
+the upgrade comparison in §9 (which includes the scorer patch) measures it.
+HNSW is approximate (§9).
 
 ### 8.4 Entity-scoped nomination (coverage first)
 
@@ -557,14 +563,18 @@ materially. All numbers are starting points for the owner to confirm:
   mixed spilled and unspilled rows, multi-term queries and near-ties, every row
   an index-ordered scan streams carries a projected score bitwise equal to the
   standalone operator's score for that row and generation, and the stream is
-  non-increasing in that score. Fixtures include 40- and 41-token documents
+  non-increasing in that score, including multi-term queries where float8
+  accumulation order matters. Fixtures include 40- and 41-token documents
   with equal term frequency and reversed stable IDs (a canonical tie), the
   three-length single-term counterexample of §8.3 (lengths 48, 50 and 67 over
   a corpus of average length 100), and both sides of the exact-tier
   threshold. Failure blocks the image;
 - **lexical behaviour** — the BM25 positive-match change (§8.1) and the
-  `pg_textsearch` upgrade are measured separately against today's answers on
-  the same corpus, so their effect is attributable.
+  `pg_textsearch` upgrade **together with the scorer-identity patch** are
+  measured separately against today's answers on the same corpus, so their
+  effects are attributable; the upgrade comparison reports whether the
+  canonical ordering of matching rows equals today's standalone ordering,
+  including multi-term tie sets.
 
 Index each distinct search input once (one entry per identical text and
 embedding input, shared by the per-version chunks that carry it) is a
