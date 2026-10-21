@@ -155,5 +155,5 @@ def bound_statement_timeout(connection: Connection, *, deadline: float) -> None:
     if remaining <= 0:
         raise SQLAlchemyTimeoutError("PostgreSQL read operation deadline expired")
     connection.exec_driver_sql(
-        f"SET LOCAL statement_timeout = {max(1, int(remaining * 1000))}"
+        f"SET LOCAL statement_timeout = {min(max(1, int(remaining * 1000)), 2**31 - 1)}"
     )

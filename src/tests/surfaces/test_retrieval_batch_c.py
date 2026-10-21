@@ -1307,11 +1307,15 @@ def test_default_facts_context_stops_graph_expansion_at_the_shared_deadline(
     """Sequential anchor traversals consult the 25-second operation deadline."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=())
-    observed_times = iter((0.0, 0.0, 0.0, 0.0, 0.0, 26.0))
 
     def operation_clock() -> float:
-        """Advance one shared monotonic clock across admission and execution."""
-        return next(observed_times)
+        """One shared clock: 26 s have passed once the first traversal ran.
+
+        Keyed to the traversal, not to a count of clock reads, so nested
+        reads that re-clamp their statement timeout (D142 §8.6) do not
+        shift it.
+        """
+        return 26.0 if graph.calls else 0.0
 
     monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
     monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)

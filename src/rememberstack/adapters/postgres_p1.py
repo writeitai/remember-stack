@@ -1979,7 +1979,7 @@ def _configure_p1_connection(
     remaining = deadline - (monotonic() if now is None else now)
     if remaining <= 0:
         raise SQLAlchemyTimeoutError("P1 PostgreSQL operation deadline expired")
-    timeout_ms = max(1, math.floor(remaining * 1_000))
+    timeout_ms = min(max(1, math.floor(remaining * 1_000)), 2**31 - 1)
     connection.exec_driver_sql(
         f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
