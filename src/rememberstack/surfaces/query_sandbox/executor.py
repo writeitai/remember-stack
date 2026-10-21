@@ -667,7 +667,12 @@ class QuerySandboxExecutor:
                             connection=cursor.connection,
                             search=self._search,
                             embed=self._embed,
-                            settings=BridgeSettings(deployment_id=self._deployment_id),
+                            settings=BridgeSettings(
+                                deployment_id=self._deployment_id,
+                                # D142 §8.6: every SRF spends the request's
+                                # one statement budget, not a fresh one each.
+                                deadline=clock + effective_statement_timeout_ms / 1000,
+                            ),
                         )
                     executable, bridge_parameters = substitute(
                         validated.sql, resolutions

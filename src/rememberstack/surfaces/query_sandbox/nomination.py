@@ -175,6 +175,8 @@ class BridgeSettings:
     k_max: int = 100
     total_nominations_max: int = 200
     chunk_ids_max: int = 50
+    deadline: float | None = None
+    """Absolute ``monotonic()`` end of the request's statement budget (D142 §8.6)."""
     nominations_used: int = field(default=0, init=False)
     chunk_text_bytes_used: int = field(default=0, init=False)
 
@@ -397,7 +399,7 @@ def confirm(
         # a join against these columns and it must still type-check. It also
         # still consulted PostgreSQL, so it still reports when.
         columns, oids = EMPTY_CONTRACTS[target]
-        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        empty_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
         return Confirmation(
             columns=columns,
             rows=[],
@@ -431,7 +433,7 @@ def confirm(
         parameters["g_embedder"] = generations[1]
     extra = f", ({' AND '.join(predicates)}) AS filter_pass" if predicates else ""
     statement = statement.replace("{extra}", extra)
-    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
+    confirmed_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
     cursor = connection.execute(
         statement.encode(), {"deployment": str(deployment_id), "ids": ids, **parameters}
     )
@@ -748,9 +750,9 @@ def confirm_chunk_coordinates(
     if not chunk_ids:
         # Nothing to confirm, but the decision was still made at an instant,
         # and an invocation that reports none reads as one that never ran.
-        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        empty_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
         return {}, (empty_at[0] if empty_at else None)
-    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
+    confirmed_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
     cursor = connection.execute(
         _BODY_SQL.encode(), {"deployment": str(deployment_id), "ids": list(chunk_ids)}
     )

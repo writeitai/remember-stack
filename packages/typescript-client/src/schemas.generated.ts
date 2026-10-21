@@ -6081,6 +6081,11 @@ export default {
           "default": null,
           "title": "Embedder Generation"
         },
+        "fetched": {
+          "default": 0,
+          "title": "Fetched",
+          "type": "integer"
+        },
         "function": {
           "title": "Function",
           "type": "string"
@@ -6125,6 +6130,11 @@ export default {
           ],
           "default": null,
           "title": "Policy Generation"
+        },
+        "rejected": {
+          "default": 0,
+          "title": "Rejected",
+          "type": "integer"
         },
         "termination_reason": {
           "anyOf": [

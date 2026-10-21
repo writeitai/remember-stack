@@ -984,7 +984,9 @@ class PostgresP1Index:
             )
 
     @contextmanager
-    def imported_snapshot(self, *, snapshot_id: str, deadline: float) -> Iterator[None]:
+    def imported_snapshot(
+        self, *, snapshot_id: str, deadline: float, evaluated_at: datetime | None = None
+    ) -> Iterator[None]:
         """Run nested P1 reads in another transaction's exported snapshot.
 
         D142 §8.2: the SQL sandbox exports its request snapshot and every
@@ -996,7 +998,9 @@ class PostgresP1Index:
             raise P1SearchUnavailableError(
                 "the P1 adapter has no bounded read pool to share a snapshot"
             )
-        with self._read_pool.snapshot(deadline=deadline, import_snapshot=snapshot_id):
+        with self._read_pool.snapshot(
+            deadline=deadline, import_snapshot=snapshot_id, evaluated_at=evaluated_at
+        ):
             yield
 
     def _instant(self) -> datetime:

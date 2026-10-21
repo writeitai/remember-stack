@@ -10696,6 +10696,11 @@
             "default": null,
             "title": "Embedder Generation"
           },
+          "fetched": {
+            "default": 0,
+            "title": "Fetched",
+            "type": "integer"
+          },
           "function": {
             "title": "Function",
             "type": "string"
@@ -10741,6 +10746,11 @@
             "default": null,
             "title": "Policy Generation"
           },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
+          },
           "termination_reason": {
             "anyOf": [
               {
@@ -10765,11 +10775,13 @@
           "dropped_hash_mismatch",
           "dropped_stale",
           "embedder_generation",
+          "fetched",
           "function",
           "generation",
           "nominated",
           "pg_confirmed_at",
           "policy_generation",
+          "rejected",
           "termination_reason"
         ],
         "title": "SemanticInvocation",
@@ -13370,6 +13382,11 @@
             "default": null,
             "title": "Embedder Generation"
           },
+          "fetched": {
+            "default": 0,
+            "title": "Fetched",
+            "type": "integer"
+          },
           "function": {
             "title": "Function",
             "type": "string"
@@ -13414,6 +13431,11 @@
             ],
             "default": null,
             "title": "Policy Generation"
+          },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
           },
           "termination_reason": {
             "anyOf": [

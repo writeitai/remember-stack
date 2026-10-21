@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from contextlib import contextmanager
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
@@ -29,6 +30,7 @@ from typing import Protocol
 import psycopg
 
 from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.ports.p1_index import P1SearchAccount
 from rememberstack.ports.p1_index import search_account
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
@@ -347,49 +349,57 @@ def _resolve_one(
         policy_generation=policy_generation,
         embedder_generation=embedder_generation,
     )
-    try:
-        with _shared_snapshot(connection=connection, search=search):
+    # D142 §8.2 (review r1 P1-3): the imported snapshot stays open from
+    # nomination through confirmation and body hydration.
+    with ExitStack() as shared:
+        try:
+            shared.enter_context(
+                _shared_snapshot(
+                    connection=connection, search=search, settings=settings
+                )
+            )
             nominations = nominate(query_text, k, filters)
-    except SandboxRejection:
-        raise
-    except LookupError as error:  # a pin the projection cannot honour
-        raise SandboxRejection(
-            code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
-        ) from error
-    except Exception as error:  # the projection is a separate process
-        raise SandboxRejection(
-            code=QueryErrorCode.P1_UNAVAILABLE,
-            message="the projection could not be searched",
-        ) from error
-    # A projection that returns more than it was asked for does not get to
-    # spend the statement's budget: the cap is enforced here, not trusted.
-    if len(nominations) > k:
-        nominations = tuple(nominations)[:k]
-    settings.nominations_used += len(nominations)
+        except SandboxRejection:
+            raise
+        except LookupError as error:  # a pin the projection cannot honour
+            raise SandboxRejection(
+                code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
+            ) from error
+        except Exception as error:  # the projection is a separate process
+            raise SandboxRejection(
+                code=QueryErrorCode.P1_UNAVAILABLE,
+                message="the projection could not be searched",
+            ) from error
+        account = search_account(nominations)
+        # A projection that returns more than it was asked for does not get to
+        # spend the statement's budget: the cap is enforced here, not trusted.
+        if len(nominations) > k:
+            nominations = tuple(nominations)[:k]
+        settings.nominations_used += len(nominations)
 
-    try:
-        confirmation = confirm(
-            connection=connection,
-            target=target,
-            nominations=nominations,
-            deployment_id=settings.deployment_id,
-            filters=filters,
-            generations=(policy_generation, embedder_generation),
-        )
-    except psycopg.Error as error:
-        raise SandboxRejection(
-            code=QueryErrorCode.CONFIRMATION_FAILED,
-            message="nominated rows could not be confirmed",
-        ) from error
+        try:
+            confirmation = confirm(
+                connection=connection,
+                target=target,
+                nominations=nominations,
+                deployment_id=settings.deployment_id,
+                filters=filters,
+                generations=(policy_generation, embedder_generation),
+            )
+        except psycopg.Error as error:
+            raise SandboxRejection(
+                code=QueryErrorCode.CONFIRMATION_FAILED,
+                message="nominated rows could not be confirmed",
+            ) from error
 
-    body: BodyConfirmation | None = None
-    if target == "chunks":
-        # §3.4: the chunk channels and the body fetch share one body path, so
-        # a nominated chunk carries its verified source text out with it
-        # rather than making the caller ask a second time.
-        confirmation, body = _hydrate(
-            confirmation=confirmation, search=search, settings=settings
-        )
+        body: BodyConfirmation | None = None
+        if target == "chunks":
+            # §3.4: the chunk channels and the body fetch share one body path,
+            # so a nominated chunk carries its verified source text out with
+            # it rather than making the caller ask a second time.
+            confirmation, body = _hydrate(
+                confirmation=confirmation, search=search, settings=settings
+            )
 
     return ResolvedInvocation(
         cte_name=cte_name,
@@ -412,14 +422,15 @@ def _resolve_one(
             embedder_generation=embedder_generation,
             generation=embedder_generation or policy_generation,
             pg_confirmed_at=confirmation.pg_confirmed_at,
-            termination_reason=_termination_reason(nominations),
+            termination_reason=_termination_reason(account),
+            fetched=account.fetched,
+            rejected=account.rejected,
         ),
     )
 
 
-def _termination_reason(nominations: Sequence[Any]) -> str:
+def _termination_reason(account: P1SearchAccount) -> str:
     """The invocation's D142 termination: ``completed`` or the early stop."""
-    account = search_account(nominations)
     if account.termination.complete:
         return "completed"
     return f"p1_{account.termination.value}"
@@ -427,7 +438,7 @@ def _termination_reason(nominations: Sequence[Any]) -> str:
 
 @contextmanager
 def _shared_snapshot(
-    *, connection: psycopg.Connection, search: object
+    *, connection: psycopg.Connection, search: object, settings: BridgeSettings
 ) -> Iterator[None]:
     """Nominate in the request transaction's own snapshot (D142 §8.2).
 
@@ -444,7 +455,9 @@ def _shared_snapshot(
         yield
         return
     try:
-        row = connection.execute("SELECT pg_export_snapshot()").fetchone()
+        # REPEATABLE READ freezes rows, not clocks (review r1 P1-4): the
+        # request's transaction instant pins every nested P1 scope.
+        row = connection.execute("SELECT pg_export_snapshot(), now()").fetchone()
     except psycopg.Error as error:
         raise SandboxRejection(
             code=QueryErrorCode.P1_UNAVAILABLE,
@@ -455,12 +468,17 @@ def _shared_snapshot(
             code=QueryErrorCode.P1_UNAVAILABLE,
             message="the request snapshot could not be shared with the projection",
         )
-    with imported(snapshot_id=str(row[0]), deadline=monotonic() + _SNAPSHOT_BUDGET_S):
+    deadline = (
+        settings.deadline
+        if settings.deadline is not None
+        else monotonic() + _SNAPSHOT_BUDGET_S
+    )
+    with imported(snapshot_id=str(row[0]), deadline=deadline, evaluated_at=row[1]):
         yield
 
 
 _SNAPSHOT_BUDGET_S = 30.0
-"""Upper bound on one imported-snapshot P1 call; the statement budget is lower."""
+"""Fallback budget when the caller set no request deadline (tests, tools)."""
 
 
 def _hydrate(

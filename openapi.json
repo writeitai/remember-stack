@@ -5098,6 +5098,11 @@
             ],
             "title": "Embedder Generation"
           },
+          "fetched": {
+            "default": 0,
+            "title": "Fetched",
+            "type": "integer"
+          },
           "function": {
             "title": "Function",
             "type": "string"
@@ -5139,6 +5144,11 @@
               }
             ],
             "title": "Policy Generation"
+          },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
           },
           "termination_reason": {
             "anyOf": [
