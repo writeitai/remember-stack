@@ -30,6 +30,7 @@ from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.spine.fact_window_review import FactWindowReviewer
+from rememberstack.spine.fact_window_review import ReviewDeferred
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import facts_needing_review_on
 from rememberstack.spine.period_adjudication import period_fence_barrier_on
@@ -71,13 +72,35 @@ class FactWindowReviewHandler:
             raise NonRetryableHandlerError(
                 f"fact window review cannot target {work.target_kind}"
             )
-        self._reviewer.review(
-            deployment_id=work.deployment_id,
-            kind=kind,  # type: ignore[arg-type]
-            fact_id=_payload_uuid(work=work, field="fact_id"),
-            meter=meter,
-            call_key=f"fact_window_review:{work.processing_id}",
-        )
+        try:
+            self._reviewer.review(
+                deployment_id=work.deployment_id,
+                kind=kind,  # type: ignore[arg-type]
+                fact_id=_payload_uuid(work=work, field="fact_id"),
+                meter=meter,
+                call_key=f"fact_window_review:{work.processing_id}",
+            )
+        except ReviewDeferred as deferred:
+            # another job holds a live claim on this review: come back when it
+            # may be taken over, without spending this job's retries
+            return HandlerOutcome(
+                follow_up=(
+                    EnqueueWork(
+                        deployment_id=work.deployment_id,
+                        target_kind=work.target_kind,
+                        target_id=uuid5(
+                            NAMESPACE_URL,
+                            f"fact-window-review-deferred:{work.processing_id}",
+                        ),
+                        stage=PipelineStage.REVIEW_FACT_WINDOWS,
+                        component_version=FACT_WINDOW_REVIEW_VERSION,
+                        content_hash=work.content_hash,
+                        lane=work.lane or ProcessingLane.STEADY,
+                        payload=dict(work.payload or {}),
+                        not_before=deferred.until,
+                    ),
+                )
+            )
         return HandlerOutcome()
 
     def _fan_out(self, *, work: ClaimedWork) -> HandlerOutcome:

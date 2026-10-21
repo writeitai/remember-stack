@@ -22,7 +22,6 @@ from sqlalchemy import text
 from remember.models import EffectivePeriodInput
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import NoopCostMeter
-from rememberstack.adapters.testing import RecordingProfileRefresher
 from rememberstack.model import ClaimedWork
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -36,6 +35,7 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_window_review import FactWindowReviewer
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.period_adjudication import record_period_basis_on
+from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.workers import LabelFactsHandler
 from rememberstack.workers import P1Settings
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
@@ -138,10 +138,10 @@ def _fact_on_v1_only_claim(rig: _ReuseRig, *, v1: UUID) -> tuple[UUID, UUID]:
             text(
                 "INSERT INTO observations(observation_id, deployment_id,"
                 " subject_entity_id, statement, obs_label, normalizer_version,"
-                " valid_from, valid_precision, window_claim_ids, embedding,"
+                " valid_from, valid_precision, window_claim_ids, evidence_count, embedding,"
                 " embedding_model, embedding_input_policy_version, embedding_text_hash)"
                 " VALUES (:f, :d, :e, 'Topic 12 has fact 12', 'Topic 12 has fact 12',"
-                " :n, :start, 'open', CAST(:claims AS uuid[]),"
+                " :n, :start, 'open', CAST(:claims AS uuid[]), 1,"
                 " CAST(array_fill(0.01, ARRAY[:dims]) AS vector), :model, :policy,"
                 " 'hash-of-the-label')"
             ),
@@ -278,6 +278,19 @@ def test_periodised_new_version_reextracts_only_the_edit_and_a_period_change_non
         == ()
     )
 
+    # the fact's entity has a current production profile (its embedded text
+    # includes the fact's window annotation)
+    profiles = EntityProfileRefresher(
+        engine=rig.engine,
+        model_provider=rig.provider,
+        embedding_model=P1Settings().embedding_model,
+    )
+    profiles.refresh_for_facts(
+        deployment_id=_DEPLOYMENT_ID, relation_ids=(), observation_ids=(fact_id,)
+    )
+    profile_before = _profile(rig, fact_id)
+    assert profile_before[0] is not None and "since 2024-01-01" in profile_before[0]
+
     rows_before = _rows(rig)
     prompts_before = len(rig.provider.generated_prompts)
     embeds_before = len(rig.provider.embedded_texts)
@@ -353,7 +366,6 @@ def test_periodised_new_version_reextracts_only_the_edit_and_a_period_change_non
             .mappings()
             .one()
         )
-    profiles = RecordingProfileRefresher()
     LabelFactsHandler(
         facts=FactCatalog(engine=rig.engine),
         model_provider=rig.provider,
@@ -363,9 +375,32 @@ def test_periodised_new_version_reextracts_only_the_edit_and_a_period_change_non
         settings=P1Settings(),
         profile_refresher=profiles,
     ).handle(work=_claimed(dict(repair)), meter=NoopCostMeter())
-    assert len(rig.provider.embedded_texts) == embeds_before
+    # The fact is not re-embedded. Its entity's profile embeds the fact's window
+    # annotation, and that text did change, so exactly one embedding call is
+    # made: for the entity profile, with the new annotation (no chunk, claim or
+    # fact text is embedded).
+    new_texts = rig.provider.embedded_texts[embeds_before:]
+    assert len(new_texts) == 1
+    assert "2025-06-30" in new_texts[0] and "Topic 12 has fact 12" in new_texts[0]
+    profile_after = _profile(rig, fact_id)
+    assert profile_after[0] != profile_before[0] and "2025-06-30" in profile_after[0]
     assert _vector_state(rig, fact_id)[:5] == vector_before[:5]
     assert _rows(rig) == rows_before
     rig.drain()
     assert _rows(rig) == rows_before
     assert len(rig.provider.generated_prompts) == prompts_before + 1
+    assert len(rig.provider.embedded_texts) == embeds_before + 1
+
+
+def _profile(rig: _ReuseRig, fact_id: UUID) -> tuple[Any, ...]:
+    with rig.engine.connect() as connection:
+        return tuple(
+            connection.execute(
+                text(
+                    "SELECT e.profile_summary, e.embedding_text_hash FROM entities e"
+                    " JOIN observations o ON o.subject_entity_id = e.entity_id"
+                    " WHERE o.observation_id = :id"
+                ),
+                {"id": fact_id},
+            ).one()
+        )

@@ -21,6 +21,7 @@ under the lock and apply only if nothing changed. A fact whose period basis
 adjudicated is not reviewed, so a repeated trigger costs no model call.
 """
 
+from datetime import datetime
 from hashlib import sha256
 from typing import Any
 from typing import Literal
@@ -209,21 +210,37 @@ class FactWindowReviewer:
                 return "gone"
             if inputs["basis"] == inputs["stored_basis"]:
                 return "unchanged"
-            stored = _claim_attempt_on(
+            claim = _claim_attempt_on(
                 connection=connection,
                 deployment_id=deployment_id,
                 kind=kind,
                 fact_id=fact_id,
                 digest=inputs["digest"],
+                owner=call_key,
             )
-        answer = (
-            PromptWindowReview.model_validate(stored)
-            if stored is not None
-            else self._infer(
-                inputs=inputs, meter=meter, call_key=call_key, fact_id=fact_id
-            )
-        )
-        if stored is None:
+        if isinstance(claim, ReviewDeferred):
+            raise claim
+        if claim is not None:
+            answer = PromptWindowReview.model_validate(claim)
+        else:
+            try:
+                answer = self._infer(
+                    inputs=inputs, meter=meter, call_key=call_key, fact_id=fact_id
+                )
+                # an answer citing a claim the attempt did not supply is never
+                # stored: the retry asks again instead of replaying it forever
+                _require_supplied_citations(answer=answer, handles=inputs["handles"])
+            except Exception:
+                with self._engine.begin() as connection:
+                    _release_claim_on(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        kind=kind,
+                        fact_id=fact_id,
+                        digest=inputs["digest"],
+                        owner=call_key,
+                    )
+                raise
             with self._engine.begin() as connection:
                 _store_answer_on(
                     connection=connection,
@@ -311,6 +328,15 @@ class FactWindowReviewer:
         return None if value is None else UUID(str(value))
 
 
+class ReviewDeferred(Exception):
+    """Another job holds a live claim on this review; try again at ``until``."""
+
+    def __init__(self, *, until: datetime) -> None:
+        """Carry the instant the other job's claim may be taken over."""
+        super().__init__(f"fact window review is claimed by another job until {until}")
+        self.until = until
+
+
 def _claim_attempt_on(
     *,
     connection: Connection,
@@ -318,24 +344,29 @@ def _claim_attempt_on(
     kind: FactKind,
     fact_id: UUID,
     digest: str,
-) -> dict[str, Any] | None:
+    owner: str,
+) -> dict[str, Any] | ReviewDeferred | None:
     """Claim this fingerprint's review, or return its stored answer.
 
-    Raises ``ApplicationInputChanged`` (retried later) while another job holds
-    a fresh claim without an answer, so two jobs never pay for one review.
+    ``owner`` identifies the job (stable across its retries), so a job resumes
+    its own unfinished claim. Another job's live claim without an answer is a
+    ``ReviewDeferred``: the caller reschedules instead of paying for a second
+    review or burning its retries. A claim older than the stale limit is taken
+    over.
     """
     params = {
         "deployment_id": deployment_id,
         "kind": kind,
         "fact_id": fact_id,
         "digest": digest,
+        "owner": owner,
         "stale": _CLAIM_STALE_AFTER_S,
     }
     claimed = connection.execute(
         text(
             "INSERT INTO fact_window_review_attempts"
-            " (deployment_id, fact_kind, fact_id, input_digest)"
-            " VALUES (:deployment_id, :kind, :fact_id, :digest)"
+            " (deployment_id, fact_kind, fact_id, input_digest, claimed_by)"
+            " VALUES (:deployment_id, :kind, :fact_id, :digest, :owner)"
             " ON CONFLICT DO NOTHING RETURNING fact_id"
         ),
         params,
@@ -345,8 +376,10 @@ def _claim_attempt_on(
     row = (
         connection.execute(
             text(
-                "SELECT answer, claimed_at < now() - make_interval(secs => :stale)"
-                " AS stale FROM fact_window_review_attempts"
+                "SELECT answer, claimed_by,"
+                " claimed_at < now() - make_interval(secs => :stale) AS stale,"
+                " claimed_at + make_interval(secs => :stale) AS expires"
+                " FROM fact_window_review_attempts"
                 " WHERE deployment_id = :deployment_id AND fact_kind = :kind"
                 " AND fact_id = :fact_id AND input_digest = :digest FOR UPDATE"
             ),
@@ -357,17 +390,58 @@ def _claim_attempt_on(
     )
     if row["answer"] is not None:
         return dict(row["answer"])
-    if not row["stale"]:
-        raise ApplicationInputChanged("another job is reviewing this fact window")
+    if row["claimed_by"] != owner and not row["stale"]:
+        return ReviewDeferred(until=row["expires"])
     connection.execute(
         text(
-            "UPDATE fact_window_review_attempts SET claimed_at = now()"
+            "UPDATE fact_window_review_attempts SET claimed_by = :owner,"
+            " claimed_at = now()"
             " WHERE deployment_id = :deployment_id AND fact_kind = :kind"
             " AND fact_id = :fact_id AND input_digest = :digest"
         ),
         params,
     )
     return None
+
+
+def _release_claim_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: FactKind,
+    fact_id: UUID,
+    digest: str,
+    owner: str,
+) -> None:
+    """Drop this job's unanswered claim after a failed inference."""
+    connection.execute(
+        text(
+            "DELETE FROM fact_window_review_attempts"
+            " WHERE deployment_id = :deployment_id AND fact_kind = :kind"
+            " AND fact_id = :fact_id AND input_digest = :digest"
+            " AND claimed_by = :owner AND answer IS NULL"
+        ),
+        {
+            "deployment_id": deployment_id,
+            "kind": kind,
+            "fact_id": fact_id,
+            "digest": digest,
+            "owner": owner,
+        },
+    )
+
+
+def _require_supplied_citations(
+    *, answer: PromptWindowReview, handles: dict[str, UUID]
+) -> None:
+    """Reject a replacement that cites a claim name this attempt did not supply."""
+    if answer.window is None:
+        return
+    unknown = [name for name in answer.window.supporting_claims if name not in handles]
+    if unknown:
+        raise ApplicationInputChanged(
+            f"window review cited unsupplied claims: {', '.join(unknown)}"
+        )
 
 
 def _store_answer_on(
@@ -560,15 +634,7 @@ def _apply_review(
     replaced = answer.decision == "replace" and answer.confidence >= floor
     if replaced:
         assert answer.window is not None
-        unknown = [
-            name
-            for name in answer.window.supporting_claims
-            if name not in inputs["handles"]
-        ]
-        if unknown:
-            raise ApplicationInputChanged(
-                f"window review cited unsupplied claims: {', '.join(unknown)}"
-            )
+        _require_supplied_citations(answer=answer, handles=inputs["handles"])
         window = answer.window.window
         supporting = sorted(
             {inputs["handles"][name] for name in answer.window.supporting_claims},
@@ -671,6 +737,10 @@ def _apply_review(
             target_id=adjudication_id,
             content_hash=inputs["digest"],
             payload={f"{kind}_id": str(fact_id)},
+            # entity profiles render fact windows: refresh them, but keep the
+            # stored vectors so only a profile whose embedded text changed is
+            # re-embedded
+            invalidate_profiles=False,
         )
         return "replaced"
     return "kept"

@@ -42,8 +42,10 @@ from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
+from rememberstack.spine.period_adjudication import periods_unchanged_on
 from rememberstack.spine.period_adjudication import record_period_basis_on
 from rememberstack.spine.period_adjudication import share_period_fence_on
+from rememberstack.spine.period_adjudication import watch_periods_on
 
 _logger = logging.getLogger(__name__)
 
@@ -862,6 +864,16 @@ class FactAdjudicator:
                     confidence=decision.confidence,
                     rationale=f"Confidence below {self._settings.confidence_floor}; preserve coexistence. {decision.rationale}",
                 )
+            # What the bases recorded below may certify, read before any write.
+            watch = watch_periods_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=snapshot["kind"],
+                fact_ids=(UUID(str(fact["fact_id"])) for fact in snapshot["facts"]),
+                claim_ids=(
+                    UUID(str(claim["claim_id"])) for claim in snapshot["claims"]
+                ),
+            )
             try:
                 with connection.begin_nested():
                     result = apply_fact_decision(
@@ -874,12 +886,26 @@ class FactAdjudicator:
                     )
                     # D140 §8.2: these windows were just adjudicated against the
                     # evidence's current in-force periods (none for undated facts).
-                    record_period_basis_on(
-                        connection=connection,
-                        deployment_id=deployment_id,
-                        kind=snapshot["kind"],
-                        fact_ids=(UUID(value) for value in result["changed_fact_ids"]),
-                    )
+                    # A candidate already stale keeps its stale basis for review.
+                    if watch is not None:
+                        record_period_basis_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            kind=snapshot["kind"],
+                            fact_ids=(
+                                UUID(value)
+                                for value in result["changed_fact_ids"]
+                                if UUID(value) not in watch.stale
+                            ),
+                        )
+                        if not periods_unchanged_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            watch=watch,
+                        ):
+                            raise ApplicationInputChanged(
+                                "in-force periods changed before the decision committed"
+                            )
                     return result
             except ValueError as error:
                 # Roll back all attempted effects, but commit removal of the invalid

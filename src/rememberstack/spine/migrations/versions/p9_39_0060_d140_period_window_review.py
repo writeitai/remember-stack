@@ -3,12 +3,12 @@
 Three schema objects:
 
 - ``relations.period_basis`` and ``observations.period_basis``: a fingerprint
-  of the in-force periods of the fact's evidence claims (the periods of the
-  versions those claims occur in) at the moment the fact's window was last
-  adjudicated. NULL means the window has never been adjudicated against any
-  declared period. A fact whose current fingerprint differs from the stored one
-  is reviewed again (D140 §8.2); the fingerprint is how that review is found and
-  how a repeated trigger becomes a no-op.
+  of the periodised evidence claims of a fact and their in-force periods (the
+  periods of the versions those claims occur in) at the moment the fact's window
+  was last adjudicated. NULL means that evidence contained no periodised claim.
+  A fact whose current fingerprint differs from the stored one is reviewed again
+  (D140 §8.2); the fingerprint is how that review is found and how a repeated
+  trigger becomes a no-op.
 - the ``review_fact_windows`` pipeline stage: one job per lineage whose
   periods or testimony changed (it finds the affected facts) and one job per
   affected fact (it asks the adjudicator whether the fact's window still fits).
@@ -43,6 +43,7 @@ CREATE TABLE fact_window_review_attempts (
   fact_kind     text NOT NULL CHECK (fact_kind IN ('relation', 'observation')),
   fact_id       uuid NOT NULL,
   input_digest  text NOT NULL,
+  claimed_by    text NOT NULL,
   claimed_at    timestamptz NOT NULL DEFAULT now(),
   answer        jsonb,
   answered_at   timestamptz,
@@ -50,7 +51,7 @@ CREATE TABLE fact_window_review_attempts (
   CHECK ((answer IS NULL) = (answered_at IS NULL))
 );
 COMMENT ON TABLE fact_window_review_attempts IS
-  'D140 §8.2: one claimed fact window review per fact and input fingerprint, with the completed model answer once it exists; reused by retries and duplicate jobs, deleted when applied, and deleted for the touched facts by hard forget.';
+  'D140 §8.2: one claimed fact window review per fact and input fingerprint (claimed_by is the owning job, which may resume its own claim), with the completed, validated model answer once it exists; reused by retries and duplicate jobs, released on a failed inference, deleted when applied, and deleted for the touched facts by hard forget.';
 """
 
 _DOWNGRADE = """

@@ -1649,8 +1649,8 @@ def test_mutable_fact_payloads_and_date_witnesses_are_erased(
         # D140 §8.2: a stored window-review answer for the touched fact
         connection.execute(
             text("""INSERT INTO fact_window_review_attempts
-            (deployment_id,fact_kind,fact_id,input_digest,answer,answered_at)
-            VALUES (:dep,'observation',:id,'digest',
+            (deployment_id,fact_kind,fact_id,input_digest,claimed_by,answer,answered_at)
+            VALUES (:dep,'observation',:id,'digest','job',
               jsonb_build_object('rationale',CAST(:phrase AS text)),now())"""),
             {"dep": _DEPLOYMENT_ID, "id": _SHARED_OBSERVATION_ID, "phrase": _TOKEN},
         )

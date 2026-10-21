@@ -2048,6 +2048,7 @@ CREATE TABLE fact_window_review_attempts (
   fact_kind     text NOT NULL CHECK (fact_kind IN ('relation', 'observation')),
   fact_id       uuid NOT NULL,
   input_digest  text NOT NULL,
+  claimed_by    text NOT NULL,                -- the owning job, which may resume its own claim
   claimed_at    timestamptz NOT NULL DEFAULT now(),
   answer        jsonb,
   answered_at   timestamptz,

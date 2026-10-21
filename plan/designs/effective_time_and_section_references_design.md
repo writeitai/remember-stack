@@ -970,9 +970,19 @@ application would ever reach the adjudicator again. A **window review** closes t
   evidence claims (both stances) that occur in periodised lineages, with their in-force
   intervals (rendered in UTC) and `also_undated` flags, as they were when the fact's window was
   last adjudicated. It is computed set-wise in the database, so a fact with many evidence
-  claims is never materialised in a worker. It is recorded in the transaction that applies an
-  ordinary adjudication (for every fact the application changed) and by every review. A fact
-  with no periodised evidence has `NULL`.
+  claims is never materialised in a worker. It is recorded by every review and in the
+  transaction that applies an ordinary adjudication. A fact with no periodised evidence has
+  `NULL`.
+- **An ordinary application certifies only what it saw.** Period writers (declarations,
+  deletions, new occurrences) do not take the fence below, so one may commit while an
+  application is between validation and commit. Before writing, the application reads which
+  candidate facts already have a stale basis, and the in-force periods of every claim its
+  bases can cover: the shown claims and all evidence of its candidate facts, including
+  evidence beyond the 100 claims shown. It then records the basis only for changed facts
+  that were current, and re-reads those periods after recording. If any changed, the whole
+  application rolls back and retries. A fact that was already stale keeps its stale basis:
+  the change that made it stale queued its review. A writer that commits after the re-read
+  leaves the old basis stored, which its own fan-out sees as moved.
 - **The period fence.** Every writer of a window or basis — ordinary adjudication apply and
   review apply — takes a per-deployment advisory lock *shared* after the entity adjudication
   lock and before its final input validation, and holds it through commit (lock order:
@@ -1019,17 +1029,31 @@ application would ever reach the adjudicator again. A **window review** closes t
   adjudication engines.
 - **Only the window changes.** A fact's label and vector are computed from its statement
   (the vector attests only the label text), never from its window, so a review never clears,
-  relabels or re-embeds the fact. Entity profiles render fact windows, so a replacement
-  repairs the endpoint entities' profiles; that repair job is keyed by the review's
-  adjudication receipt, so a correction cycle that repeats an earlier input (A → B → A → B)
-  still repairs every time.
-- **Paid answers are reused.** Before calling the model a review claims its fact and input
-  fingerprint in `fact_window_review_attempts`; the completed answer is stored there before it
-  is applied. A retry after a failed apply, or a duplicate job for the same moved basis, reuses
-  the stored answer; a job that finds a fresh claim without an answer retries later instead of
-  paying again (a claim older than 15 minutes, a starting value, may be taken over). The row is
-  deleted when its answer is applied, and hard forget deletes the rows of the facts it touches
-  (and clears their `period_basis`).
+  relabels or re-embeds the fact. Entity profiles render fact windows: a profile lists its
+  entity's best-supported facts with their windows, and its vector attests that exact text.
+  A replacement therefore queues a repair of the endpoint entities' profiles, but it does not
+  clear their vectors. The production profile refresher re-renders each profile and calls the
+  embedding model only when the rendered text differs from the text its vector attests, for
+  example when the reviewed fact is shown in the profile and its window moved. A profile that
+  does not show the fact costs no call. The repair job is keyed by the review's adjudication
+  receipt, so a correction cycle that repeats an earlier input (A → B → A → B) still repairs
+  every time.
+- **Paid answers are reused.** Before calling the model, a review claims its fact and input
+  fingerprint in `fact_window_review_attempts`, recording the job that owns the claim. Retries
+  of the same job keep the same owner.
+  - If inference fails, the review releases its own claim, so the job's normal retry calls
+    the model again.
+  - A completed answer is checked before it is stored: it must cite only claims that were
+    supplied. An answer that cites anything else is never stored. The claim is released and
+    the retry asks again.
+  - A stored answer is reused by a retry after a failed apply, and by a duplicate job for the
+    same moved basis.
+  - A job that finds another job's live claim without an answer does not pay again and does
+    not spend its retries. It reschedules itself as a new job that becomes due when that claim
+    goes stale. A claim older than 15 minutes (a starting value) may be taken over.
+
+  The row is deleted when its answer is applied. Hard forget deletes the rows of the facts it
+  touches and clears their `period_basis`.
 - **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
   stored basis already matches returns without a model call, so duplicate triggers are free.
   An undated deployment never queues a request and never computes a basis beyond one indexed

@@ -461,8 +461,15 @@ def enqueue_fact_projection_repair(
     target_id: UUID,
     content_hash: str,
     payload: dict[str, object],
+    invalidate_profiles: bool = True,
 ) -> None:
     """Invalidate the changed facts' entity profiles and queue their relabeling.
+
+    ``invalidate_profiles=False`` keeps the endpoint entities' stored profiles
+    and vectors and only queues the repair: the profile refresher re-renders the
+    deterministic profile input and re-embeds an entity only when that input's
+    hash actually changed (a D140 window review uses this, so a window that is
+    not part of any profile's text costs no embedding call).
 
     ``target_kind`` is ``fact_application`` for an ordinary application (the
     label stage recovers the changed facts from its receipt) or the fact's own
@@ -496,7 +503,7 @@ def enqueue_fact_projection_repair(
         .scalars()
         .all()
     )
-    for entity_id in entity_ids:
+    for entity_id in entity_ids if invalidate_profiles else ():
         connection.execute(
             text("""UPDATE entities SET profile_summary=NULL,embedding=NULL,
           embedding_model=NULL,embedding_input_policy_version=NULL,embedding_text_hash=NULL,

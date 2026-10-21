@@ -373,7 +373,7 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 EXPECTED_CONSTRAINT_COUNTS: Final = {
     "c": 115,
     "f": 147,
-    "n": 632,
+    "n": 633,
     "p": 83,
     "t": 7,
     "u": 41,

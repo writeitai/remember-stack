@@ -20,6 +20,7 @@ them, so an undated corpus adjudicates exactly as before.
 """
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from datetime import UTC
 from typing import Any
@@ -213,9 +214,9 @@ def record_period_basis_on(
 ) -> None:
     """Store each fact's current basis: its window was just adjudicated against it.
 
-    The caller holds the shared period fence from its final input validation
-    through commit, so the basis stored is the one the decision was made on.
-    A deployment that never declared a period has no basis anywhere, so this is
+    An ordinary application passes only facts its :class:`PeriodWatch` found
+    current and then checks :func:`periods_unchanged_on`; a review passes the
+    fact whose basis it validated under the fence. A deployment that never declared a period has no basis anywhere, so this is
     one indexed existence probe there.
     """
     if not deployment_ever_periodised_on(
@@ -241,6 +242,109 @@ def record_period_basis_on(
             "fact_ids": [str(fact_id) for fact_id in bases],
             "bases": list(bases.values()),
         },
+    )
+
+
+@dataclass(frozen=True)
+class PeriodWatch:
+    """The in-force periods an application was validated against (D140 §8.2).
+
+    ``stale`` holds the candidate facts whose stored basis already differed
+    from their current one: a change the application did not adjudicate is
+    pending review for them, so their basis must not be certified now.
+    ``claim_ids`` are every claim the application's recorded bases can cover
+    (its snapshot claims and all evidence of its candidate facts), and
+    ``in_force`` their periods when validated.
+    """
+
+    stale: frozenset[UUID]
+    claim_ids: tuple[UUID, ...]
+    in_force: dict[str, dict[str, Any]]
+
+
+def watch_periods_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: FactKind,
+    fact_ids: Iterable[UUID],
+    claim_ids: Iterable[UUID],
+) -> PeriodWatch | None:
+    """Capture what an application's period bases may certify, before it writes.
+
+    Period writers do not take the period fence (it only keeps fan-outs out),
+    so a declaration, deletion or new occurrence may commit while an
+    application is between validation and commit. The application records
+    bases only for facts that were current here, and only if
+    :func:`periods_unchanged_on` still holds after recording. None for a
+    deployment that never declared a period: nothing is recorded there.
+    """
+    if not deployment_ever_periodised_on(
+        connection=connection, deployment_id=deployment_id
+    ):
+        return None
+    facts = sorted({str(fact_id) for fact_id in fact_ids})
+    table, id_column, evidence = _FACT_TABLES[kind]
+    stale: frozenset[UUID] = frozenset()
+    evidence_ids: list[UUID] = []
+    if facts:
+        params = {"deployment_id": deployment_id, "fact_ids": facts}
+        current = fact_period_basis_on(
+            connection=connection,
+            deployment_id=deployment_id,
+            kind=kind,
+            fact_ids=(UUID(fact_id) for fact_id in facts),
+        )
+        stale = frozenset(
+            UUID(str(row["fact_id"]))
+            for row in connection.execute(
+                text(
+                    f"SELECT {id_column} AS fact_id, period_basis FROM {table}"
+                    f" WHERE deployment_id = :deployment_id"
+                    f" AND {id_column} = ANY(CAST(:fact_ids AS uuid[]))"
+                ),
+                params,
+            ).mappings()
+            if row["period_basis"] != current.get(UUID(str(row["fact_id"])))
+        )
+        evidence_ids = [
+            UUID(str(claim_id))
+            for claim_id in connection.execute(
+                text(
+                    f"SELECT DISTINCT claim_id FROM {evidence}"
+                    f" WHERE deployment_id = :deployment_id"
+                    f" AND {id_column} = ANY(CAST(:fact_ids AS uuid[]))"
+                ),
+                params,
+            ).scalars()
+        ]
+    watched = tuple(sorted({*claim_ids, *evidence_ids}, key=str))
+    return PeriodWatch(
+        stale=stale,
+        claim_ids=watched,
+        in_force=claim_in_force_on(
+            connection=connection, deployment_id=deployment_id, claim_ids=watched
+        ),
+    )
+
+
+def periods_unchanged_on(
+    *, connection: Connection, deployment_id: UUID, watch: PeriodWatch
+) -> bool:
+    """Whether every watched claim still has the periods it was validated with.
+
+    Called after the bases are recorded, in the same transaction: a period
+    writer that committed before this read is detected (the application rolls
+    back and retries); one that commits after it leaves the old basis stored,
+    which its own fan-out then sees as moved and reviews.
+    """
+    return (
+        claim_in_force_on(
+            connection=connection,
+            deployment_id=deployment_id,
+            claim_ids=watch.claim_ids,
+        )
+        == watch.in_force
     )
 
 

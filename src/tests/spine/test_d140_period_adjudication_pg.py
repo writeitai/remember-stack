@@ -33,6 +33,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from remember.models import EffectivePeriodInput
+from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.adapters.testing import NoopCostMeter
 from rememberstack.adapters.testing import RecordingProfileRefresher
@@ -41,12 +42,20 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
+from rememberstack.model import ProviderCallError
+from rememberstack.model import RunResultOutcome
 from rememberstack.model import UploadRecord
 from rememberstack.model.relations import NormalizationResponse
+from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import DocumentCatalog
+from rememberstack.spine import fact_adjudication as adjudication_module
+from rememberstack.spine import fact_application_inputs as inputs_module
 from rememberstack.spine import fact_window_review as review_module
+from rememberstack.spine import FactCatalog
+from rememberstack.spine import WorkLedger
+from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import _FACT_PROMPT
 from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
@@ -54,16 +63,23 @@ from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
 from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION
 from rememberstack.spine.fact_adjudication import OBSERVATION_APPLICATION_VERSION_JEV
+from rememberstack.spine.fact_applications import application_block
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_window_review import FactWindowReviewer
+from rememberstack.spine.fact_window_review import ReviewDeferred
 from rememberstack.spine.lifecycle import LifecycleCatalog
 from rememberstack.spine.period_adjudication import claim_in_force_on
 from rememberstack.spine.period_adjudication import fact_period_basis_on
 from rememberstack.spine.period_adjudication import FACT_WINDOW_REVIEW_VERSION
 from rememberstack.spine.period_adjudication import period_fence_barrier_on
+from rememberstack.spine.profile_refresher import EntityProfileRefresher
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.workers import HandlerRegistry
+from rememberstack.workers import LabelFactsHandler
+from rememberstack.workers import P1Settings
+from rememberstack.workers import Worker
 from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from rememberstack.workers.reconcile import DeletionService
 from tests.database_reset import reset_database
@@ -74,6 +90,7 @@ _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT = UUID("62000000-0000-0000-0000-0000000e7007")
 _Y2015 = datetime(2015, 1, 1, tzinfo=UTC)
 _Y2020 = datetime(2020, 1, 1, tzinfo=UTC)
+_Y2023 = datetime(2023, 1, 1, tzinfo=UTC)
 _Y2024 = datetime(2024, 1, 1, tzinfo=UTC)
 _MID2023 = datetime(2023, 7, 1, tzinfo=UTC)
 
@@ -1106,39 +1123,276 @@ def test_a_completed_answer_is_reused_and_a_claimed_review_is_not_repeated(
     assert left == 0  # applied answers are not kept
 
 
-def test_a_live_claim_without_an_answer_blocks_a_duplicate_review(
-    rig: _Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Two jobs for one moved basis never both pay for the review (R1 P2-1)."""
+def test_another_jobs_live_claim_defers_instead_of_paying_or_failing(rig: _Rig) -> None:
+    """Two jobs for one moved basis never both pay; the second is rescheduled (R1 P2-1, R2 P1-3)."""
     vat = _vat_rig(rig)
     _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
-
-    def claim_everything(**kwargs: Any) -> Any:
-        # simulate another job that claimed this fingerprint a moment ago
-        connection = kwargs["connection"]
+    reviewer = FactWindowReviewer(
+        engine=rig.engine,
+        model_provider=rig.provider,
+        settings=FactAdjudicationSettings(),
+    )
+    with rig.engine.begin() as connection:
+        subject = connection.execute(
+            text(
+                "SELECT subject_entity_id FROM observations WHERE observation_id = :f"
+            ),
+            {"f": vat["old_fact"]},
+        ).scalar_one()
+    with (
+        rig.engine.begin() as connection,
+        application_block(
+            connection=connection, deployment_id=_DEPLOYMENT, subject_entity_id=subject
+        ),
+    ):
+        digest = review_module._review_inputs(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_id=vat["old_fact"],
+        )["digest"]  # type: ignore[index]
         connection.execute(
             text(
                 "INSERT INTO fact_window_review_attempts"
-                " (deployment_id, fact_kind, fact_id, input_digest)"
-                " VALUES (:d, :k, :f, :g) ON CONFLICT DO NOTHING"
+                " (deployment_id, fact_kind, fact_id, input_digest, claimed_by)"
+                " VALUES (:d, 'observation', :f, :g, 'another-job')"
             ),
-            {
-                "d": kwargs["deployment_id"],
-                "k": kwargs["kind"],
-                "f": kwargs["fact_id"],
-                "g": kwargs["digest"],
-            },
+            {"d": _DEPLOYMENT, "f": vat["old_fact"], "g": digest},
         )
-        return real_claim(**kwargs)
+    prompts = len(rig.provider.generated_prompts)
+    with pytest.raises(ReviewDeferred):
+        reviewer.review(
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_id=vat["old_fact"],
+            meter=NoopCostMeter(),
+            call_key="this-job",
+        )
+    assert len(rig.provider.generated_prompts) == prompts
+    review = _fan_out_review_for(rig, vat["old_fact"])
+    outcome = _handler(rig).handle(work=review, meter=NoopCostMeter())
+    (rescheduled,) = outcome.follow_up
+    assert rescheduled.not_before is not None
+    assert rescheduled.payload == review.payload
+    assert len(rig.provider.generated_prompts) == prompts
 
-    real_claim = review_module._claim_attempt_on
-    monkeypatch.setattr(review_module, "_claim_attempt_on", claim_everything)
+
+def _fan_out_review_for(rig: _Rig, fact_id: UUID) -> ClaimedWork:
+    """The review job the latest lineage request queues for this fact."""
+    for work in _run_fan_out(rig, _jobs(rig, target_kind="document")[-1]):
+        if UUID(str((work.payload or {})["fact_id"])) == fact_id:
+            return ClaimedWork(
+                processing_id=uuid4(),
+                deployment_id=_DEPLOYMENT,
+                target_kind=work.target_kind,
+                target_id=work.target_id,
+                stage=work.stage,
+                component_version=work.component_version,
+                content_hash=work.content_hash,
+                lane=ProcessingLane.STEADY,
+                attempt=1,
+                payload=work.payload,
+            )
+    raise AssertionError("no review queued for the fact")
+
+
+def test_a_failed_inference_releases_its_claim_so_the_retry_succeeds(rig: _Rig) -> None:
+    """A transient provider failure does not strand the job's own claim (R2 P1-3):
+    through the real worker and ledger, the retry asks again and succeeds."""
+    vat = _vat_rig(rig)
+    registry = HandlerRegistry()
+    registry.register(stage=PipelineStage.REVIEW_FACT_WINDOWS, handler=_handler(rig))
+    worker = Worker(
+        ledger=WorkLedger(
+            engine=rig.engine,
+            settings=WorkLedgerSettings(
+                retry_backoff_base_s=0.0, retry_backoff_max_s=0.0
+            ),
+        ),
+        registry=registry,
+    )
+
+    def run() -> list[RunResultOutcome]:
+        outcomes: list[RunResultOutcome] = []
+        while (
+            outcome := worker.run_one(
+                deployment_id=_DEPLOYMENT,
+                stage=PipelineStage.REVIEW_FACT_WINDOWS,
+                lane=ProcessingLane.STEADY,
+            ).outcome
+        ) is not RunResultOutcome.NO_WORK:
+            outcomes.append(outcome)
+        return outcomes
+
+    assert RunResultOutcome.DEAD_LETTERED not in run()  # the setup's fan-outs
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+    failures = {"left": 1}
+    replace = _replace_answer(
+        body="VAT on books is 15%", window=_window(_Y2015, _MID2023)
+    )
+    keep = _review_answer(decision="keep", window=None, cite=None)
+
+    def answer(prompt: str, type_name: str) -> dict[str, object]:
+        if _inputs(prompt)["fact"]["chosen_from"] != _Y2015.isoformat():
+            return keep(prompt, type_name)  # the 10% fact
+        if failures["left"]:
+            failures["left"] -= 1
+            raise ProviderCallError("upstream 503")
+        return replace(prompt, type_name)
+
+    rig.answers.extend((answer, answer, answer))
+    prompts = len(rig.provider.generated_prompts)
+    outcomes = run()
+    assert outcomes.count(RunResultOutcome.RETRY_SCHEDULED) == 1
+    assert RunResultOutcome.DEAD_LETTERED not in outcomes
+    assert len(rig.provider.generated_prompts) == prompts + 3
+    assert _fact(rig, vat["old_fact"])["valid_until"] == _MID2023
+
+
+def test_an_answer_citing_an_unsupplied_claim_is_never_replayed(rig: _Rig) -> None:
+    """An invalid citation is not stored; the retry gets a fresh, valid answer (R2 P1-4)."""
+    vat = _vat_rig(rig)
+    _declare(rig, vat["doc_id"], vat["editions"][2], _MID2023)
+
+    def invalid(prompt: str, type_name: str) -> dict[str, object]:
+        return {
+            "decision": "replace",
+            "window": {
+                "window": _window(_Y2015, _MID2023),
+                "supporting_claims": ["C999"],
+            },
+            "confidence": 0.9,
+            "rationale": "cites a claim that was not supplied",
+        }
+
+    rig.answers.append(invalid)
+    rig.answers.append(
+        _replace_answer(body="VAT on books is 15%", window=_window(_Y2015, _MID2023))
+    )
+    prompts = len(rig.provider.generated_prompts)
     with pytest.raises(ApplicationInputChanged):
         _review(rig, vat["old_fact"])
-    assert all(
-        "Review ONE stored fact" not in prompt
-        for prompt in rig.provider.generated_prompts
+    assert _review(rig, vat["old_fact"]) == "replaced"
+    assert len(rig.provider.generated_prompts) == prompts + 2
+    assert _fact(rig, vat["old_fact"])["valid_until"] == _MID2023
+
+
+def test_ordinary_apply_never_certifies_periods_its_decision_did_not_see(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A period correction committed between validation and the basis write rolls
+    the application back; the retry decides on the corrected periods (R2 P1-1)."""
+    doc_id, version_id, claim = _one_edition_rule(rig, body="Allowance is 45 per day")
+    real_record = adjudication_module.record_period_basis_on
+    corrected = {"done": False}
+
+    def correct_then_record(**kwargs: Any) -> None:
+        if not corrected["done"]:
+            corrected["done"] = True
+            rig.periods.set_effective_periods(  # a separate, committed writer
+                deployment_id=_DEPLOYMENT,
+                doc_id=doc_id,
+                version_id=version_id,
+                periods=(
+                    EffectivePeriodInput(effective_from=_Y2015, effective_until=_Y2024),
+                ),
+            )
+        real_record(**kwargs)
+
+    monkeypatch.setattr(
+        adjudication_module, "record_period_basis_on", correct_then_record
     )
+    rig.answers.append(
+        _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, None))
+    )
+    rig.answers.append(
+        _new_fact_answer(body="Allowance is 45 per day", window=_window(_Y2015, _Y2024))
+    )
+    _stage(rig, claim_id=claim, statement="Allowance is 45 per day")
+    with pytest.raises(ApplicationInputChanged):
+        _drain(rig)
+    with rig.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT count(*) FROM observations WHERE deployment_id = :d"),
+                {"d": _DEPLOYMENT},
+            ).scalar_one()
+            == 0
+        )  # the stale decision left nothing behind
+    (fact,) = _drain(rig)
+    row = _fact(rig, fact)
+    assert (row["valid_from"], row["valid_until"]) == (_Y2015, _Y2024)
+    assert "2024-01-01" in rig.provider.generated_prompts[-1].split("INPUT JSON:\n")[1]
+    with rig.engine.connect() as connection:
+        current = fact_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(fact,),
+        )
+    assert row["period_basis"] == current[fact]
+
+
+def test_ordinary_apply_never_certifies_evidence_periods_it_was_not_shown(
+    rig: _Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The basis of a supported fact covers evidence beyond the shown claims: a
+    correction to such a claim before commit rolls back, and the retry leaves the
+    fact's basis stale so the correction's fan-out reviews it (R2 P1-1)."""
+    vat = _vat_rig(rig)
+    memo_doc, (memo,) = _lineage(rig, label="memo", editions=1)
+    memo_claim = _claim(
+        rig, doc_id=memo_doc, body="VAT on books is 15%", chunks=(memo.chunk_id,)
+    )
+    # only the incoming claim is shown; the fact's dated evidence is not
+    monkeypatch.setattr(inputs_module, "_CLAIM_LIMIT", 1)
+    real_record = adjudication_module.record_period_basis_on
+    corrected = {"done": False}
+
+    def correct_then_record(**kwargs: Any) -> None:
+        if not corrected["done"]:
+            corrected["done"] = True  # a separate, committed writer
+            _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
+        real_record(**kwargs)
+
+    monkeypatch.setattr(
+        adjudication_module, "record_period_basis_on", correct_then_record
+    )
+
+    def support(prompt: str, type_name: str) -> dict[str, object]:
+        assert type_name == "PromptFactDecision"
+        presentation = _inputs(prompt)
+        (fact,) = (
+            fact
+            for fact in presentation["facts"]
+            if fact["chosen_from"] == _Y2015.isoformat()  # the 15% fact
+        )
+        return {
+            "target": fact["handle"],
+            "stance": "supports",
+            "new_facts": [],
+            "window": None,
+            "updates": [],
+            "support_moves": [],
+            "contradict_with": [],
+            "confidence": 0.9,
+            "rationale": "Same rate.",
+        }
+
+    rig.answers.extend((support, support))
+    _stage(rig, claim_id=memo_claim, statement="VAT on books is 15%")
+    with pytest.raises(ApplicationInputChanged):
+        _drain(rig)
+    _drain(rig)
+    with rig.engine.connect() as connection:
+        current = fact_period_basis_on(
+            connection=connection,
+            deployment_id=_DEPLOYMENT,
+            kind="observation",
+            fact_ids=(vat["old_fact"],),
+        )
+    assert _fact(rig, vat["old_fact"])["period_basis"] != current[vat["old_fact"]]
+    assert _fan_out_review_for(rig, vat["old_fact"]).payload is not None
 
 
 def test_deleting_a_lineage_queues_review_in_its_tombstone_transaction(
@@ -1151,3 +1405,112 @@ def test_deleting_a_lineage_queues_review_in_its_tombstone_transaction(
     jobs = _jobs(rig, target_kind="document")
     assert len(jobs) == before + 1
     assert jobs[-1]["payload"]["reason"] == "lineage_deleted"
+
+
+def test_a_review_whose_window_leaves_profiles_unchanged_embeds_nothing(
+    rig: _Rig,
+) -> None:
+    """A window change re-embeds an entity profile only if its embedded text changed
+    (owner invariant, R2 P1-2): here eight better-supported facts fill the Books
+    profile, so the reviewed fact is not in it and production repair costs no call."""
+    vat = _vat_rig(rig)
+    with rig.engine.begin() as connection:
+        # the fact already has its current vector
+        connection.execute(
+            text(
+                "UPDATE observations SET obs_label = statement, embedding ="
+                " CAST(array_fill(0.01, ARRAY[:dims]) AS vector), embedding_model = :m,"
+                " embedding_input_policy_version = :p, embedding_text_hash = 'h'"
+                " WHERE observation_id = :id"
+            ),
+            {
+                "id": vat["old_fact"],
+                "dims": P1_VECTOR_DIMENSIONS,
+                "m": P1Settings().embedding_model,
+                "p": FACT_INPUT_POLICY,
+            },
+        )
+        # eight undated, better-supported facts about the same subject
+        connection.execute(
+            text(
+                "INSERT INTO observations(observation_id, deployment_id,"
+                " subject_entity_id, statement, normalizer_version, evidence_count)"
+                " SELECT gen_random_uuid(), o.deployment_id, o.subject_entity_id,"
+                " 'Books fact ' || g, o.normalizer_version, 9"
+                " FROM observations o, generate_series(1, 8) g"
+                " WHERE o.observation_id = :id"
+            ),
+            {"id": vat["old_fact"]},
+        )
+    profiles = EntityProfileRefresher(
+        engine=rig.engine,
+        model_provider=rig.provider,
+        embedding_model=P1Settings().embedding_model,
+    )
+    profiles.refresh_for_facts(
+        deployment_id=_DEPLOYMENT,
+        relation_ids=(),
+        observation_ids=(vat["old_fact"], vat["new_fact"]),
+    )
+    embeds = len(rig.provider.embedded_texts)
+    profile_before = _entity_profile(rig, vat["old_fact"])
+    assert "VAT on books" not in profile_before[0]
+    # the 10% edition is corrected to start in 2023: the 15% fact now ends there
+    _declare(rig, vat["doc_id"], vat["editions"][2], _Y2023)
+    rig.answers.append(
+        _replace_answer(body="VAT on books is 15%", window=_window(_Y2015, _Y2023))
+    )
+    assert _review(rig, vat["old_fact"]) == "replaced"
+    with rig.engine.connect() as connection:
+        repair = (
+            connection.execute(
+                text(
+                    "SELECT processing_id, target_id, content_hash, payload"
+                    " FROM processing_state WHERE deployment_id = :d"
+                    " AND stage = 'label_relation'"
+                    " AND payload->>'observation_id' = CAST(:id AS text)"
+                ),
+                {"d": _DEPLOYMENT, "id": vat["old_fact"]},
+            )
+            .mappings()
+            .one()
+        )
+    LabelFactsHandler(
+        facts=FactCatalog(engine=rig.engine),
+        model_provider=rig.provider,
+        fact_index=PostgresP1Index(
+            engine=rig.engine, embedding_model=P1Settings().embedding_model
+        ),
+        settings=P1Settings(),
+        profile_refresher=profiles,
+    ).handle(
+        work=ClaimedWork(
+            processing_id=repair["processing_id"],
+            deployment_id=_DEPLOYMENT,
+            target_kind=ProcessingTarget.OBSERVATION,
+            target_id=repair["target_id"],
+            stage=PipelineStage.LABEL_RELATION,
+            component_version="label",
+            content_hash=repair["content_hash"],
+            lane=ProcessingLane.STEADY,
+            attempt=1,
+            payload=repair["payload"],
+        ),
+        meter=NoopCostMeter(),
+    )
+    assert len(rig.provider.embedded_texts) == embeds
+    assert _entity_profile(rig, vat["old_fact"]) == profile_before
+
+
+def _entity_profile(rig: _Rig, fact_id: UUID) -> tuple[Any, ...]:
+    with rig.engine.connect() as connection:
+        return tuple(
+            connection.execute(
+                text(
+                    "SELECT e.profile_summary, e.embedding_text_hash FROM entities e"
+                    " JOIN observations o ON o.subject_entity_id = e.entity_id"
+                    " WHERE o.observation_id = :id"
+                ),
+                {"id": fact_id},
+            ).one()
+        )
