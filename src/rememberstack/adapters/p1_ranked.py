@@ -188,15 +188,18 @@ def nominate_and_confirm(
             text("SELECT set_config(:name, :value, true)"),
             {"name": name, "value": value},
         )
+    # Both extensions use their index only for ORDER BY … LIMIT; the limit is
+    # the work budget, the most this search may ever fetch from the cursor.
+    sql = f"{statement.sql} LIMIT :nomination_limit"
+    parameters = {**statement.parameters, "nomination_limit": limit}
     try:
         attest_index_plan(
-            connection,
-            sql=statement.sql,
-            parameters=statement.parameters,
-            index=statement.expected_index,
+            connection, sql=sql, parameters=parameters, index=statement.expected_index
         )
-        stream = connection.execution_options(stream_results=True).execute(
-            text(statement.sql), dict(statement.parameters)
+        # Per-statement option: Connection.execution_options() would change the
+        # connection itself and turn every later statement into a cursor.
+        stream = connection.execute(
+            text(sql), parameters, execution_options={"stream_results": True}
         )
     finally:
         for name, _value in _PLANNER_CONTROLS:
