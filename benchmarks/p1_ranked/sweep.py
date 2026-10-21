@@ -6,6 +6,8 @@ lineages repeat their text across versions (the "superseded editions" stratum
 of versioned corpora such as law), and measures each ranked channel through
 the public ``PostgresP1Index`` API:
 
+- chunk text is rewritten as Zipf-skewed words of varying length (the D140
+  seed's text is degenerate for BM25: every word is ``w0``);
 - strata: ``current`` (one in-force version per lineage), a 1% document
   filter (a small, fixed eligible set), and ``history`` (every edition);
 - per stratum: p50/p95 latency, returned-``k`` rate, termination counts and
@@ -52,6 +54,35 @@ def _reset(engine: Engine) -> None:
     with engine.begin() as connection:
         # isolated benchmark database only: empties every deployment
         connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
+
+
+def _rewrite_text(engine: Engine, *, min_words: int, max_words: int) -> None:
+    """Give every chunk Zipf-skewed text of varying length.
+
+    The D140 seed's words come from ``hashint8``, which returns a 32-bit hash,
+    divided by 2**63: every word is ``w0`` and every chunk has the same length,
+    so every BM25 score ties. Lengths here span the exact and quantized ranges
+    of pg_textsearch's length encoding (0..39 exact, 3-bit mantissa above).
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE chunk_search AS target SET search_text = ("
+                "  SELECT string_agg('w' || floor(power(abs(hashint8extended("
+                "      i::int8, hashtext(target.chunk_id::text)::int8))::float8"
+                "      / 9223372036854775807, 3) * :vocabulary)::int, ' ')"
+                "  FROM generate_series(1, :min_words"
+                "      + abs(hashtext(target.chunk_id::text || 'n'))"
+                "        % (:max_words - :min_words + 1)) AS i)"
+                " WHERE target.deployment_id = :d"
+            ),
+            {
+                "d": d140.DEPLOYMENT,
+                "vocabulary": d140.VOCABULARY,
+                "min_words": min_words,
+                "max_words": max_words,
+            },
+        )
 
 
 def _duplicate_versions(engine: Engine, *, share: float, versions: int) -> int:
@@ -199,6 +230,8 @@ def main() -> None:
     parser.add_argument("--periodised", type=float, default=0.5)
     parser.add_argument("--duplicate-share", type=float, default=0.5)
     parser.add_argument("--queries", type=int, default=60)
+    parser.add_argument("--min-words", type=int, default=20)
+    parser.add_argument("--max-words", type=int, default=300)
     parser.add_argument("--maintenance-work-mem", default="1GB")
     parser.add_argument("--out", default="p1_ranked_sweep.json")
     args = parser.parse_args()
@@ -218,6 +251,7 @@ def main() -> None:
             periodised=args.periodised,
             semantic_chunks=0,
         )
+        _rewrite_text(engine, min_words=args.min_words, max_words=args.max_words)
         duplicated = _duplicate_versions(
             engine, share=args.duplicate_share, versions=args.versions
         )

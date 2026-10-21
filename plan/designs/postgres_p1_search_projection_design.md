@@ -331,10 +331,16 @@ the index is used and eligibility stays exact. For each target and channel:
    fetched with; nothing is rescored.
 3. **Confirm the batch.** A confirmation query applies the target's complete
    eligibility predicates — the same predicate builders the adapter already
-   uses for every filter, scope and gate — to `item_id = ANY(:batch_ids)`. It
-   is a primary-key probe per candidate and returns, per rejected ID, the
-   first failed rule class (authority, scope, entity, document, fact time,
-   evidence gate) for the counters.
+   uses for every filter, scope and gate — to each candidate of the batch. It
+   is a primary-key probe per candidate: the batch is unnested and each ID is
+   checked by a `LATERAL` existence subquery. (A set predicate
+   `item_id = ANY(:batch_ids)` lets the planner start from the eligibility
+   joins instead, so confirmation grows with the corpus; the scaling sweep
+   measured 17 s for one 4,000-ID batch at 30k chunks, against 0.13 s for
+   the same batch probed per candidate.) It should return, per rejected ID,
+   the first failed rule class (authority, scope, entity, document, fact
+   time, evidence gate) for the counters; the first implementation counts
+   rejections without the class.
 4. **Stop** under exactly one termination reason (§8.6):
    - `k_filled` — `k` rows are confirmed **and** the stream has moved past the
      `k`-th confirmed score (the next fetched score is strictly worse), so a
