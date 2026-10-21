@@ -509,25 +509,30 @@ class QueryEngine:
             for grain, channel, _ in probes
         ):
             return ()  # an index without scores cannot rank a probe
+        # Review r1 P1-8: explicit document restrictions apply before the cap,
+        # and one row past it marks the enumeration (and so the answer)
+        # incomplete even when no enumerated lineage is touched.
         with self._read() as connection:
             candidates = tuple(
                 connection.execute(
                     _PENDING_IN_FORCE,
                     {
                         "deployment_id": deployment_id,
-                        "limit": SCOPE_PENDING_PROBE_LINEAGES,
+                        "limit": SCOPE_PENDING_PROBE_LINEAGES + 1,
+                        "pending_doc_ids": [str(item) for item in documents.doc_ids]
+                        if documents is not None and documents.doc_ids
+                        else None,
                         **scope.parameters(),
                     },
                 ).scalars()
             )
-        if documents is not None and documents.doc_ids:
-            allowed = set(documents.doc_ids)
-            candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+        enumerated = len(candidates) <= SCOPE_PENDING_PROBE_LINEAGES
+        candidates = candidates[:SCOPE_PENDING_PROBE_LINEAGES]
         if not candidates:
-            return ()
+            return _Touched((), complete=enumerated)
         testimony = getattr(index, "nominate_testimony_scored", None)
         if entity_ids and callable(testimony):
-            return self._touched_by_testimony(
+            touched_by_testimony = self._touched_by_testimony(
                 deployment_id=deployment_id,
                 scope=scope,
                 query=query,
@@ -536,12 +541,16 @@ class QueryEngine:
                 candidates=candidates,
                 testimony=testimony,
             )
+            return _Touched(
+                touched_by_testimony,
+                complete=enumerated and _touched_complete(touched_by_testimony),
+            )
         restricted = (documents or DocumentSearchFilters()).model_copy(
             update={"doc_ids": candidates}
         )
         readable = TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at)
         touched: dict[UUID, None] = {}
-        complete = True
+        complete = enumerated
         for grain, channel, k in probes:
             method = getattr(index, methods[(grain, channel)], None)
             if not callable(method):
@@ -1986,14 +1995,17 @@ class QueryEngine:
         parallel channels can fuse their candidate orderings before one
         `hydrate_claims` confirmation. Candidate UUIDs and ranks are not facts.
         """
-        nominated = self._nominate_claim_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.NOMINATE_CLAIMS,
-            time=time,
-        )
+        # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
+        # deadline and pinned instant even without a later confirmation.
+        with self._operation(evaluated_at=None):
+            nominated = self._nominate_claim_ids(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                call_site=SurfaceCallSite.NOMINATE_CLAIMS,
+                time=time,
+            )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
         )
@@ -2155,14 +2167,17 @@ class QueryEngine:
         time: TextScope | None = None,
     ) -> Envelope:
         """Rank source-chunk IDs without returning unconfirmed source text."""
-        nominated = self._nominate_chunk_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.NOMINATE_CHUNKS,
-            time=time,
-        )
+        # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
+        # deadline and pinned instant even without a later confirmation.
+        with self._operation(evaluated_at=None):
+            nominated = self._nominate_chunk_ids(
+                deployment_id=deployment_id,
+                query=query,
+                k=k,
+                channel=channel,
+                call_site=SurfaceCallSite.NOMINATE_CHUNKS,
+                time=time,
+            )
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
         )
@@ -5714,6 +5729,8 @@ _PENDING_IN_FORCE = text(
     WHERE s.deployment_id = :deployment_id
       AND NOT s.selectable
       AND s.in_force && {WINDOW_SQL}
+      AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
+           OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
