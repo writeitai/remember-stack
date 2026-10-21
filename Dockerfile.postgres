@@ -55,6 +55,21 @@ RUN set -eux; \
         -type f -name 'pg_textsearch*' -print0 | sort -z | xargs -0 sha256sum; \
     } > /tmp/pg_textsearch-artifacts.sha256
 
+# Local PostgreSQL 19 gate (D142, design §6): upstream supports PG19 on a
+# best-effort basis, so every image build runs the extension's own regression
+# suite against a throwaway cluster of this exact server build.
+RUN set -eux; \
+    chown -R postgres /src/pg_textsearch; \
+    su postgres -c "/usr/lib/postgresql/19/bin/initdb -D /tmp/pg_regress_data >/dev/null"; \
+    echo "shared_preload_libraries = 'pg_textsearch'" >> /tmp/pg_regress_data/postgresql.conf; \
+    su postgres -c "/usr/lib/postgresql/19/bin/pg_ctl -D /tmp/pg_regress_data -l /tmp/pg_regress.log -w start"; \
+    if ! su postgres -c "cd /src/pg_textsearch && make installcheck"; then \
+      cat /src/pg_textsearch/regression.diffs 2>/dev/null || true; \
+      exit 1; \
+    fi; \
+    su postgres -c "/usr/lib/postgresql/19/bin/pg_ctl -D /tmp/pg_regress_data -w stop"; \
+    rm -rf /tmp/pg_regress_data /tmp/pg_regress.log
+
 FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572
 
 # pg_textsearch uses the PostgreSQL License at the source revision pinned above
