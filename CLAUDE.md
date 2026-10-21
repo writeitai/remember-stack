@@ -92,14 +92,16 @@ over are content identities and the paid products keyed on them
   `anchor_min_gap_tokens` after the previous one) or the section's end.
 - **Embeddings (D80).** A vector carries forward from an earlier version of the same
   lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
-  location header + body; it depends on the lineage title, section title and role), the
-  policy generation and the embedding model all match. Neighbours are not part of this key.
+  location header + body, so it depends on all D80 location facts: title, source kind and
+  shape, section title, path and role, chunk count, and message metadata), the policy
+  generation and the embedding model all match. Neighbours are not part of this key.
 - **Selection (D56, D140).** `extraction_input_hash` = own block hashes + previous/next
   *same-section* neighbour hashes + header facts (`header_title()`, `source_kind`, the
   chunk's text-origin date, `language`, `file_name`; plus the eligibility policy for
   ineligible chunks) + extractor and structurer versions. D140's text origin keeps the date
-  stable for unchanged chunks across dated versions (`reuse_identity_hash` is the same
-  identity without the date).
+  stable for unchanged chunks across dated versions; it is looked up through
+  `reuse_identity_hash`, which is the same identity without the date plus
+  `REUSE_IDENTITY_VERSION` and `blockizer_version`.
 - **Claimify (D122).** `claimify_input_hash` = the target's Selection hash + the Selection
   hashes of the **previous eight chunks in document order** + `REFERENCE_POLICY_VERSION`
   ([document_reference_context_design](plan/designs/document_reference_context_design.md)).
@@ -136,7 +138,8 @@ the owner's decision — do not describe them as solved):
   `SKELETON_PARSER_VERSION`, `REUSE_IDENTITY_VERSION`,
   `EXTRACTION_ELIGIBILITY_POLICY_VERSION`, `E2_EXTRACTOR_VERSION` (includes
   `SECTION_ORIENTATION_VERSION`), `REFERENCE_POLICY_VERSION`,
-  `EMBEDDING_INPUT_POLICY_VERSION`, `E1_EMBED_VERSION` and the embedding model.
+  `EMBEDDING_INPUT_POLICY_VERSION`, `E1_EMBED_VERSION`, the embedding model, and
+  `E3_NORMALIZER_VERSION` (reused claims keep their IDs but are normalized again).
 - **Keep lineage identity stable.** Successive versions must arrive under the same
   connector-native `(source_kind, source_ref)` (D55); never append a revision or hash to
   `source_ref`. A one-shot upload is identified by its bytes, so an edited file becomes a new
@@ -147,9 +150,11 @@ the owner's decision — do not describe them as solved):
   `src/tests/workers/test_reuse_lifecycle.py` and `test_d140_text_origin_pg.py`, or adds a
   test that ingests two versions of one lineage, with distinct source dates and stable names,
   of a document with untouched sections before and after an edited multi-chunk section. It
-  counts provider calls per stage (Selection, Claimify, embedding) and asserts that
-  unchanged chunks keep their content, Selection and text-origin identities, reuse the same
-  `claim_id`s through `chunk_claims`, and cause no embedding calls. Cover a
+  counts provider calls per stage (Selection, Claimify, embedding). Chunks next to the
+  edit legitimately get new Selection and origin identities; every untouched chunk outside
+  the edited chunk's same-section neighbours must keep its content, Selection and
+  text-origin identities and reuse the same `claim_id`s through `chunk_claims`, and every
+  chunk whose embedding identity is unchanged causes no embedding call. Cover a
   packing-boundary case and a D122 window case. Cases that hit a known gap above are marked
   expected-failure naming the gap, never silently weakened.
 - **Converters and connectors** must render unchanged content byte-identically across
