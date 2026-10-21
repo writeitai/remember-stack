@@ -954,9 +954,21 @@ class PostgresP1Index:
                 )
             if entity_ids:
                 return _entity_tiers(connection, query=query, k=k, deadline=deadline)
+            statement = query.nomination
             if query.versions_sql is not None:
-                eligible = _small_eligible_set(connection, query=query)
-                if eligible is not None:
+                eligible = _enumerate_eligible(
+                    connection, query=query, limit=p1_ranked.FILTER_PUSHDOWN_LIMIT
+                )
+                if eligible is not None and len(eligible) > (
+                    p1_ranked.EXACT_TIER_THRESHOLD
+                ):
+                    # Post-approval design change (§8.3, review r1 P1-9): the
+                    # enumerated eligible set is pushed into the index scan
+                    # as a filter, so the cursor streams eligible rows only.
+                    statement = _pushdown(
+                        statement, eligible, id_column=query.id_column
+                    )
+                elif eligible is not None:
                     rows = _exact_testimony(
                         connection, query=query, ids=eligible, limit=k
                     )
@@ -972,13 +984,24 @@ class PostgresP1Index:
                     )
             candidates, account = p1_ranked.nominate_and_confirm(
                 connection,
-                statement=query.nomination,
+                statement=statement,
                 k=k,
                 confirm=lambda conn, ids: _confirm_testimony(
                     conn, query=query, ids=ids
                 ),
                 deadline=deadline,
             )
+            if statement is not query.nomination:
+                account = replace(
+                    account,
+                    coverage_rows=len(statement.parameters["eligible_ids"]),
+                    limits={
+                        **(account.limits or {}),
+                        "filter_pushdown_rows": float(
+                            len(statement.parameters["eligible_ids"])
+                        ),
+                    },
+                )
             return p1_ranked.as_result(
                 candidates, account=account, channel=query.channel
             )
@@ -2292,19 +2315,21 @@ def _confirm_testimony(
     return {str(row["item_id"]): None for row in rows}
 
 
-def _small_eligible_set(
-    connection: Connection, *, query: _TestimonyQuery
+def _enumerate_eligible(
+    connection: Connection, *, query: _TestimonyQuery, limit: int
 ) -> tuple[str, ...] | None:
-    """The whole eligible set when a filter makes it small, else ``None``.
+    """The whole eligible set of a document-filtered search, or ``None`` above
+    ``limit`` rows.
 
     A selective document filter leaves few eligible rows among many index
-    matches, so nomination would fetch up to the work budget and still stop
-    short (the scaling sweep's 1% document stratum). At or below the exact-tier
-    threshold the eligible rows are scored exactly instead, as entity tiers
-    are (D142 §8.4). The probe starts from the matching versions and reads
-    each one's chunks through a ``LATERAL`` subquery (``OFFSET 0`` keeps the
-    planner from flattening it and starting from every chunk instead: 6 s
-    against 83 ms at 3M chunks), and it reads at most threshold + 1 rows.
+    matches, so plain nomination would fetch up to the work budget and still
+    stop short (the scaling sweep's 1% document stratum). A small set is
+    scored exactly (D142 §8.4); a larger one, up to ``limit``, is pushed into
+    the index scan (:func:`_pushdown`). The probe starts from the matching
+    versions and reads each one's chunks through a ``LATERAL`` subquery
+    (``OFFSET 0`` keeps the planner from flattening it and starting from every
+    chunk instead: 6 s against 83 ms at 3M chunks); it reads at most
+    ``limit + 1`` rows.
     """
     assert query.versions_sql is not None
     rows = connection.execute(
@@ -2318,12 +2343,38 @@ def _small_eligible_set(
             " OFFSET 0) AS eligible"
             " LIMIT :tier_limit"
         ),
-        {**query.parameters, "tier_limit": p1_ranked.EXACT_TIER_THRESHOLD + 1},
+        {**query.parameters, "tier_limit": limit + 1},
     ).scalars()
     eligible = tuple(str(item) for item in rows)
-    if len(eligible) > p1_ranked.EXACT_TIER_THRESHOLD:
+    if len(eligible) > limit:
         return None
     return eligible
+
+
+def _pushdown(
+    statement: p1_ranked.NominationStatement,
+    eligible: tuple[str, ...],
+    *,
+    id_column: str,
+) -> p1_ranked.NominationStatement:
+    """Filter the index scan to an enumerated eligible set (D142 §8.3).
+
+    The index still orders by its own score and the cursor still streams one
+    scoring generation; PostgreSQL applies the (hashed) membership filter to
+    each streamed row, so the cursor, the work budget and confirmation see
+    eligible rows only. Confirmation still applies every predicate.
+    """
+    membership = f" AND {id_column} = ANY(CAST(:eligible_ids AS uuid[]))"
+    head, order = statement.sql.split(" ORDER BY ", 1)
+    return replace(
+        statement,
+        sql=f"{head}{membership} ORDER BY {order}",
+        parameters={**statement.parameters, "eligible_ids": list(eligible)},
+        # an HNSW exhaustion proof counts the filtered searchable rows
+        count_sql=None
+        if statement.count_sql is None
+        else statement.count_sql + membership,
+    )
 
 
 def _exact_testimony(

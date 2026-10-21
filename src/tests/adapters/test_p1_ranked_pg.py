@@ -143,15 +143,17 @@ def _oracle(
     return matching[:k]
 
 
-@pytest.mark.parametrize("exact_tier", [False, True], ids=["loop", "exact_tier"])
+@pytest.mark.parametrize("mode", ["loop", "pushdown", "exact_tier"])
 def test_bm25_loop_equals_the_canonical_oracle(
-    database_engine: Engine, monkeypatch: pytest.MonkeyPatch, exact_tier: bool
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
-    """With a restrictive filter (low eligible share) the loop keeps fetching
-    until it returns exactly the oracle's top k, scores included; the
-    small-eligible-set exact tier returns the same rows."""
-    if not exact_tier:
+    """With a restrictive filter (low eligible share) the plain loop keeps
+    fetching until it returns exactly the oracle's top k, scores included;
+    the filter pushdown and the small-set exact tier return the same rows."""
+    if mode != "exact_tier":
         monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)
+    if mode == "loop":
+        monkeypatch.setattr(p1_ranked, "FILTER_PUSHDOWN_LIMIT", 0)
     generator = random.Random(142)
     doc_ids: list[UUID] = []
     for _ in range(12):
@@ -178,7 +180,8 @@ def test_bm25_loop_equals_the_canonical_oracle(
             assert item.score == pytest.approx(score, rel=1e-12)
         account = search_account(result)
         assert account.termination.complete
-        assert (account.coverage_rows > 0) is exact_tier
+        assert (account.coverage_rows > 0) is (mode != "loop")
+        assert (account.fetch_rounds > 0) is (mode != "exact_tier")
 
 
 def test_absent_and_empty_queries_return_no_lexical_rows(
@@ -285,11 +288,13 @@ def _unit(axis: int, *, tilt: float = 0.0) -> str:
     return "[" + ",".join(map(str, vector)) + "]"
 
 
+@pytest.mark.parametrize("pushdown", [0, 100_000], ids=["loop", "pushdown"])
 def test_semantic_loop_returns_eligible_neighbours_and_proves_exhaustion(
-    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch, pushdown: int
 ) -> None:
     """HNSW nomination with confirmation; a drained small corpus is counted."""
     monkeypatch.setattr(p1_ranked, "EXACT_TIER_THRESHOLD", 0)  # force the loop
+    monkeypatch.setattr(p1_ranked, "FILTER_PUSHDOWN_LIMIT", pushdown)
     allowed_doc, allowed = _seed_chunks(database_engine, ["a", "b", "c"])
     _, others = _seed_chunks(database_engine, ["d", "e", "f"])
     with database_engine.begin() as connection:

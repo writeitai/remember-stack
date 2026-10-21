@@ -115,6 +115,12 @@ WORK_BUDGET_PER_K = 200
 EXACT_TIER_THRESHOLD = 5_000
 """Entity tiers at or below this many items are scored exactly (D142 §8.4)."""
 
+FILTER_PUSHDOWN_LIMIT = 100_000
+"""Most enumerated eligible rows pushed into an index scan as a filter (§8.3).
+
+A starting point to measure: above it a document-filtered search uses the
+plain loop."""
+
 ENTITY_WORK_BUDGET = 50_000
 """Most scoped items an entity-coverage computation may read (D142 §8.4)."""
 
