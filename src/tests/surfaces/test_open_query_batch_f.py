@@ -786,9 +786,9 @@ def test_assured_operation_descriptors_are_the_complete_catalog(migrated: str) -
         assert descriptor.answer_intent == operation.answer_intent.value
     # Pin the closed surface versions explicitly.
     assert descriptors["resolve_entity"].version == 1
-    assert descriptors["claims_and_sources_context"].version == 3
-    assert descriptors["facts_context"].version == 3
-    assert descriptors["combined_context"].version == 4
+    assert descriptors["claims_and_sources_context"].version == 4
+    assert descriptors["facts_context"].version == 4
+    assert descriptors["combined_context"].version == 5
 
 
 def _expected_input_schema(operation: object) -> dict[str, object]:
@@ -951,7 +951,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
+        == "60bfacee13ea9093a17cc638d92fd9aeb67b9b38ac4f0ddcb65d7629ba2131fa"
     )
 
 
