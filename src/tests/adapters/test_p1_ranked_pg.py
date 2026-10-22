@@ -398,7 +398,9 @@ def test_scorer_bound_holds_for_spilled_and_memtable_rows(
                 ),
                 {"q": query, "d": _DEPLOYMENT_ID},
             ).all()
-            epsilon = p1_ranked.score_epsilon(p1_ranked.analyzed_terms_bound(query))
+            epsilon = p1_ranked.score_epsilon(
+                p1_ranked.analyzed_terms(connection, query=query, text_config="simple")
+            )
             slack = (1 + epsilon) ** 2
             previous = float("inf")
             assert rows, query
@@ -506,3 +508,19 @@ def test_operation_snapshot_bounds_nested_statements(database_engine: Engine) ->
     else:
         millis = int(shown)
     assert 0 < millis <= 30_000
+
+
+@pytest.mark.parametrize(
+    ("query", "terms"),
+    [("alpha beta", 2), ("alpha alpha alpha", 3), ("a-b", 3), ("x-y-z", 4)],
+)
+def test_the_margin_counts_terms_with_the_real_parser(
+    database_engine: Engine, query: str, terms: int
+) -> None:
+    """Review r2 P2-1: compound tokens yield the compound and its parts, so a
+    length-based bound would undercount; the margin uses the parser's count."""
+    with database_engine.connect() as connection:
+        counted = p1_ranked.analyzed_terms(
+            connection, query=query, text_config="simple"
+        )
+    assert counted == terms

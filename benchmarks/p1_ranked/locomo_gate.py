@@ -31,22 +31,13 @@ import statistics
 import sys
 from typing import Any
 
-from pydantic import TypeAdapter
-
-from benchmarks.locomo.dataset import item_ids_hash
-from benchmarks.locomo.dataset import manifest_bytes_hash
-from benchmarks.locomo.model import PreparedDocument
-from benchmarks.locomo.model import QuestionManifest
-from benchmarks.locomo.model import RunConfiguration
-from benchmarks.locomo.model import RunState
-from benchmarks.locomo.runner import _models_hash  # noqa: PLC2701 -- read-only reuse
+from benchmarks.locomo.runner import BenchmarkRunError
+from benchmarks.locomo.runner import load_recorded_run
 
 RESAMPLES = 10_000
 SEED = 504
 MARGIN_PP = 1.0
 MIN_RUNS = 3
-
-_DOCUMENTS = TypeAdapter(tuple[PreparedDocument, ...])
 
 
 class GateInputError(ValueError):
@@ -71,38 +62,35 @@ class RunExport:
 
 
 def load_export(run_dir: Path) -> RunExport:
-    """Read and integrity-check one run; every question must be judged."""
-    configuration = RunConfiguration.model_validate_json(
-        (run_dir / "run.json").read_text(encoding="utf-8")
-    )
-    manifest = QuestionManifest.model_validate_json(
-        (run_dir / "manifest.json").read_text(encoding="utf-8")
-    )
-    documents = _DOCUMENTS.validate_json(
-        (run_dir / "documents.json").read_text(encoding="utf-8")
-    )
-    state = RunState.model_validate_json(
-        (run_dir / "state.json").read_text(encoding="utf-8")
-    )
-    if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
-        raise GateInputError(f"{run_dir}: manifest item hash does not match its ids")
-    if manifest_bytes_hash(manifest=manifest) != configuration.manifest_sha256:
-        raise GateInputError(f"{run_dir}: manifest differs from the recorded run")
-    if _models_hash(values=documents) != configuration.documents_sha256:
-        raise GateInputError(f"{run_dir}: documents differ from the recorded run")
-    labels: dict[str, int] = {}
-    missing = [item for item in manifest.item_ids if item not in state.judges]
-    if missing:
+    """Load one run against its own recorded identity; every question answered
+    and judged.
+
+    The runner's own integrity checks run (recomputed protocol fingerprint,
+    manifest/item/document hashes, rendered documents, state/identity
+    correspondence, judge ids), without the current code's protocol pins, so
+    a ``main`` baseline keeps its own fingerprint (review r1 P2-1, r2 P2-2).
+    """
+    try:
+        context = load_recorded_run(run_dir=run_dir)
+    except BenchmarkRunError as error:
+        raise GateInputError(f"{run_dir}: {error}") from error
+    item_ids = tuple(question.item_id for question in context.questions)
+    unanswered = [item for item in item_ids if item not in context.state.answers]
+    unjudged = [item for item in item_ids if item not in context.state.judges]
+    if unanswered or unjudged:
         raise GateInputError(
-            f"{run_dir}: {len(missing)} questions have no judge record (unfinished)"
+            f"{run_dir}: {len(unanswered)} questions have no answer and"
+            f" {len(unjudged)} no judge record (unfinished)"
         )
-    for item_id in manifest.item_ids:
-        labels[item_id] = int(state.judges[item_id].label == "CORRECT")
+    labels = {
+        item_id: int(context.state.judges[item_id].label == "CORRECT")
+        for item_id in item_ids
+    }
     return RunExport(
         run_dir=run_dir,
-        item_ids_sha256=manifest.item_ids_sha256,
-        documents_sha256=configuration.documents_sha256,
-        dataset_sha256=configuration.dataset_sha256,
+        item_ids_sha256=context.configuration.item_ids_sha256,
+        documents_sha256=context.configuration.documents_sha256,
+        dataset_sha256=context.configuration.dataset_sha256,
         labels=labels,
     )
 

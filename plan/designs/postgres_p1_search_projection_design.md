@@ -407,14 +407,19 @@ row, without patching the extension:
 
 Floating point is bounded per query, not by a fixed slack (review r1 P1-2: a
 fixed `10⁻⁴` fails for 40,000 single-occurrence terms in one long document,
-ratio 1.12533 against 1.12523). Each scorer sums `n` positive float4 terms,
-each computed with at most 16 rounded operations, so a computed score is
-within `1 ± γ(n+16)` of its real value (`γ(m) = m·u/(1−m·u)`, `u = 2⁻²⁴`,
-recursive summation); the implementation uses `ε(n) = 2(n+16)u` with `n`
-bounded by the query's length (`⌊(len+1)/2⌋`: no parser finds more tokens).
-Chaining the unfetched row's two scores, the index order and the last row's
-two scores gives `canonical(u) ≤ M · canonical(last)` with
-`M = (1+ε(n))⁴ / (1 − 1/9)` (≈ 1.1261 for a 4,096-character query). The loop
+ratio 1.12533 against 1.12523). `n` is the parser's own term count for the
+query (`ts_debug` under the channel's `simple` configuration, every token
+counted, compound tokens and their parts alike — review r2 P2-1). Each
+scorer sums `n` positive terms computed in float4 with at most 16 roundings
+each (the standalone operator adds them in float8 and casts the exact sum),
+so with `m = n + 16`, `x = m·2⁻²⁴` and `γ = x/(1−x)` a computed score `C'`
+and its real value `C` satisfy `C(1−γ) ≤ C' ≤ C(1+γ)`. With `ε = 2x`, both
+`1+γ ≤ 1+ε` and `1/(1−γ) ≤ 1+ε` hold exactly while `x ≤ 1/4`; longer queries
+(over about four million terms) are refused. Removing or adding each prime
+costs one factor along `C'(u) ≤ C(u)(1+ε) ≤ I(u)(1+ε)/(1−1/9) ≤
+I'(u)(1+ε)²/(1−1/9) ≤ I'(last)(1+ε)²/(1−1/9) ≤ I(last)(1+ε)³/(1−1/9) ≤
+C(last)(1+ε)³/(1−1/9) ≤ C'(last)(1+ε)⁴/(1−1/9)`, so
+`M = (1+ε(n))⁴ / (1 − 1/9)`. The loop
 stops `k_filled` only when the `k`-th confirmed canonical score is strictly
 greater than `M · canonical(last)`: no unfetched row can enter the result or
 tie with its last member. In the reviewer's single-term example (lengths 48,

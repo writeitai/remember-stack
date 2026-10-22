@@ -296,17 +296,28 @@ def test_float_slack_grows_with_query_terms() -> None:
     ratio = canonical / index
     fixed = (1 + 1e-4) ** 2 / (1 - p1_ranked.BM25_LENGTH_QUANTIZATION_ERROR)
     assert ratio > fixed
-    query = " ".join(f"t{n:03d}" for n in range(40_000))
-    assert ratio <= p1_ranked.bm25_stop_margin(p1_ranked.analyzed_terms_bound(query))
+    assert ratio <= p1_ranked.bm25_stop_margin(40_000)
 
 
-def test_analyzed_terms_bound_covers_every_parser_split() -> None:
-    """Single-character tokens separated by single characters are the densest."""
-    assert p1_ranked.analyzed_terms_bound("a b c") == 3
-    assert p1_ranked.analyzed_terms_bound("a-b-c-d") == 4
-    assert p1_ranked.analyzed_terms_bound("") == 1
+@pytest.mark.parametrize("fraction", [1e-6, 0.01, 0.1, 0.2, 0.25])
+def test_epsilon_covers_both_rounding_directions_up_to_its_domain(
+    fraction: float,
+) -> None:
+    """Review r2 P2-1: with x = m·u and γ = x/(1−x), ε = 2x bounds both
+    1+γ (rounding up) and 1/(1−γ) (rounding down) exactly while x ≤ 1/4."""
+    m = round(fraction / p1_ranked.FLOAT4_UNIT_ROUNDOFF)
+    x = m * p1_ranked.FLOAT4_UNIT_ROUNDOFF
+    gamma = x / (1 - x)
+    epsilon = p1_ranked.score_epsilon(m - p1_ranked.TERM_OPERATIONS)
+    assert 1 + gamma <= 1 + epsilon
+    assert 1 / (1 - gamma) <= (1 + epsilon) * (1 + 1e-15)
+
+
+def test_queries_beyond_the_proved_domain_are_refused() -> None:
+    limit = int(0.25 / p1_ranked.FLOAT4_UNIT_ROUNDOFF) - p1_ranked.TERM_OPERATIONS
+    p1_ranked.score_epsilon(limit)
     with pytest.raises(ValueError, match="too long"):
-        p1_ranked.score_epsilon(2**23)
+        p1_ranked.score_epsilon(limit + 1)
 
 
 @pytest.mark.parametrize(

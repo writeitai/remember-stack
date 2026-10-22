@@ -912,7 +912,6 @@ class PostgresP1Index:
                 ),
                 parameters=parameters,
                 expected_index=bm25_index,
-                query_terms=p1_ranked.analyzed_terms_bound(query_text),
             )
         where = " ".join(f"AND {item}" for item in predicates)
         return _TestimonyQuery(
@@ -984,7 +983,7 @@ class PostgresP1Index:
                     )
             candidates, account = p1_ranked.nominate_and_confirm(
                 connection,
-                statement=statement,
+                statement=_with_term_count(connection, statement),
                 k=k,
                 confirm=lambda conn, ids: _confirm_testimony(
                     conn, query=query, ids=ids
@@ -2363,6 +2362,26 @@ def _enumerate_eligible(
     return eligible
 
 
+BM25_TEXT_CONFIG = "simple"
+"""The text search configuration of every P1 BM25 channel (D94)."""
+
+
+def _with_term_count(
+    connection: Connection, statement: p1_ranked.NominationStatement
+) -> p1_ranked.NominationStatement:
+    """Attach the parser's term count to a BM25 statement (its stop margin)."""
+    if statement.channel != "bm25":
+        return statement
+    return replace(
+        statement,
+        query_terms=p1_ranked.analyzed_terms(
+            connection,
+            query=str(statement.parameters["query"]),
+            text_config=BM25_TEXT_CONFIG,
+        ),
+    )
+
+
 def _pushdown(
     statement: p1_ranked.NominationStatement,
     eligible: tuple[str, ...],
@@ -2510,7 +2529,7 @@ def _entity_tiers(
 
         candidates, account = p1_ranked.nominate_and_confirm(
             connection,
-            statement=query.nomination,
+            statement=_with_term_count(connection, query.nomination),
             k=need,
             confirm=confirm_tier,
             deadline=deadline,

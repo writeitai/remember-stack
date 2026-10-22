@@ -1172,7 +1172,20 @@ def run_protocol(*, run_dir: Path) -> LoCoMoProtocol:
     return protocol_for_name(configuration.protocol_name)
 
 
-def _load_run(*, run_dir: Path) -> _RunContext:
+def load_recorded_run(*, run_dir: Path) -> _RunContext:
+    """Load a finished run against its own recorded identity only.
+
+    Every check of :func:`_load_run` that compares the run with itself — the
+    recomputed protocol fingerprint, manifest, item, document and dataset
+    hashes, the rendered documents and the full state/identity
+    correspondence — runs; only the comparison with the *current* code's
+    protocol pins and adapter version is skipped, so a baseline produced by
+    another revision stays comparable (D142 LoCoMo gate).
+    """
+    return _load_run(run_dir=run_dir, current_pins=False)
+
+
+def _load_run(*, run_dir: Path, current_pins: bool = True) -> _RunContext:
     """Load every persisted boundary and reject protocol or state drift."""
     configuration = RunConfiguration.model_validate_json(
         (run_dir / _RUN_FILE).read_text(encoding="utf-8")
@@ -1195,6 +1208,7 @@ def _load_run(*, run_dir: Path) -> _RunContext:
         documents=documents,
         dataset=dataset,
         questions=questions,
+        current_pins=current_pins,
     )
     _validate_state(
         configuration=configuration,
@@ -1220,6 +1234,7 @@ def _validate_run(
     documents: tuple[PreparedDocument, ...],
     dataset: LoCoMoDataset,
     questions: tuple[LoCoMoQuestion, ...],
+    current_pins: bool = True,
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
     selected_protocol = protocol_for_name(configuration.protocol_name)
@@ -1235,7 +1250,7 @@ def _validate_run(
         raise BenchmarkRunError("run manifest tier changed")
     if configuration.dataset_commit != DATASET_COMMIT:
         raise BenchmarkRunError("run dataset commit is not RS-LoCoMo-Full-v38")
-    if configuration.adapter_version != ADAPTER_VERSION:
+    if current_pins and configuration.adapter_version != ADAPTER_VERSION:
         raise BenchmarkRunError("run adapter version differs from current code")
     if _models_hash(values=documents) != configuration.documents_sha256:
         raise BenchmarkRunError("prepared document manifest changed")
@@ -1311,7 +1326,7 @@ def _validate_run(
         "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
         "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
-    for field, expected in current_pin.items():
+    for field, expected in current_pin.items() if current_pins else ():
         if getattr(configuration, field) != expected:
             raise BenchmarkRunError(f"current {field} differs from prepared run")
     _validate_documents(

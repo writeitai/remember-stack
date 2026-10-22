@@ -68,29 +68,56 @@ TERM_OPERATIONS = 16
 (pg_textsearch 1.5.1 computes about ten); per-term error is at most ``γ_16``."""
 
 
-def analyzed_terms_bound(query: str) -> int:
-    """An upper bound on the terms a text search parser can find in ``query``.
+ANALYZED_TERMS_SQL = (
+    "SELECT count(*) FROM ts_debug(CAST(:text_config AS regconfig), :query)"
+    " WHERE array_length(lexemes, 1) > 0"
+)
+"""How many terms the text parser emits for a query, every occurrence counted.
 
-    Every token is at least one character and adjacent tokens are separated
-    by at least one character, so no parser finds more than
-    ``(len(query) + 1) // 2`` tokens; repeated terms are counted each time.
-    """
-    return max(1, (len(query) + 1) // 2)
+``ts_debug`` reports each token the parser emits — compound tokens *and*
+their parts (``a-b`` gives ``a-b``, ``a`` and ``b``) — so this counts at
+least the terms any scorer can sum (review r2 P2-1: a length-based bound is
+wrong for compound tokens)."""
+
+
+def analyzed_terms(connection: Connection, *, query: str, text_config: str) -> int:
+    """The parser's term count for ``query`` (an upper bound on scored terms)."""
+    return max(
+        1,
+        int(
+            connection.execute(
+                text(ANALYZED_TERMS_SQL), {"text_config": text_config, "query": query}
+            ).scalar_one()
+        ),
+    )
+
+
+MAX_ROUNDING_FRACTION = 0.25
+"""Largest ``m·u`` the margin is proved for (see :func:`score_epsilon`)."""
 
 
 def score_epsilon(terms: int) -> float:
-    """Relative rounding bound on one computed BM25 score of ``terms`` terms.
+    """Relative rounding bound ``ε`` on one computed BM25 score of ``terms`` terms.
 
-    A sum of ``n`` positive float4 terms, each computed with at most
-    ``TERM_OPERATIONS`` roundings, is within a factor ``1 ± γ_(n + 16)`` of its
-    real value (``γ_m = m·u / (1 - m·u)``, Higham, recursive summation); float8
-    accumulation of float4 terms is tighter. Doubling ``m·u`` covers the
-    ``1 - m·u`` denominator while ``m·u ≤ 1/2``. A fixed slack cannot hold for
-    every query: 40,000 terms in a single long document reach a canonical/index
-    ratio of 1.12533 against a fixed-``1e-4`` margin of 1.12523 (review r1).
+    Each scorer sums ``n`` positive terms, each computed in float4 with at
+    most ``TERM_OPERATIONS`` roundings (the standalone operator then adds the
+    float4 terms in float8, a smaller error, and casts the exact float8 sum to
+    double precision). With ``m = n + TERM_OPERATIONS`` and ``x = m·u``, a
+    computed score ``C'`` and its real value ``C`` satisfy
+    ``C(1−γ) ≤ C' ≤ C(1+γ)``, ``γ = x/(1−x)`` (Higham, positive recursive
+    summation). With ``ε = 2x``:
+
+    - ``C' ≤ C(1+γ) ≤ C(1+ε)`` because ``x/(1−x) ≤ 2x`` for ``x ≤ 1/2``;
+    - ``C ≤ C'/(1−γ) = C'(1−x)/(1−2x) ≤ C'(1+ε)`` because
+      ``(1−x) ≤ (1−2x)(1+2x) = 1−4x²`` exactly when ``x ≤ 1/4``.
+
+    So the proof needs ``x ≤ 1/4``; larger queries are refused. A fixed slack
+    cannot hold for every query: 40,000 terms in a single long document reach
+    a canonical/index ratio of 1.12533 against a fixed-``1e-4`` margin of
+    1.12523 (review r1).
     """
     m = max(1, terms) + TERM_OPERATIONS
-    if m * FLOAT4_UNIT_ROUNDOFF > 0.5:
+    if m * FLOAT4_UNIT_ROUNDOFF > MAX_ROUNDING_FRACTION:
         raise ValueError("query too long for a float4 BM25 error bound")
     return 2.0 * m * FLOAT4_UNIT_ROUNDOFF
 
@@ -98,10 +125,13 @@ def score_epsilon(terms: int) -> float:
 def bm25_stop_margin(terms: int) -> float:
     """Upper bound on (unfetched canonical score) / (last fetched canonical score).
 
-    Four rounding factors: the unfetched row's canonical and index scores
-    (``C(u) ≤ I(u)·(1+ε)²/(1-e)``) and the last row's index and canonical
-    scores (``I(last) ≤ C(last)·(1+ε)²``), with ``I(u) ≤ I(last)`` from the
-    index order and ``e`` the length-quantization bound.
+    With computed scores primed and real ones bare, ``e`` the length
+    quantization bound and the stream ordered by the computed index score:
+    ``C'(u) ≤ C(u)(1+ε) ≤ I(u)(1+ε)/(1−e) ≤ I'(u)(1+ε)²/(1−e)
+    ≤ I'(last)(1+ε)²/(1−e) ≤ I(last)(1+ε)³/(1−e) ≤ C(last)(1+ε)³/(1−e)
+    ≤ C'(last)(1+ε)⁴/(1−e)`` — the real index score never exceeds the real
+    canonical one (quantized length ≤ raw length), and each prime is removed
+    or added with one factor of :func:`score_epsilon`.
     """
     return (1.0 + score_epsilon(terms)) ** 4 / (1.0 - BM25_LENGTH_QUANTIZATION_ERROR)
 
@@ -167,7 +197,7 @@ class NominationStatement:
     expected_index: str
     count_sql: str | None = None
     query_terms: int = 1
-    """BM25: an upper bound on analyzed query terms (:func:`analyzed_terms_bound`)."""
+    """BM25: the parser's term count for the query (:func:`analyzed_terms`)."""
 
 
 @dataclass(frozen=True)
