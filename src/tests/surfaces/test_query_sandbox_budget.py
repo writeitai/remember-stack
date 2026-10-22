@@ -55,6 +55,7 @@ class _Search:
         )
 
     search_claims_scored = _answer
+    search_chunks_scored = _answer
 
 
 def _query(
@@ -136,3 +137,99 @@ def test_genuine_failures_keep_their_own_codes(monkeypatch: pytest.MonkeyPatch) 
 
     outcome = _query(monkeypatch, _Search(None), confirm=confirm)
     assert outcome.error_code == QueryErrorCode.CONFIRMATION_FAILED
+
+
+class _SharingSearch(_Search):
+    """A projection that really imports the request snapshot."""
+
+    @contextmanager
+    def imported_snapshot(self, **_: object) -> Iterator[None]:
+        yield
+
+
+def _failing_connection_query(
+    monkeypatch: pytest.MonkeyPatch,
+    search: object,
+    *,
+    sql: str,
+    failure: Exception,
+    marker: str | None,
+) -> Any:
+    """Run ``sql`` with every request-connection statement containing
+    ``marker`` (every one when None) raising ``failure``."""
+
+    def execute(statement: object, *args: object, **kwargs: object) -> MagicMock:
+        if marker is None or marker in str(statement):
+            raise failure
+        return MagicMock()
+
+    @contextmanager
+    def transaction(self: object, **_: object) -> Iterator[MagicMock]:
+        cursor = MagicMock()
+        cursor.connection.execute.side_effect = execute
+        yield cursor
+
+    monkeypatch.setattr(QuerySandboxExecutor, "_transaction", transaction)
+    monkeypatch.setattr(
+        executor_module, "live_schema_differences_psycopg", lambda **_: ()
+    )
+    executor = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT,
+        connect=MagicMock(),
+        search=search,
+        embed=lambda **_: (0.1,) * 8,
+    )
+    return executor.query_sql(sql=sql, parameters=["memory"])
+
+
+@pytest.mark.parametrize("failure", _BUDGET[:2])
+def test_a_budget_failure_exporting_the_snapshot_is_a_statement_timeout(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Review r4: the pg_export_snapshot handler classifies budget first."""
+    outcome = _failing_connection_query(
+        monkeypatch,
+        _SharingSearch(None),
+        sql="SELECT rank FROM semantic_claims($1, 5)",
+        failure=failure,
+        marker="pg_export_snapshot",
+    )
+    assert outcome.error_code == QueryErrorCode.STATEMENT_TIMEOUT, outcome.error_message
+
+
+@pytest.mark.parametrize("failure", _BUDGET[:2])
+def test_a_budget_failure_reading_the_generation_is_a_statement_timeout(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Review r4: the current-generation handler classifies budget first."""
+    outcome = _failing_connection_query(
+        monkeypatch,
+        _Search(None),
+        sql="SELECT rank FROM semantic_chunks($1, 5)",
+        failure=failure,
+        marker=None,
+    )
+    assert outcome.error_code == QueryErrorCode.STATEMENT_TIMEOUT, outcome.error_message
+
+
+def test_genuine_export_and_generation_failures_keep_their_codes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    exported = _failing_connection_query(
+        monkeypatch,
+        _SharingSearch(None),
+        sql="SELECT rank FROM semantic_claims($1, 5)",
+        failure=psycopg.errors.UndefinedColumn("gone"),
+        marker="pg_export_snapshot",
+    )
+    assert exported.error_code == QueryErrorCode.P1_UNAVAILABLE
+    assert "snapshot" in (exported.error_message or "")  # the export path
+    generation = _failing_connection_query(
+        monkeypatch,
+        _Search(None),
+        sql="SELECT rank FROM semantic_chunks($1, 5)",
+        failure=psycopg.errors.UndefinedColumn("gone"),
+        marker=None,
+    )
+    assert generation.error_code == QueryErrorCode.CONFIRMATION_FAILED
+    assert "generation" in (generation.error_message or "")  # that path

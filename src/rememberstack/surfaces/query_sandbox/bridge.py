@@ -465,6 +465,8 @@ def _shared_snapshot(
         # request's transaction instant pins every nested P1 scope.
         row = connection.execute("SELECT pg_export_snapshot(), now()").fetchone()
     except psycopg.Error as error:
+        if budget_exhausted(error):  # review r4: budget before the generic map
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.P1_UNAVAILABLE,
             message="the request snapshot could not be shared with the projection",
@@ -649,6 +651,8 @@ def _pinned_generations(
             connection=connection, deployment_id=settings.deployment_id
         )
     except psycopg.Error as error:
+        if budget_exhausted(error):  # review r4: budget before the generic map
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="the current chunk generation could not be read",

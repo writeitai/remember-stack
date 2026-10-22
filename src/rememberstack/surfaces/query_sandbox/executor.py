@@ -44,6 +44,7 @@ from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
 from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
@@ -107,7 +108,11 @@ def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
         row = cursor.connection.execute(
             "SELECT pg_catalog.format_type(%s::oid, NULL)", (oid,)
         ).fetchone()
-    except psycopg.Error:
+    except psycopg.Error as error:
+        if budget_exhausted(error):
+            # the request budget ran out: the transaction is aborted, so this
+            # is the request's statement_timeout, not a missing type name
+            raise
         return str(oid)
     return str(row[0]) if row and row[0] else str(oid)
 
