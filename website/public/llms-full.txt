@@ -2766,10 +2766,18 @@ fuse, confirm**.
   the deployment's embedding model.
 - **BM25**: keyword ranking over chunks and claims, with PostgreSQL's
   `pg_textsearch`. It catches exact names, codes and numbers that vectors
-  blur.
+  blur. Only passages that contain at least one query word are keyword
+  results: a query whose words appear nowhere returns no keyword results
+  rather than filling the list with unrelated passages.
 - **Graph**: for `facts_context` with entity anchors, the live PostgreSQL
   graph expands to the anchors' neighbours, and fact search runs inside that
   scope.
+
+Each channel asks its index for candidates in score order and checks each
+batch against the live state, fetching more until it has enough results that
+are visible to you, or until a work limit stops it. A search stopped by a work
+limit says so in `truncation` (its `reason` starts with `p1_`) instead of
+looking like "nothing more"; see [Reading results](https://remember.dev/docs/concepts/reading-results).
 
 **Fuse.** Channel rankings are merged with reciprocal rank fusion (RRF): each
 candidate scores the sum of `1 / (60 + rank)` over the channels that found
@@ -5147,7 +5155,9 @@ If the edition in force is still being processed, the policy contributes
 nothing for that time, rather than an outdated edition. The envelope's
 `freshness.scope_pending` names such documents, so an empty answer can be
 told apart from one that is not ready yet. A search with a `documents`
-filter naming the policy's `doc_id` always reports it there.
+filter naming the policy's `doc_id` always reports it there. If
+`scope_pending.complete` is `false`, the check stopped on a work limit and
+more such documents may exist.
 
 ## Read the facts in force
 
@@ -6685,7 +6695,7 @@ The migrations create these extensions:
 | Extension | Version | Used for |
 |---|---|---|
 | `vector` (pgvector) | 0.8.6 | Semantic search vectors and HNSW indexes |
-| `pg_textsearch` | 1.3.1 | BM25 keyword search |
+| `pg_textsearch` | 1.5.1 | BM25 keyword search |
 | `pg_partman` | 5.5.0 | Monthly partitioning of large tables |
 | `pgcrypto` | contrib | UUID generation and digests |
 | `pg_trgm` | contrib | Fuzzy name matching during entity resolution |
@@ -6694,9 +6704,8 @@ The migrations create these extensions:
 | `btree_gist` | contrib | The time-range exclusion constraint on relations |
 
 `pg_textsearch` has no PostgreSQL 19 package yet. `Dockerfile.postgres`
-downloads a pinned source revision from `timescale/pg_textsearch`, applies
-a small compatibility patch (`docker/pg_textsearch-pg19.patch`) and
-compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
+downloads the pinned `v1.5.1` source revision from `timescale/pg_textsearch`
+(which supports PostgreSQL 19 upstream) and compiles it. `pgvector` and `pg_partman` come from the PostgreSQL apt
 archive at the exact versions above. `remember ops graph-catalog ensure`
 checks these three versions (see [Operating the pipeline](https://remember.dev/docs/self-hosting/operating)).
 
@@ -13645,6 +13654,7 @@ A path is returned whole or not at all.
 |---|---|---|
 | `doc_ids` | array of UUID | At most 50 of the documents. |
 | `count` | integer ≥ 0 | How many there are. |
+| `complete` | boolean, default `true` | `false` when the check that finds these documents stopped on a work limit; `count` is then a lower bound. |
 
 ### KFreshness
 
@@ -13665,7 +13675,7 @@ A cap is never silent: when one applies, this block says so.
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
 | `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`. |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). |
 
 ### Negative
 
@@ -13779,7 +13789,7 @@ did.
 | `embedder_generation` | string, nullable | |
 | `generation` | string, nullable | |
 | `pg_confirmed_at` | date-time, nullable | |
-| `termination_reason` | string, nullable | |
+| `termination_reason` | string, nullable | `completed`, or `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` when the search stopped on a work limit before it could prove it had every match. |
 
 ### GraphInvocation
 

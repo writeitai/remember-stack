@@ -1,0 +1,26 @@
+{
+  "k": 10,
+  "seed": 142,
+  "strata": {
+    "unfiltered": {
+      "queries": 200,
+      "paths": {
+        "hnsw_loop": 200
+      },
+      "mean_recall": 0.999,
+      "min_recall": 0.9
+    },
+    "document_filter": {
+      "queries": 200,
+      "paths": {
+        "hnsw_loop": 200
+      },
+      "mean_recall": 0.9975,
+      "min_recall": 0.9
+    }
+  },
+  "samples": 200,
+  "sample_sha256": "3a73484193d43a57ff1a0c0178440e7dc5bf6bf9612aef87757a6ca289235084",
+  "decision": "pass",
+  "mean_recall": 0.9982500000000001
+}

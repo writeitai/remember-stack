@@ -446,6 +446,7 @@ A path is returned whole or not at all.
 |---|---|---|
 | `doc_ids` | array of UUID | At most 50 of the documents. |
 | `count` | integer ≥ 0 | How many there are. |
+| `complete` | boolean, default `true` | `false` when the check that finds these documents stopped on a work limit; `count` is then a lower bound. |
 
 ### KFreshness
 
@@ -466,7 +467,7 @@ A cap is never silent: when one applies, this block says so.
 | `estimated_total` | integer ≥ 0 | Items seen before the cap. |
 | `total_is_exact` | boolean | `false` when the count itself hit a cap. Default `true`. |
 | `continuation` | string, nullable | A cursor to pass back. Only `POST /graph/neighborhood` accepts one. |
-| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`. |
+| `reason` | string, nullable | Which cap applied, when known: `resolve_candidate_limit`, `lookup_k_limit`, `result_budget`, `expansion_budget`, `frontier_budget`, `time_budget`, `depth_budget`; for a search channel that stopped early, `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` (more matching results may exist). |
 
 ### Negative
 
@@ -580,7 +581,7 @@ did.
 | `embedder_generation` | string, nullable | |
 | `generation` | string, nullable | |
 | `pg_confirmed_at` | date-time, nullable | |
-| `termination_reason` | string, nullable | |
+| `termination_reason` | string, nullable | `completed`, or `p1_work_budget`, `p1_deadline` or `p1_ann_scan_bound` when the search stopped on a work limit before it could prove it had every match. |
 
 ### GraphInvocation
 

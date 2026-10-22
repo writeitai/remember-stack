@@ -1150,6 +1150,9 @@ class ScopePending(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     doc_ids: tuple[UUID, ...] = Field(max_length=SCOPE_PENDING_MAX_DOC_IDS)
     count: int = Field(ge=0)
+    #: D142 §8.6: false when a probe nomination stopped on a work bound; the
+    #: count is then a lower bound.
+    complete: bool = True
 
 
 class Freshness(BaseModel):

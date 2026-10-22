@@ -36,6 +36,9 @@ from rememberstack.model import ConsumptionOperation
 from rememberstack.model import ConsumptionSkillContext
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import Grain
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
@@ -51,6 +54,8 @@ from rememberstack.surfaces.query_sandbox.saved_queries import PLATFORM_SEED_ACT
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryDescription
 from rememberstack.surfaces.query_sandbox.saved_queries import SavedQueryRegistry
 from rememberstack.surfaces.query_sandbox.saved_queries import seed_shipped_examples
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _DEPLOYMENT = UUID("f0000000-0000-0000-0000-00000000000f")
 _HASH = surface_manifest_hash(build_hash_members())
@@ -480,20 +485,20 @@ def test_http_open_routes_and_four_assured_operations(migrated: str) -> None:
 
 
 class _NullSearch:
-    def search_claims(self, **_: object) -> tuple:
-        return ()
+    def search_claims(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple:
-        return ()
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple:
-        return ()
+    def search_chunks(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple:
-        return ()
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_facts(self, **_: object) -> tuple:
-        return ()
+    def search_facts(self, **_: object) -> P1SearchIds:
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def search_entities(self, **_: object) -> tuple:
         return ()
@@ -946,7 +951,7 @@ def test_core_prose_is_authority_for_live_graph_and_claims_verbatim() -> None:
     assert "memory_v1.graph_neighborhood" in graph_entry["example"]
     assert (
         load_manifest()["surface_manifest_hash"]
-        == "3e3fbb7e7c3721fa6a8e667fad7b4275906b18db7c7512f19012323964a28355"
+        == "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
     )
 
 

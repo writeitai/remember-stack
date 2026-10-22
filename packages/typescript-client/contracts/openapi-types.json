@@ -10136,6 +10136,11 @@
         "additionalProperties": false,
         "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
         "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
           "count": {
             "minimum": 0,
             "title": "Count",
@@ -10152,6 +10157,7 @@
           }
         },
         "required": [
+          "complete",
           "count",
           "doc_ids"
         ],
@@ -10690,6 +10696,11 @@
             "default": null,
             "title": "Embedder Generation"
           },
+          "fetched": {
+            "default": 0,
+            "title": "Fetched",
+            "type": "integer"
+          },
           "function": {
             "title": "Function",
             "type": "string"
@@ -10735,6 +10746,11 @@
             "default": null,
             "title": "Policy Generation"
           },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
+          },
           "termination_reason": {
             "anyOf": [
               {
@@ -10759,11 +10775,13 @@
           "dropped_hash_mismatch",
           "dropped_stale",
           "embedder_generation",
+          "fetched",
           "function",
           "generation",
           "nominated",
           "pg_confirmed_at",
           "policy_generation",
+          "rejected",
           "termination_reason"
         ],
         "title": "SemanticInvocation",
@@ -12825,6 +12843,11 @@
         "additionalProperties": false,
         "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
         "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
           "count": {
             "minimum": 0,
             "title": "Count",
@@ -13359,6 +13382,11 @@
             "default": null,
             "title": "Embedder Generation"
           },
+          "fetched": {
+            "default": 0,
+            "title": "Fetched",
+            "type": "integer"
+          },
           "function": {
             "title": "Function",
             "type": "string"
@@ -13403,6 +13431,11 @@
             ],
             "default": null,
             "title": "Policy Generation"
+          },
+          "rejected": {
+            "default": 0,
+            "title": "Rejected",
+            "type": "integer"
           },
           "termination_reason": {
             "anyOf": [
@@ -14087,6 +14120,11 @@
         "additionalProperties": false,
         "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
         "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
           "count": {
             "minimum": 0.0,
             "title": "Count",
@@ -14113,6 +14151,11 @@
         "additionalProperties": false,
         "description": "Lineages whose in-force text for a time scope is still processing (D140 \u00a73.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
         "properties": {
+          "complete": {
+            "default": true,
+            "title": "Complete",
+            "type": "boolean"
+          },
           "count": {
             "minimum": 0.0,
             "title": "Count",

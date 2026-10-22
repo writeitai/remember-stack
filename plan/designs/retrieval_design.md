@@ -91,7 +91,7 @@ query engine**:
 
 > **Stale projections may nominate candidates; only authoritative PostgreSQL
 > rows confirm truth.** P1 nomination and confirmation share one PostgreSQL
-> statement/MVCC snapshot. Live graph traversal reads the same invariant-bearing
+> ranked-read transaction snapshot (D142). Live graph traversal reads the same invariant-bearing
 > PostgreSQL authority views directly and therefore has no nominate-then-confirm
 > boundary. Validity, invalidation, and contradiction state never come from a
 > copied projection row.
@@ -119,10 +119,12 @@ Consequences, spelled out (S42, S43):
 
 - On the query engine, P1 lag can only cost **recall** (a fact too new to be
   indexed is not found), never **correctness** (a superseded fact cannot pass
-  the same-statement authority join). Graph expansion itself is live and has
+  the authority confirmation in the same snapshot, D142). Graph expansion itself is live and has
   no generation lag. P1 lag is reported (§5); correctness is live, always.
-- P1 authority rejection is ordinary filtering within the ranked statement and
-  is reported through candidate/eligible counters. Deep source-body hydration
+- P1 authority rejection is ordinary filtering in the confirmation step of the
+  ranked search (index-cursor nomination, then confirmation, continued in one
+  snapshot, D142) and is reported through candidate/eligible counters; a
+  search stopped by its work budget sets the truncation marker. Deep source-body hydration
   can still lose a candidate at a later eligibility/locator boundary; the
   envelope reports those drops honestly.
 - **Compound results remain units, not rows (S17, S21).** A graph *path* is
@@ -148,7 +150,7 @@ never trigger anything** — all K/E triggering originates from writes).
 |---|---|---|---|
 | `resolve` | text, type?, context_entities? → ranked entity candidates | query-time entity resolution over the registry's **non-LLM tiers T0–T3** (T0 canonical-alias exact, T1 trigram, T2 phonetic, T3 embedding similarity — embedding a query string is not an LLM call and the semantic channel does it anyway; **no T4 adjudication on the hot path**, D17). Inflected names (S50) ride the stored canonical aliases + T1/T2. Ambiguity → ranked candidates, never a silent guess (S51). Returns **current** identities, following `merged_into` survivor chains with the redirect disclosed (S60); *pre-merge* identity reconstruction is the transcript-based `identity_as_of` recipe (S61), never automatic | S1, S50, S51, S60 |
 | `lookup` | relations(s?, p?, o?) / observations(entity, property?) / claims(doc?, entity?) / entity(id) / document(id) | scalar reads on the spine and its indexes; observation property matching is semantic-over-statement (D43) | S1–S4, S26 |
-| `search` | channel × target × query, filters, k — channels: semantic \| bm25 \| fts; targets: chunks \| claims \| relations \| observations \| k_pages \| **media_segments** (D65) | PostgreSQL-native P1 entry: pgvector semantic indexes, pg_textsearch BM25 indexes, and authority joins in one statement (D94). `media_segments` is the **cross-modal** target — a logical target over per-modality PostgreSQL indexes: one row per standalone image / video keyframe-or-shot / bounded audio segment, embedded by CLIP-class models that map pixels (or audio) and *text queries* into a shared vector space — so "the photo with the small red connector" matches pixels the description never mentioned (access is not discovery: an agent can open any file it *found*, never one it didn't retrieve). Rows carry modality + embedding family/version + representation + immutable source locator, hydrate to representation passage + preview + raw deep link, and RRF-fuse with the text channels (rank fusion only — different embedding families are never compared by raw distance); embedders are port config (D63), capability advertised **per query→target modality pair** — **any unconfigured pair reports as a typed `boundary`** (§5), never a silent gap | S6, S46, S52, S62 |
+| `search` | channel × target × query, filters, k — channels: semantic \| bm25 \| fts; targets: chunks \| claims \| relations \| observations \| k_pages \| **media_segments** (D65) | PostgreSQL-native P1 entry: pgvector semantic indexes, pg_textsearch BM25 indexes, and authority confirmation in one snapshot (D94, D142). `media_segments` is the **cross-modal** target — a logical target over per-modality PostgreSQL indexes: one row per standalone image / video keyframe-or-shot / bounded audio segment, embedded by CLIP-class models that map pixels (or audio) and *text queries* into a shared vector space — so "the photo with the small red connector" matches pixels the description never mentioned (access is not discovery: an agent can open any file it *found*, never one it didn't retrieve). Rows carry modality + embedding family/version + representation + immutable source locator, hydrate to representation passage + preview + raw deep link, and RRF-fuse with the text channels (rank fusion only — different embedding families are never compared by raw distance); embedders are port config (D63), capability advertised **per query→target modality pair** — **any unconfigured pair reports as a typed `boundary`** (§5), never a silent gap | S6, S46, S52, S62 |
 | `graph` | neighborhood(entity, hops, predicates?) / path(a, b, max_hops) / citation_path(a, b, max_hops) | live PostgreSQL fixed SQL/PGQ plus work-bounded frontier traversal; both as-of predicates apply during expansion (D98) | S17–S22 |
 | `fuse` | result_sets → RRF-merged set | reciprocal-rank fusion of parallel channels (D9), exposed as an operator so *agent-composed* channel sets fuse the same way recipes do | S46 |
 | `rerank` | candidates × signal — graph_distance(focal), evidence_count, cross_encoder (flagged) | the D9 rerankers as explicit, inspectable stages | S46, S48 |
@@ -169,9 +171,11 @@ For claims and chunks, `semantic` embeds the query once and searches a pgvector
 HNSW index; `bm25` searches a pg_textsearch BM25 index over the same canonical
 text and stable ID. RRF combines ranks, never raw vector/BM25 scores.
 
-Both channels join the invariant-bearing authority view inside the ranked
-PostgreSQL statement. Projection lag can omit a new row, but an invalidated,
-wrong-lineage or wrong-generation row cannot leave the statement. Ordinary DML
+Both channels confirm every index nomination against the invariant-bearing
+authority view in the operation's one PostgreSQL snapshot (D142's ranked-read
+context; P1 search design §8). Projection lag can omit a new row, but an
+invalidated, wrong-lineage or wrong-generation row cannot be returned. BM25
+returns positive matches only (D142). Ordinary DML
 maintains both indexes and autovacuum cleans dead rows; index creation belongs
 to migrations/backfill and evidence-driven reindexing, not reads or a P1
 maintenance ticker. The analyzer/text configuration is versioned rather than
@@ -201,8 +205,8 @@ metadata (family, authors, recipients, created/modified ranges, language, thread
 (`chunk_claims`) lies in a matching version — for inclusion this refines the origin-chunk join
 above, because a claim reused across versions (D56) has one occurrence per version; the returned
 claim evidence is still its origin; relations and observations when at least one live supporting claim comes from a
-matching document, with returned evidence limited to those claims. The filter is applied inside
-the ranked statement, before the top-k cut. `document_metadata_and_search_design.md` §4.
+matching document, with returned evidence limited to those claims. The filter is applied in the
+ranked search's confirmation step, before the top-k cut (D142). `document_metadata_and_search_design.md` §4.
 
 `combine_evidence` is the side-effect-free composition operator for separately typed evidence
 sets. It combines confirmed claim and chunk envelopes without cross-fusing their unlabeled UUIDs
@@ -304,15 +308,16 @@ lexical chunk-ID nominations, hydrates each fused list exactly once through D48,
 returns the two payloads under one evidence envelope. This order avoids
 hydrating candidate-depth rows or counting one stale candidate more than once. Candidate depth
 is larger than returned depth; both bounds are declared in the operation schema and measured rather
-than hidden. Optional confirmed `entity_ids` narrow the eligible set inside the
-same PostgreSQL ranked statement, through normalized associations, before
-candidate depth is applied; globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
+than hidden. Optional confirmed `entity_ids` narrow the eligible set in the same
+PostgreSQL snapshot, through normalized associations, before candidate depth
+is applied (coverage tiers, D142 / P1 design §8.3); globally nominating and then filtering is forbidden. Multi-anchor coverage sorts before
 relevance and before the candidate cut. The operation contains no fact or entity-candidate channel.
 
 `facts_context` is the fact-grain counterpart: semantic facts nomination followed by
 PostgreSQL confirmation under its current, valid-at, overlap, or history world-time mode. It
 applies entity and time eligibility before its internal candidate depth by
-joining the normalized fact authority in the ranked PostgreSQL statement; the current-only public
+confirming against the normalized fact authority in the operation's ranked-read context
+(D142); the current-only public
 `semantic_facts` SRF is not the historical implementation. It returns facts with their
 supporting and contradicting evidence associations. `combined_context`
 does not add a retrieval path; it returns the complete claims-and-sources and fact responses as separate
@@ -627,6 +632,12 @@ labels, same trust model (§9).
 - **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate operations or saved queries at
   the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per plan in the
   eval harness. Batch: throughput-bound, no latency promise.
+  *Ranked P1 search (D142 amendment, owner, 2026-10-22):* until WP-RS.11 lands, ranked
+  chunk search is accepted against size- and stratum-specific budgets measured at 300k
+  chunks — unfiltered ≤ 300 ms, document-filtered up to 2.5 s p95 — and is ungated at
+  3M chunks and above
+  ([P1 search design §9](postgres_p1_search_projection_design.md#9-index-and-planner-contract));
+  this ~300 ms budget remains its target.
 - **Locality:** PostgreSQL serves P1 semantic/BM25 entry, live graph expansion,
   authority joins, and registry lookups. API nodes hold no local graph data;
   graph-specific pool/concurrency, statement/transaction timeouts, and hard
@@ -637,7 +648,9 @@ labels, same trust model (§9).
   clamped to the same absolute operation deadline; expiry is a typed boundary,
   never an unbounded general-pool fallback.
 - **Hot spots named:** hub-entity neighborhoods (ranked pagination, §5 truncation); PostgreSQL
-  filtered ANN/BM25 search; multi-hop as-of path predicates
+  filtered ANN/BM25 search (index-cursor nomination plus confirmation, D142 — in the common case work
+  grows with `k` over the eligible share of top candidates, not with corpus size;
+  P1 search design §9.1 names the exceptions); multi-hop as-of path predicates
   (D44's known perf spike); `resolve` under trigram/phonetic load (registry indexes, D23).
 - **Scaling shape:** query nodes are stateless-plus-replicas → horizontal; the spine scales
   reads via the by-ID discipline (no fuzzy scans on the hot path — D23's index philosophy).
@@ -683,8 +696,8 @@ implementation consequences are:
 1. **P1 filtered hybrid search:** D94 supersedes the historical Lance/IVFFlat
    spike result as implementation authority. Pgvector HNSW and pg_textsearch
    BM25 use one private `chunk_search` sidecar plus embeddings/indexes on natural
-   PostgreSQL rows. Filters use normalized authority joins in the ranked
-   statement. The prior Lance measurements remain historical only; D94 requires
+   PostgreSQL rows. Filters are applied by authority confirmation in one
+   ranked-read snapshot (D142; originally the ranked statement under D94). The prior Lance measurements remain historical only; D94 requires
    focused functional contract checks, not a parity or scale benchmark before
    the direct replacement.
 2. **Hub pagination:** 500 neighbors fit below the battery's 64 KiB operational starting target

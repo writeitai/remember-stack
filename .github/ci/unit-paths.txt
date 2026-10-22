@@ -9,6 +9,7 @@ src/tests/adapters/test_managed_metering.py
 src/tests/adapters/test_minio_store.py
 src/tests/adapters/test_mistral_ocr.py
 src/tests/adapters/test_openrouter.py
+src/tests/adapters/test_p1_ranked.py
 src/tests/adapters/test_postgres_p1.py
 src/tests/adapters/test_routed.py
 src/tests/adapters/test_selfhost_forget.py
@@ -28,6 +29,7 @@ src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
 src/tests/benchmarks/test_locomo_sharding.py
 src/tests/benchmarks/test_locomo_store_backup.py
+src/tests/benchmarks/test_p1_ranked_gate.py
 src/tests/benchmarks/test_workspacebench_core.py
 src/tests/benchmarks/test_workspacebench_runner.py
 src/tests/core/test_blockizer_corpus.py
@@ -147,3 +149,5 @@ src/tests/spine/test_document_references_rules.py
 src/tests/surfaces/test_document_references_clients.py
 src/tests/core/test_text_scope.py
 src/tests/core/test_period_adjudication.py
+src/tests/surfaces/test_d142_accounts.py
+src/tests/surfaces/test_query_sandbox_budget.py

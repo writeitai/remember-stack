@@ -16,11 +16,13 @@ export type OutputSemanticInvocation = {
     dropped_hash_mismatch: number;
     dropped_stale: number;
     embedder_generation: string | null;
+    fetched: number;
     function: string;
     generation: string | null;
     nominated: number;
     pg_confirmed_at: string | null;
     policy_generation: string | null;
+    rejected: number;
     termination_reason: string | null;
 };
 

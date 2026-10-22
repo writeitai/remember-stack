@@ -21,11 +21,13 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 import json
+from time import monotonic
 from typing import Any
 from typing import Final
 from uuid import UUID
 
 import psycopg
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.ports.p1_index import P1Nomination
@@ -175,6 +177,8 @@ class BridgeSettings:
     k_max: int = 100
     total_nominations_max: int = 200
     chunk_ids_max: int = 50
+    deadline: float | None = None
+    """Absolute ``monotonic()`` end of the request's statement budget (D142 §8.6)."""
     nominations_used: int = field(default=0, init=False)
     chunk_text_bytes_used: int = field(default=0, init=False)
 
@@ -341,11 +345,26 @@ _CONFIRM_SQL: Final[dict[str, str]] = {
         " WHERE c.deployment_id = %(deployment)s"
         "   AND c.chunk_id = ANY(%(ids)s::uuid[])"
     ),
+    # facts_current applies statement_timestamp(); the bridge confirms at the
+    # request's one transaction instant instead (D142 §8.2, review r2 P1-1),
+    # with facts_current's own predicates, so every SRF of a request and the
+    # projection's nomination answer the same instant (reported as
+    # pg_confirmed_at).
     "facts": (
         "SELECT fact_id::text AS id{extra}, fact_id, fact_kind, fact_label, predicate,"
         " subject_entity_id, object_entity_id, evidence_count, contradict_count,"
         " support_state, evaluated_at"
-        " FROM memory_v1.facts_current"
+        " FROM (SELECT h.deployment_id, h.fact_id, h.fact_kind, h.fact_label,"
+        "   h.predicate, h.subject_entity_id, h.object_entity_id,"
+        "   h.evidence_count_current AS evidence_count,"
+        "   h.contradict_count_current AS contradict_count,"
+        "   h.support_state_current AS support_state, clock.at AS evaluated_at"
+        "   FROM (SELECT now() AS at) AS clock"
+        "   CROSS JOIN memory_v1.facts_visible_history AS h"
+        "   WHERE h.ingested_at <= clock.at AND h.invalidated_at IS NULL"
+        "     AND h.valid_from <= clock.at"
+        "     AND (h.valid_precision = 'open' OR h.valid_until > clock.at)"
+        " ) AS facts_at_request"
         " WHERE deployment_id = %(deployment)s AND fact_id = ANY(%(ids)s::uuid[])"
     ),
     "entities": (
@@ -397,7 +416,7 @@ def confirm(
         # a join against these columns and it must still type-check. It also
         # still consulted PostgreSQL, so it still reports when.
         columns, oids = EMPTY_CONTRACTS[target]
-        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        empty_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
         return Confirmation(
             columns=columns,
             rows=[],
@@ -431,7 +450,7 @@ def confirm(
         parameters["g_embedder"] = generations[1]
     extra = f", ({' AND '.join(predicates)}) AS filter_pass" if predicates else ""
     statement = statement.replace("{extra}", extra)
-    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
+    confirmed_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
     cursor = connection.execute(
         statement.encode(), {"deployment": str(deployment_id), "ids": ids, **parameters}
     )
@@ -748,9 +767,9 @@ def confirm_chunk_coordinates(
     if not chunk_ids:
         # Nothing to confirm, but the decision was still made at an instant,
         # and an invocation that reports none reads as one that never ran.
-        empty_at = connection.execute("SELECT statement_timestamp()").fetchone()
+        empty_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
         return {}, (empty_at[0] if empty_at else None)
-    confirmed_at = connection.execute("SELECT statement_timestamp()").fetchone()
+    confirmed_at = connection.execute("SELECT now()").fetchone()  # the pinned instant
     cursor = connection.execute(
         _BODY_SQL.encode(), {"deployment": str(deployment_id), "ids": list(chunk_ids)}
     )
@@ -823,3 +842,57 @@ def verify_bodies(
         absent_projection=absent_projection,
         mismatch_hash=mismatch_hash,
     )
+
+
+def clamp_statement_timeout(
+    connection: psycopg.Connection, *, deadline: float | None
+) -> None:
+    """Give the next statement only the request budget that is left (D142 §8.6).
+
+    ``SET LOCAL`` semantics: the setting lasts to the end of the request
+    transaction. An exhausted budget leaves one millisecond, so the statement
+    is cancelled with the ordinary timeout outcome instead of starting a fresh
+    full-budget run.
+    """
+    if deadline is None:
+        return
+    remaining_ms = int((deadline - monotonic()) * 1000)
+    connection.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(min(max(1, remaining_ms), 2**31 - 1)),),
+    )
+
+
+BUDGET_SQLSTATES: Final = frozenset({"57014", "25P04"})
+"""query_canceled (statement_timeout) and transaction_timeout (D142 §8.6)."""
+
+
+def budget_exhausted(error: BaseException) -> bool:
+    """Whether ``error`` is the request budget running out, however wrapped.
+
+    Walks the exception chain, unwrapping SQLAlchemy's ``DBAPIError.orig``,
+    for a PostgreSQL 57014/25P04 or a bounded-admission timeout, so the same
+    exhausted budget is reported the same way wherever it happens (review r3
+    P2-1).
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "sqlstate", None) in BUDGET_SQLSTATES:
+            return True
+        if isinstance(current, SQLAlchemyTimeoutError):  # bounded admission
+            return True
+        orig = getattr(current, "orig", None)
+        current = orig if isinstance(orig, BaseException) else current.__cause__
+    return False
+
+
+def budget_rejection(error: BaseException) -> SandboxRejection:
+    """The sandbox's ordinary statement-timeout failure for an exhausted budget."""
+    rejection = SandboxRejection(
+        code=QueryErrorCode.STATEMENT_TIMEOUT,
+        message="the request's statement budget ran out",
+    )
+    rejection.__cause__ = error
+    return rejection

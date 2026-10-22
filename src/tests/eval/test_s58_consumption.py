@@ -25,7 +25,10 @@ from rememberstack.model import EvalSuite
 from rememberstack.model import P1ChunkText
 from rememberstack.model import PublishedMounts
 from rememberstack.model import S58Answer
-from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1SearchResult
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import ConsumptionCatalog
@@ -37,6 +40,8 @@ from rememberstack.surfaces import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("55000000-0000-0000-0000-000000000058")
@@ -57,9 +62,9 @@ class _NullSearchIndex:
         vector: tuple[float, ...],
         k: int,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Return no entity nominations from the published semantic channel."""
-        return ()
+        return P1SearchResult((), account=_EXHAUSTED_ACCOUNT)
 
     def search_claims(
         self,
@@ -70,21 +75,21 @@ class _NullSearchIndex:
         current_only: bool,
         documents: object = None,
         time: object = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return no claim nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_claims_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_claims_lexical(self, **_: object) -> P1SearchIds:
         """Return no lexical claim nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks(self, **_: object) -> tuple[str, ...]:
+    def search_chunks(self, **_: object) -> P1SearchIds:
         """Return no semantic chunk nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
-    def search_chunks_lexical(self, **_: object) -> tuple[str, ...]:
+    def search_chunks_lexical(self, **_: object) -> P1SearchIds:
         """Return no lexical chunk nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
     def chunk_texts(self, **_: object) -> dict[str, P1ChunkText]:
         """Return no projected chunk text."""
@@ -92,9 +97,9 @@ class _NullSearchIndex:
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return no fact nominations."""
-        return ()
+        return P1SearchIds((), account=_EXHAUSTED_ACCOUNT)
 
 
 @pytest.fixture(scope="module")

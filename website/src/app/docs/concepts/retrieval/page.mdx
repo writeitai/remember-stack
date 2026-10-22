@@ -212,10 +212,18 @@ fuse, confirm**.
   the deployment's embedding model.
 - **BM25**: keyword ranking over chunks and claims, with PostgreSQL's
   `pg_textsearch`. It catches exact names, codes and numbers that vectors
-  blur.
+  blur. Only passages that contain at least one query word are keyword
+  results: a query whose words appear nowhere returns no keyword results
+  rather than filling the list with unrelated passages.
 - **Graph**: for `facts_context` with entity anchors, the live PostgreSQL
   graph expands to the anchors' neighbours, and fact search runs inside that
   scope.
+
+Each channel asks its index for candidates in score order and checks each
+batch against the live state, fetching more until it has enough results that
+are visible to you, or until a work limit stops it. A search stopped by a work
+limit says so in `truncation` (its `reason` starts with `p1_`) instead of
+looking like "nothing more"; see [Reading results](/docs/concepts/reading-results).
 
 **Fuse.** Channel rankings are merged with reciprocal rank fusion (RRF): each
 candidate scores the sum of `1 / (60 + rank)` over the channels that found

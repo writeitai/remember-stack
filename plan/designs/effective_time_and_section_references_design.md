@@ -306,11 +306,13 @@ the whole deployment. With `believed_at` it evaluates the ledgers (§2.2) and **
 `doc_ids` argument** naming the lineages to evaluate; it never enumerates the deployment at a
 past belief, because the projection only knows current belief.
 
-**Query plan (the scale contract).** Scoping is a **predicate inside the existing ranked
-statement**, never a pre-computed list of versions and never a filter on finished top-k:
+**Query plan (the scale contract).** Scoping is a **predicate of the ranked search's
+eligibility check** — the confirmation step of D142's nominate–confirm–continue loop, which
+runs before the `k` cut and continues until `k` eligible rows are found or a disclosed stop — never a
+pre-computed list of versions and never a filter on finished top-k:
 
-- Chunk and claim search already join each candidate to its version inside the ANN/BM25
-  statement (the D94 rule used today by the `documents` filter). The scope adds one probe per
+- Chunk and claim search already join each candidate to its version in that eligibility
+  check (the D94 rule used by the `documents` filter; executed per D142). The scope adds one probe per
   candidate: `EXISTS (SELECT 1 FROM document_version_scope s WHERE s.deployment_id = … AND
   s.version_id = candidate.version_id AND s.selectable AND s.in_force && :window)` via the
   primary key. Undeclared lineages have their served version in the projection with an
@@ -423,7 +425,7 @@ cannot remove a candidate from the walk:
 - Every chunk, passage, claim occurrence and document result from a periodised lineage
   includes `effective: [{from, until, until_declared}]` for its version.
 - Scoped responses report lineages whose in-force version for the scope is not ready in a new
-  envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count}`, so an agent
+  envelope field `Freshness.scope_pending`: `{doc_ids: [...] (at most 50), count, complete}`, so an agent
   can tell "nothing is in force" from "the in-force text is still processing". A lineage is
   reported when the request touched it: it was named by a document filter, it is in the
   answer, or its readable text would have made one of the request's own nominations. For the
@@ -437,6 +439,9 @@ cannot remove a candidate from the walk:
   nomination at the same k with its candidate set widened to the pending lineages' readable
   editions, and a lineage counts when one of its items makes that top k. These probe hits
   only name lineages and never enter the answer.
+  The probe runs in the request's ranked-read context (D142); `complete` is false when any
+  replayed nomination stopped on a work, deadline or ANN-scan bound instead of filling `k`
+  or exhausting its stream, and `count` is then a lower bound.
 
 ## 4. Section keys
 
@@ -882,9 +887,9 @@ excludes that edition. The gate closes this without touching fact windows:
 - **The gate is an eligibility predicate, applied before every relevance bound.** Like entity
   and fact-time eligibility (`decisions.md` D87 context operations: "eligibility constrain[s]
   the candidate set before bounded relevance ranking; a global top-k followed by scope
-  filtering is forbidden"), in-scope support is part of the `WHERE` clause of every nomination
-  channel (semantic, lexical, entity-anchored and graph expansion) and of confirmation, before
-  `ORDER BY … LIMIT`. Concretely each channel adds `EXISTS (evidence → chunk_claims → chunk →
+  filtering is forbidden"), in-scope support is part of the eligibility check of every
+  nomination channel (semantic, lexical, entity-anchored and graph expansion) and of
+  confirmation, before the relevance cut (for P1 channels, D142's confirmation step). Concretely each channel adds `EXISTS (evidence → chunk_claims → chunk →
   document_version_scope)` probed through primary keys and `ix_chunkclaims_claim`, the same
   shape as §3.2, for current-belief reads. For a supplied past `believed_at` (open-query callers
   and belief-pinned graph helpers) the projection cannot answer; the probe instead collects the

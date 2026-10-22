@@ -153,7 +153,9 @@ If the edition in force is still being processed, the policy contributes
 nothing for that time, rather than an outdated edition. The envelope's
 `freshness.scope_pending` names such documents, so an empty answer can be
 told apart from one that is not ready yet. A search with a `documents`
-filter naming the policy's `doc_id` always reports it there.
+filter naming the policy's `doc_id` always reports it there. If
+`scope_pending.complete` is `false`, the check stopped on a work limit and
+more such documents may exist.
 
 ## Read the facts in force
 

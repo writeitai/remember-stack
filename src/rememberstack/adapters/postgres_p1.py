@@ -4,6 +4,8 @@ from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
+from dataclasses import replace
 from datetime import datetime
 from datetime import UTC
 import math
@@ -18,7 +20,9 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from remember.models import DocumentSearchFilters
+from rememberstack.adapters import p1_ranked
 from rememberstack.core.document_filters import is_empty
+from rememberstack.core.document_filters import live_matching_versions
 from rememberstack.core.document_filters import live_version_matches
 from rememberstack.core.document_filters import matching_occurrence_exists
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
@@ -42,7 +46,13 @@ from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import FACT_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import require_p1_vector
+from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 
 P1_HNSW_MAX_SCAN_TUPLES = 20_000
@@ -480,11 +490,10 @@ class PostgresP1Index:
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed semantic claim IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_claims_scored(
+        return _ids(
+            self.search_claims_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
@@ -503,11 +512,10 @@ class PostgresP1Index:
         current_only: bool,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed BM25 claim IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_claims_lexical_scored(
+        return _ids(
+            self.search_claims_lexical_scored(
                 deployment_id=deployment_id,
                 query=query,
                 k=k,
@@ -527,11 +535,10 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed semantic chunk IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_chunks_scored(
+        return _ids(
+            self.search_chunks_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
@@ -552,11 +559,10 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed BM25 chunk IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_chunks_lexical_scored(
+        return _ids(
+            self.search_chunks_lexical_scored(
                 deployment_id=deployment_id,
                 query=query,
                 k=k,
@@ -569,17 +575,16 @@ class PostgresP1Index:
 
     def search_facts(
         self, *, deployment_id: str, vector: tuple[float, ...], k: int, kind: str | None
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Return authority-confirmed current fact IDs."""
-        return tuple(
-            item.item_id
-            for item in self.search_facts_scored(
+        return _ids(
+            self.search_facts_scored(
                 deployment_id=deployment_id,
                 vector=vector,
                 k=k,
                 kind=kind,
                 time=CurrentFactTime(),
-                evaluated_at=datetime.now(UTC),
+                evaluated_at=self._instant(),
             )
         )
 
@@ -595,13 +600,14 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank semantic claims after authority, time scope and filters.
 
         ``time`` (D140 §3.4, default the current scope) selects claims inside
-        the ranked statement: a claim of a lineage without declared periods by
+        the eligibility check: a claim of a lineage without declared periods by
         today's currency rule, a claim of a periodised lineage by an
-        occurrence in a version in force for the scope.
+        occurrence in a version in force for the scope. D142: the HNSW index
+        nominates, the eligibility check confirms, in one snapshot.
         """
         _require_vector(vector)
         self._require_channel(
@@ -610,64 +616,21 @@ class PostgresP1Index:
             channel="semantic",
             policy=CLAIM_INPUT_POLICY,
         )
-        published = (
-            "memory_v1.claims_live"
-            if current_only
-            else "memory_v1.claims_visible_history"
+        query = self._testimony_query(
+            target="claims",
+            channel="semantic",
+            deployment_id=deployment_id,
+            current_only=current_only,
+            equality_filters=equality_filters,
+            entity_ids=entity_ids,
+            documents=documents,
+            time=time,
+            vector=vector,
+            model=self._embedding_model,
+            policy=CLAIM_INPUT_POLICY,
         )
-        predicates, parameters = _claim_filters(equality_filters)
-        _add_claim_documents(
-            documents=documents, predicates=predicates, parameters=parameters
-        )
-        _add_claim_scope(
-            time=time, published=published, predicates=predicates, parameters=parameters
-        )
-        entity_scope = ""
-        coverage_order = ""
-        if entity_ids:
-            entity_scope = (
-                "JOIN LATERAL ("
-                " SELECT count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
-                " FROM memory_v1.mentions_live AS scope"
-                " WHERE scope.deployment_id = indexed.deployment_id"
-                "   AND scope.claim_id = indexed.claim_id"
-                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-                ") AS entity_scope ON entity_scope.coverage > 0"
-            )
-            coverage_order = "entity_scope.coverage DESC,"
-            parameters["entity_ids"] = _uuid_strings(entity_ids)
-        if candidate_ids is not None:
-            predicates.append("indexed.claim_id = ANY(CAST(:candidate_ids AS uuid[]))")
-            parameters["candidate_ids"] = _uuid_strings(candidate_ids)
-        statement = f"""
-            SELECT indexed.claim_id::text AS item_id,
-                   1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
-            FROM claims AS indexed
-            JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = indexed.deployment_id
-             AND document.doc_id = indexed.doc_id
-            {entity_scope}
-            WHERE indexed.deployment_id = :deployment_id
-              AND indexed.embedding IS NOT NULL
-              AND indexed.embedding_model = :embedding_model
-              AND indexed.embedding_input_policy_version = :input_policy
-              {"AND indexed.is_current_testimony" if current_only else ""}
-              {" ".join(f"AND {item}" for item in predicates)}
-            ORDER BY {coverage_order}
-                     indexed.embedding <=> CAST(:query_vector AS vector), indexed.claim_id
-            LIMIT :limit
-        """
-        parameters.update(
-            {
-                "deployment_id": UUID(deployment_id),
-                "embedding_model": self._embedding_model,
-                "input_policy": CLAIM_INPUT_POLICY,
-                "query_vector": _vector_literal(vector),
-                "limit": k,
-            }
-        )
-        return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic"
+        return self._run_testimony(
+            query=query, k=k, candidate_ids=candidate_ids, entity_ids=entity_ids
         )
 
     def search_claims_lexical_scored(
@@ -682,60 +645,30 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
-        """Rank current claims through the one explicit partial BM25 index."""
+    ) -> P1SearchResult:
+        """Rank current claims through the one explicit partial BM25 index.
+
+        D142 §8.1: only positive matches are lexical results.
+        """
         if not current_only:
             raise ValueError("historical claim BM25 is not an admitted D94 channel")
         self._require_channel(
             deployment_id=deployment_id, target="claims", channel="bm25", policy=None
         )
-        predicates, parameters = _claim_filters(equality_filters)
-        _add_claim_documents(
-            documents=documents, predicates=predicates, parameters=parameters
-        )
-        _add_claim_scope(
+        built = self._testimony_query(
+            target="claims",
+            channel="bm25",
+            deployment_id=deployment_id,
+            current_only=True,
+            equality_filters=equality_filters,
+            entity_ids=entity_ids,
+            documents=documents,
             time=time,
-            published="memory_v1.claims_live",
-            predicates=predicates,
-            parameters=parameters,
+            query_text=query,
         )
-        entity_scope = ""
-        coverage_order = ""
-        if entity_ids:
-            entity_scope = (
-                "JOIN LATERAL ("
-                " SELECT count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
-                " FROM memory_v1.mentions_live AS scope"
-                " WHERE scope.deployment_id = indexed.deployment_id"
-                "   AND scope.claim_id = indexed.claim_id"
-                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-                ") AS entity_scope ON entity_scope.coverage > 0"
-            )
-            coverage_order = "entity_scope.coverage DESC,"
-            parameters["entity_ids"] = _uuid_strings(entity_ids)
-        if candidate_ids is not None:
-            predicates.append("indexed.claim_id = ANY(CAST(:candidate_ids AS uuid[]))")
-            parameters["candidate_ids"] = _uuid_strings(candidate_ids)
-        statement = f"""
-            SELECT indexed.claim_id::text AS item_id,
-                   -(indexed.claim_text <@> to_bm25query(
-                       :query, 'ix_claims_current_bm25'))::double precision AS score
-            FROM claims AS indexed
-            JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = indexed.deployment_id
-             AND document.doc_id = indexed.doc_id
-            {entity_scope}
-            WHERE indexed.deployment_id = :deployment_id
-              AND indexed.is_current_testimony
-              {" ".join(f"AND {item}" for item in predicates)}
-            ORDER BY {coverage_order} indexed.claim_text <@> to_bm25query(
-                       :query, 'ix_claims_current_bm25'), indexed.claim_id
-            LIMIT :limit
-        """
-        parameters.update(
-            {"deployment_id": UUID(deployment_id), "query": query, "limit": k}
+        return self._run_testimony(
+            query=built, k=k, candidate_ids=candidate_ids, entity_ids=entity_ids
         )
-        return _nominations(self._engine_rows(statement, parameters), channel="bm25")
 
     def search_chunks_scored(
         self,
@@ -750,13 +683,12 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
-        """Rank semantic chunks with live-source filtering in the same statement.
+    ) -> P1SearchResult:
+        """Rank semantic chunks with live-source eligibility in one snapshot.
 
         ``time`` (D140 §3.2, default the current scope) keeps a chunk only
-        when its version is in force for the scope, inside the ranked
-        statement; candidates come from every live ready version, not only
-        the served one.
+        when its version is in force for the scope; candidates come from every
+        live ready version, not only the served one.
         """
         _require_vector(vector)
         policy = policy_generation or self._chunk_input_policy
@@ -768,66 +700,21 @@ class PostgresP1Index:
             policy=policy,
             model=model,
         )
-        predicates, parameters = _chunk_filters(equality_filters)
-        if documents is not None and not is_empty(documents):
-            version_sql, document_parameters = live_version_matches(
-                filters=documents, version="published.version_id", prefix="documents_"
-            )
-            predicates.append(version_sql)
-            parameters.update(document_parameters)
-        scope_join = _chunk_scope_join(time=time, parameters=parameters)
-        entity_scope = ""
-        coverage_order = ""
-        if entity_ids:
-            entity_scope = (
-                "JOIN LATERAL ("
-                " SELECT count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
-                " FROM memory_v1.mentions_live AS scope"
-                " WHERE scope.deployment_id = indexed.deployment_id"
-                "   AND scope.chunk_id = indexed.chunk_id"
-                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-                ") AS entity_scope ON entity_scope.coverage > 0"
-            )
-            coverage_order = "entity_scope.coverage DESC,"
-            parameters["entity_ids"] = _uuid_strings(entity_ids)
-        if candidate_ids is not None:
-            predicates.append("indexed.chunk_id = ANY(CAST(:candidate_ids AS uuid[]))")
-            parameters["candidate_ids"] = _uuid_strings(candidate_ids)
-        statement = f"""
-            SELECT indexed.chunk_id::text AS item_id,
-                   1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
-            FROM chunk_search AS indexed
-            JOIN memory_v1.chunks_all_versions_live AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.chunk_id = indexed.chunk_id
-            {scope_join}
-            JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = published.deployment_id
-             AND document.doc_id = published.doc_id
-            LEFT JOIN document_sections AS section
-              ON section.deployment_id = published.deployment_id
-             AND section.section_id = published.section_id
-            {entity_scope}
-            WHERE indexed.deployment_id = :deployment_id
-              AND indexed.embedding IS NOT NULL
-              AND indexed.embedding_model = :embedding_model
-              AND indexed.embedding_input_policy_version = :input_policy
-              {" ".join(f"AND {item}" for item in predicates)}
-            ORDER BY {coverage_order}
-                     indexed.embedding <=> CAST(:query_vector AS vector), indexed.chunk_id
-            LIMIT :limit
-        """
-        parameters.update(
-            {
-                "deployment_id": UUID(deployment_id),
-                "embedding_model": model,
-                "input_policy": policy,
-                "query_vector": _vector_literal(vector),
-                "limit": k,
-            }
+        query = self._testimony_query(
+            target="chunks",
+            channel="semantic",
+            deployment_id=deployment_id,
+            current_only=True,
+            equality_filters=equality_filters,
+            entity_ids=entity_ids,
+            documents=documents,
+            time=time,
+            vector=vector,
+            model=model,
+            policy=policy,
         )
-        return _nominations(
-            self._engine_rows(statement, parameters), channel="semantic"
+        return self._run_testimony(
+            query=query, k=k, candidate_ids=candidate_ids, entity_ids=entity_ids
         )
 
     def search_chunks_lexical_scored(
@@ -843,68 +730,344 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[P1Nomination, ...]:
-        """Rank BM25 chunks with live-source filtering in the same statement.
+    ) -> P1SearchResult:
+        """Rank BM25 chunks with live-source eligibility in one snapshot.
 
-        ``time`` (D140 §3.2, default the current scope) keeps a chunk only
-        when its version is in force for the scope, inside the ranked
-        statement; candidates come from every live ready version, not only
-        the served one.
+        D142 §8.1: only positive matches are lexical results.
         """
+        del policy_generation, embedder_generation
         self._require_channel(
             deployment_id=deployment_id, target="chunks", channel="bm25", policy=None
         )
-        predicates, parameters = _chunk_filters(equality_filters)
-        if documents is not None and not is_empty(documents):
-            version_sql, document_parameters = live_version_matches(
-                filters=documents, version="published.version_id", prefix="documents_"
-            )
-            predicates.append(version_sql)
-            parameters.update(document_parameters)
-        scope_join = _chunk_scope_join(time=time, parameters=parameters)
-        entity_scope = ""
-        coverage_order = ""
-        if entity_ids:
-            entity_scope = (
-                "JOIN LATERAL ("
-                " SELECT count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
-                " FROM memory_v1.mentions_live AS scope"
-                " WHERE scope.deployment_id = indexed.deployment_id"
-                "   AND scope.chunk_id = indexed.chunk_id"
-                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
-                ") AS entity_scope ON entity_scope.coverage > 0"
-            )
-            coverage_order = "entity_scope.coverage DESC,"
-            parameters["entity_ids"] = _uuid_strings(entity_ids)
-        if candidate_ids is not None:
-            predicates.append("indexed.chunk_id = ANY(CAST(:candidate_ids AS uuid[]))")
-            parameters["candidate_ids"] = _uuid_strings(candidate_ids)
-        statement = f"""
-            SELECT indexed.chunk_id::text AS item_id,
-                   -(indexed.search_text <@> to_bm25query(
-                       :query, 'ix_chunk_search_bm25'))::double precision AS score
-            FROM chunk_search AS indexed
-            JOIN memory_v1.chunks_all_versions_live AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.chunk_id = indexed.chunk_id
-            {scope_join}
-            JOIN memory_v1.documents_live AS document
-              ON document.deployment_id = published.deployment_id
-             AND document.doc_id = published.doc_id
-            LEFT JOIN document_sections AS section
-              ON section.deployment_id = published.deployment_id
-             AND section.section_id = published.section_id
-            {entity_scope}
-            WHERE indexed.deployment_id = :deployment_id
-              {" ".join(f"AND {item}" for item in predicates)}
-            ORDER BY {coverage_order} indexed.search_text <@> to_bm25query(
-                       :query, 'ix_chunk_search_bm25'), indexed.chunk_id
-            LIMIT :limit
-        """
-        parameters.update(
-            {"deployment_id": UUID(deployment_id), "query": query, "limit": k}
+        built = self._testimony_query(
+            target="chunks",
+            channel="bm25",
+            deployment_id=deployment_id,
+            current_only=True,
+            equality_filters=equality_filters,
+            entity_ids=entity_ids,
+            documents=documents,
+            time=time,
+            query_text=query,
         )
-        return _nominations(self._engine_rows(statement, parameters), channel="bm25")
+        return self._run_testimony(
+            query=built, k=k, candidate_ids=candidate_ids, entity_ids=entity_ids
+        )
+
+    def _testimony_query(
+        self,
+        *,
+        target: Literal["claims", "chunks"],
+        channel: Literal["semantic", "bm25"],
+        deployment_id: str,
+        current_only: bool,
+        equality_filters: Mapping[str, str] | None,
+        entity_ids: tuple[str, ...],
+        documents: DocumentSearchFilters | None,
+        time: TextScope | None,
+        vector: tuple[float, ...] | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        query_text: str | None = None,
+    ) -> "_TestimonyQuery":
+        """Build the eligibility relation and the index nomination for one search."""
+        time = time or TextScope.of(time=None, evaluated_at=self._instant())
+        parameters: dict[str, Any] = {"deployment_id": UUID(deployment_id)}
+        versions_sql: str | None = None
+        if target == "claims":
+            id_column = "claim_id"
+            published = (
+                "memory_v1.claims_live"
+                if current_only
+                else "memory_v1.claims_visible_history"
+            )
+            predicates, filter_parameters = _claim_filters(equality_filters)
+            parameters.update(filter_parameters)
+            _add_claim_documents(
+                documents=documents, predicates=predicates, parameters=parameters
+            )
+            _add_claim_scope(
+                time=time,
+                published=published,
+                predicates=predicates,
+                parameters=parameters,
+            )
+            relation = (
+                "FROM claims AS indexed"
+                " JOIN memory_v1.documents_live AS document"
+                "   ON document.deployment_id = indexed.deployment_id"
+                "  AND document.doc_id = indexed.doc_id"
+            )
+            if current_only:
+                predicates.append("indexed.is_current_testimony")
+            search_table = "claims"
+            search_column = "claim_text"
+            bm25_index = "ix_claims_current_bm25"
+            hnsw_index = "ix_claims_current_embedding_hnsw"
+            partial = " AND is_current_testimony" if current_only else ""
+        else:
+            id_column = "chunk_id"
+            predicates, filter_parameters = _chunk_filters(equality_filters)
+            parameters.update(filter_parameters)
+            if documents is not None and not is_empty(documents):
+                versions_sql, _ = live_matching_versions(
+                    filters=documents, prefix="documents_"
+                )
+                version_sql, document_parameters = live_version_matches(
+                    filters=documents,
+                    version="published.version_id",
+                    prefix="documents_",
+                )
+                predicates.append(version_sql)
+                parameters.update(document_parameters)
+            scope_join = _chunk_scope_join(time=time, parameters=parameters)
+            relation = (
+                "FROM chunk_search AS indexed"
+                " JOIN memory_v1.chunks_all_versions_live AS published"
+                "   ON published.deployment_id = indexed.deployment_id"
+                "  AND published.chunk_id = indexed.chunk_id"
+                f" {scope_join}"
+                " JOIN memory_v1.documents_live AS document"
+                "   ON document.deployment_id = published.deployment_id"
+                "  AND document.doc_id = published.doc_id"
+                " LEFT JOIN document_sections AS section"
+                "   ON section.deployment_id = published.deployment_id"
+                "  AND section.section_id = published.section_id"
+            )
+            search_table = "chunk_search"
+            search_column = "search_text"
+            bm25_index = "ix_chunk_search_bm25"
+            hnsw_index = "ix_chunk_search_embedding_hnsw"
+            partial = ""
+        coverage_sql = None
+        mentions_sql = None
+        if entity_ids:
+            parameters["entity_ids"] = _uuid_strings(entity_ids)
+            mentions_from = (
+                " FROM memory_v1.mentions_live AS scope"
+                " WHERE scope.deployment_id = :deployment_id"
+                "   AND scope.resolved_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
+                f"   AND scope.{id_column} IS NOT NULL"
+            )
+            mentions_sql = "SELECT 1" + mentions_from
+            coverage_sql = (
+                "SELECT scope." + id_column + "::text AS item_id,"
+                " count(DISTINCT scope.resolved_entity_id)::integer AS coverage"
+                f"{mentions_from} GROUP BY scope.{id_column}"
+            )
+        if channel == "semantic":
+            assert vector is not None and model is not None and policy is not None
+            parameters.update(
+                {
+                    "query_vector": _vector_literal(vector),
+                    "embedding_model": model,
+                    "input_policy": policy,
+                }
+            )
+            predicates[:0] = [
+                "indexed.embedding IS NOT NULL",
+                "indexed.embedding_model = :embedding_model",
+                "indexed.embedding_input_policy_version = :input_policy",
+                # HNSW cannot reach a zero vector, so neither may an exact tier
+                # (review r2 P2-6; cosine to it is NaN, which sorts first).
+                "vector_norm(indexed.embedding) > 0",
+            ]
+            score_sql = "1.0 - (indexed.embedding <=> CAST(:query_vector AS vector))"
+            attestation = (
+                "embedding IS NOT NULL AND embedding_model = :embedding_model"
+                " AND embedding_input_policy_version = :input_policy"
+            )
+            nomination = p1_ranked.NominationStatement(
+                channel="semantic",
+                sql=(
+                    f"SELECT {id_column}::text AS item_id,"
+                    " embedding <=> CAST(:query_vector AS vector) AS distance"
+                    f" FROM {search_table}"
+                    f" WHERE deployment_id = :deployment_id AND {attestation}{partial}"
+                    " ORDER BY embedding <=> CAST(:query_vector AS vector)"
+                ),
+                parameters=parameters,
+                expected_index=hnsw_index,
+                count_sql=(
+                    f"SELECT count(*) FROM {search_table}"
+                    f" WHERE deployment_id = :deployment_id AND {attestation}{partial}"
+                    # HNSW (cosine) does not index zero vectors; legacy rows
+                    # written before validation must not count as reachable.
+                    " AND vector_norm(embedding) > 0"
+                ),
+            )
+        else:
+            assert query_text is not None
+            parameters["query"] = query_text
+            score_sql = (
+                f"-(indexed.{search_column} <@> to_bm25query(:query, '{bm25_index}'))"
+                "::double precision"
+            )
+            nomination = p1_ranked.NominationStatement(
+                channel="bm25",
+                sql=(
+                    f"SELECT {id_column}::text AS item_id,"
+                    f" -({search_column} <@> to_bm25query(:query, '{bm25_index}'))"
+                    "::double precision AS score"
+                    f" FROM {search_table}"
+                    f" WHERE deployment_id = :deployment_id{partial}"
+                    f" ORDER BY {search_column} <@> to_bm25query(:query, '{bm25_index}')"
+                ),
+                parameters=parameters,
+                expected_index=bm25_index,
+            )
+        where = " ".join(f"AND {item}" for item in predicates)
+        return _TestimonyQuery(
+            channel=channel,
+            id_column=id_column,
+            relation=relation,
+            where=f"WHERE indexed.deployment_id = :deployment_id {where}",
+            score_sql=score_sql,
+            parameters=parameters,
+            nomination=nomination,
+            coverage_sql=coverage_sql,
+            versions_sql=versions_sql,
+            mentions_sql=mentions_sql,
+        )
+
+    def _run_testimony(
+        self,
+        *,
+        query: "_TestimonyQuery",
+        k: int,
+        candidate_ids: tuple[str, ...] | None,
+        entity_ids: tuple[str, ...],
+    ) -> P1SearchResult:
+        """Execute one testimony search: exact, entity tiers, or the D142 loop."""
+        deadline = self._deadline()
+        with self._ranked_connection(deadline=deadline) as connection:
+            if candidate_ids is not None:
+                rows = _exact_testimony(
+                    connection, query=query, ids=tuple(candidate_ids), limit=k
+                )
+                return p1_ranked.as_result(
+                    rows,
+                    account=P1SearchAccount(
+                        termination=P1Termination.EXHAUSTED,
+                        fetched=len(candidate_ids),
+                        confirmed=len(rows),
+                    ),
+                    channel=query.channel,
+                )
+            if entity_ids:
+                return _entity_tiers(connection, query=query, k=k, deadline=deadline)
+            statement = query.nomination
+            if query.versions_sql is not None:
+                eligible = _enumerate_eligible(
+                    connection, query=query, limit=p1_ranked.FILTER_PUSHDOWN_LIMIT
+                )
+                if eligible is not None and len(eligible) > (
+                    p1_ranked.EXACT_TIER_THRESHOLD
+                ):
+                    # Post-approval design change (§8.3, review r1 P1-9): the
+                    # enumerated eligible set is pushed into the index scan
+                    # as a filter, so the cursor streams eligible rows only.
+                    statement = _pushdown(
+                        statement, eligible, id_column=query.id_column
+                    )
+                elif eligible is not None:
+                    rows = _exact_testimony(
+                        connection, query=query, ids=eligible, limit=k
+                    )
+                    return p1_ranked.as_result(
+                        rows,
+                        account=P1SearchAccount(
+                            termination=P1Termination.EXHAUSTED,
+                            fetched=len(eligible),
+                            confirmed=len(rows),
+                            coverage_rows=len(eligible),
+                        ),
+                        channel=query.channel,
+                    )
+            candidates, account = p1_ranked.nominate_and_confirm(
+                connection,
+                statement=_with_term_count(connection, statement),
+                k=k,
+                confirm=lambda conn, ids: _confirm_testimony(
+                    conn, query=query, ids=ids
+                ),
+                deadline=deadline,
+            )
+            if statement is not query.nomination:
+                account = replace(
+                    account,
+                    coverage_rows=len(statement.parameters["eligible_ids"]),
+                    limits={
+                        **(account.limits or {}),
+                        "filter_pushdown_rows": float(
+                            len(statement.parameters["eligible_ids"])
+                        ),
+                    },
+                )
+            return p1_ranked.as_result(
+                candidates, account=account, channel=query.channel
+            )
+
+    @contextmanager
+    def imported_snapshot(
+        self, *, snapshot_id: str, deadline: float, evaluated_at: datetime | None = None
+    ) -> Iterator[None]:
+        """Run nested P1 reads in another transaction's exported snapshot.
+
+        D142 §8.2: the SQL sandbox exports its request snapshot and every
+        nomination, fetch and confirmation of its P1 calls reads that state.
+        Without bounded read admission there is no shared connection to bind,
+        so the call fails rather than reading an independent snapshot.
+        """
+        if self._read_pool is None:
+            raise P1SearchUnavailableError(
+                "the P1 adapter has no bounded read pool to share a snapshot"
+            )
+        with self._read_pool.snapshot(
+            deadline=deadline, import_snapshot=snapshot_id, evaluated_at=evaluated_at
+        ):
+            yield
+
+    def _instant(self) -> datetime:
+        """The operation's pinned authority instant, else now (D142 §8.2)."""
+        operation = self._read_pool.operation() if self._read_pool else None
+        return operation.evaluated_at if operation else datetime.now(UTC)
+
+    def _deadline(self, deadline: float | None = None) -> float | None:
+        """The earlier of a call's deadline and its operation's (D142 §8.6)."""
+        operation = self._read_pool.operation() if self._read_pool else None
+        if operation is None:
+            return deadline
+        return (
+            operation.deadline
+            if deadline is None
+            else min(deadline, operation.deadline)
+        )
+
+    @contextmanager
+    def _ranked_connection(
+        self, *, deadline: float | None = None
+    ) -> Iterator[Connection]:
+        """Open (or join) the read-only repeatable-read ranked-read context."""
+        if self._read_pool is not None:
+            with self._read_pool.connect(
+                deadline=deadline, isolation_level="REPEATABLE READ"
+            ) as connection:
+                _configure_p1_connection(connection=connection, deadline=deadline)
+                connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+                yield connection
+            return
+        if deadline is not None:
+            raise SQLAlchemyTimeoutError(
+                "bounded P1 PostgreSQL read admission is not configured"
+            )
+        with self._engine.connect() as raw:
+            connection = raw.execution_options(isolation_level="REPEATABLE READ")
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
+            try:
+                yield connection
+            finally:
+                connection.rollback()
 
     def nominate_testimony_scored(
         self,
@@ -920,7 +1083,7 @@ class PostgresP1Index:
         embedder_generation: str | None = None,
         time: TextScope | None = None,
         pending_doc_ids: tuple[str, ...] | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank cheap entity-scoped testimony candidates for later confirmation.
 
         The D140 time scope (default current) is part of the candidate
@@ -935,9 +1098,7 @@ class PostgresP1Index:
             raise ValueError("scoped testimony nomination requires entity_ids")
         if grain == "claim":
             table = "claims"
-            id_column = "claim_id"
             mention_column = "claim_id"
-            search_column = "claim_text"
             target = "claims"
             policy = CLAIM_INPUT_POLICY
             model = self._embedding_model
@@ -962,9 +1123,7 @@ class PostgresP1Index:
             current_predicate = "AND indexed.is_current_testimony AND " + selected
         elif grain == "chunk":
             table = "chunk_search"
-            id_column = "chunk_id"
             mention_column = "chunk_id"
-            search_column = "search_text"
             target = "chunks"
             policy = policy_generation or self._chunk_input_policy
             model = embedder_generation or self._embedding_model
@@ -995,7 +1154,7 @@ class PostgresP1Index:
             "pending_doc_ids": _uuid_strings(pending_doc_ids or ()),
             "limit": k,
             **(
-                time or TextScope.of(time=None, evaluated_at=datetime.now(UTC))
+                time or TextScope.of(time=None, evaluated_at=self._instant())
             ).parameters(),
         }
         if channel == "semantic":
@@ -1009,10 +1168,9 @@ class PostgresP1Index:
                 policy=policy,
                 model=model if grain == "chunk" else None,
             )
-            score_sql = "1.0 - (indexed.embedding <=> CAST(:query_vector AS vector))"
-            order_sql = "indexed.embedding <=> CAST(:query_vector AS vector)"
             search_predicate = """
               AND indexed.embedding IS NOT NULL
+              AND vector_norm(indexed.embedding) > 0
               AND indexed.embedding_model = :embedding_model
               AND indexed.embedding_input_policy_version = :input_policy
             """
@@ -1029,20 +1187,14 @@ class PostgresP1Index:
             self._require_channel(
                 deployment_id=deployment_id, target=target, channel="bm25", policy=None
             )
-            index_name = (
-                "ix_claims_current_bm25" if grain == "claim" else "ix_chunk_search_bm25"
-            )
-            distance_sql = (
-                f"indexed.{search_column} <@> to_bm25query(:query, '{index_name}')"
-            )
-            score_sql = f"-({distance_sql})::double precision"
-            order_sql = distance_sql
+            # D142 §8.1: only positive matches are lexical results (the
+            # shared tiers apply it to exact scoring and the loop alike).
             search_predicate = ""
             parameters["query"] = query
         else:
             raise ValueError(f"unknown testimony channel {channel!r}")
 
-        statement = f"""
+        scope_ctes = f"""
             WITH scoped_entities AS MATERIALIZED (
                 SELECT entity_id, survivor_entity_id
                 FROM v_memory_entity_survivor
@@ -1066,17 +1218,42 @@ class PostgresP1Index:
                 FROM scoped_items
                 GROUP BY item_id
             )
-            SELECT indexed.{id_column}::text AS item_id,
-                   {score_sql} AS score
-            FROM {table} AS indexed
-            JOIN coverage ON coverage.item_id = indexed.{id_column}
-            WHERE indexed.deployment_id = :deployment_id
-              {current_predicate}
-              {search_predicate}
-            ORDER BY coverage.coverage DESC, {order_sql}, indexed.{id_column}
-            LIMIT :limit
         """
-        return _nominations(self._engine_rows(statement, parameters), channel=channel)
+        # D142 §8.4 and review r1 P1-6: the same coverage-tier execution as
+        # every entity-scoped search — the mention-row budget first, exact
+        # scoring for small tiers, the index loop within large ones.
+        base = self._testimony_query(
+            target=target,
+            channel=channel,
+            deployment_id=deployment_id,
+            current_only=grain == "claim",
+            equality_filters=None,
+            entity_ids=entity_ids,
+            documents=None,
+            time=time,
+            vector=vector,
+            model=model if channel == "semantic" else None,
+            policy=policy if channel == "semantic" else None,
+            query_text=query,
+        )
+        attestation = search_predicate
+        scoped_query = replace(
+            base,
+            relation=f"FROM {table} AS indexed",
+            where=(
+                "WHERE indexed.deployment_id = :deployment_id"
+                f" {current_predicate} {attestation}"
+            ),
+            parameters={**base.parameters, **parameters},
+            coverage_sql=(
+                f"{scope_ctes} SELECT item_id::text AS item_id, coverage FROM coverage"
+            ),
+            mentions_sql=f"{scope_ctes} SELECT 1 FROM scoped_items",
+            versions_sql=None,
+        )
+        deadline = self._deadline()
+        with self._ranked_connection(deadline=deadline) as connection:
+            return _entity_tiers(connection, query=scoped_query, k=k, deadline=deadline)
 
     def chunk_texts(
         self,
@@ -1132,7 +1309,7 @@ class PostgresP1Index:
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
         documents: DocumentSearchFilters | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank facts after applying identity, temporal, and entity authority.
 
         The D140 §8.1 evidence gate for ``time`` is part of every branch's
@@ -1142,6 +1319,8 @@ class PostgresP1Index:
         ``documents`` keeps a fact only when at least one live supporting
         claim has a live occurrence in a matching document version (D134).
         """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -1161,7 +1340,7 @@ class PostgresP1Index:
                 deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
-        evaluation = evaluated_at or datetime.now(UTC)
+        evaluation = evaluated_at or self._instant()
         time_sql, parameters = _fact_time(selected_time, evaluated_at=evaluation)
         filter_sql, filter_parameters = _fact_filters(equality_filters)
         parameters.update(filter_parameters)
@@ -1231,6 +1410,28 @@ class PostgresP1Index:
             coverage_select = ""
             branch_order = "indexed.embedding <=> CAST(:query_vector AS vector)"
             result_order = "distance, qualifier, item_id"
+        if not entity_ids and candidate_keys is None:
+            # D142 §8.5: deployment-wide fact search nominates per fact table
+            # from its HNSW index and confirms with the same predicates.
+            return self._fact_loop(
+                required=required,
+                parameters=parameters,
+                relation=_FACT_AUTHORITY_JOIN,
+                predicates=f"{time_sql} {filter_sql} {supporting_sql}",
+                k=k,
+                deadline=deadline,
+            )
+        if entity_ids:
+            # Review r2 P1-5: the scoring scope matches survivor-resolved
+            # endpoints (facts_visible_history), so the budget counts the raw
+            # endpoints of every entity those survivors absorbed.
+            self._require_fact_scope_budget(
+                required=required,
+                scope_sql=_SURVIVOR_SCOPE_CTE,
+                endpoint_sql="ARRAY(SELECT entity_id FROM scoped_entities)",
+                parameters=parameters,
+                deadline=deadline,
+            )
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -1251,6 +1452,7 @@ class PostgresP1Index:
                   AND fact.fact_id = indexed.{id_column}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
+                   AND vector_norm(indexed.embedding) > 0
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {entity_sql} {key_sql} {filter_sql} {supporting_sql}
@@ -1265,10 +1467,134 @@ class PostgresP1Index:
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
         """
-        return _nominations(
-            self._engine_rows(statement, parameters, deadline=deadline),
-            channel="semantic",
-            qualified=True,
+        return _bounded_result(
+            _nominations(
+                self._engine_rows(statement, parameters, deadline=deadline),
+                channel="semantic",
+                qualified=True,
+            ),
+            k=k,
+        )
+
+    def _require_fact_scope_budget(
+        self,
+        *,
+        required: tuple[str, ...],
+        scope_sql: str,
+        endpoint_sql: str,
+        parameters: Mapping[str, Any],
+        deadline: float | None,
+    ) -> None:
+        """Bound an entity-scoped exact fact scan by its input rows (r1 P1-6).
+
+        Each fact table's rows with an endpoint in the scope are counted, at
+        most the entity work budget plus one, before any is scored; a hub
+        beyond the budget is the typed ``entity_scope_too_broad`` boundary.
+        """
+        read = 0
+        for table in required:
+            remaining = p1_ranked.ENTITY_WORK_BUDGET + 1 - read
+            if remaining <= 0:
+                break
+            endpoints = f"indexed.subject_entity_id = ANY({endpoint_sql})" + (
+                f" OR indexed.object_entity_id = ANY({endpoint_sql})"
+                if table == "relations"
+                else ""
+            )
+            rows = self._engine_rows(
+                f"{scope_sql}SELECT count(*) AS n FROM (SELECT 1 FROM {table} AS indexed"
+                f" WHERE indexed.deployment_id = :deployment_id AND ({endpoints})"
+                " LIMIT :entity_budget) AS bounded",
+                {**parameters, "entity_budget": remaining},
+                deadline=deadline,
+            )
+            read += int(rows[0]["n"]) if rows else 0
+        if read > p1_ranked.ENTITY_WORK_BUDGET:
+            raise p1_ranked.P1EntityScopeTooBroadError(
+                "the requested entities are endpoints of more facts than the entity"
+                f" work budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
+            )
+
+    def _fact_loop(
+        self,
+        *,
+        required: tuple[str, ...],
+        parameters: Mapping[str, Any],
+        relation: str,
+        predicates: str,
+        k: int,
+        deadline: float | None,
+    ) -> P1SearchResult:
+        """One D142 loop per fact table, merged by (distance, kind, id)."""
+        merged: list[p1_ranked.Candidate] = []
+        accounts: list[P1SearchAccount] = []
+        attestation = (
+            "embedding IS NOT NULL AND embedding_model = :embedding_model"
+            " AND embedding_input_policy_version = :input_policy"
+        )
+        with self._ranked_connection(deadline=deadline) as connection:
+            for table, fact_kind, id_column in (
+                ("relations", "relation", "relation_id"),
+                ("observations", "observation", "observation_id"),
+            ):
+                if table not in required:
+                    continue
+                join = relation.format(fact_kind=fact_kind, id_column=id_column)
+                gate = fact_in_scope(
+                    fact_kind=fact_kind, fact_id=f"indexed.{id_column}"
+                )
+                confirm_sql = _confirm_by_candidate(
+                    f"FROM {table} AS indexed{join}"
+                    " WHERE indexed.deployment_id = :deployment_id"
+                    f" {predicates} AND {gate}",
+                    f"indexed.{id_column}",
+                )
+
+                def confirm(
+                    conn: Connection,
+                    ids: Sequence[str],
+                    sql: str = confirm_sql,
+                    qualifier: str = fact_kind,
+                ) -> dict[str, str | None]:
+                    rows = conn.execute(
+                        text(sql),
+                        {**parameters, "batch_ids": _uuid_strings(tuple(ids))},
+                    ).mappings()
+                    return {str(row["item_id"]): qualifier for row in rows}
+
+                nomination = p1_ranked.NominationStatement(
+                    channel="semantic",
+                    sql=(
+                        f"SELECT {id_column}::text AS item_id,"
+                        " embedding <=> CAST(:query_vector AS vector) AS distance"
+                        f" FROM {table}"
+                        f" WHERE deployment_id = :deployment_id AND {attestation}"
+                        " ORDER BY embedding <=> CAST(:query_vector AS vector)"
+                    ),
+                    parameters=parameters,
+                    expected_index=f"ix_{table}_embedding_hnsw",
+                    count_sql=(
+                        f"SELECT count(*) FROM {table}"
+                        f" WHERE deployment_id = :deployment_id AND {attestation}"
+                        # HNSW (cosine) does not index zero vectors; legacy rows
+                        # written before validation must not count as reachable.
+                        " AND vector_norm(embedding) > 0"
+                    ),
+                )
+                candidates, account = p1_ranked.nominate_and_confirm(
+                    connection,
+                    statement=nomination,
+                    k=k,
+                    confirm=confirm,
+                    deadline=deadline,
+                )
+                merged.extend(candidates)
+                accounts.append(account)
+        merged.sort(
+            key=lambda item: (item.sort_value, item.qualifier or "", item.item_id)
+        )
+        return p1_ranked.as_result(
+            merged[:k], account=p1_ranked.merge_accounts(accounts), channel="semantic"
         )
 
     def nominate_facts_scored(
@@ -1283,11 +1609,13 @@ class PostgresP1Index:
         entity_ids: tuple[str, ...] = (),
         ranking_entity_ids: tuple[str, ...] | None = None,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
+    ) -> P1SearchResult:
         """Rank cheap base-table candidates for a caller that confirms every row.
 
         The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``.
         """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -1307,7 +1635,7 @@ class PostgresP1Index:
                 deadline=deadline,
             )
         selected_time = time or CurrentFactTime()
-        evaluation = evaluated_at or datetime.now(UTC)
+        evaluation = evaluated_at or self._instant()
         time_sql, parameters = _fact_time(
             selected_time, evaluated_at=evaluation, alias="indexed"
         )
@@ -1340,9 +1668,26 @@ class PostgresP1Index:
                 ),
             """
             result_order = "coverage DESC, distance, qualifier, item_id"
+            self._require_fact_scope_budget(
+                required=required,
+                scope_sql=_SURVIVOR_SCOPE_CTE,
+                endpoint_sql="ARRAY(SELECT entity_id FROM scoped_entities)",
+                parameters=parameters,
+                deadline=deadline,
+            )
         else:
-            scope_cte = ""
-            result_order = "distance, qualifier, item_id"
+            # D142 §8.5: without anchors, nominate per fact table from its HNSW
+            # index; the D140 gate and time window confirm each batch.
+            # Review r1 P1-5: confirmation applies the full fact authority
+            # (facts_visible_history) before a row counts toward the cut.
+            return self._fact_loop(
+                required=required,
+                parameters=parameters,
+                relation=_FACT_AUTHORITY_JOIN,
+                predicates=time_sql,
+                k=k,
+                deadline=deadline,
+            )
         branches: list[str] = []
         for table, fact_kind, id_column in (
             ("relations", "relation", "relation_id"),
@@ -1408,8 +1753,10 @@ class PostgresP1Index:
                         indexed.embedding <=> CAST(:query_vector AS vector) AS distance
                  FROM {table} AS indexed
                  {scope_join}
+                 {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
+                   AND vector_norm(indexed.embedding) > 0
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {scope_filter}
@@ -1425,10 +1772,13 @@ class PostgresP1Index:
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
         """
-        return _nominations(
-            self._engine_rows(statement, parameters, deadline=deadline),
-            channel="semantic",
-            qualified=True,
+        return _bounded_result(
+            _nominations(
+                self._engine_rows(statement, parameters, deadline=deadline),
+                channel="semantic",
+                qualified=True,
+            ),
+            k=k,
         )
 
     def entity_semantic_ready(self, *, deployment_id: str) -> bool:
@@ -1455,8 +1805,13 @@ class PostgresP1Index:
         vector: tuple[float, ...],
         k: int,
         deadline: float | None = None,
-    ) -> tuple[P1Nomination, ...]:
-        """Rank live entity profiles without an entity-class filter (D96)."""
+    ) -> P1SearchResult:
+        """Rank live entity profiles without an entity-class filter (D96).
+
+        D142: the HNSW index nominates; ``entities_current`` confirms.
+        """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,
@@ -1465,32 +1820,57 @@ class PostgresP1Index:
             policy=ENTITY_INPUT_POLICY,
             deadline=deadline,
         )
-        rows = self._engine_rows(
-            """
-            SELECT indexed.entity_id::text AS item_id,
-                   1.0 - (indexed.embedding <=> CAST(:query_vector AS vector)) AS score
-            FROM entities AS indexed
-            JOIN memory_v1.entities_current AS published
-              ON published.deployment_id = indexed.deployment_id
-             AND published.entity_id = indexed.entity_id
-            WHERE indexed.deployment_id = :deployment_id
-              AND indexed.embedding IS NOT NULL
-              AND indexed.embedding_model = :embedding_model
-              AND indexed.embedding_input_policy_version = :input_policy
-            ORDER BY indexed.embedding <=> CAST(:query_vector AS vector),
-                     indexed.entity_id
-            LIMIT :limit
-            """,
-            {
-                "deployment_id": UUID(deployment_id),
-                "embedding_model": self._embedding_model,
-                "input_policy": ENTITY_INPUT_POLICY,
-                "query_vector": _vector_literal(vector),
-                "limit": k,
-            },
-            deadline=deadline,
+        parameters = {
+            "deployment_id": UUID(deployment_id),
+            "embedding_model": self._embedding_model,
+            "input_policy": ENTITY_INPUT_POLICY,
+            "query_vector": _vector_literal(vector),
+        }
+        attestation = (
+            "embedding IS NOT NULL AND embedding_model = :embedding_model"
+            " AND embedding_input_policy_version = :input_policy"
         )
-        return _nominations(rows, channel="semantic")
+        nomination = p1_ranked.NominationStatement(
+            channel="semantic",
+            sql=(
+                "SELECT entity_id::text AS item_id,"
+                " embedding <=> CAST(:query_vector AS vector) AS distance"
+                f" FROM entities WHERE deployment_id = :deployment_id AND {attestation}"
+                " ORDER BY embedding <=> CAST(:query_vector AS vector)"
+            ),
+            parameters=parameters,
+            expected_index="ix_entities_embedding_hnsw",
+            count_sql=(
+                "SELECT count(*) FROM entities"
+                f" WHERE deployment_id = :deployment_id AND {attestation}"
+                # HNSW (cosine) does not index zero vectors; legacy rows
+                # written before validation must not count as reachable.
+                " AND vector_norm(embedding) > 0"
+            ),
+        )
+
+        def confirm(conn: Connection, ids: Sequence[str]) -> dict[str, str | None]:
+            rows = conn.execute(
+                text(
+                    _confirm_by_candidate(
+                        "FROM memory_v1.entities_current AS published"
+                        " WHERE published.deployment_id = :deployment_id",
+                        "published.entity_id",
+                    )
+                ),
+                {**parameters, "batch_ids": _uuid_strings(tuple(ids))},
+            ).mappings()
+            return {str(row["item_id"]): None for row in rows}
+
+        with self._ranked_connection(deadline=deadline) as connection:
+            candidates, account = p1_ranked.nominate_and_confirm(
+                connection,
+                statement=nomination,
+                k=k,
+                confirm=confirm,
+                deadline=deadline,
+            )
+        return p1_ranked.as_result(candidates, account=account, channel="semantic")
 
     def _natural_vectors(
         self,
@@ -1639,7 +2019,7 @@ def _configure_p1_connection(
     remaining = deadline - (monotonic() if now is None else now)
     if remaining <= 0:
         raise SQLAlchemyTimeoutError("P1 PostgreSQL operation deadline expired")
-    timeout_ms = max(1, math.floor(remaining * 1_000))
+    timeout_ms = min(max(1, math.floor(remaining * 1_000)), 2**31 - 1)
     connection.exec_driver_sql(
         f"SET LOCAL statement_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
@@ -1879,11 +2259,8 @@ def _parse_vector(value: str) -> tuple[float, ...]:
 
 
 def _require_vector(vector: tuple[float, ...]) -> None:
-    """Refuse any vector that cannot match the fixed D94 column typmod."""
-    if len(vector) != P1_VECTOR_DIMENSIONS:
-        raise ValueError(
-            f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
-        )
+    """Validate one vector before writing it (shared port contract)."""
+    require_p1_vector(vector)
 
 
 def _require_vectors(*, rows: tuple[tuple[float, ...], ...]) -> None:
@@ -1901,3 +2278,324 @@ def _require_updated(rowcount: int, *, target: str, item_id: UUID) -> None:
 def _uuid_strings(values: tuple[str, ...]) -> list[str]:
     """Validate an external tuple of UUID strings before binding it as an array."""
     return [str(UUID(value)) for value in values]
+
+
+@dataclass(frozen=True)
+class _TestimonyQuery:
+    """One claim/chunk search: its eligibility relation and index nomination."""
+
+    channel: Literal["semantic", "bm25"]
+    id_column: str
+    relation: str
+    where: str
+    score_sql: str
+    parameters: Mapping[str, Any]
+    nomination: p1_ranked.NominationStatement
+    coverage_sql: str | None
+    versions_sql: str | None = None
+    """Matching versions of a document-filtered chunk search (small-set tier)."""
+    mentions_sql: str | None = None
+    """The mention rows behind ``coverage_sql``; the entity budget counts them."""
+
+
+def _confirm_by_candidate(relation_where: str, id_expression: str) -> str:
+    """Confirm a nominated batch one candidate at a time, by primary key.
+
+    ``= ANY(:batch_ids)`` lets the planner drive from the eligibility joins
+    instead — every eligible row, re-probing the whole id array per row, which
+    grows with the corpus (17 s for a 4,000-id batch at 30k chunks). A
+    ``LATERAL`` existence probe per candidate keeps confirmation proportional
+    to the batch (D142 §8.3 step 3).
+    """
+    return (
+        "SELECT candidate.item_id::text AS item_id"
+        " FROM unnest(CAST(:batch_ids AS uuid[])) AS candidate(item_id)"
+        f" CROSS JOIN LATERAL (SELECT 1 {relation_where}"
+        f" AND {id_expression} = candidate.item_id LIMIT 1) AS eligible"
+    )
+
+
+def _confirm_testimony(
+    connection: Connection, *, query: _TestimonyQuery, ids: Sequence[str]
+) -> dict[str, str | None]:
+    """The eligible subset of one nominated batch (D142 §8.3 step 3)."""
+    if not ids:
+        return {}
+    rows = connection.execute(
+        text(
+            _confirm_by_candidate(
+                f"{query.relation} {query.where}", f"indexed.{query.id_column}"
+            )
+        ),
+        {**query.parameters, "batch_ids": _uuid_strings(tuple(ids))},
+    ).mappings()
+    return {str(row["item_id"]): None for row in rows}
+
+
+def _enumerate_eligible(
+    connection: Connection, *, query: _TestimonyQuery, limit: int
+) -> tuple[str, ...] | None:
+    """The whole eligible set of a document-filtered search, or ``None`` above
+    ``limit`` rows.
+
+    A selective document filter leaves few eligible rows among many index
+    matches, so plain nomination would fetch up to the work budget and still
+    stop short (the scaling sweep's 1% document stratum). A small set is
+    scored exactly (D142 §8.4); a larger one, up to ``limit``, is pushed into
+    the index scan (:func:`_pushdown`). The probe starts from the matching
+    versions and reads each one's chunks through a ``LATERAL`` subquery
+    (``OFFSET 0`` keeps the planner from flattening it and starting from every
+    chunk instead: 6 s against 83 ms at 3M chunks); it reads at most
+    ``limit + 1`` rows.
+    """
+    assert query.versions_sql is not None
+    rows = connection.execute(
+        text(
+            "SELECT eligible.item_id"
+            f" FROM ({query.versions_sql}) AS matching_version"
+            " CROSS JOIN LATERAL ("
+            f"SELECT indexed.{query.id_column}::text AS item_id"
+            f" {query.relation} {query.where}"
+            " AND published.version_id = matching_version.version_id"
+            " OFFSET 0) AS eligible"
+            " LIMIT :tier_limit"
+        ),
+        {**query.parameters, "tier_limit": limit + 1},
+    ).scalars()
+    eligible = tuple(str(item) for item in rows)
+    if len(eligible) > limit:
+        return None
+    return eligible
+
+
+BM25_TEXT_CONFIG = "simple"
+"""The text search configuration of every P1 BM25 channel (D94)."""
+
+
+def _with_term_count(
+    connection: Connection, statement: p1_ranked.NominationStatement
+) -> p1_ranked.NominationStatement:
+    """Attach the parser's term count to a BM25 statement (its stop margin)."""
+    if statement.channel != "bm25":
+        return statement
+    return replace(
+        statement,
+        query_terms=p1_ranked.analyzed_terms(
+            connection,
+            query=str(statement.parameters["query"]),
+            text_config=BM25_TEXT_CONFIG,
+        ),
+    )
+
+
+def _pushdown(
+    statement: p1_ranked.NominationStatement,
+    eligible: tuple[str, ...],
+    *,
+    id_column: str,
+) -> p1_ranked.NominationStatement:
+    """Filter the index scan to an enumerated eligible set (D142 §8.3).
+
+    The index still orders by its own score and the cursor still streams one
+    scoring generation; PostgreSQL applies the (hashed) membership filter to
+    each streamed row, so the cursor, the work budget and confirmation see
+    eligible rows only. Confirmation still applies every predicate.
+    """
+    membership = f" AND {id_column} = ANY(CAST(:eligible_ids AS uuid[]))"
+    head, order = statement.sql.split(" ORDER BY ", 1)
+    return replace(
+        statement,
+        sql=f"{head}{membership} ORDER BY {order}",
+        parameters={**statement.parameters, "eligible_ids": list(eligible)},
+        # an HNSW exhaustion proof counts the filtered searchable rows
+        count_sql=None
+        if statement.count_sql is None
+        else statement.count_sql + membership,
+    )
+
+
+def _exact_testimony(
+    connection: Connection, *, query: _TestimonyQuery, ids: tuple[str, ...], limit: int
+) -> list[p1_ranked.Candidate]:
+    """Score a bounded id set exactly: coverage, score, then stable id."""
+    if not ids or limit <= 0:
+        return []
+    positive = f" AND {query.score_sql} > 0" if query.channel == "bm25" else ""
+    coverage_join = ""
+    coverage_order = ""
+    if query.coverage_sql is not None:
+        coverage_join = (
+            f" JOIN ({query.coverage_sql}) AS coverage"
+            " ON coverage.item_id = candidate.item_id::text"
+        )
+        coverage_order = "coverage.coverage DESC,"
+    rows = connection.execute(
+        text(
+            # per-candidate probes, as in _confirm_by_candidate
+            "SELECT candidate.item_id::text AS item_id, eligible.score"
+            " FROM unnest(CAST(:candidate_ids AS uuid[])) AS candidate(item_id)"
+            f" CROSS JOIN LATERAL (SELECT {query.score_sql} AS score"
+            f" {query.relation} {query.where}{positive}"
+            f" AND indexed.{query.id_column} = candidate.item_id LIMIT 1) AS eligible"
+            f"{coverage_join}"
+            f" ORDER BY {coverage_order} eligible.score DESC, candidate.item_id"
+            " LIMIT :limit"
+        ),
+        {**query.parameters, "candidate_ids": _uuid_strings(ids), "limit": limit},
+    ).mappings()
+    return [
+        p1_ranked.Candidate(
+            item_id=str(row["item_id"]),
+            score=float(row["score"]),
+            sort_value=-float(row["score"]),
+        )
+        for row in rows
+    ]
+
+
+_SURVIVOR_SCOPE_CTE = (
+    "WITH scoped_entities AS MATERIALIZED ("
+    " SELECT entity_id, survivor_entity_id FROM v_memory_entity_survivor"
+    " WHERE deployment_id = :deployment_id"
+    "   AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))) "
+)
+"""Every entity the requested survivors absorbed (merge redirects resolved)."""
+
+_FACT_AUTHORITY_JOIN = (
+    " JOIN memory_v1.facts_visible_history AS fact"
+    "   ON fact.deployment_id = indexed.deployment_id"
+    "  AND fact.fact_kind = '{fact_kind}'"
+    "  AND fact.fact_id = indexed.{id_column}"
+)
+"""Full fact authority (survivors, claim-coordinate visibility; D87, D142 §8.5)."""
+
+
+def _require_entity_budget(
+    connection: Connection, *, mentions_sql: str, parameters: Mapping[str, Any]
+) -> int:
+    """Count the scope's mention rows, reading at most the budget plus one.
+
+    Review r1 P1-6: the budget bounds mention rows read, not grouped items —
+    a few items with millions of mentions must not pass a grouped LIMIT.
+    """
+    read = int(
+        connection.execute(
+            text(f"SELECT count(*) FROM ({mentions_sql} LIMIT :entity_budget) AS m"),
+            {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+        ).scalar_one()
+    )
+    if read > p1_ranked.ENTITY_WORK_BUDGET:
+        raise p1_ranked.P1EntityScopeTooBroadError(
+            "the requested entities have more mentions than the entity work"
+            f" budget ({p1_ranked.ENTITY_WORK_BUDGET}) allows"
+        )
+    return read
+
+
+def _entity_tiers(
+    connection: Connection,
+    *,
+    query: _TestimonyQuery,
+    k: int,
+    deadline: float | None = None,
+) -> P1SearchResult:
+    """Coverage-first ranking by coverage tiers (D142 §8.4)."""
+    assert query.coverage_sql is not None and query.mentions_sql is not None
+    read = _require_entity_budget(
+        connection, mentions_sql=query.mentions_sql, parameters=query.parameters
+    )
+    rows = connection.execute(text(query.coverage_sql), query.parameters).mappings()
+    tiers: dict[int, list[str]] = {}
+    for row in rows:
+        tiers.setdefault(int(row["coverage"]), []).append(str(row["item_id"]))
+    results: list[p1_ranked.Candidate] = []
+    fetched = rejected = rounds = 0
+    termination = P1Termination.EXHAUSTED
+    # Review r2 P2-3: one candidate work budget for the whole search, shared
+    # by every tier loop (exact tiers are bounded by the mention budget).
+    budget = p1_ranked.work_budget(k)
+    loop_limits: Mapping[str, float] = {}
+    for coverage in sorted(tiers, reverse=True):
+        need = k - len(results)
+        if need <= 0:
+            termination = P1Termination.K_FILLED
+            break
+        members = tiers[coverage]
+        if len(members) <= p1_ranked.EXACT_TIER_THRESHOLD:
+            found = _exact_testimony(
+                connection, query=query, ids=tuple(members), limit=need
+            )
+            fetched += len(members)
+            results.extend(found)
+            continue
+        tier = frozenset(members)
+
+        def confirm_tier(
+            conn: Connection, ids: Sequence[str], tier: frozenset[str] = tier
+        ) -> dict[str, str | None]:
+            return _confirm_testimony(
+                conn, query=query, ids=[item for item in ids if item in tier]
+            )
+
+        remaining = budget - fetched
+        if remaining <= 0:
+            termination = P1Termination.WORK_BUDGET
+            break
+        candidates, account = p1_ranked.nominate_and_confirm(
+            connection,
+            statement=_with_term_count(connection, query.nomination),
+            k=need,
+            confirm=confirm_tier,
+            deadline=deadline,
+            budget=remaining,
+        )
+        loop_limits = account.limits or {}
+        fetched += account.fetched
+        rejected += account.rejected
+        rounds += account.fetch_rounds
+        results.extend(candidates)
+        if not account.termination.complete:
+            termination = account.termination
+            break
+    else:
+        if len(results) >= k:
+            termination = P1Termination.K_FILLED
+    return p1_ranked.as_result(
+        results[:k],
+        account=P1SearchAccount(
+            termination=termination,
+            fetched=fetched,
+            confirmed=len(results[:k]),
+            rejected=rejected,
+            fetch_rounds=rounds,
+            coverage_rows=read,
+            limits={
+                **loop_limits,
+                "k": float(k),
+                "work_budget": float(budget),
+                "exact_tier_threshold": float(p1_ranked.EXACT_TIER_THRESHOLD),
+                "entity_work_budget": float(p1_ranked.ENTITY_WORK_BUDGET),
+            },
+        ),
+        channel=query.channel,
+    )
+
+
+def _bounded_result(rows: tuple[P1Nomination, ...], *, k: int) -> P1SearchResult:
+    """Wrap an exact scan over a bounded eligible set (entity or explicit ids)."""
+    return P1SearchResult(
+        rows,
+        account=P1SearchAccount(
+            termination=P1Termination.K_FILLED
+            if len(rows) >= k
+            else P1Termination.EXHAUSTED,
+            confirmed=len(rows),
+        ),
+    )
+
+
+def _ids(result: Sequence[P1Nomination]) -> P1SearchIds:
+    """The ranked ids of a search result, keeping its account (D142 §8.6)."""
+    return P1SearchIds(
+        (item.item_id for item in result), account=search_account(result)
+    )
