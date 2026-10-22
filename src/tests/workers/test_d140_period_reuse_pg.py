@@ -5,9 +5,11 @@ reuse keys (D56 ``extraction_input_hash``, D140 ``reuse_identity_hash``), text
 origin, or embedding carry-forward (D80). Version 2 of a dated, periodised
 lineage rewrites one paragraph: only that chunk and its same-section
 neighbours are extracted and embedded, exactly as without periods. A later
-period correction then re-processes nothing — it only reviews the fact whose
-evidence periods moved, with one window-review model call and no extraction
-or embedding call.
+period correction then re-processes no document text — it only reviews the
+fact whose evidence periods moved, with one window-review model call and no
+extraction, chunk, claim or fact embedding call. An entity profile that shows
+the moved window is refreshed with one profile embedding call (the accepted
+owner decision of 2026-10-22, design §8.2).
 """
 
 from datetime import datetime

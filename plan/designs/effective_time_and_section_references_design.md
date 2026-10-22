@@ -226,9 +226,11 @@ Consequences a reader should check against the example:
   event, returning the lineage to served-version semantics for readers believing after that
   instant. It is the
   only way back, so reverting to "the newest version is current" is always an explicit act.
-- Periods never trigger reprocessing: they are not part of any extraction, embedding or
-  structure input (§5 keeps them out of every key). They do queue a fact window review
-  (§8.2).
+- Periods never trigger document reprocessing: they are not part of any document
+  ingestion input — extraction, chunk/claim/fact embedding or structure (§5 keeps them out of
+  every key). They do queue a fact window review (§8.2), and a review that moves a window
+  shown in an entity profile refreshes that profile's embedding (the accepted owner decision
+  in §8.2).
 
 ### 2.4 Interaction with versioning modes, currency and the served version
 
