@@ -599,8 +599,17 @@ returns them. At 300k chunks the unfiltered strata meet the p95 ≈ 300 ms
 budget; filtered strata above about 600 eligible rows do not. The exact tier
 is slower than the pushdown on either side of its threshold (p95 2.1 s at
 4,990 rows against 0.8 s at 5,010), so the threshold for document-filtered
-sets is set too high; that is input to the open latency decision (review r2
-P1-6), not changed here.
+sets is set too high. That was input to the latency decision (review r2 P1-6),
+resolved by the owner's amendment below on 2026-10-22; re-tuning the threshold
+is WP-RS.11 (#508), not changed here.
+
+The `history` stratum's eligible population is 180,000 rows, not the 300,000
+indexed edition rows: the 3,000 periodised lineages contribute all five editions
+(3,000 × 5 × 10 = 150,000) and the 3,000 undated lineages only their served
+edition, the only one with a non-empty interval (3,000 × 1 × 10 = 30,000).
+The archive's `eligible_current_chunks` field always counts current (live)
+chunks whatever the time scope, so for the `history` rows it reports 60,000 and
+is not a history count.
 
 **Owner decision (2026-10-22, D142 amendment).** The scaling gate's latency
 criterion is these measured, size- and stratum-specific budgets at 300k

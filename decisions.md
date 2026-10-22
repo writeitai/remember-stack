@@ -6974,7 +6974,7 @@ like a significant improvement. Let's get it in."
 | Stratum (300k chunks) | Eligible rows | Path | p95 budget | Measured p50 / p95 | Completeness |
 | --- | --- | --- | --- | --- | --- |
 | `current`, unfiltered | 60,000 current chunk rows | loop | **≤ 300 ms** | 152 / 263 ms | 40/40 return k; 0 early stops |
-| `history`, unfiltered | 300,000 live edition rows | loop | **≤ 300 ms** | 112 / 267 ms | 40/40 return k; 0 early stops |
+| `history`, unfiltered | 180,000 history-eligible rows (of 300,000 indexed edition rows) | loop | **≤ 300 ms** | 112 / 267 ms | 40/40 return k; 0 early stops |
 | 0.1% of documents (6) | 60 | exact tier | **≤ 300 ms** | 78 / 90 ms | 0 early stops (7 return k; the rest have fewer matches) |
 | 1% of documents (60) | 600 | exact tier | **≤ 500 ms** | 235 / 351 ms | 0 early stops (18 return k; the rest have fewer matches) |
 | 10% of documents (600) | 6,000 | pushdown | **≤ 1,000 ms** | 600 / 859 ms | 0 early stops (37 return k) |
