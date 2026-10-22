@@ -35,6 +35,7 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from rememberstack.workers.forget import CorpusForgetRebuilder
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 from rememberstack.workers.forget import ForgetProjectionRebuilder
@@ -88,6 +89,7 @@ __all__ = (
     "ChunkHandler",
     "ConvertHandler",
     "CrossrefHandler",
+    "FactWindowReviewHandler",
     "E1Settings",
     "E1_CHUNK_VERSION",
     "E1_EMBED_VERSION",

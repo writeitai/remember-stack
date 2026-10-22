@@ -321,6 +321,13 @@ services:
       setup:
         condition: service_completed_successfully
 
+  worker-review-fact-windows:
+    <<: *app
+    command: ["worker", "--stage", "review_fact_windows"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   meter-receipts:
     <<: *app
     command: ["meter-receipts"]

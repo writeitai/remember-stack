@@ -226,9 +226,11 @@ Consequences a reader should check against the example:
   event, returning the lineage to served-version semantics for readers believing after that
   instant. It is the
   only way back, so reverting to "the newest version is current" is always an explicit act.
-- Periods never trigger reprocessing: they are not part of any extraction, embedding or
-  structure input (§5 keeps them out of every key). They do enqueue fact re-adjudication
-  (§8).
+- Periods never trigger document reprocessing: they are not part of any document
+  ingestion input — extraction, chunk/claim/fact embedding or structure (§5 keeps them out of
+  every key). They do queue a fact window review (§8.2), and a review that moves a window
+  shown in an entity profile refreshes that profile's embedding (the accepted owner decision
+  in §8.2).
 
 ### 2.4 Interaction with versioning modes, currency and the served version
 
@@ -924,16 +926,203 @@ excludes that edition. The gate closes this without touching fact windows:
   caller reproduces exactly the evidence set an operation saw. The raw `facts_current` view is
   unchanged and its manifest comment says it does not apply the gate.
 
-### 8.2 Adjudication input
+### 8.2 Adjudication input and window review
 
-A claim's occurrence **in-force interval set** — the union of the intervals of the versions it
-occurs in — is an additional **adjudication input** for E3, shown beside the claim's own
+A claim's occurrence **in-force interval set** — the union of the in-force intervals of the
+versions it occurs in — is an additional **adjudication input** for E3, shown beside the claim's own
 validity. D118's single fact window stays the only fact-time authority: adjudication may use
-the interval to propose or bound a window, exactly as it uses a claim's own dates. When a
-lineage's declarations change (a new start, a declared end, a correction, a version deleted),
-the engine enqueues ordinary D118 re-adjudication for facts supported by claims that occur in
-the affected versions; windows then change through the normal mutable-window path, so open PR
-#486's belief-time rule applies without special cases.
+the interval to propose or bound a window, exactly as it uses a claim's own dates.
+
+**What the adjudicator is shown.** For every supplied claim that occurs in at least one version
+of a periodised lineage, the attempt carries `source_in_force`: the union of those versions'
+in-force intervals, as UTC bounds with exclusive ends (`until` absent = still in force), taken
+from the current-belief projection `document_version_scope` and counting only occurrences in a
+non-deleted version's current reading. `source_in_force_also_undated` is added when the same
+claim also occurs in a lineage without declared periods. A claim from undated lineages only
+gets neither key, and the prompt's *IN-FORCE PERIODS* section is rendered only when some
+supplied claim carries `source_in_force`. An attempt in a corpus without declared periods is
+therefore byte-for-byte the attempt it was before D140: same inputs, same fingerprint, same
+prompt, no extra model call. The section tells the adjudicator when the periods are world
+dates (a rule, rate, obligation or definition the document establishes holds because the
+text is in force) and when they are not (an event the text merely reports keeps its own
+date); a later version stating a different value ends the earlier fact at that version's
+in-force start, never at publication time.
+
+**The first fact is adjudicated too.** Ordinary adjudication skips the model when an entity
+has no candidate fact (the D118 novelty gate records a new, undated fact). That shortcut is
+kept only for attempts with no periodised claim: an attempt whose claims carry
+`source_in_force` goes to adjudication even with no candidates, so its first fact gets a
+window decision grounded in the periods. Otherwise a single-edition rule ("the allowance is
+45 per day") would be recorded undated and, its basis already current, never reviewed.
+
+The deterministic adjudication engine (D121 `jev`) uses the same input in its existing
+`use_claim` window action and in every new fact it records, including the first: a claim
+with no dates of its own whose text was in force over exactly one interval is dated by that
+interval (midnight bounds at day precision; an open interval as `open`). Several intervals
+(text that left and came back) are left unchanged — that engine cannot choose among them.
+
+Example (a price list, or a statute): the 2015 and 2020 editions say "VAT on books is 15%",
+the 2024 edition says 10%. When the 10% claim arrives, the adjudicator sees the 15% claim
+with `source_in_force = [2015-01-01, 2024-01-01)` and the 10% claim with
+`[2024-01-01, open)`, and can record the 10% fact from 2024-01-01 while capping the 15% fact
+there — both grounded windows citing the claims, as any D118 window replacement.
+
+**Window review when periods move later.** Ordinary adjudication runs when a claim arrives.
+Periods can change afterwards without any new assertion: a declaration is corrected or
+retracted, a lineage leaves effective time (`clear`), a new version ends its predecessor's
+derived interval, or a version or lineage is deleted. The evidence did not change, so no
+application would ever reach the adjudicator again. A **window review** closes that gap:
+
+- **Period basis.** Each relation and observation stores `period_basis`, a fingerprint of its
+  evidence claims (both stances) that occur in periodised lineages, with their in-force
+  intervals (rendered in UTC) and `also_undated` flags, as they were when the fact's window was
+  last adjudicated. It is computed set-wise in the database, so a fact with many evidence
+  claims is never materialised in a worker. It is recorded by every review and in the
+  transaction that applies an ordinary adjudication. A fact with no periodised evidence has
+  `NULL`.
+- **Consistency: certify only one consistent read.** Every period-dependent input is read by
+  **one SQL statement**, so the whole read sees one committed state (READ COMMITTED gives
+  each statement its own snapshot). That covers the current bases, which bases are stale,
+  the shown claims' periods and, for ordinary application, a digest over the periods of all
+  coverable evidence. Two reads that "agree" across separate statements prove nothing: a
+  writer can commit between them, and an A → B → A sequence can repeat the same torn
+  combination. The rule has three parts:
+  1. **Read.** Preparation and final validation each read their period-dependent inputs with
+     that one statement.
+  2. **Certify.** A basis is stored only if it was produced by a validated one-statement read:
+     - a **review** stores the basis from its validated read, which is also the read that
+       produced the periods it showed;
+     - an **ordinary application**'s evidence changes during its writes, so it works in four
+       steps, set out in the next item.
+  3. **Order.** A writer that commits after the certifying read leaves that basis stale. The
+     fence below makes the writer's fan-out wait for the certifying transaction to commit, so
+     the fan-out sees the stale basis and reviews the fact.
+
+  Period writers take no lock. This is deliberate. In-force intervals change not only through
+  declarations, clears and deletions, which all pass through the scope projection's deferred
+  refresh, but also whenever extraction writes `chunk_claims` for a version, since a version's
+  representation becomes current before it is extracted. Freezing periods for the length of
+  a decision would need one of two things:
+  - an exclusive per-deployment lock in every extraction write of a periodised deployment,
+    which would serialise extraction deployment-wide; or
+  - a shared lock per lineage for every lineage a decision's evidence touches, which is
+    unbounded.
+
+  The rule above makes freezing unnecessary: a change is either visible to the certifying
+  read or leaves a stale basis whose review is ordered after the certification.
+- **Ordinary application in four steps.**
+  1. **Watch, before final validation.** One statement reads, from the prepared inputs (which
+     final validation must match), three things:
+     - the candidate facts that are already stale;
+     - one digest over the in-force periods of every claim the bases can cover: all evidence
+       of the candidate facts, both stances, however many, plus the shown claims;
+     - the shown claims' periods.
+
+     Only the digest, the stale ids (at most the candidate count) and the shown periods (at
+     most 100) reach the worker, so its memory does not grow with a fact's evidence.
+  2. **Validate.** The final snapshot must match the prepared fingerprint, and its shown
+     periods must equal the watch's. Otherwise the decision is discarded and prepared again.
+  3. **Verify.** After the writes, one statement reads the changed facts' bases together with
+     the digest over the same claims. An application only adds or removes evidence of shown
+     claims, so the set is unchanged. A different digest rolls the whole application back
+     for a fresh attempt.
+  4. **Store.** The verified bases are stored, except for facts that were already stale: the
+     change that made such a fact stale queued its review.
+- **The period fence.** Every certifier (ordinary apply and review apply) takes a
+  per-deployment advisory lock *shared*. It takes it after the entity adjudication lock and
+  before its final validation, and holds it through commit. Lock order: hard-forget fence,
+  identity epoch, entity lock, period fence, then row locks.
+
+  A lineage fan-out takes the same lock *exclusively* before its first page. It holds no
+  other lock while doing so, and it reads stored and current bases in one statement.
+  - **No deadlock:** the fence is the last advisory lock a certifier takes, and the fan-out
+    holds nothing else.
+  - **What it costs:** certifiers never wait for each other. A first fan-out page waits for
+    in-flight applies (milliseconds each) and holds back new ones only for one bounded page
+    query. Inference never runs under it.
+
+  Without the fence, a review could certify basis B, a writer could revert the periods to A,
+  that writer's fan-out could see the still-stored A and skip the fact, and only then would
+  the review commit B's window.
+- **Triggers.** A lineage *review request* is queued — only for a lineage that has ever
+  recorded an effective-time event, and never while a hard forget is honored (D74 scrubs the
+  touched facts itself) — in the transaction of the change: a period write that changed
+  anything, `clear`, an ingest that declares or corrects a period on an existing version (a D55
+  no-op ingest, which no processing follows), an operator version deletion, a lineage
+  deletion (public delete, operator delete, source-deletion finalisation), and late testimony
+  retired from a deleted version. A **new** version declared at ingest is reviewed when its
+  processing completes (the reconcile stage), not at ingest: until then its reused claims have
+  no occurrences in it, so the predecessor's facts would look closed and be reviewed twice. A
+  version whose processing never completes (no route, dead letter) is reviewed when it is
+  reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
+  is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
+  duplicate it.
+- **Fan-out.** The lineage job walks the live facts with evidence in any version of the
+  lineage (deleted versions included, since deleting one changes the intervals) in pages of a
+  bounded size (500, a starting value to tune), each page one bounded transaction; a full page
+  queues a continuation job carrying its cursor. It queues one review job per fact whose
+  current basis differs from the stored one, skipping a fact left with neither periodised nor
+  live evidence (its only source was deleted; the lifecycle cascade settled it). It makes no
+  model call.
+- **Review.** A fact review shows the adjudicator the fact, its current window and window
+  claims, and up to 40 evidence claims (window claims first, then claims from periodised
+  lineages, then supports, newest first — selected in the database) with their own dates and
+  in-force intervals, and asks one question: keep the window, or replace it with a complete
+  window grounded in supplied claims. Inputs are read under the entity's adjudication lock,
+  and the fact's basis and the shown claims' periods come from the one period statement. The
+  model is called with no lock held. The answer is applied only if a re-read under the entity
+  lock and the shared period fence (with the fact row locked) yields the same input
+  fingerprint, otherwise the job retries; the basis stored is the one that validated read
+  produced. A replacement below the adjudication confidence floor
+  is not applied. Every review — kept or replaced — appends an
+  `{relation,observation}_adjudications` row (`outcome` `update` or `noop`, method
+  `small_model`, version `fact-window-review-…`) with the before/after window and both bases,
+  and stores the new basis. The review uses the generative adjudication model for both
+  adjudication engines.
+- **Only the window changes.** A fact's label and vector are computed from its statement
+  (the vector attests only the label text), never from its window, so a review never clears,
+  relabels or re-embeds the fact. Entity profiles render fact windows: a profile lists its
+  entity's best-supported facts with their windows, and its vector attests that exact text.
+  A replacement therefore queues a repair of the endpoint entities' profiles, but it does not
+  clear their vectors. The production profile refresher re-renders each profile and calls the
+  embedding model only when the rendered text differs from the text its vector attests, for
+  example when the reviewed fact is shown in the profile and its window moved. A profile that
+  does not show the fact costs no call.
+  This profile re-embedding is an accepted owner decision (2026-10-22): it refreshes a
+  projection whose text genuinely changed, re-processes no document text, and therefore sits
+  outside the incremental-ingestion requirement (CLAUDE.md Rule 4). A date-free embedded
+  profile was considered and rejected because it saves only that call and has no measured
+  matching benefit. If an evaluation ever shows distinct same-name events (two tournaments in
+  one month, say) merged into one entity, the remedy is an identity time on such entities
+  with a date-compatibility check in entity resolution, not dates in the profile vector
+  (backlog issue #509). The repair job is keyed by the review's adjudication
+  receipt, so a correction cycle that repeats an earlier input (A → B → A → B) still repairs
+  every time.
+- **Paid answers are reused.** Before calling the model, a review claims its fact and input
+  fingerprint in `fact_window_review_attempts`, recording the job that owns the claim. Retries
+  of the same job keep the same owner.
+  - If inference fails, the review releases its own claim, so the job's normal retry calls
+    the model again.
+  - A completed answer is checked before it is stored: it must cite only claims that were
+    supplied. An answer that cites anything else is never stored. The claim is released and
+    the retry asks again.
+  - A stored answer is reused by a retry after a failed apply, and by a duplicate job for the
+    same moved basis.
+  - A job that finds another job's live claim without an answer does not pay again and does
+    not spend its retries. It reschedules itself as a new job that becomes due when that claim
+    goes stale. A claim older than 15 minutes (a starting value) may be taken over.
+
+  The row is deleted when its answer is applied. Hard forget deletes the rows of the facts it
+  touches and clears their `period_basis`.
+- **Cost.** A fact whose basis did not move is never reviewed, and a review of a fact whose
+  stored basis already matches returns without a model call, so duplicate triggers are free.
+  An undated deployment never queues a request and never computes a basis beyond one indexed
+  existence probe per applied adjudication; its only other new work is one shared advisory
+  lock statement per applied adjudication.
+
+Belief time is the current belief: a review answers "given what is now believed about the
+periods, is this window right?", and windows change through the normal mutable-window path,
+so open PR #486's belief-time rule applies without special cases.
 
 ## 9. Deletion and forgetting
 

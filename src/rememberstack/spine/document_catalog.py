@@ -51,6 +51,7 @@ from rememberstack.spine.document_metadata import refresh_family_on
 from rememberstack.spine.effective_time import declare_at_ingest_on
 from rememberstack.spine.effective_time import resolve_version_key_on
 from rememberstack.spine.managed_metering import record_managed_measurement_on
+from rememberstack.spine.period_adjudication import request_window_review_on
 from rememberstack.spine.references import activate_extracted_on
 from rememberstack.spine.references import bind_pending_references_on
 from rememberstack.spine.references import enqueue_pending_supplied_on
@@ -253,7 +254,7 @@ class DocumentCatalog:
                 # D140: a period is neither snapshot metadata nor extraction
                 # input, so declaring it on a D55 no-op version rewrites
                 # nothing derived text depends on
-                declare_at_ingest_on(
+                declared = declare_at_ingest_on(
                     connection=connection,
                     deployment_id=record.deployment_id,
                     doc_id=doc_id,
@@ -262,6 +263,18 @@ class DocumentCatalog:
                     effective_from=record.effective_from,
                     effective_until=record.effective_until,
                 )
+                if declared and not created:
+                    # D140 §8.2: a period declared or corrected on an existing
+                    # (D55 no-op) version changes facts' periods with no
+                    # processing to follow, so review now. A new version is
+                    # reviewed when its processing completes (reconcile): its
+                    # claims' occurrences do not exist yet.
+                    request_window_review_on(
+                        connection=connection,
+                        deployment_id=record.deployment_id,
+                        doc_id=doc_id,
+                        reason="ingest_period_declared",
+                    )
             parked = False
             if metering is None:
                 convert = enqueue_on(

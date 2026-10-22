@@ -140,6 +140,7 @@ EXPECTED_TABLES: Final = (
     "extension_packs",
     "forget_manifests",
     "fact_applications",
+    "fact_window_review_attempts",
     "normalization_outputs",
     "golden_claim_labels",
     "golden_pairs",
@@ -370,10 +371,10 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 113,
-    "f": 146,
-    "n": 627,
-    "p": 82,
+    "c": 115,
+    "f": 147,
+    "n": 633,
+    "p": 83,
     "t": 7,
     "u": 41,
 }
@@ -434,6 +435,7 @@ DECISION_OBJECTS: Final = {
         "ux_docversions_version_key",
         "ux_sections_key",
         "ix_chunks_reuse_identity",
+        "fact_window_review_attempts",
     ),
 }
 

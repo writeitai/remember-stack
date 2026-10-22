@@ -42,6 +42,10 @@ from rememberstack.spine.fact_applications import canonical_json
 from rememberstack.spine.fact_applications import FactApplicationCatalog
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
+from rememberstack.spine.period_adjudication import share_period_fence_on
+from rememberstack.spine.period_adjudication import store_period_bases_on
+from rememberstack.spine.period_adjudication import verified_period_bases_on
+from rememberstack.spine.period_adjudication import watch_periods_on
 
 _logger = logging.getLogger(__name__)
 
@@ -196,6 +200,43 @@ INPUT JSON:
 """
 
 
+_IN_FORCE_GUIDANCE = """
+IN-FORCE PERIODS
+Some sources are versioned documents whose versions are in force over declared
+periods: a policy, price list, standard or statute amended over time.
+source_in_force lists, for such a claim, the periods during which a version
+containing the claim's text was in force, as UTC bounds with EXCLUSIVE ends; a
+missing until means still in force. source_in_force_also_undated=true means the
+same text also appears in a source without declared periods. When the
+proposition holds BECAUSE the text is in force (a rule, rate, obligation,
+definition or entitlement the document establishes), these periods are world
+dates for it like source_world_*: you may set or bound a window from them,
+citing that claim. A later version stating a different value ends the earlier
+fact at that version's in-force start, never at publication time. Periods do not
+date events the text merely reports: a historical event described in the text
+keeps its own date. An empty list means no version with the text was ever in
+force.
+"""
+
+
+def render_fact_prompt(*, presentation: Mapping[str, Any]) -> str:
+    """The adjudication prompt for one attempt (D140 §8.2 guidance only when used).
+
+    The in-force section is added only when some supplied claim carries
+    ``source_in_force``, so an attempt without declared periods renders
+    byte-for-byte as before.
+    """
+    periodised = any(
+        "source_in_force" in claim for claim in presentation.get("claims", ())
+    )
+    prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+    if not periodised:
+        return prompt
+    marker = "empty windows are invalid.\n"
+    head, tail = prompt.split(marker, 1)
+    return f"{head}{marker}{_IN_FORCE_GUIDANCE}{tail}"
+
+
 class FactAdjudicationSettings(BaseSettings):
     """Model, engine, and conservative confidence floor for the fact adjudicator."""
 
@@ -300,7 +341,7 @@ class FactAdjudicator:
         call_key: str,
     ) -> FactApplicationDecision:
         """Run generative LLM prompt adjudication (baseline engine)."""
-        base_prompt = _FACT_PROMPT.format(inputs=canonical_json(presentation))
+        base_prompt = render_fact_prompt(presentation=presentation)
         base_receipt_key = f"{call_key}:{prepared.application_id}:{prepared.attempt_id}"
         # In-delivery translator budget: exactly one retry against this
         # same prepared attempt. The note is a local variable, never
@@ -364,7 +405,19 @@ class FactAdjudicator:
     ) -> FactApplicationDecision:
         """Adjudicate incoming assertion against candidate facts using TypeSafe System One Jev."""
         if not presentation.get("facts"):
-            return _sole_new_fact(application_id=UUID(str(prepared.application_id)))
+            if not _presented_periods(presentation):
+                return _sole_new_fact(application_id=UUID(str(prepared.application_id)))
+            # D140 §8.2: a first fact from periodised text is dated by the
+            # incoming claim's single in-force period, like a NEW match below
+            return translate_prompt_decision(
+                response=_jev_new_fact(
+                    presentation=presentation,
+                    mapping=mapping,
+                    confidence=1.0,
+                    rationale="Jev System One: no candidate facts; new proposition.",
+                ),
+                mapping=mapping,
+            )
 
         criteria_match: dict[str, str | None] = {}
         for fact in presentation.get("facts", []):
@@ -521,16 +574,9 @@ class FactAdjudicator:
                 ),
             )
         elif match_choice == "NEW":
-            prompt_decision = PromptFactDecision(
-                target="N1",
-                new_facts=(
-                    PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),
-                ),
-                stance="supports",
-                window=None,
-                updates=(),
-                support_moves=(),
-                contradict_with=(),
+            prompt_decision = _jev_new_fact(
+                presentation=presentation,
+                mapping=mapping,
                 confidence=match_confidence,
                 rationale=f"Jev System One: new proposition (confidence {match_confidence:.2f})",
             )
@@ -566,7 +612,21 @@ class FactAdjudicator:
                         if crow.get("handle") == incoming_claim_handle:
                             claim_row = crow
                             break
-                    if claim_row and claim_row.get("source_world_precision"):
+                    period_window = _single_in_force_window(claim_row)
+                    if (
+                        period_window is not None
+                        and claim_row is not None
+                        and claim_row.get("source_world_precision")
+                        in (None, ClaimValidPrecision.UNKNOWN.value)
+                    ):
+                        # D140 §8.2: an undated claim whose text was in force
+                        # over one declared period is dated by that period,
+                        # exactly as its own dates would date it.
+                        grounded_window = PromptGroundedWindow(
+                            window=period_window,
+                            supporting_claims=(incoming_claim_handle,),
+                        )
+                    elif claim_row and claim_row.get("source_world_precision"):
                         valid_from = (
                             datetime.fromisoformat(claim_row["source_world_from"])
                             if claim_row.get("source_world_from")
@@ -677,7 +737,7 @@ class FactAdjudicator:
             # call, under the same attempt, fingerprint and re-read checks.
             decision = (
                 None
-                if snapshot["facts"]
+                if snapshot["facts"] or _periodised(snapshot["claims"])
                 else _sole_new_fact(application_id=UUID(str(app["application_id"])))
             )
             connection.execute(
@@ -761,6 +821,26 @@ class FactAdjudicator:
                 return None
             if app["decision"] is None:
                 return None
+            # D140 §8.2: from the final input validation through commit, no
+            # lineage fan-out can read stored period bases (they would be stale)
+            share_period_fence_on(connection=connection, deployment_id=deployment_id)
+            # What the bases recorded below may certify, read before the final
+            # validation from the prepared inputs that validation must match.
+            prepared_inputs = connection.execute(
+                text("SELECT prepared FROM fact_applications WHERE application_id=:id"),
+                {"id": application_id},
+            ).scalar_one()
+            watch = watch_periods_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                kind=prepared_inputs["kind"],
+                fact_ids=(
+                    UUID(str(fact["fact_id"])) for fact in prepared_inputs["facts"]
+                ),
+                claim_ids=(
+                    UUID(str(claim["claim_id"])) for claim in prepared_inputs["claims"]
+                ),
+            )
             snapshot = application_snapshot(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -781,7 +861,11 @@ class FactAdjudicator:
                 engine=self._settings.engine,
                 question_identity=active_question_identity(self._settings.engine),
             )
-            if current["input_hash"] != expected_hash:
+            if current["input_hash"] != expected_hash or (
+                watch is not None and watch.shown != _shown_periods(snapshot["claims"])
+            ):
+                # The inputs moved, or the validated periods are not the ones
+                # the watch read (a writer committed between the two reads).
                 connection.execute(
                     text(
                         "UPDATE fact_applications SET attempt_id=NULL,input_hash=NULL,prepared=NULL,decision=NULL WHERE application_id=:id"
@@ -803,12 +887,40 @@ class FactAdjudicator:
                 )
             try:
                 with connection.begin_nested():
-                    return apply_fact_decision(
+                    result = apply_fact_decision(
                         connection=connection,
                         snapshot=snapshot,
                         decision=decision,
-                        method="small_model" if snapshot["facts"] else "novelty_gate",
+                        method="small_model"
+                        if snapshot["facts"] or _periodised(snapshot["claims"])
+                        else "novelty_gate",
                     )
+                    # D140 §8.2: these windows were just adjudicated against the
+                    # evidence's current in-force periods (none for undated facts).
+                    # A candidate already stale keeps its stale basis for review.
+                    if watch is not None:
+                        changed = [UUID(v) for v in result["changed_fact_ids"]]
+                        bases = verified_period_bases_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            watch=watch,
+                            changed_fact_ids=changed,
+                        )
+                        if bases is None:
+                            raise ApplicationInputChanged(
+                                "in-force periods changed before the decision committed"
+                            )
+                        store_period_bases_on(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            kind=snapshot["kind"],
+                            bases={
+                                fact_id: basis
+                                for fact_id, basis in bases.items()
+                                if fact_id not in watch.stale
+                            },
+                        )
+                    return result
             except ValueError as error:
                 # Roll back all attempted effects, but commit removal of the invalid
                 # saved answer so the existing work retry can obtain a fresh one.
@@ -834,3 +946,107 @@ def _sole_new_fact(*, application_id: UUID) -> FactApplicationDecision:
         confidence=1.0,
         rationale="No candidate facts on this entity; the assertion is a new identity.",
     )
+
+
+def _single_in_force_window(claim_row: Mapping[str, Any] | None) -> FactWindow | None:
+    """The fact window one contiguous in-force period gives a claim, else None.
+
+    In-force bounds are already canonical half-open instants, so they become the
+    window directly (an end is never advanced). Midnight UTC bounds are day
+    precision; an open end is ``open`` (the version is still in force).
+    """
+    if claim_row is None:
+        return None
+    periods = claim_row.get("source_in_force")
+    if not isinstance(periods, list) or len(periods) != 1:
+        return None
+    start = datetime.fromisoformat(periods[0]["from"])
+    until_raw = periods[0].get("until")
+    end = datetime.fromisoformat(until_raw) if until_raw else None
+    if end is None:
+        return FactWindow(
+            valid_from=start, valid_until=None, valid_precision=ClaimValidPrecision.OPEN
+        )
+    midnight = all(
+        (value.hour, value.minute, value.second, value.microsecond) == (0, 0, 0, 0)
+        for value in (start, end)
+    )
+    return FactWindow(
+        valid_from=start,
+        valid_until=end,
+        valid_precision=ClaimValidPrecision.DAY
+        if midnight
+        else ClaimValidPrecision.INSTANT,
+    )
+
+
+def _periodised(claims: Any) -> bool:
+    """Whether any snapshot claim occurs in a lineage with declared periods."""
+    return any("in_force" in claim for claim in claims)
+
+
+def _presented_periods(presentation: Mapping[str, Any]) -> bool:
+    return any("source_in_force" in claim for claim in presentation.get("claims", ()))
+
+
+def _jev_new_fact(
+    *, presentation: Mapping[str, Any], mapping: Any, confidence: float, rationale: str
+) -> PromptFactDecision:
+    """A new fact for the incoming assertion, dated by one in-force period if any.
+
+    The ``jev`` engine's deterministic dating rule (D140 §8.2): an incoming
+    claim with no dates of its own whose text was in force over exactly one
+    interval gets that interval as its window, citing the claim.
+    """
+    window: PromptGroundedWindow | None = None
+    incoming = next(
+        (
+            item
+            for item in presentation.get("assertions", ())
+            if item.get("handle") == presentation.get("incoming_assertion")
+        ),
+        None,
+    )
+    handle = None if incoming is None else incoming.get("claim")
+    if handle is not None and handle in mapping.claims:
+        claim_row = next(
+            (
+                row
+                for row in presentation.get("claims", ())
+                if row.get("handle") == handle
+            ),
+            None,
+        )
+        period_window = _single_in_force_window(claim_row)
+        if (
+            period_window is not None
+            and claim_row is not None
+            and claim_row.get("source_world_precision")
+            in (None, ClaimValidPrecision.UNKNOWN.value)
+        ):
+            window = PromptGroundedWindow(
+                window=period_window, supporting_claims=(handle,)
+            )
+    return PromptFactDecision(
+        target="N1",
+        new_facts=(PromptNewFact(handle="N1", assertion=mapping.incoming_assertion),),
+        stance="supports",
+        window=window,
+        updates=(),
+        support_moves=(),
+        contradict_with=(),
+        confidence=confidence,
+        rationale=rationale,
+    )
+
+
+def _shown_periods(claims: Any) -> dict[str, dict[str, Any]]:
+    """The in-force periods validated inputs showed, keyed like a period watch."""
+    return {
+        str(claim["claim_id"]): {
+            "in_force": claim["in_force"],
+            "also_undated": claim["in_force_also_undated"],
+        }
+        for claim in claims
+        if "in_force" in claim
+    }

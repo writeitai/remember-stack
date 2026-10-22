@@ -84,6 +84,39 @@ class LifecycleCatalog:
         with self._engine.begin() as connection:
             yield LifecycleCatalog.on_connection(connection=connection)
 
+    def request_window_review(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        reason: str,
+        request_id: UUID | None = None,
+    ) -> bool:
+        """Queue a D140 §8.2 fact window review of a lineage that had periods.
+
+        Returns whether one was queued; a lineage that never declared an
+        effective period queues nothing.
+        """
+        from rememberstack.spine.period_adjudication import request_window_review_on
+
+        with self._engine.begin() as connection:
+            return request_window_review_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason=reason,
+                request_id=request_id,
+            )
+
+    def lineage_ever_periodised(self, *, deployment_id: UUID, doc_id: UUID) -> bool:
+        """Whether the lineage ever recorded an effective-time event (D140)."""
+        from rememberstack.spine.period_adjudication import lineage_ever_periodised_on
+
+        with self._engine.connect() as connection:
+            return lineage_ever_periodised_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+
     def reconciliation_context(self, *, version_id: UUID) -> dict[str, object]:
         """What reconciling one completed version needs to know."""
         with self._engine.connect() as connection:
@@ -576,6 +609,14 @@ class LifecycleCatalog:
                 _CLEAR_DOCUMENT_BINDINGS,
                 {"deployment_id": row["deployment_id"], "doc_id": row["doc_id"]},
             )
+            # D140 §8.2: the lineage continues with different in-force
+            # intervals; queued in the tombstone's transaction (crash-safe)
+            _request_review_on(
+                connection=connection,
+                deployment_id=row["deployment_id"],
+                doc_id=row["doc_id"],
+                reason="version_deleted",
+            )
         return dict(row)
 
     def delete_lineage(self, *, doc_id: UUID) -> datetime:
@@ -593,6 +634,18 @@ class LifecycleCatalog:
             connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
             connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
             connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
+            deployment_id = connection.execute(
+                text("SELECT deployment_id FROM documents WHERE doc_id = :doc_id"),
+                {"doc_id": doc_id},
+            ).scalar_one()
+            # D140 §8.2: facts that also rest on other sources lose this
+            # lineage's periods; queued in the tombstone's transaction
+            _request_review_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="lineage_deleted",
+            )
             return connection.execute(
                 _SELECT_LINEAGE_DELETED_AT, {"doc_id": doc_id}
             ).scalar_one()
@@ -1556,3 +1609,14 @@ _CLAIM_FINALIZATION = text(
     RETURNING cycle_id
     """
 )
+
+
+def _request_review_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID, reason: str
+) -> None:
+    """Queue a D140 §8.2 window review in the caller's transaction (if periodised)."""
+    from rememberstack.spine.period_adjudication import request_window_review_on
+
+    request_window_review_on(
+        connection=connection, deployment_id=deployment_id, doc_id=doc_id, reason=reason
+    )

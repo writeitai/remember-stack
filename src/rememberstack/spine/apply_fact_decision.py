@@ -437,10 +437,49 @@ def _enqueue_projection_repair(
     changed: tuple[UUID, ...],
 ) -> None:
     """Invalidate profiles and durably reuse label work for this application."""
+    from rememberstack.model import ProcessingTarget
+
+    enqueue_fact_projection_repair(
+        connection=connection,
+        deployment_id=deployment_id,
+        kind=kind,
+        changed=changed,
+        target_kind=ProcessingTarget.FACT_APPLICATION,
+        target_id=application_id,
+        content_hash=application_id.hex,
+        payload={"application_id": str(application_id)},
+    )
+
+
+def enqueue_fact_projection_repair(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    kind: str,
+    changed: tuple[UUID, ...],
+    target_kind: Any,
+    target_id: UUID,
+    content_hash: str,
+    payload: dict[str, object],
+    invalidate_profiles: bool = True,
+) -> None:
+    """Invalidate the changed facts' entity profiles and queue their relabeling.
+
+    ``invalidate_profiles=False`` keeps the endpoint entities' stored profiles
+    and vectors and only queues the repair: the profile refresher re-renders the
+    deterministic profile input and re-embeds an entity only when that input's
+    hash actually changed (a D140 window review uses this, so a window that is
+    not part of any profile's text costs no embedding call).
+
+    ``target_kind`` is ``fact_application`` for an ordinary application (the
+    label stage recovers the changed facts from its receipt) or the fact's own
+    kind for a single-fact change such as a D140 window review, whose payload
+    names the fact. A work row is unique per target, so ``target_id`` must be
+    new for every change that needs relabeling.
+    """
     from rememberstack.model import EnqueueWork
     from rememberstack.model import PipelineStage
     from rememberstack.model import ProcessingLane
-    from rememberstack.model import ProcessingTarget
     from rememberstack.spine.work_ledger import enqueue_on
     from rememberstack.workers.p1 import label_relation_component_version
     from rememberstack.workers.p1 import P1Settings
@@ -464,7 +503,7 @@ def _enqueue_projection_repair(
         .scalars()
         .all()
     )
-    for entity_id in entity_ids:
+    for entity_id in entity_ids if invalidate_profiles else ():
         connection.execute(
             text("""UPDATE entities SET profile_summary=NULL,embedding=NULL,
           embedding_model=NULL,embedding_input_policy_version=NULL,embedding_text_hash=NULL,
@@ -475,14 +514,14 @@ def _enqueue_projection_repair(
         connection=connection,
         work=EnqueueWork(
             deployment_id=deployment_id,
-            target_kind=ProcessingTarget.FACT_APPLICATION,
-            target_id=application_id,
+            target_kind=target_kind,
+            target_id=target_id,
             stage=PipelineStage.LABEL_RELATION,
             component_version=label_relation_component_version(
                 embedding_model=P1Settings().embedding_model
             ),
-            content_hash=application_id.hex,
+            content_hash=content_hash,
             lane=ProcessingLane.STEADY,
-            payload={"application_id": str(application_id)},
+            payload=payload,
         ),
     )

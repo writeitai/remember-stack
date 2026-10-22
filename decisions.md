@@ -6798,7 +6798,22 @@ to it.
    selects (or in a lineage without declared periods). The gate is an eligibility
    predicate applied before every relevance bound (D87). D118 remains the only fact-window
    authority; declaration changes also enqueue ordinary re-adjudication, with the
-   in-force intervals as an adjudication input.
+   in-force intervals as an adjudication input. *(Refined 2026-10-21 by the WP-ET.7
+   implementation: there was no mechanism to re-adjudicate evidence already applied, so
+   "re-adjudication" is defined as a **window review** — a per-fact keep-or-replace
+   decision grounded in supplied claims, queued through a per-fact `period_basis`
+   fingerprint when a lineage's periods change or one of its versions completes or is
+   deleted, serialised with adjudication by a per-deployment period fence; a first fact
+   from periodised evidence is adjudicated rather than recorded undated, and a review
+   changes only the window, never the fact's label or vector. Every period-dependent
+   input is read by one SQL statement, and a basis is stored only from such a validated
+   read, so a concurrent period writer leaves a stale basis that its fan-out reviews. An entity
+   profile is re-embedded only when its rendered text changed. **Owner decision
+   (2026-10-22):** that re-embedding is accepted as is. Refreshing a profile whose displayed
+   fact windows changed is a cheap projection refresh of genuinely changed text; it
+   re-processes no document text, so it is outside the incremental-ingestion requirement
+   (CLAUDE.md Rule 4). A date-free embedded profile was considered and rejected: it saves
+   only that embedding call and has no measured matching benefit. See the design §8.2.)*
 4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
    key; sections also store deterministic own-block and subtree hashes.
    `section_history` lists a key across versions, including absences.

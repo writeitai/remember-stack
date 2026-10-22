@@ -43,6 +43,7 @@ from rememberstack.model import DocumentVersionNotFoundError
 from rememberstack.model import EffectivePeriodConflictError
 from rememberstack.model import EffectiveTimeNotSupportedError
 from rememberstack.model import VersionKeyConflictError
+from rememberstack.spine.period_adjudication import request_window_review_on
 
 
 class EffectiveTimeCatalog:
@@ -142,6 +143,15 @@ class EffectiveTimeCatalog:
                     doc_id=doc_id,
                     instant=instant,
                 )
+            if replacements or retracted:
+                # D140 §8.2: facts adjudicated against the old periods are
+                # reviewed once this commits and the projection is rewritten.
+                request_window_review_on(
+                    connection=connection,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="periods_set",
+                )
             return EffectivePeriodsSet(
                 doc_id=doc_id,
                 version_id=version_id,
@@ -194,6 +204,12 @@ class EffectiveTimeCatalog:
                     "event": "cleared",
                 },
             )
+            request_window_review_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="effective_time_cleared",
+            )
             return EffectiveTimeCleared(
                 doc_id=doc_id, retracted=retracted, cleared_at=instant
             )
@@ -242,8 +258,10 @@ def declare_at_ingest_on(
     versioning_mode: str,
     effective_from: datetime,
     effective_until: datetime | None,
-) -> None:
+) -> bool:
     """Declare one period for the ingested version (new or D55 no-op).
+
+    Returns whether a declaration was written (False for an identical one).
 
     Runs with the lineage row locked, in the ingest's transaction. A
     declaration identical to a live one of the same version is a no-op; one
@@ -266,7 +284,7 @@ def declare_at_ingest_on(
             effective_from=effective_from, version_id=holder["version_id"]
         )
     if holder is not None and holder["effective_until"] == effective_until:
-        return
+        return False
     instant = _instant(connection=connection, deployment_id=deployment_id)
     period_id = uuid4()
     if holder is not None:
@@ -297,6 +315,7 @@ def declare_at_ingest_on(
         doc_id=doc_id,
         instant=instant,
     )
+    return True
 
 
 def _lock_version(

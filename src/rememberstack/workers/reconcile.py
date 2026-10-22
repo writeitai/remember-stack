@@ -233,6 +233,15 @@ class ReconcileHandler:
             )
         return HandlerOutcome(
             follow_up=(
+                *_window_review(
+                    catalog=self._catalog,
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="version_completed",
+                    request_id=uuid5(
+                        NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
+                    ),
+                ),
                 EnqueueWork(
                     deployment_id=work.deployment_id,
                     target_kind=work.target_kind,
@@ -333,7 +342,19 @@ class ReconcileHandler:
                 "stale cache remains empty",
                 reconciliation_id,
             )
-        return HandlerOutcome()
+        # D140 §8.2: late testimony retired from a deleted version changes
+        # the lineage's evidence; review its facts (only if it had periods)
+        return HandlerOutcome(
+            follow_up=_window_review(
+                catalog=self._catalog,
+                deployment_id=deployment_id,
+                doc_id=doc_id,
+                reason="deleted_testimony_retired",
+                request_id=uuid5(
+                    NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
+                ),
+            )
+        )
 
     def _flag_transcription_only(
         self,
@@ -460,6 +481,17 @@ class CycleFinalizer:
                     catalog.rebuild_live_document_bindings(
                         deployment_id=deployment_id, doc_id=doc_id
                     )
+                # D140 §8.2: queued in the cascade's transaction (crash-safe)
+                catalog.request_window_review(
+                    deployment_id=deployment_id,
+                    doc_id=doc_id,
+                    reason="source_deleted",
+                    # one request per deletion episode, however many passes
+                    request_id=uuid5(
+                        NAMESPACE_URL,
+                        f"fact-window-review:source-deleted:{doc_id}:{episode_at}",
+                    ),
+                )
                 cascade_lineage_removal(
                     catalog=catalog,
                     deployment_id=deployment_id,
@@ -716,6 +748,8 @@ class DocumentDeleter:
         if already_deleted and not changed:
             # Nothing was left to finish: the document was already gone.
             raise DocumentNotFoundError(str(doc_id))
+        # D140 §8.2: catalog.delete_lineage queued the window review in this
+        # transaction (only for a lineage that ever had periods)
         return delta, deleted_at
 
 
@@ -885,3 +919,26 @@ def _payload_uuid(*, work: ClaimedWork, field: str) -> UUID:
             f"stage {work.stage} work {work.processing_id} carries no {field!r} payload"
         )
     return UUID(value)
+
+
+def _window_review(
+    *,
+    catalog: LifecycleCatalog,
+    deployment_id: UUID,
+    doc_id: UUID,
+    reason: str,
+    request_id: UUID,
+) -> tuple[EnqueueWork, ...]:
+    """A D140 §8.2 lineage review job, only for a lineage that had periods."""
+    from rememberstack.spine.period_adjudication import review_request
+
+    if not catalog.lineage_ever_periodised(deployment_id=deployment_id, doc_id=doc_id):
+        return ()
+    return (
+        review_request(
+            deployment_id=deployment_id,
+            doc_id=doc_id,
+            reason=reason,
+            request_id=request_id,
+        ),
+    )

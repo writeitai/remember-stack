@@ -253,6 +253,8 @@ def test_an_empty_store_downgrades_and_upgrades_again(
         assert graph_catalog_problems(connection=connection) == ()
     command.upgrade(config=config, revision=_HEAD)
     assert _revision(engine) == _HEAD
+    # the binding contract is the head's; later revisions sit on top of D140
+    command.upgrade(config=config, revision="head")
     with engine.begin() as connection:
         connection.execute(text("TRUNCATE TABLE deployments CASCADE"))
     with engine.connect() as connection:
