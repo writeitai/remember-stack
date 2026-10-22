@@ -37,6 +37,8 @@ from rememberstack.surfaces.query_sandbox.nomination import BODY_TYPE_OIDS
 from rememberstack.surfaces.query_sandbox.nomination import BodyConfirmation
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
+from rememberstack.surfaces.query_sandbox.nomination import budget_rejection
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
 from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.nomination import confirm
@@ -365,6 +367,8 @@ def _resolve_one(
                 code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
             ) from error
         except Exception as error:  # the projection is a separate process
+            if budget_exhausted(error):
+                raise budget_rejection(error) from error
             raise SandboxRejection(
                 code=QueryErrorCode.P1_UNAVAILABLE,
                 message="the projection could not be searched",
@@ -386,13 +390,9 @@ def _resolve_one(
                 filters=filters,
                 generations=(policy_generation, embedder_generation),
             )
-        except psycopg.errors.QueryCanceled as error:
-            # the request's one budget ran out (D142 §8.6, review r2 P1-2/P1-3)
-            raise SandboxRejection(
-                code=QueryErrorCode.STATEMENT_TIMEOUT,
-                message="the request's statement budget ran out during confirmation",
-            ) from error
         except psycopg.Error as error:
+            if budget_exhausted(error):  # D142 §8.6, review r3 P2-1
+                raise budget_rejection(error) from error
             raise SandboxRejection(
                 code=QueryErrorCode.CONFIRMATION_FAILED,
                 message="nominated rows could not be confirmed",
@@ -571,6 +571,8 @@ def _chunk_texts(
             embedder_generation=embedder_generation,
         )
     except Exception as error:  # the projection is a separate process
+        if budget_exhausted(error):
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.P1_UNAVAILABLE, message="chunk bodies could not be read"
         ) from error
@@ -936,6 +938,8 @@ def _resolve_bodies(
     except SandboxRejection:
         raise
     except psycopg.Error as error:
+        if budget_exhausted(error):
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="chunk coordinates could not be confirmed",

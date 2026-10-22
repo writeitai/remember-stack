@@ -740,7 +740,8 @@ class QuerySandboxExecutor:
                 principal,
                 query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
-        except psycopg.errors.QueryCanceled:
+        except (psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout):
+            # 57014 and 25P04 alike: the request budget ran out (r3 P2-1)
             return self._failure(
                 QueryErrorCode.STATEMENT_TIMEOUT,
                 "the statement exceeded its timeout",

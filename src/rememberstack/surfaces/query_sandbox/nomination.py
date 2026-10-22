@@ -27,6 +27,7 @@ from typing import Final
 from uuid import UUID
 
 import psycopg
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.ports.p1_index import P1Nomination
@@ -860,3 +861,38 @@ def clamp_statement_timeout(
         "SELECT set_config('statement_timeout', %s, true)",
         (str(min(max(1, remaining_ms), 2**31 - 1)),),
     )
+
+
+BUDGET_SQLSTATES: Final = frozenset({"57014", "25P04"})
+"""query_canceled (statement_timeout) and transaction_timeout (D142 §8.6)."""
+
+
+def budget_exhausted(error: BaseException) -> bool:
+    """Whether ``error`` is the request budget running out, however wrapped.
+
+    Walks the exception chain, unwrapping SQLAlchemy's ``DBAPIError.orig``,
+    for a PostgreSQL 57014/25P04 or a bounded-admission timeout, so the same
+    exhausted budget is reported the same way wherever it happens (review r3
+    P2-1).
+    """
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if getattr(current, "sqlstate", None) in BUDGET_SQLSTATES:
+            return True
+        if isinstance(current, SQLAlchemyTimeoutError):  # bounded admission
+            return True
+        orig = getattr(current, "orig", None)
+        current = orig if isinstance(orig, BaseException) else current.__cause__
+    return False
+
+
+def budget_rejection(error: BaseException) -> SandboxRejection:
+    """The sandbox's ordinary statement-timeout failure for an exhausted budget."""
+    rejection = SandboxRejection(
+        code=QueryErrorCode.STATEMENT_TIMEOUT,
+        message="the request's statement budget ran out",
+    )
+    rejection.__cause__ = error
+    return rejection

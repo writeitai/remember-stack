@@ -111,7 +111,10 @@ def score_epsilon(terms: int) -> float:
     - ``C ≤ C'/(1−γ) = C'(1−x)/(1−2x) ≤ C'(1+ε)`` because
       ``(1−x) ≤ (1−2x)(1+2x) = 1−4x²`` exactly when ``x ≤ 1/4``.
 
-    So the proof needs ``x ≤ 1/4``; larger queries are refused. A fixed slack
+    So the proof needs ``x ≤ 1/4``; a larger query raises ``ValueError``,
+    which :func:`nominate_and_confirm` checks before it opens any cursor
+    (about four million terms; capped public requests never reach it). A
+    fixed slack
     cannot hold for every query: 40,000 terms in a single long document reach
     a canonical/index ratio of 1.12533 against a fixed-``1e-4`` margin of
     1.12523 (review r1).
@@ -283,6 +286,10 @@ def nominate_and_confirm(
     }
     if k <= 0:
         return [], P1SearchAccount(termination=P1Termination.K_FILLED, limits=limits)
+    if statement.channel == "bm25":
+        # Validate the margin's domain before any cursor opens (review r3
+        # nit): a query beyond it raises ValueError here, not mid-search.
+        bm25_stop_margin(statement.query_terms)
     if statement.channel == "semantic":
         max_scan = max(P1_HNSW_MIN_SCAN_TUPLES, 4 * limit)
         connection.exec_driver_sql("SET LOCAL hnsw.iterative_scan = 'strict_order'")

@@ -589,10 +589,18 @@ likely, not certain. Therefore, for the nomination cursor only:
 
 1. immediately before `DECLARE`, the context sets transaction-local planner
    controls `enable_seqscan = off`, `enable_sort = off`,
-   `enable_bitmapscan = off` and a low `cursor_tuple_fraction` (favouring the
-   fast-start index plan); immediately after `DECLARE` it restores them, so
-   confirmation and authority queries plan normally (the objection to
-   steering the full statement does not apply here);
+   `enable_bitmapscan = off`, `cursor_tuple_fraction = 1` and
+   `plan_cache_mode = force_custom_plan`. `EXPLAIN` cannot plan a `DECLARE`,
+   and a cursor is planned for its first `cursor_tuple_fraction` of rows while
+   the attested `SELECT` is planned for all of them; with fraction 1 the two
+   are planned alike (the statement's `LIMIT`, the work budget, already
+   bounds the rows), so the attestation covers the plan the cursor runs, and
+   forcing custom plans keeps a prepared execution on that plan too.
+   Immediately after `DECLARE` the context restores the caller's own values —
+   on a healthy transaction; after a cancelled `EXPLAIN`/`DECLARE` it leaves
+   them to the rollback so the original error survives — so confirmation and
+   authority queries plan normally (the objection to steering the full
+   statement does not apply here);
 2. before declaring, it runs `EXPLAIN (FORMAT JSON)` of the exact nomination
    statement (planning only, no execution) and requires an index scan on the
    expected index (`ix_chunk_search_embedding_hnsw`, `ix_chunk_search_bm25`,

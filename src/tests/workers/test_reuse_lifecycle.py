@@ -9,6 +9,7 @@ forward byte-identical. The measured hit rate is recorded in
 `plan/analysis/reuse_hit_rate_spike.md`.
 """
 
+from collections import Counter
 from collections.abc import Iterator
 from collections.abc import Mapping
 from datetime import datetime
@@ -842,16 +843,24 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     # call's own target is one of those chunks
     assert trace["extracted"] <= allowed
     assert trace["selection_v2"] == len(trace["extracted"])
-    assert len(trace["selection_called"]) == len(trace["extracted"])
-    for targets in trace["selection_called"]:
-        assert targets and targets <= trace["extracted"]
+    selection_targets = [targets for targets in trace["selection_called"]]
+    assert all(len(targets) == 1 for targets in selection_targets), (
+        "each Selection call maps to exactly one chunk"
+    )
+    assert Counter(next(iter(targets)) for targets in selection_targets) == Counter(
+        trace["extracted"]
+    ), "every new extraction identity is selected exactly once, and nothing else"
     # Claimify: one call per new Claimify identity, each call's target among
     # them, and the reruns confined to the known window (Rule 4 gap): the
     # extracted chunks and the eight chunks after each in document order
     claimify_changed = trace["claimify_changed"]
-    assert len(trace["claimify_called"]) == len(claimify_changed)
-    for targets in trace["claimify_called"]:
-        assert targets and targets <= claimify_changed
+    claimify_targets = [targets for targets in trace["claimify_called"]]
+    assert all(len(targets) == 1 for targets in claimify_targets), (
+        "each Claimify call maps to exactly one chunk"
+    )
+    assert Counter(next(iter(targets)) for targets in claimify_targets) == Counter(
+        claimify_changed
+    ), "every new Claimify identity is claimified exactly once, and nothing else"
     window = set(trace["extracted"])
     for chunk_id in trace["extracted"]:
         start = trace["position"][chunk_id]

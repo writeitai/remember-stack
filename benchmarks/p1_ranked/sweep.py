@@ -1,27 +1,38 @@
-"""D142 scaling sweep (WP-RS.8): does ranked-search work stay flat as the corpus grows?
+"""D142 scaling sweep (WP-RS.8): how ranked BM25 chunk search scales with the corpus.
 
 For each corpus size the sweep reseeds the D140 benchmark corpus (dated
-lineages, several versions each, Zipf text), optionally makes a share of
-lineages repeat their text across versions (the "superseded editions" stratum
-of versioned corpora such as law), and measures each ranked channel through
-the public ``PostgresP1Index`` API:
+lineages, several versions each), rewrites chunk text as Zipf-skewed words of
+20-300 words (the D140 seed's own text is degenerate for BM25: every word is
+``w0``), gives every version D134 metadata, and makes a share of lineages
+repeat their text across versions (the "superseded editions" stratum of
+versioned corpora such as law). ``--measure-only`` measures a corpus already
+in the database instead.
 
-- chunk text is rewritten as Zipf-skewed words of varying length (the D140
-  seed's text is degenerate for BM25: every word is ``w0``);
-- strata: ``current`` (one in-force version per lineage), a 1% document
-  filter (a small, fixed eligible set), and ``history`` (every edition);
-- per stratum: p50/p95 latency, returned-``k`` rate, termination counts and
-  mean fetched candidates (D142 accounts; absent on ``main``, reported null),
-  plus one ``EXPLAIN (ANALYZE, BUFFERS)`` buffer count of a nomination
-  statement as a proxy for index-internal work.
+What it measures, through the public ``QueryEngine.search_chunks`` (BM25,
+k = 20) with a fixed query set drawn from the generator's distribution:
+
+- strata: ``current``, ``history``, 0.1%/1%/10% document filters and 4,990 /
+  5,010 eligible rows (both sides of the exact tier);
+- per stratum: p50/p95 latency, the public outcome of every query (k
+  returned, fewer than k, ``known_empty`` or a boundary with its reason), the
+  eligible current-chunk count, and the adapter's account per query
+  (termination, fetched candidates, fetch rounds);
+- the production nomination statement's plan with its real ``LIMIT`` (the
+  work budget), by ``EXPLAIN`` without ``ANALYZE``, for five queries;
+- corpus and query hashes.
+
+**Not measured:** index-internal execution work (posting traversal, scoring
+passes, buffers) of the cursor as it runs; only the rows it hands out are.
+The synthetic corpus has no vectors, so hydration ignores the embedding
+generation, and only the BM25 chunk channel is swept.
 
 Run the same command in a ``main`` checkout and in this branch against
 separate databases, then compare the JSON files:
 
     REMEMBERSTACK_DATABASE_URL=... uv run python -m benchmarks.p1_ranked.sweep \\
-        --sizes 30000,300000,3000000 --queries 60 --out sweep_branch.json
+        --sizes 30000,300000,3000000 --queries 40 --out sweep_branch.json
 
-Synthetic data; timings only, not a correctness test.
+Synthetic data; timings and completeness only, not a correctness test.
 """
 
 from __future__ import annotations
