@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from rememberstack.adapters import BoundedPostgresReadPool
 import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
@@ -53,7 +54,6 @@ from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from tests.database_reset import reset_database
 
 _EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
