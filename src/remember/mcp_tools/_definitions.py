@@ -107,12 +107,16 @@ PROJECT_ARGUMENT: Final[dict[str, object]] = {
 }
 
 _CONTEXT_K: Final[dict[str, object]] = {
-    "type": "integer", "default": DEFAULT_CONTEXT_K, "minimum": 1,
+    "type": "integer",
+    "default": DEFAULT_CONTEXT_K,
+    "minimum": 1,
     "maximum": MAX_CONTEXT_K,
     "description": "Maximum confirmed results per evidence type.",
 }
 _CONTEXT_CANDIDATE_K: Final[dict[str, object]] = {
-    "type": "integer", "minimum": 1, "maximum": MAX_CONTEXT_CANDIDATES,
+    "type": "integer",
+    "minimum": 1,
+    "maximum": MAX_CONTEXT_CANDIDATES,
     "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
 }
 

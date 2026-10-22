@@ -37,7 +37,7 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38"
 DEFAULT_PROTOCOL_KEY: Final = "full-v38"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v38"
 """Adapter identity for Full-v38: clean-temporal fact labels, entity-first retrieval hierarchy, and concise adjudication."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9

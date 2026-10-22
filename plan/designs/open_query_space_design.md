@@ -1604,7 +1604,7 @@ for the shipping surface pass before release.
    returning currently retracted facts; a future-starting fact is absent from
    `history` and present in the matching explicit `at`/`overlap` request. All modes retain both-stance,
    source-diverse associations/totals, contradiction co-members, the
-   60-record fact-evidence budget, and the 30-fact ceiling. With no entity IDs,
+   max(60, 2*k) association budget, and the configurable 100-fact ceiling. With no entity IDs,
    both operations preserve deployment-wide retrieval. With confirmed IDs,
    scoped P1 ranking returns a relevant anchor result deliberately placed below
    the unscoped global candidate depth; the same fixture covers chunks, claims,

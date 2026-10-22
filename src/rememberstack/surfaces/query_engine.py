@@ -1108,7 +1108,9 @@ class QueryEngine:
     ) -> Envelope:
         """The facts_context body inside its operation context."""
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
-        candidate_k = ContextRetrievalBudget(k=k, candidate_k=candidate_k).candidate_depth
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         required_entity_ids = (
@@ -1409,7 +1411,9 @@ class QueryEngine:
         neighborhood expansion requires a single world-time instant.
         """
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
-        candidate_k = ContextRetrievalBudget(k=k, candidate_k=candidate_k).candidate_depth
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         _validate_default_facts_context_hops(hops=hops)
         _validate_optional_predicate(predicate=predicate)
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
@@ -1688,7 +1692,9 @@ class QueryEngine:
         ``time`` (D140 §3.1, default ``current``) selects the text in force
         for the scope in every nomination channel and at confirmation.
         """
-        candidate_k = ContextRetrievalBudget(k=k, candidate_k=candidate_k).candidate_depth
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         # D142 §8.2 (review r1 P1-3/P1-4): the entity check, every channel,
         # confirmation, hydration and pending/freshness share one snapshot,

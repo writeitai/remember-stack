@@ -93,9 +93,9 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     )
     assert tuple(operation.version for operation in CANONICAL_OPERATIONS) == (
         1,
-        3,  # D140 added the time scope to claims_and_sources_context
-        3,
+        4,  # Configurable candidate depths and automatic overfetch.
         4,
+        5,
     )
     descriptors = {
         descriptor.name: descriptor

@@ -817,6 +817,8 @@ result = memory.run_operation(
 MemoryClient.facts_context(
     query: str,
     *,
+    k: int | None = None,
+    candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     hops: int | None = None,
     predicate: str | None = None,
@@ -843,11 +845,16 @@ for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
 
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `claims_and_sources_context`
 
 ```python
 MemoryClient.claims_and_sources_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
 ) -> Envelope
 ```
 
@@ -863,11 +870,16 @@ for claim in said.evidence:
     print(claim.claim_text, claim.asserted_at, claim.document_title)
 ```
 
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `combined_context`
 
 ```python
 MemoryClient.combined_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
 ) -> ContextBundleV2
 ```
 
@@ -879,6 +891,11 @@ both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
 bundle = memory.combined_context("What did Ravi decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
+
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
 
 #### `resolve_entity`
 
