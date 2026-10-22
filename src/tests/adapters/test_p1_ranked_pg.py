@@ -487,15 +487,18 @@ def test_deadline_between_fetches_stops_with_a_disclosed_deadline(
         time=None,
         query_text="alpha",
     )
-    clock = iter([0.0] + [5.0] * 100)
-    monkeypatch.setattr(p1_ranked, "monotonic", lambda: next(clock))
+    rounds: list[int] = []
+
+    def confirm(connection: object, ids: object) -> dict[str, str | None]:
+        rounds.append(1)
+        return {}  # nothing confirms: keep fetching
+
+    # 5 s have passed once the first round confirmed (keyed to the work, not
+    # to a count of clock reads, which the per-statement clamp also makes)
+    monkeypatch.setattr(p1_ranked, "monotonic", lambda: 5.0 if rounds else 0.0)
     with database_engine.begin() as connection:
         rows, account = p1_ranked.nominate_and_confirm(
-            connection,
-            statement=query.nomination,
-            k=1,
-            confirm=lambda conn, ids: {},  # nothing confirms: keep fetching
-            deadline=1.0,
+            connection, statement=query.nomination, k=1, confirm=confirm, deadline=1.0
         )
     assert rows == []
     assert account.termination is P1Termination.DEADLINE
@@ -639,7 +642,9 @@ def test_a_hub_of_absorbed_endpoints_is_too_broad(
             connection.execute(
                 text(
                     "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
-                    " normalized_name, merged_into) VALUES (:e, :d, :n, lower(:n), :m)"
+                    " normalized_name, status, merged_into) VALUES (:e, :d, :n,"
+                    " lower(:n), CASE WHEN CAST(:m AS uuid) IS NULL THEN 'active'"
+                    " ELSE 'merged' END::entity_status, :m)"
                 ),
                 {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "m": merged_into},
             )
@@ -687,6 +692,9 @@ def test_a_hub_of_absorbed_endpoints_is_too_broad(
         query="who works for whom",
         entity_ids=(survivor,),
         predicate="works_for",
+        # the hub has no live mention, so it is not an anchor that must be a
+        # current survivor; it still scopes the facts
+        _required_entity_ids=(),
     )
     assert envelope.truncation is not None
     assert envelope.truncation.reason == "entity_scope_too_broad"

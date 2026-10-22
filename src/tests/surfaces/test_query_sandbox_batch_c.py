@@ -1347,7 +1347,7 @@ def test_bridged_calls_spend_one_request_budget(seeded: tuple[str, UUID]) -> Non
     url, claim_id = seeded
     executor = _executor(url, _SlowFactSearch((_nomination(claim_id),), delay=1.2))
     outcome = executor.query_sql(
-        sql="SELECT rank, pg_sleep(0.5) FROM semantic_claims($1, 5)",
+        sql="SELECT rank FROM semantic_claims($1, 5)",
         parameters=["memory"],
         statement_timeout_ms=1000,
     )
