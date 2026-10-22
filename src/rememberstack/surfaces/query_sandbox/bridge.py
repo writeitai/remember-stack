@@ -386,6 +386,12 @@ def _resolve_one(
                 filters=filters,
                 generations=(policy_generation, embedder_generation),
             )
+        except psycopg.errors.QueryCanceled as error:
+            # the request's one budget ran out (D142 §8.6, review r2 P1-2/P1-3)
+            raise SandboxRejection(
+                code=QueryErrorCode.STATEMENT_TIMEOUT,
+                message="the request's statement budget ran out during confirmation",
+            ) from error
         except psycopg.Error as error:
             raise SandboxRejection(
                 code=QueryErrorCode.CONFIRMATION_FAILED,

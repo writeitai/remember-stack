@@ -41,6 +41,7 @@ from sqlalchemy.engine import Engine
 
 from benchmarks.d140_scope import run as d140
 from remember.models import HistoryReadTime
+from rememberstack.adapters import p1_ranked
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
 from rememberstack.model.client import DocumentSearchFilters
@@ -218,12 +219,19 @@ def _stratum(
         embedding_model=d140.MODEL,
         fact_read_pool=pool,
     )
+    # The synthetic corpus carries no vectors, so its chunk_search rows have
+    # no embedding generation; without this the generation-pinned hydration
+    # drops every candidate and no public result ever hydrates (review r2
+    # P2-4). Lexical search does not depend on the generation.
+    surface._policy_generation = None  # type: ignore[assignment]  # noqa: SLF001
+    surface._embedder_generation = None  # type: ignore[assignment]  # noqa: SLF001
     documents = None if doc_ids is None else DocumentSearchFilters(doc_ids=doc_ids)
     latencies: list[float] = []
     outcomes: dict[str, int] = {}
     terminations: dict[str, int] = {}
     fetched: list[int] = []
     rounds: list[int] = []
+    per_query: list[dict[str, Any]] = []
     for query in queries:
         started = time.perf_counter()
         envelope = surface.search_chunks(
@@ -249,6 +257,17 @@ def _stratum(
             terminations[name] = terminations.get(name, 0) + 1
             fetched.append(index.last.fetched)
             rounds.append(index.last.fetch_rounds)
+        per_query.append(
+            {
+                "query": query,
+                "ms": round(1000 * latencies[-1], 1),
+                "returned": len(envelope.chunks),
+                "outcome": outcome,
+                "fetched": index.last.fetched if index.last else None,
+                "rounds": index.last.fetch_rounds if index.last else None,
+                "termination": index.last.termination.value if index.last else None,
+            }
+        )
     truncated = sum(
         count
         for name, count in terminations.items()
@@ -265,15 +284,18 @@ def _stratum(
         "mean_fetched": statistics.mean(fetched) if fetched else None,
         "max_fetched": max(fetched) if fetched else None,
         "mean_fetch_rounds": statistics.mean(rounds) if rounds else None,
+        "per_query": per_query,
     }
 
 
-def _nomination_work(engine: Engine, query: str, *, fetched: int) -> dict[str, Any]:
-    """EXPLAIN (ANALYZE, BUFFERS) of the production nomination statement.
+def _nomination_plan(engine: Engine, query: str) -> dict[str, Any]:
+    """The production nomination statement's plan, with its real LIMIT.
 
-    The statement the cursor runs (canonical projection, index order), read
-    to ``fetched`` rows — the depth the measured search actually consumed —
-    reporting planning time and shared buffers (index-internal work proxy).
+    Explained with the production cursor's own LIMIT (the work budget) and
+    the loop's planner controls, without ANALYZE: executing it to that LIMIT
+    would measure more rows than any cursor consumes. The rows a search
+    actually consumed are its account (``fetched``, ``rounds``), kept per
+    query in the stratum results (review r2 P2-4).
     """
     index = PostgresP1Index(engine=engine, embedding_model=d140.MODEL)
     nomination = index._testimony_query(  # noqa: SLF001 -- the real statement
@@ -288,25 +310,27 @@ def _nomination_work(engine: Engine, query: str, *, fetched: int) -> dict[str, A
         query_text=query,
     ).nomination
     with engine.connect() as connection:
-        for name in ("enable_seqscan", "enable_bitmapscan", "enable_sort"):
-            connection.execute(text(f"SET LOCAL {name} = off"))
+        for name, value in p1_ranked._PLANNER_CONTROLS:  # noqa: SLF001
+            connection.execute(
+                text("SELECT set_config(:name, :value, true)"),
+                {"name": name, "value": value},
+            )
+        started = time.perf_counter()
         plan = connection.execute(
-            text(
-                "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
-                f"{nomination.sql} LIMIT :nomination_limit"
-            ),
-            {**nomination.parameters, "nomination_limit": max(1, fetched)},
+            text(f"EXPLAIN (FORMAT JSON) {nomination.sql} LIMIT :nomination_limit"),
+            {**nomination.parameters, "nomination_limit": p1_ranked.work_budget(K)},
         ).scalar_one()
+        round_trip_ms = 1000 * (time.perf_counter() - started)
         connection.rollback()
     document = (json.loads(plan) if isinstance(plan, str) else plan)[0]
-    root = document["Plan"]
+    nodes = [document["Plan"], *document["Plan"].get("Plans", ())]
     return {
         "query": query,
-        "rows": fetched,
-        "planning_ms": document.get("Planning Time"),
-        "execution_ms": document.get("Execution Time"),
-        "shared_blocks": int(root.get("Shared Hit Blocks", 0))
-        + int(root.get("Shared Read Blocks", 0)),
+        "limit": p1_ranked.work_budget(K),
+        "explain_round_trip_ms": round_trip_ms,
+        "index": next(
+            (node.get("Index Name") for node in nodes if node.get("Index Name")), None
+        ),
     }
 
 
@@ -358,9 +382,9 @@ def measure(engine: Engine, *, queries: int, lineages: int) -> dict[str, Any]:
     }
     for name, arguments in strata.items():
         report["strata"][name] = _stratum(engine, sample, **arguments)
-    report["nomination_work"] = _nomination_work(
-        engine, sample[0], fetched=int(report["strata"]["current"]["max_fetched"] or K)
-    )
+    report["nomination_plans"] = [
+        _nomination_plan(engine, query) for query in sample[:5]
+    ]
     return report
 
 

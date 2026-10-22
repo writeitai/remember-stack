@@ -10,6 +10,8 @@ from datetime import UTC
 from pathlib import Path
 import random
 from time import monotonic
+from typing import Any
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -22,14 +24,20 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters import p1_ranked
+from rememberstack.adapters import postgres_p1
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.bounded_postgres_read import BoundedPostgresReadPool
+from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model.client import DocumentSearchFilters
+from rememberstack.model.envelope import NegativeKind
+from rememberstack.ports.p1_index import P1EntityScopeTooBroadError
 from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
+from rememberstack.surfaces import query_engine as query_engine_module
+from rememberstack.surfaces.query_engine import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_live_document_lineage
 
@@ -524,3 +532,158 @@ def test_the_margin_counts_terms_with_the_real_parser(
             connection, query=query, text_config="simple"
         )
     assert counted == terms
+
+
+def _surface(database_engine: Engine) -> QueryEngine:
+    pool = BoundedPostgresReadPool(
+        engine=database_engine, max_concurrency=2, pool_wait_seconds=5.0
+    )
+    return QueryEngine(
+        engine=database_engine,
+        search_index=PostgresP1Index(
+            engine=database_engine, embedding_model=_MODEL, read_pool=pool
+        ),
+        model_provider=MagicMock(),
+        embedding_model=_MODEL,
+        fact_read_pool=pool,
+    )
+
+
+@pytest.mark.parametrize("stage", ["attestation", "confirmation"])
+def test_a_real_statement_timeout_is_a_typed_deadline_boundary(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """Review r2 P1-3: a statement cancelled by the operation's timeout during
+    attestation or confirmation answers p1_deadline through the public
+    search, and the cleanup never replaces the original error."""
+    _seed_chunks(database_engine, [f"alpha filler{n}" for n in range(30)])
+    monkeypatch.setattr(
+        query_engine_module, "FACTS_CONTEXT_DATABASE_BUDGET_SECONDS", 1.0
+    )
+    if stage == "attestation":
+        original_attest = p1_ranked.attest_index_plan
+
+        def slow_attest(connection: Any, **arguments: Any) -> None:
+            connection.execute(text("SELECT pg_sleep(3)"))
+            original_attest(connection, **arguments)
+
+        monkeypatch.setattr(p1_ranked, "attest_index_plan", slow_attest)
+    else:
+        original_confirm = postgres_p1._confirm_by_candidate  # noqa: SLF001
+        monkeypatch.setattr(
+            postgres_p1,
+            "_confirm_by_candidate",
+            lambda relation_where, id_expression: original_confirm(
+                relation_where + " AND pg_sleep(3) IS NOT NULL", id_expression
+            ),
+        )
+    envelope = _surface(database_engine).search_chunks(
+        deployment_id=_DEPLOYMENT_ID, query="alpha", k=5, channel="bm25"
+    )
+    assert envelope.negative is not None
+    assert envelope.negative.kind is NegativeKind.BOUNDARY
+    assert envelope.truncation is not None
+    assert envelope.truncation.reason == "p1_deadline"
+
+
+_AXIS_VECTOR = (1.0,) + (0.0,) * 1535
+
+
+def test_fact_searches_inherit_the_operation_deadline(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r2 P1-2: a fact or entity search inside an operation receives
+    the operation's deadline even when its caller passes none."""
+    seen: list[float | None] = []
+    original = p1_ranked.nominate_and_confirm
+
+    def recording(connection: Any, **arguments: Any) -> Any:
+        seen.append(arguments.get("deadline"))
+        return original(connection, **arguments)
+
+    monkeypatch.setattr(p1_ranked, "nominate_and_confirm", recording)
+    pool = BoundedPostgresReadPool(
+        engine=database_engine, max_concurrency=1, pool_wait_seconds=5.0
+    )
+    index = PostgresP1Index(
+        engine=database_engine, embedding_model=_MODEL, read_pool=pool
+    )
+    deadline = monotonic() + 30.0
+    with pool.snapshot(deadline=deadline):
+        index.search_entities_scored(
+            deployment_id=str(_DEPLOYMENT_ID), vector=_AXIS_VECTOR, k=3
+        )
+        index.search_facts_scored(
+            deployment_id=str(_DEPLOYMENT_ID), vector=_AXIS_VECTOR, k=3, kind=None
+        )
+    assert seen and all(value == deadline for value in seen)
+
+
+def test_a_hub_of_absorbed_endpoints_is_too_broad(
+    database_engine: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r2 P1-5: facts whose stored endpoint is an entity merged into
+    the requested survivor count toward the scoped-scan budget, as they do
+    toward its scoring scope — directly and through predicate-filtered
+    facts_context."""
+    survivor, absorbed, other = uuid4(), uuid4(), uuid4()
+    with database_engine.begin() as connection:
+        for entity_id, name, merged_into in (
+            (survivor, "Survivor", None),
+            (other, "Other", None),
+            (absorbed, "Absorbed", survivor),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO entities (entity_id, deployment_id, canonical_name,"
+                    " normalized_name, merged_into) VALUES (:e, :d, :n, lower(:n), :m)"
+                ),
+                {"e": entity_id, "d": _DEPLOYMENT_ID, "n": name, "m": merged_into},
+            )
+        for _ in range(5):
+            connection.execute(
+                text(
+                    "INSERT INTO relations (relation_id, deployment_id,"
+                    " subject_entity_id, predicate, object_entity_id,"
+                    " normalizer_version, fact_label, ingested_at) VALUES"
+                    " (:r, :d, :s, 'works_for', :o, 'd142-test', 'hub', :at)"
+                ),
+                {
+                    "r": uuid4(),
+                    "d": _DEPLOYMENT_ID,
+                    "s": absorbed,
+                    "o": other,
+                    "at": _NOW,
+                },
+            )
+    monkeypatch.setattr(p1_ranked, "ENTITY_WORK_BUDGET", 3)
+    index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
+    with pytest.raises(P1EntityScopeTooBroadError):
+        index.search_facts_scored(
+            deployment_id=str(_DEPLOYMENT_ID),
+            vector=_AXIS_VECTOR,
+            k=5,
+            kind="relation",
+            entity_ids=(str(survivor),),
+            equality_filters={"predicate": "works_for"},
+        )
+    pool = BoundedPostgresReadPool(
+        engine=database_engine, max_concurrency=2, pool_wait_seconds=5.0
+    )
+    surface = QueryEngine(
+        engine=database_engine,
+        search_index=PostgresP1Index(
+            engine=database_engine, embedding_model=_MODEL, read_pool=pool
+        ),
+        model_provider=FakeModelProvider(),
+        embedding_model=_MODEL,
+        fact_read_pool=pool,
+    )
+    envelope = surface.facts_context(
+        deployment_id=_DEPLOYMENT_ID,
+        query="who works for whom",
+        entity_ids=(survivor,),
+        predicate="works_for",
+    )
+    assert envelope.truncation is not None
+    assert envelope.truncation.reason == "entity_scope_too_broad"

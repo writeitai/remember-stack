@@ -178,7 +178,18 @@ class _ReuseRig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.provider = FakeModelProvider(generate_router=_canned)
+        self.calls: list[tuple[str, str]] = []
+        """Every Selection/Claimify call as (response type, target span)."""
+
+        def route(prompt: str, type_name: str) -> dict[str, object]:
+            if type_name in {"SelectionResponse", "ClaimifyResponse"}:
+                match = _TARGET_PATTERN.search(prompt)
+                self.calls.append(
+                    (type_name, match.group(1).strip() if match is not None else "")
+                )
+            return _canned(prompt, type_name)
+
+        self.provider = FakeModelProvider(generate_router=route)
         self.chunk_catalog = ChunkCatalog(engine=engine)
         self.claim_catalog = ClaimCatalog(engine=engine)
         catalog = DocumentCatalog(engine=engine)
@@ -694,6 +705,7 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
     rig.drain()
     baseline_selection = rig.selection_calls()
     baseline_embeds = len(rig.provider.embedded_texts)
+    baseline_calls = len(rig.calls)
     second = _observe_mode(
         rig,
         content=_sectioned(edited=True),
@@ -706,7 +718,9 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
         "c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
         " c.extraction_input_hash AS extraction, c.section_id::text AS section_id,"
         " c.ordinal AS ordinal, s.embedding::text AS vector,"
-        " s.embedding_text_hash AS text_hash"
+        " s.embedding_text_hash AS text_hash, c.claimify_input_hash AS claimify,"
+        " c.reuse_identity_hash AS reuse_identity, c.text_origin_at AS text_origin,"
+        " s.search_text AS search_text"
     )
     with rig.engine.connect() as connection:
 
@@ -766,6 +780,17 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
         embedding_text_hash(item)
         for item in rig.provider.embedded_texts[baseline_embeds:]
     }
+    v1_claimify = {row["claimify"] for row in v1}
+    calls = rig.calls[baseline_calls:]
+
+    def called_chunks(type_name: str) -> list[set[str]]:
+        """For each call of one stage, the v2 chunks whose text holds its target."""
+        return [
+            {row["chunk_id"] for row in v2 if span and span[:60] in row["search_text"]}
+            for kind, span in calls
+            if kind == type_name
+        ]
+
     return {
         "v1": v1,
         "v2": v2,
@@ -781,6 +806,12 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
             row["chunk_id"] for row in v2 if row["text_hash"] in embedded_hashes
         },
         "embeds_v2": len(rig.provider.embedded_texts) - baseline_embeds,
+        "claimify_changed": {
+            row["chunk_id"] for row in v2 if row["claimify"] not in v1_claimify
+        },
+        "selection_called": called_chunks("SelectionResponse"),
+        "claimify_called": called_chunks("ClaimifyResponse"),
+        "position": position,
     }
 
 
@@ -807,9 +838,25 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     assert len({row["section_id"] for row in trace["changed"]}) == 1
     allowed = trace["allowed"]
     # Selection: only new extraction identities (the edited chunk and the
-    # neighbours whose bundles include it), one model call each
+    # neighbours whose bundles include it), one model call each, and every
+    # call's own target is one of those chunks
     assert trace["extracted"] <= allowed
     assert trace["selection_v2"] == len(trace["extracted"])
+    assert len(trace["selection_called"]) == len(trace["extracted"])
+    for targets in trace["selection_called"]:
+        assert targets and targets <= trace["extracted"]
+    # Claimify: one call per new Claimify identity, each call's target among
+    # them, and the reruns confined to the known window (Rule 4 gap): the
+    # extracted chunks and the eight chunks after each in document order
+    claimify_changed = trace["claimify_changed"]
+    assert len(trace["claimify_called"]) == len(claimify_changed)
+    for targets in trace["claimify_called"]:
+        assert targets and targets <= claimify_changed
+    window = set(trace["extracted"])
+    for chunk_id in trace["extracted"]:
+        start = trace["position"][chunk_id]
+        window |= {row["chunk_id"] for row in v2[start + 1 : start + 9]}
+    assert claimify_changed <= window
     # Embedding: every embedded input belongs to the neighbourhood
     assert trace["embedded"] <= allowed, "only the edited neighbourhood is re-embedded"
     assert trace["embeds_v2"] <= len(allowed)
@@ -826,7 +873,11 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
         before = v1_by_extraction[row["extraction"]]
         assert row["vector"] == before["vector"], "v1 vector carried forward"
         assert row["text_hash"] == before["text_hash"], "same embedding input"
-        if row["chunk_id"] not in trace["minted"]:
+        assert row["reuse_identity"] == before["reuse_identity"]
+        assert row["text_origin"] == before["text_origin"], "text origin carried"
+        if row["chunk_id"] not in trace["claimify_changed"]:
+            # same Claimify identity: no call, the v1 claims reattach
+            assert row["chunk_id"] not in trace["minted"]
             claims = trace["v2_claims"][row["chunk_id"]]
             assert claims and claims == trace["v1_claims"][row["extraction"]]
             reused_claims += 1
@@ -842,5 +893,7 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     ),
 )
 def test_claimify_reruns_stay_inside_the_edited_neighbourhood(rig: _ReuseRig) -> None:
+    """The requirement against the known gap only: every other expectation
+    lives in the passing test, so unrelated regressions fail normally."""
     trace = _edit_trace(rig, dated=False)
-    assert trace["minted"] <= trace["allowed"]
+    assert trace["claimify_changed"] <= trace["allowed"]

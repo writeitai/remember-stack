@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import json
 from pathlib import Path
+import time
 from uuid import UUID
 from uuid import uuid4
 
@@ -1262,3 +1263,92 @@ def test_an_unqualified_nomination_of_a_shared_id_is_ambiguous(
     )
     assert outcome.rows == ()
     assert outcome.semantic_invocations[0].dropped_ambiguous == 1
+
+
+class _SlowFactSearch(_FakeSearch):
+    """A projection whose nominations take ``delay`` seconds (embedding, index
+    work), during which an already-declared validity boundary passes."""
+
+    def __init__(self, nominations: tuple[P1Nomination, ...], delay: float) -> None:
+        super().__init__(nominations)
+        self.delay = delay
+
+    def _answer(self, **kwargs: object) -> tuple[P1Nomination, ...]:  # type: ignore[override]
+        time.sleep(self.delay)
+        return super()._answer(**kwargs)
+
+    search_facts_scored = _answer
+    search_claims_scored = _answer
+
+
+def test_fact_srfs_confirm_at_the_request_instant_across_a_validity_boundary(
+    seeded: tuple[str, UUID],
+) -> None:
+    """Review r2 P1-1: a fact whose declared validity ends while the request
+    is nominating stays eligible for the request, in every SRF, at one
+    reported instant — the request's, not each statement's clock."""
+    url, _ = seeded
+    with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+        row = connection.execute(
+            "SELECT fact_id::text, fact_kind FROM memory_v1.facts_current"
+            " WHERE deployment_id = %s ORDER BY fact_id LIMIT 1",
+            (str(_DEPLOYMENT),),
+        ).fetchone()
+        assert row is not None
+        table = "relations" if row[1] == "relation" else "observations"
+        column = "relation_id" if row[1] == "relation" else "observation_id"
+        before = connection.execute(
+            f"SELECT valid_from, valid_until, valid_precision::text FROM {table}"
+            f" WHERE {column} = %s",
+            (row[0],),
+        ).fetchone()
+        assert before is not None
+        connection.execute(
+            f"UPDATE {table} SET valid_precision = 'instant',"
+            " valid_from = coalesce(valid_from, now() - interval '1 day'),"
+            " valid_until = clock_timestamp() + interval '1.5 seconds'"
+            f" WHERE {column} = %s",
+            (row[0],),
+        )
+    try:
+        live = P1Nomination(
+            item_id=row[0], rank=1, score=1.0, channel="semantic", qualifier=row[1]
+        )
+        outcome = _executor(url, _SlowFactSearch((live,), delay=1.0)).query_sql(
+            sql=(
+                "SELECT a.fact_id, a.evaluated_at, b.evaluated_at"
+                " FROM semantic_facts($1, 5) AS a"
+                " CROSS JOIN semantic_facts($1, 5) AS b"
+            ),
+            parameters=["memory"],
+        )
+        assert outcome.termination_reason == "completed", outcome.error_message
+        assert outcome.rows, "the boundary passed during nomination, not before it"
+        (fact_id, first, second), *_ = outcome.rows
+        assert fact_id == UUID(row[0])
+        assert first == second
+        confirmed_at = {
+            invocation.pg_confirmed_at for invocation in outcome.semantic_invocations
+        }
+        assert confirmed_at == {first}
+    finally:
+        with psycopg.connect(_psycopg_url(url), autocommit=True) as connection:
+            connection.execute(
+                f"UPDATE {table} SET valid_from = %s, valid_until = %s,"
+                f" valid_precision = %s::public.claim_valid_precision"
+                f" WHERE {column} = %s",
+                (*before, row[0]),
+            )
+
+
+def test_bridged_calls_spend_one_request_budget(seeded: tuple[str, UUID]) -> None:
+    """Review r2 P1-2: when the SRFs use up the request's statement budget,
+    the outer statement does not start with a fresh full timeout."""
+    url, claim_id = seeded
+    executor = _executor(url, _SlowFactSearch((_nomination(claim_id),), delay=1.2))
+    outcome = executor.query_sql(
+        sql="SELECT rank, pg_sleep(0.5) FROM semantic_claims($1, 5)",
+        parameters=["memory"],
+        statement_timeout_ms=1000,
+    )
+    assert outcome.error_code == QueryErrorCode.STATEMENT_TIMEOUT, outcome.error_message
