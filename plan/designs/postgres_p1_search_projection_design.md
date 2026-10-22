@@ -633,9 +633,45 @@ materially. All numbers are starting points for the owner to confirm:
   and plan-attestation cost. Strata: fixed and declining eligible fractions,
   long tie runs, superseded editions, rare and hub entities, `current`/`at`/
   `history` scopes. Index-internal work (§9.1) is reported next to fetched
-  counts. Pass: p95 within the retrieval design's interactive
-  budget at the target size for the common strata, **without** a rising
-  truncation rate; adversarial strata are reported, not hidden;
+  counts. **Pass (amended by the owner, D142, 2026-10-22):** the
+  size- and stratum-specific budgets below, each paired with completeness
+  (every search `k_filled` or `exhausted`, early-stop rate 0, any early stop
+  disclosed with its typed reason); adversarial strata are reported, not
+  hidden. The ≈ 300 ms interactive budget stays the **target** for every
+  common stratum, owed by the follow-up WP-RS.11 (immutable `doc_id` on search
+  rows and a re-tuned document exact-tier threshold, issue #508). Multi-second
+  filtered reads are accepted for now. Budgets hold for 300k chunks only;
+  3M and the 50M target are ungated until measured on hydratable public
+  results.
+
+  | Stratum (300k chunks) | Eligible rows | Path | p95 budget | Measured p50 / p95 | Completeness |
+  | --- | --- | --- | --- | --- | --- |
+  | `current`, unfiltered | 60,000 current chunk rows | loop | **≤ 300 ms** | 152 / 263 ms | 40/40 return k; 0 early stops |
+  | `history`, unfiltered | 300,000 live edition rows | loop | **≤ 300 ms** | 112 / 267 ms | 40/40 return k; 0 early stops |
+  | 0.1% of documents (6) | 60 | exact tier | **≤ 300 ms** | 78 / 90 ms | 0 early stops (7 return k; the rest have fewer matches) |
+  | 1% of documents (60) | 600 | exact tier | **≤ 500 ms** | 235 / 351 ms | 0 early stops (18 return k; the rest have fewer matches) |
+  | 10% of documents (600) | 6,000 | pushdown | **≤ 1,000 ms** | 600 / 859 ms | 0 early stops (37 return k) |
+  | 499 documents | 4,990 | exact tier | **≤ 2,500 ms** | 1,334 / 2,084 ms | 0 early stops (35 return k) |
+  | 501 documents | 5,010 | pushdown | **≤ 1,000 ms** | 505 / 780 ms | 0 early stops (35 return k) |
+
+  Measured conditions (all binding on the criterion): the public
+  `QueryEngine.search_chunks` operation, BM25 channel, k = 20, in-process (no
+  HTTP); a synthetic corpus of 6,000 lineages × 5 versions × 10 chunks = 300,000
+  chunk rows, half the lineages periodised (declared effective periods) and half
+  repeating version 1's text in later versions (120,120 duplicated rows), chunk
+  text 20–300 Zipf-skewed words from a 50,000-word vocabulary, D134 metadata on
+  every version, no vectors; one GCE n2-highmem-8 VM (8 vCPU, 64 GB, pd-ssd),
+  the branch's PostgreSQL 19 engine image in Docker (`shared_buffers` 8 GB,
+  `work_mem` 128 MB), warm cache (corpus seeded and indexed in the same session,
+  heap and indexes fit in shared buffers), while the integration test suite ran
+  on the same VM against another database (contended CPU, no other load on this
+  database); 40 two-word queries drawn from the generator's own Zipf
+  distribution (seed 142, query hash `c5d83714…`), each run once per stratum,
+  sequentially, no concurrency. Archive:
+  `plan/analysis/data/d142_sweep_300k_2026-10-22.json`. "Fewer matches" means
+  the search was `exhausted` with fewer than k positive lexical matches among the
+  eligible rows — a complete answer, not an early stop.
+
 - **HNSW recall** — recall@k of the HNSW path against exact scoring, per
   stratum above, on sampled real queries; acceptance threshold: mean
   recall@10 ≥ 0.95 and no stratum below 0.90;

@@ -14,7 +14,7 @@ implementation is added to the same pull request (#505) after design approval
 
 | WP | Status |
 | --- | --- |
-| WP-RS.0 | **pending** — harness `benchmarks/p1_ranked/explain_real.py` ready; runs on a copy of a real deployment after the current LoCoMo run |
+| WP-RS.0 | **post-merge follow-up (owner, 2026-10-22)** — harness `benchmarks/p1_ranked/explain_real.py` ready; runs on a copy of a real deployment after the current LoCoMo run |
 | WP-RS.1 | done — pg_textsearch v1.5.1 pinned, D98 patch retired; **post-approval design change:** no scorer patch, the design §8.3 bounded-reconciliation margin instead (for the dual review); writers reject zero-norm and non-finite vectors; every image build runs the upstream regression suite (82/82) |
 | WP-RS.2 | done — ranked-read connection (read-only REPEATABLE READ); SQL sandbox snapshot export/import; every ranked operation (searches, nominations, contexts, resolve) reads one snapshot with one deadline and pinned instant, hydration and pending/freshness included; the SQL sandbox shares its snapshot, instant and request deadline (review r1/r2) |
 | WP-RS.3 | done — `adapters/p1_ranked.py` loop; chunk and claim searches |
@@ -22,9 +22,10 @@ implementation is added to the same pull request (#505) after design approval
 | WP-RS.5 | done — coverage tiers for testimony searches; entity budget on testimony nomination; small document-filtered chunk sets scored exactly (post-approval addition, design §8.4) |
 | WP-RS.6 | done — deployment-wide fact and entity search on the loop; entity-scoped fact searches remain exact bounded scans |
 | WP-RS.7 | done (round 1) — unit proofs incl. the float32 long-query counterexample; Postgres proofs on the built image: randomized half-spilled scorer bound against `bm25_get_current_score()`, oracle equality for loop/pushdown/exact tier, 48/50/67, 40/41 tie, deadline between fetches, clamped nested timeouts, caller planner settings across prepared runs; public-entry account tests; owner-invariant regression traced per input (living and dated; Claimify window a strict expected failure). **Still pending:** HNSW `max_scan_tuples`/memory stops at scale, between-fetch spill/compaction, SQL-bridge insert/delete through a real request |
-| WP-RS.8 | run (analysis §8.1–§8.2, results archived): completeness of the 1% stratum now passes at 3M (0 early stops, was 25%); **the latency half fails** (p95 ≈ 300 ms budget vs 0.8–3.1 s filtered, 2.3 s unfiltered at 3M) — design-level options for the owner in §8.2; 50M and non-BM25 channels not swept |
-| WP-RS.9 | recall gate **passes** on an isolated clustered 100k-vector synthetic corpus (0.999 unfiltered, 0.9975 filtered, `ef_search` 200; it failed at 40); real-embedding recall and the paid LoCoMo gate **pending** (harnesses ready) |
+| WP-RS.8 | **passes the amended criterion (owner, 2026-10-22; D142 amendment)** at 300k chunks on the final configuration: every stratum within its named p95 budget, 0 early stops (analysis §8.3, archive `d142_sweep_300k_2026-10-22.json`); 3M (diagnostic) and 50M are ungated until measured; the ≈ 300 ms target moves to WP-RS.11 |
+| WP-RS.9 | recall gate **passes** on an isolated clustered 100k-vector synthetic corpus (0.999 unfiltered, 0.9975 filtered, `ef_search` 200); **post-merge follow-ups (owner, 2026-10-22):** the paid LoCoMo gate after the owner's current full LoCoMo run finishes (never on that deployment), and real-embedding recall with WP-RS.0 |
 | WP-RS.10 | done — retrieval concepts, result types and versions-in-force pages |
+| WP-RS.11 | **next work item (owner, 2026-10-22), not in PR #505** — immutable `doc_id` on search rows + re-tune the document exact-tier threshold; issue [#508](https://github.com/writeitai/remember-stack/issues/508) |
 
 
 **Operational constraint (2026-10-21).** A full LoCoMo run is in progress. No
@@ -45,6 +46,7 @@ the paid part of WP-RS.9 wait until that run has finished.
 | WP-RS.8 | Scaling benchmark: extend `benchmarks/d140_scope` into the §9 size sweep and strata, `main` against the change, reporting latency with returned-`k` rate, truncation rate, fetched candidates, coverage rows, plan-attestation cost and index-internal work (buffer reads; posting/block/scoring-pass counts and HNSW visits where exposed). | design §9, §9.1 | WP-RS.7 | release gate |
 | WP-RS.9 | Quality gates: HNSW recall@k per stratum against exact scoring; LoCoMo answer accuracy by the predeclared paired non-inferiority test (design §9; margin, seed and question set fixed and owner-confirmed before the first run; owner-approved paid run); the BM25 positive-match change and the `pg_textsearch` upgrade measured separately against today's answers. | design §9 | WP-RS.7, LoCoMo run finished | release gate |
 | WP-RS.10 | Docs (D66): the lexical positive-match behaviour, truncation reporting and `scope_pending.complete` on the docs site, same PR as the behaviour. | — | WP-RS.4 | same PR as the behaviour |
+| WP-RS.11 | Follow-up (owner decision 2026-10-22, issue [#508](https://github.com/writeitai/remember-stack/issues/508)): immutable `doc_id` on `chunk_search` (lineage identity, not visibility) so a document filter is an index-scan predicate without enumeration or a large id array; migration and backfill that touch no ingestion identity (Rule 4); re-tune the document exact-tier threshold from the measured crossover (2.1 s at 4,990 rows exact vs 0.8 s pushdown at 5,010). **Gate:** on the D142 amendment's workload, every filtered stratum (60 / 600 / 6,000 / 4,990 / 5,010 eligible rows) p95 ≤ 300 ms at 300k chunks with 0 early stops and unchanged returned-k; at 3M chunks on hydratable public results p95 ≤ 300 ms for the common strata or an owner decision for that size; Rule 4 regression and the D142 oracle proofs green. | D142 amendment, design §9 | D142 merged | after PR #505 |
 
 ## Decision point: distinct-text search index
 

@@ -602,6 +602,14 @@ is slower than the pushdown on either side of its threshold (p95 2.1 s at
 sets is set too high; that is input to the open latency decision (review r2
 P1-6), not changed here.
 
+**Owner decision (2026-10-22, D142 amendment).** The scaling gate's latency
+criterion is these measured, size- and stratum-specific budgets at 300k
+chunks, each paired with completeness (0 early stops); multi-second filtered
+reads are accepted for now; 3M and 50M are ungated until measured. The
+≈ 300 ms goal moves to WP-RS.11 (immutable `doc_id` on search rows, re-tuned
+exact-tier threshold; issue #508). These measurements are not a 300 ms pass
+for the filtered strata.
+
 ## 9. Out of scope
 
 - **Reranking.** A precise reranker (for example TypeSafe AI's Jev model,

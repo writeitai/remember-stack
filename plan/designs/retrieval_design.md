@@ -632,6 +632,12 @@ labels, same trust model (§9).
 - **Interactive budget (starting point):** P95 ≤ ~300 ms for entry+expand+hydrate operations or saved queries at
   the 1M-doc target (the Zep/Graphiti reference point D9 cites), measured per plan in the
   eval harness. Batch: throughput-bound, no latency promise.
+  *Ranked P1 search (D142 amendment, owner, 2026-10-22):* until WP-RS.11 lands, ranked
+  chunk search is accepted against size- and stratum-specific budgets measured at 300k
+  chunks — unfiltered ≤ 300 ms, document-filtered up to 2.5 s p95 — and is ungated at
+  3M chunks and above
+  ([P1 search design §9](postgres_p1_search_projection_design.md#9-index-and-planner-contract));
+  this ~300 ms budget remains its target.
 - **Locality:** PostgreSQL serves P1 semantic/BM25 entry, live graph expansion,
   authority joins, and registry lookups. API nodes hold no local graph data;
   graph-specific pool/concurrency, statement/transaction timeouts, and hard

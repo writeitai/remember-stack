@@ -6870,8 +6870,9 @@ only through D118 adjudication.
 
 ## D142. Ranked search nominates from the index and confirms in one snapshot
 
-**Status:** proposed (design approved by review round 3, 2026-10-21; implementation in progress); binding on
-approved design merge. Issue
+**Status:** accepted (design approved by review round 3, 2026-10-21;
+implementation approved by review round 5 pending the latency decision, which
+the owner took on 2026-10-22 — amendment below); binding on merge of PR #505. Issue
 [#504](https://github.com/writeitai/remember-stack/issues/504).
 
 **Context.** D94 put ranking and authority confirmation into one PostgreSQL
@@ -6943,10 +6944,8 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   (design §8.4); up to 20,000 are pushed into the index scan as a
   membership filter (design §8.3), so the cursor streams eligible rows only;
   above that the plain loop runs. **Post-approval design change, for review.**
-  Measured at 3M chunks it removes the 1% stratum's early stops (25% → 0%),
-  but neither that stratum (p95 0.8–3.1 s) nor unfiltered `current` (p95
-  2.3 s) meets the interactive p95 ≈ 300 ms budget on the test VM; the
-  scaling gate's latency half stays open for the owner (analysis §8.1).
+  It removes the filtered strata's early stops (3M diagnostic run: 25% → 0%);
+  latency is accepted under the 2026-10-22 amendment below.
 - **One operation context (review r1 P1-3/P1-4/P1-7).** Every ranked
   operation owns one read-only REPEATABLE READ snapshot with one absolute
   deadline and one pinned authority instant; readiness, entity checks,
@@ -6963,7 +6962,62 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   side, paired bootstrap one-sided 95% bound, fixed 1.0 pp margin,
   inconclusive when underpowered), and separate measurement of the lexical
   change and the upgrade. Thresholds and margin are starting points for the
-  owner to confirm.
+  owner to confirm. *(The scaling gate's latency criterion is amended below,
+  2026-10-22.)*
+
+**D142 amendment (2026-10-22, owner decision): latency acceptance.** The
+blanket "p95 within the interactive budget (≈ 300 ms) at the target size for
+the common strata" is replaced by these size- and stratum-specific budgets,
+which D142 meets as measured. The owner: "definitely this way. It still sounds
+like a significant improvement. Let's get it in."
+
+| Stratum (300k chunks) | Eligible rows | Path | p95 budget | Measured p50 / p95 | Completeness |
+| --- | --- | --- | --- | --- | --- |
+| `current`, unfiltered | 60,000 current chunk rows | loop | **≤ 300 ms** | 152 / 263 ms | 40/40 return k; 0 early stops |
+| `history`, unfiltered | 300,000 live edition rows | loop | **≤ 300 ms** | 112 / 267 ms | 40/40 return k; 0 early stops |
+| 0.1% of documents (6) | 60 | exact tier | **≤ 300 ms** | 78 / 90 ms | 0 early stops (7 return k; the rest have fewer matches) |
+| 1% of documents (60) | 600 | exact tier | **≤ 500 ms** | 235 / 351 ms | 0 early stops (18 return k; the rest have fewer matches) |
+| 10% of documents (600) | 6,000 | pushdown | **≤ 1,000 ms** | 600 / 859 ms | 0 early stops (37 return k) |
+| 499 documents | 4,990 | exact tier | **≤ 2,500 ms** | 1,334 / 2,084 ms | 0 early stops (35 return k) |
+| 501 documents | 5,010 | pushdown | **≤ 1,000 ms** | 505 / 780 ms | 0 early stops (35 return k) |
+
+Measured conditions (all binding on the criterion): the public
+`QueryEngine.search_chunks` operation, BM25 channel, k = 20, in-process (no
+HTTP); a synthetic corpus of 6,000 lineages × 5 versions × 10 chunks = 300,000
+chunk rows, half the lineages periodised (declared effective periods) and half
+repeating version 1's text in later versions (120,120 duplicated rows), chunk
+text 20–300 Zipf-skewed words from a 50,000-word vocabulary, D134 metadata on
+every version, no vectors; one GCE n2-highmem-8 VM (8 vCPU, 64 GB, pd-ssd),
+the branch's PostgreSQL 19 engine image in Docker (`shared_buffers` 8 GB,
+`work_mem` 128 MB), warm cache (corpus seeded and indexed in the same session,
+heap and indexes fit in shared buffers), while the integration test suite ran
+on the same VM against another database (contended CPU, no other load on this
+database); 40 two-word queries drawn from the generator's own Zipf
+distribution (seed 142, query hash `c5d83714…`), each run once per stratum,
+sequentially, no concurrency. Archive:
+`plan/analysis/data/d142_sweep_300k_2026-10-22.json`. "Fewer matches" means
+the search was `exhausted` with fewer than k positive lexical matches among the
+eligible rows — a complete answer, not an early stop.
+
+- **Completeness is part of the criterion:** every search in these strata ends
+  `k_filled` or `exhausted` (allowed early-stop rate: 0); any early stop in
+  production is disclosed with its typed `p1_<reason>`, never `known_empty`.
+- **Multi-second filtered reads are accepted for now:** document-filtered
+  searches between about 600 and 6,000 eligible rows may take up to 2.5 s at
+  p95 at this size; the 4,990-row exact tier is the slowest measured case.
+- **No extrapolation.** These budgets hold for 300k chunks only. The 3M public
+  run (analysis §8.2) is diagnostic; 3M chunks and the 50M target are
+  **ungated** until measured on hydratable public results.
+- **The ≈ 300 ms interactive goal stays the target**, for every common stratum,
+  that the follow-up must meet: WP-RS.11, immutable `doc_id` on search rows
+  plus re-tuning the document exact-tier threshold (2.1 s at 4,990 rows
+  against 0.8 s by pushdown at 5,010), issue
+  [#508](https://github.com/writeitai/remember-stack/issues/508), with its own
+  measured gate (plan).
+- **Post-merge follow-ups (owner, 2026-10-22):** the paid LoCoMo answer-quality
+  gate runs after the owner's current full LoCoMo run finishes, on its own
+  isolated deployment; WP-RS.0 (real-data `EXPLAIN` on a copy of a deployment)
+  likewise. Neither blocks the merge.
 
 **Rejected.** Steering the one-statement plan (hints, `enable_seqscan`,
 rewritten joins): still estimate-dependent for the whole statement and cannot
