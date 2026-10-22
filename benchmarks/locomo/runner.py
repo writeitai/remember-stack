@@ -98,6 +98,7 @@ from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.vertex import VertexAccessError
 from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
@@ -183,9 +184,11 @@ def prepare_run(
     tier: str,
     output: Path,
     protocol: ProtocolKey = DEFAULT_PROTOCOL_KEY,
+    retrieval_budget: ContextRetrievalBudget | None = None,
 ) -> RunConfiguration:
     """Validate, fingerprint, and render a local run without remote calls."""
     selected_protocol = protocol_for_key(protocol)
+    resolved_budget = (retrieval_budget or ContextRetrievalBudget()).resolved()
     dataset = load_dataset(dataset_path)
     manifest = load_manifest(tier)
     questions = validate_manifest(dataset=dataset, manifest=manifest)
@@ -226,6 +229,7 @@ def prepare_run(
             selected_protocol.answer_agent_reasoning_effort
         ),
         "answer_word_cap": selected_protocol.answer_word_cap,
+        "retrieval_budget": resolved_budget.model_dump(mode="json"),
         "judge_model": selected_protocol.judge_model,
         "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
         "answer_agent_temperature": selected_protocol.answer_agent_temperature,
@@ -741,6 +745,7 @@ def answer_sample(
                         context.configuration.answer_reader_retry_budget
                     ),
                     answer_word_cap=context.configuration.answer_word_cap,
+                    retrieval_budget=context.configuration.retrieval_budget,
                     answer_schema=answer_schema,
                 )
             else:
@@ -775,6 +780,7 @@ def answer_sample(
                             context.configuration.answer_reader_retry_budget
                         ),
                         answer_word_cap=context.configuration.answer_word_cap,
+                        retrieval_budget=context.configuration.retrieval_budget,
                         answer_schema=answer_schema,
                         question_trace=question_trace,
                     )
@@ -1321,6 +1327,7 @@ def _validate_run(
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "answer_word_cap": configuration.answer_word_cap,
+        "retrieval_budget": configuration.retrieval_budget.model_dump(mode="json"),
         "judge_model": configuration.judge_model,
         "judge_reasoning_effort": configuration.judge_reasoning_effort,
         "answer_agent_temperature": configuration.answer_agent_temperature,
@@ -1739,6 +1746,7 @@ def _answer_one(
     answer_word_cap: int | None = None,
     answer_schema: AnswerStepSchema = AnswerAgentStep,
     answer_prompt_template: str | None = None,
+    retrieval_budget: ContextRetrievalBudget | None = None,
     mcp_tool_shape: bool = False,
     require_content_before_answer: bool = False,
     p3: P3Mount | None = None,
@@ -1790,6 +1798,13 @@ def _answer_one(
             ),
             mcp_tool_shape=mcp_tool_shape,
         )
+        if retrieval_budget is not None:
+            prompt += (
+                "\nCONTEXT RETRIEVAL BUDGET: Context operations are executed with "
+                f"k={retrieval_budget.k} per evidence type and "
+                f"candidate_k={retrieval_budget.candidate_depth} per search channel. "
+                "These configured values override context-tool depth arguments."
+            )
         agent_observation = (
             None
             if question_trace is None
@@ -2199,6 +2214,16 @@ def _answer_one(
         # raise here; trailing junk (observed: a sentence period after the
         # closing brace at temperature 0) is recorded on the trace row.
         step_arguments, step_trailing = step.parsed_arguments()
+        if retrieval_budget is not None and step.tool_name in {
+            "facts_context",
+            "claims_and_sources_context",
+            "combined_context",
+        }:
+            step_arguments = {
+                **step_arguments,
+                "k": retrieval_budget.k,
+                "candidate_k": retrieval_budget.candidate_depth,
+            }
         tool_observation = (
             None
             if question_trace is None

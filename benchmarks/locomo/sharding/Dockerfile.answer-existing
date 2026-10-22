@@ -1,0 +1,6 @@
+# Reuse the verified v38 dependency image; only retrieval and harness source change.
+FROM rememberstack-replay:b5ea33f9
+ARG REMEMBERSTACK_BUILD_REVISION
+ENV REMEMBERSTACK_BUILD_REVISION=${REMEMBERSTACK_BUILD_REVISION} \
+    PYTHONPATH=/app/src:/app
+COPY src /app/src

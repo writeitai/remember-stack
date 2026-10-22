@@ -6,6 +6,8 @@ from typing import cast
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from remember.retrieval import ContextRetrievalBudget
+from remember.retrieval import DEFAULT_CONTEXT_K
 from rememberstack.model import AssuredOperation
 from rememberstack.model import AssuredOperationName
 from rememberstack.model import ContextBundleV2
@@ -79,13 +81,17 @@ class OperationExecutor:
         query = cast(str, arguments["query"])
         entity_ids = cast(tuple[UUID, ...], arguments.get("entity_ids", ()))
         selected_time = cast(FactTime | None, arguments.get("time"))
+        budget = ContextRetrievalBudget(
+            k=cast(int, arguments.get("k", DEFAULT_CONTEXT_K)),
+            candidate_k=cast(int | None, arguments.get("candidate_k")),
+        )
         if name is AssuredOperationName.CLAIMS_AND_SOURCES_CONTEXT:
             return self._engine.claims_and_sources_context(
                 deployment_id=deployment_id,
                 query=query,
                 entity_ids=entity_ids,
-                k=cast(int, arguments.get("k", 50)),
-                candidate_k=cast(int, arguments.get("candidate_k", 200)),
+                k=budget.k,
+                candidate_k=budget.candidate_depth,
                 evaluated_at=evaluation,
             )
         if name is AssuredOperationName.FACTS_CONTEXT:
@@ -94,7 +100,8 @@ class OperationExecutor:
                 graph_queries=self._graph,
                 query=query,
                 entity_ids=entity_ids,
-                k=cast(int, arguments.get("k", 15)),
+                k=budget.k,
+                candidate_k=budget.candidate_depth,
                 evidence_per_fact=cast(int, arguments.get("evidence_per_fact", 3)),
                 hops=cast(int, arguments.get("hops", 1)),
                 predicate=cast(str | None, arguments.get("predicate")),
@@ -106,8 +113,8 @@ class OperationExecutor:
                 deployment_id=deployment_id,
                 query=query,
                 entity_ids=entity_ids,
-                k=50,
-                candidate_k=200,
+                k=budget.k,
+                candidate_k=budget.candidate_depth,
                 evaluated_at=evaluation,
             )
             facts = self._engine.default_facts_context(
@@ -115,7 +122,8 @@ class OperationExecutor:
                 graph_queries=self._graph,
                 query=query,
                 entity_ids=entity_ids,
-                k=15,
+                k=budget.k,
+                candidate_k=budget.candidate_depth,
                 evidence_per_fact=3,
                 hops=cast(int, arguments.get("hops", 1)),
                 predicate=cast(str | None, arguments.get("predicate")),

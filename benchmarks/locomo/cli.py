@@ -28,6 +28,7 @@ from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.adapters import build_generation_recorder
 from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import GenerationRecorder
@@ -55,6 +56,9 @@ def main(argv: list[str] | None = None) -> int:
                 tier=args.tier,
                 output=args.output,
                 protocol=args.protocol,
+                retrieval_budget=ContextRetrievalBudget(
+                    k=args.retrieval_k, candidate_k=args.retrieval_candidate_k
+                ),
             )
             print(configuration.model_dump_json())
             return 0
@@ -285,6 +289,9 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument(
         "--protocol", choices=tuple(PROTOCOL_REGISTRY), default=DEFAULT_PROTOCOL_KEY
     )
+
+    prepare.add_argument("--retrieval-k", type=int, default=50)
+    prepare.add_argument("--retrieval-candidate-k", type=int)
 
     ingest = commands.add_parser(
         "ingest", help="upload one sample to a clean isolated deployment"

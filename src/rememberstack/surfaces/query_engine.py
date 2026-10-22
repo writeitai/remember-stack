@@ -40,6 +40,10 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.retrieval import ContextRetrievalBudget
+from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
+from remember.retrieval import DEFAULT_CONTEXT_K
+from remember.retrieval import MAX_CONTEXT_K
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
 from rememberstack.core.ranking import DEFAULT_RRF_K
 from rememberstack.core.ranking import reciprocal_rank_fusion
@@ -170,12 +174,6 @@ composition returns at most 50 evidence records. Four hundred matches the existi
 interactive nomination ceiling and keeps hub-entity/time-window vector reads
 bounded without ever nominating globally and filtering afterward.
 """
-
-FACTS_CONTEXT_EVIDENCE_BUDGET: Final = 60
-"""Hard maximum evidence associations in one fact-context envelope."""
-
-FACTS_CONTEXT_CANDIDATE_K: Final = 200
-"""Descriptor-pinned fact nomination depth; deliberately not a public knob."""
 
 FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 """Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
@@ -686,7 +684,8 @@ class QueryEngine:
         deployment_id: UUID,
         query: str,
         entity_ids: tuple[UUID, ...] = (),
-        k: int = 15,
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
         evidence_per_fact: int = 3,
         predicate: str | None = None,
         time: FactTime | None = None,
@@ -697,6 +696,9 @@ class QueryEngine:
     ) -> Envelope:
         """Return adjudicated facts under an explicit current-belief time scope."""
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         required_entity_ids = (
@@ -748,10 +750,11 @@ class QueryEngine:
             time=selected_time,
             evaluated_at=evaluation,
             deadline=database_deadline,
+            candidate_k=candidate_k,
         )
         candidate_keys = tuple(
             (item.qualifier, UUID(item.item_id))
-            for item in nominated[:FACTS_CONTEXT_CANDIDATE_K]
+            for item in nominated[:candidate_k]
             if item.qualifier in {"relation", "observation"}
         )
         evidence_by_fact_stance: dict[tuple[str, UUID, str], list[RowMapping]] = {}
@@ -839,7 +842,7 @@ class QueryEngine:
             fact_keys=tuple((fact.kind, fact.fact_id) for fact in facts),
             evidence_by_fact_stance=evidence_by_fact_stance,
             evidence_per_fact=evidence_per_fact,
-            budget=FACTS_CONTEXT_EVIDENCE_BUDGET,
+            budget=max(60, 2 * k),
         )
 
         returned_counts = Counter(
@@ -890,7 +893,7 @@ class QueryEngine:
         # Only candidates that reached PostgreSQL and failed confirmation are
         # hydration drops. Unvisited nominations are disclosed by truncation.
         dropped = visited_candidates - len(confirmed_rows)
-        candidate_depth_exhausted = len(nominated) > FACTS_CONTEXT_CANDIDATE_K
+        candidate_depth_exhausted = len(nominated) > candidate_k
         confirmation_incomplete = visited_candidates < len(candidate_keys)
         return _envelope(
             grain=Grain.FACT,
@@ -936,7 +939,8 @@ class QueryEngine:
         graph_queries: "GraphQueries | None",
         query: str,
         entity_ids: tuple[UUID, ...] = (),
-        k: int = 15,
+        k: int = DEFAULT_CONTEXT_K,
+        candidate_k: int | None = None,
         evidence_per_fact: int = 3,
         hops: int = DEFAULT_FACTS_CONTEXT_HOPS,
         predicate: str | None = None,
@@ -956,6 +960,9 @@ class QueryEngine:
         neighborhood expansion requires a single world-time instant.
         """
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         _validate_default_facts_context_hops(hops=hops)
         _validate_optional_predicate(predicate=predicate)
         anchors = _validate_context_entity_ids(entity_ids=entity_ids)
@@ -981,6 +988,7 @@ class QueryEngine:
                     query=query,
                     entity_ids=scoped_entity_ids,
                     k=k,
+                    candidate_k=candidate_k,
                     evidence_per_fact=evidence_per_fact,
                     predicate=predicate,
                     time=selected_time,
@@ -1214,11 +1222,13 @@ class QueryEngine:
         query: str,
         entity_ids: tuple[UUID, ...] = (),
         k: int = 50,
-        candidate_k: int = 200,
+        candidate_k: int | None = None,
         evaluated_at: datetime | None = None,
     ) -> Envelope:
         """Return current claims and source passages, never facts or entities."""
-        _validate_claims_and_sources_context_bounds(k=k, candidate_k=candidate_k)
+        candidate_k = ContextRetrievalBudget(
+            k=k, candidate_k=candidate_k
+        ).candidate_depth
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
         evaluation = evaluated_at or datetime.now(UTC)
         if entity_ids:
@@ -2580,6 +2590,7 @@ class QueryEngine:
         time: FactTime,
         evaluated_at: datetime,
         deadline: float,
+        candidate_k: int = DEFAULT_CONTEXT_CANDIDATES,
     ) -> tuple[P1Nomination, ...]:
         """Rank candidates, deferring final fact authority to the confirm gate."""
         method = (
@@ -2604,7 +2615,7 @@ class QueryEngine:
             arguments: dict[str, object] = {
                 "deployment_id": str(deployment_id),
                 "vector": query_vector,
-                "k": FACTS_CONTEXT_CANDIDATE_K + 1,
+                "k": candidate_k + 1,
                 "kind": None,
                 "time": time,
                 "evaluated_at": evaluated_at,
@@ -2642,7 +2653,7 @@ class QueryEngine:
                 nominated,
                 nominate(scope=profile_ids, ranking_scope=profile_ids),
             ),
-            limit=FACTS_CONTEXT_CANDIDATE_K + 1,
+            limit=candidate_k + 1,
         )
 
     def _resolve_context_entity(
@@ -3223,8 +3234,8 @@ def _validate_batch_b_k(*, k: int) -> None:
 
 def _validate_facts_context_bounds(*, k: int, evidence_per_fact: int) -> None:
     """Enforce the fact-context result and per-stance evidence bounds."""
-    if not 1 <= k <= 30:
-        raise ValueError("facts_context k must be between 1 and 30")
+    if not 1 <= k <= MAX_CONTEXT_K:
+        raise ValueError(f"facts_context k must be between 1 and {MAX_CONTEXT_K}")
     if not 1 <= evidence_per_fact <= 5:
         raise ValueError("evidence_per_fact must be between 1 and 5")
 
@@ -3277,20 +3288,6 @@ def _facts_context_confirmation_batch_size(*, k: int) -> int:
         FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE,
         max(FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE, k + 1),
     )
-
-
-def _validate_claims_and_sources_context_bounds(*, k: int, candidate_k: int) -> None:
-    """Enforce testimony final-list and per-channel nomination bounds."""
-    if not 1 <= k <= 100:
-        raise ValueError("claims_and_sources_context k must be between 1 and 100")
-    if not 1 <= candidate_k <= 400:
-        raise ValueError(
-            "claims_and_sources_context candidate_k must be between 1 and 400"
-        )
-    if candidate_k < k:
-        raise ValueError(
-            "claims_and_sources_context candidate_k cannot be smaller than k"
-        )
 
 
 def _bound_testimony_result(
@@ -3563,7 +3560,7 @@ def _select_fact_evidence(
     """Allocate two-stance evidence fairly within the hard envelope budget.
 
     Each rank round visits every returned fact and both stances before taking
-    another claim from any fact. Because k is at most 30 and the budget is 60,
+    another claim from any fact. Because the budget is at least twice k,
     the first round always gives every backed fact at least one association;
     when both stances exist it also exposes both before adding depth.
     """

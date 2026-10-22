@@ -20,6 +20,7 @@ from pydantic import SerializerFunctionWrapHandler
 
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
 from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import PipelineReadinessReport
@@ -53,7 +54,9 @@ AnswerAgentModel = Literal[
     "google/gemma-4-26b-a4b-it-maas",
     "gpt-5.6-luna",
 ]
-JudgeModel = Literal["openai/gpt-5.6-luna", "openai/gpt-6-luna-pro", "openai/gpt-6-sol", "gpt-5.6-luna"]
+JudgeModel = Literal[
+    "openai/gpt-5.6-luna", "openai/gpt-6-luna-pro", "openai/gpt-6-sol", "gpt-5.6-luna"
+]
 ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
 """Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
 or the local keyless Codex ChatGPT-subscription bridge."""
@@ -166,6 +169,9 @@ class RunConfiguration(FrozenModel):
     answer_agent_model: AnswerAgentModel = "openai/gpt-6-luna-pro"
     answer_agent_reasoning_effort: ReasoningEffort | None = "high"
     answer_word_cap: int | None = Field(default=None, ge=1)
+    retrieval_budget: ContextRetrievalBudget = Field(
+        default_factory=ContextRetrievalBudget
+    )
     judge_model: JudgeModel = "openai/gpt-6-luna-pro"
     judge_reasoning_effort: ReasoningEffort | None = "high"
     answer_agent_temperature: float | None = Field(default=0.0, ge=0, le=2)
