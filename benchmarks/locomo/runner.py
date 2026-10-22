@@ -1296,7 +1296,6 @@ def _validate_run(
         "answer_agent_model": configuration.answer_agent_model,
         "answer_agent_reasoning_effort": (configuration.answer_agent_reasoning_effort),
         "answer_word_cap": configuration.answer_word_cap,
-        "retrieval_budget": configuration.retrieval_budget.model_dump(mode="json"),
         "judge_model": configuration.judge_model,
         "judge_reasoning_effort": configuration.judge_reasoning_effort,
         "answer_agent_temperature": configuration.answer_agent_temperature,
@@ -1309,6 +1308,10 @@ def _validate_run(
         "answer_schema_sha256": configuration.answer_schema_sha256,
         "judge_schema_sha256": configuration.judge_schema_sha256,
     }
+    if "retrieval_budget" in configuration.model_fields_set:
+        base["retrieval_budget"] = configuration.retrieval_budget.model_dump(
+            mode="json"
+        )
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
     current_pin = {

@@ -1994,7 +1994,7 @@ def test_single_run_summary_json_is_unchanged(
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v38","protocol_fingerprint":'
-        '"d3ff268731e5155567851b7d2c9c6827326a43d262a6b2e6f2840e6589f2de3a",'
+        '"f2de7d4caf290fe2a7167749c1a9dc0650243fa2ae84b4c6a21615c5c81fe8b6",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2254,6 +2254,37 @@ def test_protocol_mutation_is_rejected(
     run_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(BenchmarkRunError, match="fingerprint"):
+        summarize_run(run_dir=run_dir)
+
+
+def test_recorded_run_preserves_identity_before_retrieval_budget_was_added(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Historical comparisons hash recorded fields without inventing new inputs."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "recorded"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    run_path = run_dir / "run.json"
+    payload = json.loads(run_path.read_text())
+    del payload["retrieval_budget"]
+    payload["adapter_version"] = "recorded-before-configurable-retrieval"
+    identity = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"prepared_at", "dataset_path", "protocol_fingerprint"}
+    }
+    payload["protocol_fingerprint"] = runner._canonical_hash(identity)
+    run_path.write_text(json.dumps(payload))
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    state["protocol_fingerprint"] = payload["protocol_fingerprint"]
+    state_path.write_text(json.dumps(state))
+
+    assert (
+        runner.load_recorded_run(run_dir=run_dir).configuration.protocol_fingerprint
+        == (payload["protocol_fingerprint"])
+    )
+    with pytest.raises(BenchmarkRunError, match="adapter version"):
         summarize_run(run_dir=run_dir)
 
 
