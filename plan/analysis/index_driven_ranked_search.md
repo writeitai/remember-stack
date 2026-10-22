@@ -574,6 +574,34 @@ editions; (3) an explicit owner budget for filtered ranked search at the
 target size. The 50M target and the semantic, claim, fact and context
 channels were not swept.
 
+### 8.3 Review r2 rerun at 300k chunks, final configuration (2026-10-22)
+
+The final configuration (pushdown limit 20,000, `ef_search` 200,
+per-statement deadline clamps) through the public `search_chunks` (BM25,
+k = 20, 40 queries from the fixed query set), on an isolated VM over 300,000
+chunks (6,000 lineages × 5 × 10, half duplicated, D134 metadata), with
+public results hydrating. Archived in
+`plan/analysis/data/d142_sweep_300k_2026-10-22.json`, per-query accounts
+included.
+
+| stratum (eligible current chunks) | path | p50 / p95 ms | k returned | early stops |
+| --- | --- | --- | --- | --- |
+| current (60,000) | loop | 152 / 263 | 40 of 40 | 0 |
+| history | loop | 112 / 267 | 40 of 40 | 0 |
+| 0.1% documents (60) | exact tier | 78 / 90 | 7 (fewer matches exist) | 0 |
+| 1% documents (600) | exact tier | 235 / 351 | 18 | 0 |
+| 10% documents (6,000) | pushdown | 600 / 859 | 37 | 0 |
+| 4,990 rows | exact tier | 1,334 / 2,084 | 35 | 0 |
+| 5,010 rows | pushdown | 505 / 780 | 35 | 0 |
+
+Readings: no stratum stops early, and every query that has `k` matches
+returns them. At 300k chunks the unfiltered strata meet the p95 ≈ 300 ms
+budget; filtered strata above about 600 eligible rows do not. The exact tier
+is slower than the pushdown on either side of its threshold (p95 2.1 s at
+4,990 rows against 0.8 s at 5,010), so the threshold for document-filtered
+sets is set too high; that is input to the open latency decision (review r2
+P1-6), not changed here.
+
 ## 9. Out of scope
 
 - **Reranking.** A precise reranker (for example TypeSafe AI's Jev model,
