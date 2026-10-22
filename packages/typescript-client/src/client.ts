@@ -177,16 +177,16 @@ export class MemoryClient {
     }
   }
   /** Run assured facts recall with optional temporal and entity context. */
-  async factsContext({query,time,hops,predicate,entityIds,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;hops?:number|null;predicate?:string|null;entityIds?:string[]|null;signal?:AbortSignal}):Promise<Envelope> {
-    const args:Record<string,Models.JsonValue>={query};if(time!=null)args.time=time;if(hops!=null)args.hops=hops;if(predicate!=null)args.predicate=predicate;if(entityIds!=null)args.entity_ids=entityIds;
+  async factsContext({query,time,hops,predicate,entityIds,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;hops?:number|null;predicate?:string|null;entityIds?:string[]|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<Envelope> {
+    const args:Record<string,Models.JsonValue>={query};if(time!=null)args.time=time;if(hops!=null)args.hops=hops;if(predicate!=null)args.predicate=predicate;if(entityIds!=null)args.entity_ids=entityIds;if(k!=null)args.k=k;if(candidateK!=null)args.candidate_k=candidateK;
     const value=await this.runOperation({name:'facts_context',arguments:args,signal});return validateModel({name:'Envelope',value,response:true});
   }
   /** Run assured combined fact and source recall. */
-  async combinedContext({query,time,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;signal?:AbortSignal}):Promise<ContextBundle> {
-    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{})},signal});return validateModel({name:'ContextBundleV2',value,response:true});
+  async combinedContext({query,time,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<ContextBundle> {
+    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},signal});return validateModel({name:'ContextBundleV2',value,response:true});
   }
   /** Run assured source-claim recall. */
-  async claimsAndSourcesContext({query,time,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{})},signal}),response:true});}
+  async claimsAndSourcesContext({query,time,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},signal}),response:true});}
   /** Run assured entity resolution. */
   async resolveEntity({name,signal}:{name:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'resolve_entity',arguments:{name},signal}),response:true});}
   /** Resolve a name with optional repeated focal-entity query parameters. */

@@ -324,7 +324,7 @@
             "additionalProperties": false,
             "properties": {
               "candidate_k": {
-                "default": 200,
+                "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
                 "maximum": 400,
                 "minimum": 1,
                 "type": "integer"
@@ -341,6 +341,7 @@
               },
               "k": {
                 "default": 50,
+                "description": "Maximum confirmed results per evidence type.",
                 "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
@@ -2452,7 +2453,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 3
+          "version": 4
         },
         {
           "description": "Complete claims-and-sources and neighborhood-aware fact responses side by side in ContextBundle/v2.",
@@ -2461,6 +2462,12 @@
           "input_schema": {
             "additionalProperties": false,
             "properties": {
+              "candidate_k": {
+                "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+                "maximum": 400,
+                "minimum": 1,
+                "type": "integer"
+              },
               "entity_ids": {
                 "items": {
                   "format": "uuid",
@@ -2474,6 +2481,13 @@
               "hops": {
                 "default": 1,
                 "maximum": 2,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "k": {
+                "default": 50,
+                "description": "Maximum confirmed results per evidence type.",
+                "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
               },
@@ -4613,7 +4627,7 @@
             "title": "ContextBundleV2",
             "type": "object"
           },
-          "version": 4
+          "version": 5
         },
         {
           "channels": {
@@ -4636,6 +4650,12 @@
           "input_schema": {
             "additionalProperties": false,
             "properties": {
+              "candidate_k": {
+                "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+                "maximum": 400,
+                "minimum": 1,
+                "type": "integer"
+              },
               "entity_ids": {
                 "items": {
                   "format": "uuid",
@@ -4659,8 +4679,9 @@
                 "type": "integer"
               },
               "k": {
-                "default": 15,
-                "maximum": 30,
+                "default": 50,
+                "description": "Maximum confirmed results per evidence type.",
+                "maximum": 100,
                 "minimum": 1,
                 "type": "integer"
               },
@@ -6776,7 +6797,7 @@
             "title": "Envelope",
             "type": "object"
           },
-          "version": 3
+          "version": 4
         },
         {
           "description": "Resolve a name to ranked current survivor candidates; never silently guess.",
@@ -45216,5 +45237,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
+  "surface_manifest_hash": "60bfacee13ea9093a17cc638d92fd9aeb67b9b38ac4f0ddcb65d7629ba2131fa"
 }

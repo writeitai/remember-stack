@@ -261,6 +261,8 @@ class MemoryClient:
         self,
         query: str,
         *,
+        k: int | None = None,
+        candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
         hops: int | None = None,
         predicate: str | None = None,
@@ -268,6 +270,10 @@ class MemoryClient:
     ) -> Envelope:
         """Run the assured facts_context operation."""
         args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
         if hops is not None:
@@ -281,10 +287,19 @@ class MemoryClient:
         return res
 
     def combined_context(
-        self, query: str, *, time: Mapping[str, object] | None = None
+        self,
+        query: str,
+        *,
+        k: int | None = None,
+        candidate_k: int | None = None,
+        time: Mapping[str, object] | None = None,
     ) -> ContextBundleV2:
         """Run the assured combined_context operation."""
         args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
         res = self.run_operation(name="combined_context", arguments=args)
@@ -292,7 +307,12 @@ class MemoryClient:
         return res
 
     def claims_and_sources_context(
-        self, query: str, *, time: Mapping[str, object] | None = None
+        self,
+        query: str,
+        *,
+        k: int | None = None,
+        candidate_k: int | None = None,
+        time: Mapping[str, object] | None = None,
     ) -> Envelope:
         """Run the assured claims_and_sources_context operation.
 
@@ -300,6 +320,10 @@ class MemoryClient:
         current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
         """
         args: dict[str, object] = {"query": query}
+        if k is not None:
+            args["k"] = k
+        if candidate_k is not None:
+            args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
         res = self.run_operation(name="claims_and_sources_context", arguments=args)

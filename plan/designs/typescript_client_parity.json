@@ -108,17 +108,17 @@
         "property": false
       },
       "facts_context": {
-        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, hops: int | None=None, predicate: str | None=None, entity_ids: Sequence[str | UUID] | None=None",
         "returns": "Envelope",
         "property": false
       },
       "combined_context": {
-        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None",
         "returns": "ContextBundleV2",
         "property": false
       },
       "claims_and_sources_context": {
-        "arguments": "self, query: str, *, time: Mapping[str, object] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None",
         "returns": "Envelope",
         "property": false
       },

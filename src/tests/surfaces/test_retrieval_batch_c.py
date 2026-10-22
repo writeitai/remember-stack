@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from rememberstack.adapters import BoundedPostgresReadPool
 import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
@@ -53,7 +54,6 @@ from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
 from tests.database_reset import reset_database
 
 _EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
@@ -983,7 +983,7 @@ def test_facts_context_returns_both_fact_kinds_with_both_stances(
         evidence_per_fact=2,
     )
 
-    assert index.requested_k == [FACTS_CONTEXT_CANDIDATE_K + 1]
+    assert index.requested_k == [DEFAULT_CONTEXT_CANDIDATES + 1]
     assert tuple(fact.kind for fact in answer.facts) == ("relation", "observation")
     for fact in answer.facts:
         assert {
@@ -1499,8 +1499,8 @@ def test_facts_context_uses_profile_text_to_rescue_list_queries(
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
     assert index.profile_requests == 1
     assert index.requested_k == [
-        FACTS_CONTEXT_CANDIDATE_K + 1,
-        FACTS_CONTEXT_CANDIDATE_K + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
     ]
     assert len(index.requested_deadlines) == 2
     assert index.requested_deadlines[0] == index.requested_deadlines[1]
