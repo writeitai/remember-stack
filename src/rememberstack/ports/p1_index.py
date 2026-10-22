@@ -38,7 +38,9 @@ def require_p1_vector(vector: tuple[float, ...]) -> None:
     # Python value that overflows, or a tiny one that underflows to zero, is
     # caught here (review r2 P2-6).
     try:
-        stored = struct.unpack(f"{len(vector)}f", struct.pack(f"{len(vector)}f", *vector))
+        stored = struct.unpack(
+            f"{len(vector)}f", struct.pack(f"{len(vector)}f", *vector)
+        )
     except (OverflowError, struct.error) as error:
         raise ValueError("P1 vector has a component outside float4 range") from error
     if not all(math.isfinite(item) for item in stored):
