@@ -88,7 +88,7 @@ def _judged_run(
                 question.item_id: AnswerRecord(
                     item_id=question.item_id,
                     sample_id=question.sample_id,
-                    category=question.category,
+                    category=question.category,  # type: ignore[arg-type]
                     question=question.question,
                     gold_answer=question.answer or "",
                     gold_evidence=question.evidence,
