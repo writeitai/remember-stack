@@ -21,6 +21,7 @@ from rememberstack.ports.p1_index import P1Nomination
 from rememberstack.surfaces.query_sandbox import bridge
 from rememberstack.surfaces.query_sandbox import executor as executor_module
 from rememberstack.surfaces.query_sandbox.executor import QuerySandboxExecutor
+from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
 from rememberstack.surfaces.query_sandbox.result import QueryErrorCode
 
 _DEPLOYMENT = uuid4()
@@ -233,3 +234,86 @@ def test_genuine_export_and_generation_failures_keep_their_codes(
     )
     assert generation.error_code == QueryErrorCode.CONFIRMATION_FAILED
     assert "generation" in (generation.error_message or "")  # that path
+
+
+_UNCACHED_OID = 1007  # int4[]: not in the executor's static type table
+
+
+@pytest.mark.parametrize("failure", _BUDGET[:2])
+def test_a_budget_failure_naming_a_result_type_is_a_statement_timeout(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Review r5 nit: the dynamic ``format_type`` lookup re-raises an
+    exhausted budget instead of falling back to the OID, and no row is
+    fetched from the aborted transaction."""
+    assert _UNCACHED_OID not in executor_module._TYPE_NAMES  # noqa: SLF001
+    cursor = MagicMock()
+    column = MagicMock(type_code=_UNCACHED_OID)
+    column.name = "ids"
+    cursor.description = (column,)
+
+    def execute(statement: object, *args: object, **kwargs: object) -> MagicMock:
+        if "format_type" in str(statement):
+            raise failure
+        return MagicMock()
+
+    cursor.connection.execute.side_effect = execute
+
+    @contextmanager
+    def transaction(self: object, **_: object) -> Iterator[MagicMock]:
+        yield cursor
+
+    monkeypatch.setattr(QuerySandboxExecutor, "_transaction", transaction)
+    monkeypatch.setattr(
+        executor_module, "live_schema_differences_psycopg", lambda **_: ()
+    )
+    outcome = QuerySandboxExecutor(
+        deployment_id=_DEPLOYMENT, connect=MagicMock(), search=None, embed=None
+    ).query_sql(sql="SELECT ARRAY[1, 2] AS ids")
+    assert outcome.error_code == QueryErrorCode.STATEMENT_TIMEOUT, outcome.error_message
+    cursor.fetchmany.assert_not_called()
+    assert outcome.rows == ()
+
+
+def _raised_while_handling_a_timeout() -> ValueError:
+    """A non-budget error whose only link to a timeout is implicit context."""
+    try:
+        raise psycopg.errors.QueryCanceled("canceled")
+    except psycopg.errors.QueryCanceled:
+        try:
+            raise ValueError("unrelated")
+        except ValueError as error:
+            return error
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(
+            psycopg.errors.UndefinedColumn(
+                "canceling statement due to statement timeout"
+            ),
+            id="timeout-text-in-another-error",
+        ),
+        pytest.param(
+            _wrapped(psycopg.errors.UndefinedColumn("statement timeout")),
+            id="wrapped-timeout-text",
+        ),
+        pytest.param(
+            psycopg.errors.LockNotAvailable("lock timeout"), id="lock-timeout"
+        ),
+        pytest.param(TimeoutError("socket timed out"), id="builtin-timeout"),
+        pytest.param(_raised_while_handling_a_timeout(), id="implicit-context"),
+    ],
+)
+def test_the_budget_classifier_ignores_look_alikes(error: BaseException) -> None:
+    """Review r5 nit: only 57014/25P04 (raw, wrapped or an explicit cause) and
+    bounded-admission timeouts count; never message text, lock timeouts, a
+    built-in TimeoutError or an implicit exception context."""
+    assert budget_exhausted(error) is False
+
+
+def test_the_budget_classifier_follows_an_explicit_cause() -> None:
+    error = RuntimeError("adapter failed")
+    error.__cause__ = psycopg.errors.TransactionTimeout("timeout")
+    assert budget_exhausted(error) is True
