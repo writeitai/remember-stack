@@ -496,13 +496,32 @@ confirmation. Without entity anchors the branches merge by
 branches — is ordered by `(coverage DESC, distance, fact_kind, fact_id)`
 using the §8.4 fact coverage, and any per-branch depth is applied only after
 that ordering and eligibility; a two-anchor relation therefore outranks a
-closer one-anchor observation. Bounded coverage tiers are scored exactly
-(§8.4).
+closer one-anchor observation.
+
+**Entity-scoped facts: bounded exact scan (post-approval alternative to the
+§8.4 tier loop, review r2 P2-7).** With entity anchors, fact search does not
+run the tier loop. It first counts the facts whose *stored* endpoints are
+any entity the requested survivors absorbed (the merge-redirect expansion
+that `facts_visible_history` resolves when it scores), reading at most the
+entity work budget plus one rows across both fact tables. Above the budget
+(50,000 rows, a starting point) the operation answers the typed
+`entity_scope_too_broad` boundary; at or below it, every in-scope fact is
+scored exactly, ordered by `(coverage DESC, distance, fact_kind, fact_id)`,
+with full fact authority and the D140 gate before the cut. Exactness and the
+input bound are the reasons; the cost of a 50,000-row exact scan has not been
+measured at scale and is not a ≤ 5,000-row tier.
 
 Entity profile search (`semantic_entities` and the engine's entity
 nomination) uses the same §8.3 loop on `ix_entities_embedding_hnsw`, with
 survivor identity and `entity_type` against `entities_current` in
 confirmation.
+
+Every semantic loop searches with `hnsw.ef_search = 200`, set
+transaction-locally for the operation. On a synthetic clustered corpus
+(100,000 vectors, 1,536 dimensions, 500 clusters) mean recall@10 was 0.887
+at pgvector's default 40, 0.959 at 100 and 0.999 at 200 and 400
+(`plan/analysis/data/d142_recall_2026-10-21.json`); real-query recall is
+still to be measured.
 
 ### 8.6 Termination and the structured search result
 

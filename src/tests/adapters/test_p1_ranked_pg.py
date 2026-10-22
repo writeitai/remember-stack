@@ -426,8 +426,11 @@ def test_scorer_bound_holds_for_spilled_and_memtable_rows(
 def test_planner_controls_restore_the_callers_settings_across_prepared_runs(
     database_engine: Engine,
 ) -> None:
-    """Review r1 nit: the loop restores the caller's own planner settings, and
-    repeated (auto-prepared) executions keep attesting the index plan."""
+    """Review r1 nit: the loop restores the caller's own planner settings
+    across repeated streamed executions, each attesting the index plan.
+
+    (psycopg declares server-side cursors directly, so this does not
+    exercise a prepared generic plan; force_custom_plan covers that case.)"""
     _seed_chunks(database_engine, ["alpha beta", "alpha", "gamma alpha alpha"])
     index = PostgresP1Index(engine=database_engine, embedding_model=_MODEL)
     query = index._testimony_query(  # noqa: SLF001
@@ -444,7 +447,7 @@ def test_planner_controls_restore_the_callers_settings_across_prepared_runs(
     with database_engine.begin() as connection:
         connection.execute(text("SET LOCAL cursor_tuple_fraction = 0.25"))
         connection.execute(text("SET LOCAL enable_sort = off"))
-        for _ in range(8):  # past psycopg's prepare threshold
+        for _ in range(8):  # repeated streamed executions
             rows, account = p1_ranked.nominate_and_confirm(
                 connection,
                 statement=query.nomination,

@@ -465,7 +465,7 @@ The executable list is the delivery plan's WP-RS.7–9; the substance:
    of design §9 (question as sampling unit, three runs per side, paired
    bootstrap one-sided 95% bound, fixed 1.0 pp margin, inconclusive when
    underpowered). The scorer-bound gate (design §9) runs in CI on the built
-   image (its randomized spill-mixed part is not built yet). The positive-match lexical change and the
+   image, randomized spill-mixed corpus included. The positive-match lexical change and the
    `pg_textsearch` upgrade are measured separately against today's answers.
    The LoCoMo part is a paid run and waits until the in-progress run has
    finished.
@@ -501,9 +501,10 @@ matched nothing).
 
 Readings:
 
-- Unfiltered `current` and `history` searches no longer grow with the corpus:
-  mean fetched candidates stay in the hundreds (328 at 300k, 824 at 3M for
-  `current`), and no query stops short. `main` grows linearly.
+- Unfiltered `current` and `history` latency grew sublinearly in this run
+  (88 ms → 415 ms p50 for `current` from 300k to 3M chunks, against `main`'s
+  linear growth); the measurements do not establish corpus-independent
+  latency (review r2 P2-4). Fetched candidates stayed in the hundreds.
 - Small document filters are exact and fast through the small-set tier.
 - **A 1% document filter at 3M chunks (about 6,000 eligible chunks, above the
   5,000 exact-tier threshold) still fails the scaling gate:** 25% of queries
@@ -520,7 +521,11 @@ Readings:
   at 30k chunks; now a per-candidate `LATERAL` probe). The D140 benchmark's
   own BM25 numbers were measured on the degenerate text.
 
-### 8.2 Review r1 rerun at 3M chunks (2026-10-21)
+### 8.2 Review r1 rerun at 3M chunks (2026-10-21) — diagnostic
+
+These numbers are diagnostic: the public envelopes did not hydrate (fixed in
+the harness after review r2), the 10% row predates the final 20,000-row
+pushdown limit, and only BM25 chunk search was swept.
 
 After the round-1 fixes (filter pushdown, per-candidate confirmation, fixed
 query set from the generator's Zipf distribution), on an isolated VM

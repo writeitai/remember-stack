@@ -6932,6 +6932,11 @@ plan check is pending (a LoCoMo run occupies the database on 2026-10-21).
   keeps exactness at the cost of fetching rows within ≈12.5% of the `k`-th
   score; the gate is a test pinning the extension revision the bound was
   verified on, plus the counterexample proofs on the built image.
+- **Entity-scoped facts (post-approval alternative, review r2 P2-7).**
+  Fact search with entity anchors scores the survivor-expanded in-scope
+  facts exactly when they number at most the entity work budget (50,000
+  stored-endpoint rows, counted first); above it, `entity_scope_too_broad`.
+  It does not run the coverage-tier loop (design §8.5).
 - **Document-filtered chunk searches (post-approval additions, 2026-10-21,
   review r1 P1-9).** The search enumerates its eligible rows from the
   matching versions: at most the exact-tier threshold are scored exactly
@@ -6983,18 +6988,24 @@ budget; then an isolated prototype on pilot data; adopt only with a
 demonstrated benefit and passed gates, through its own design update.
 
 **Owner invariant (2026-10-21): incremental ingestion is untouched.** D142
-changes only the query path. It does not change anchor-stabilized chunking
+leaves every ingestion identity and paid-work input unchanged; besides the
+query path it changes only vector write validation (P1 writers reject
+vectors that store as non-finite or zero float4). It does not change anchor-stabilized chunking
 (D58), the inputs of `extraction_input_hash` or `reuse_identity_hash`,
 search text versus embedding input, header facts, normalization, text origin
 (D140) or embedding carry-forward (D80); the reuse boundary is unchanged.
-What the CI regression proves, per input and for both a living undated and a
-dated snapshot lineage: after a one-paragraph edit, Selection and embedding
-run only for the changed chunk and its immediate same-section neighbours;
-every other chunk keeps its extraction identity, embedding input and v1
-vector, and where Claimify is reused it reattaches exactly its v1 claim ids.
-Claimify's input also hashes the previous eight Selection producers, so it
-can re-run on later chunks — a known Rule 4 gap that D142 neither causes nor
-fixes, pinned by an expected-failure test.
+What the CI regression proves, for both a living undated and a dated
+snapshot lineage after a one-paragraph edit: every Selection call targets a
+chunk with a new extraction identity (one call each) and those are the
+changed chunk and its immediate same-section neighbours; every embedding
+input belongs to that neighbourhood; every Claimify call targets a chunk
+with a new Claimify identity (one call each), and those lie within the
+extracted chunks and the eight chunks after each; every other chunk keeps its
+extraction identity, reuse identity, text origin, embedding input and v1
+vector, and a chunk with an unchanged Claimify identity reattaches exactly
+its v1 claim ids. That Claimify window is a known Rule 4 gap that D142
+neither causes nor fixes; a narrowly scoped expected-failure test holds the
+requirement against it.
 
 **Consequences.** In the common case fetched-candidate and confirmation work
 scales with `k` over the eligible share of top candidates, not with corpus

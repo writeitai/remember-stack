@@ -16,7 +16,7 @@ implementation is added to the same pull request (#505) after design approval
 | --- | --- |
 | WP-RS.0 | **pending** — harness `benchmarks/p1_ranked/explain_real.py` ready; runs on a copy of a real deployment after the current LoCoMo run |
 | WP-RS.1 | done — pg_textsearch v1.5.1 pinned, D98 patch retired; **post-approval design change:** no scorer patch, the design §8.3 bounded-reconciliation margin instead (for the dual review); writers reject zero-norm and non-finite vectors; every image build runs the upstream regression suite (82/82) |
-| WP-RS.2 | done — ranked-read connection (read-only REPEATABLE READ); SQL sandbox snapshot export/import; `claims_and_sources_context` P1 reads in one pool snapshot (claim/chunk hydration still uses its own connection — gap, see PR) |
+| WP-RS.2 | done — ranked-read connection (read-only REPEATABLE READ); SQL sandbox snapshot export/import; every ranked operation (searches, nominations, contexts, resolve) reads one snapshot with one deadline and pinned instant, hydration and pending/freshness included; the SQL sandbox shares its snapshot, instant and request deadline (review r1/r2) |
 | WP-RS.3 | done — `adapters/p1_ranked.py` loop; chunk and claim searches |
 | WP-RS.4 | done — `P1SearchResult`/`P1SearchIds` accounts; envelopes, testimony lists, sandbox invocations, `scope_pending.complete` |
 | WP-RS.5 | done — coverage tiers for testimony searches; entity budget on testimony nomination; small document-filtered chunk sets scored exactly (post-approval addition, design §8.4) |

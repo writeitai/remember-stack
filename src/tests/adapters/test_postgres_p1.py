@@ -225,8 +225,9 @@ def test_entity_scoped_fact_search_keeps_coverage_before_similarity() -> None:
 
 
 def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
-    """The fact-context candidate path nominates from the index; its
-    confirmation reads base rows only (no ``memory_v1`` authority view)."""
+    """The fact-context candidate path nominates from the join-free index
+    statement; full fact authority applies in each batch's confirmation
+    (review r1 P1-5), not in the streamed nomination."""
     engine = MagicMock(spec=Engine)
     loop = _LoopConnection(engine)
     index = PostgresP1Index(engine=engine, embedding_model=_MODEL)
