@@ -18,6 +18,10 @@ from dataclasses import dataclass
 from typing import Final
 from typing import Literal
 
+from remember.retrieval import DEFAULT_CONTEXT_K
+from remember.retrieval import MAX_CONTEXT_CANDIDATES
+from remember.retrieval import MAX_CONTEXT_K
+
 INGEST_TOOL_NAME: Final = "ingest"
 PIPELINE_READINESS_TOOL_NAME: Final = "pipeline_readiness"
 DELETE_DOCUMENT_TOOL_NAME: Final = "delete_document"
@@ -101,6 +105,17 @@ PROJECT_ARGUMENT: Final[dict[str, object]] = {
         " default project."
     ),
 }
+
+_CONTEXT_K: Final[dict[str, object]] = {
+    "type": "integer", "default": DEFAULT_CONTEXT_K, "minimum": 1,
+    "maximum": MAX_CONTEXT_K,
+    "description": "Maximum confirmed results per evidence type.",
+}
+_CONTEXT_CANDIDATE_K: Final[dict[str, object]] = {
+    "type": "integer", "minimum": 1, "maximum": MAX_CONTEXT_CANDIDATES,
+    "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+}
+
 
 _INGEST_DESCRIPTION: Final = (
     "Store a document into this deployment's memory (E0 write). Returns a"
@@ -809,19 +824,14 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             properties={
                 "query": _QUERY,
                 "entity_ids": _ENTITY_IDS,
-                "k": {"type": "integer", "default": 50, "minimum": 1, "maximum": 100},
-                "candidate_k": {
-                    "type": "integer",
-                    "default": 200,
-                    "minimum": 1,
-                    "maximum": 400,
-                },
+                "k": _CONTEXT_K,
+                "candidate_k": _CONTEXT_CANDIDATE_K,
                 "time": _TIME_SCHEMA,
             },
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=3,
+        tool_version=4,
         http_route="POST /operations/claims_and_sources_context",
     ),
     ToolDefinition(
@@ -835,7 +845,8 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             properties={
                 "query": _QUERY,
                 "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
-                "k": {"type": "integer", "default": 15, "minimum": 1, "maximum": 30},
+                "k": _CONTEXT_K,
+                "candidate_k": _CONTEXT_CANDIDATE_K,
                 "evidence_per_fact": {
                     "type": "integer",
                     "default": 3,
@@ -849,7 +860,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=3,
+        tool_version=4,
         http_route="POST /operations/facts_context",
     ),
     ToolDefinition(
@@ -861,6 +872,8 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
         input_schema=_object_schema(
             properties={
                 "query": _QUERY,
+                "k": _CONTEXT_K,
+                "candidate_k": _CONTEXT_CANDIDATE_K,
                 "entity_ids": _NEIGHBORHOOD_ENTITY_IDS,
                 "hops": _HOPS,
                 "predicate": _PREDICATE,
@@ -869,7 +882,7 @@ _TOOLS: Final[tuple[ToolDefinition, ...]] = (
             required=("query",),
         ),
         permission="memory:read",
-        tool_version=4,
+        tool_version=5,
         http_route="POST /operations/combined_context",
     ),
     ToolDefinition(

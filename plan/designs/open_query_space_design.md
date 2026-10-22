@@ -225,9 +225,9 @@ The four assured operations are pinned in the manifest as:
 | Operation | Version | Contract |
 |---|---:|---|
 | `resolve_entity` | 1 | D49 fact `Envelope`; ranked survivor candidates, `unknown_entity`/`boundary`, current identity regime |
-| `claims_and_sources_context` | 1 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
-| `facts_context` | 1 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
-| `combined_context` | 1 | `ContextBundle/v2`; the complete `claims_and_sources_context` and `facts_context` responses in separately named fields, never one mixed result list |
+| `claims_and_sources_context` | 4 | D49 evidence `Envelope`; bounded hybrid claims and current source passages, never facts or entity candidates |
+| `facts_context` | 4 | D49 fact `Envelope`; semantically nominated relations and observations under an explicit world-time scope, with both evidence stances and exact associations/totals |
+| `combined_context` | 5 | `ContextBundle/v2`; the complete `claims_and_sources_context` and `facts_context` responses in separately named fields, never one mixed result list |
 
 The exact public input schemas are below. Their numeric defaults and hard caps
 are the starting contract carried from the measured predecessor paths; changing
@@ -236,13 +236,15 @@ one after measurement requires an operation-version and manifest roll.
 | Operation | Inputs |
 |---|---|
 | `resolve_entity` | Existing v1 schema, unchanged |
-| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: integer 1–400, default 200 |
-| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–30, default 15; `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
-| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `time`: the same closed fact-time union, default `{"mode":"current"}` |
+| `claims_and_sources_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60) |
+| `facts_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `evidence_per_fact`: integer 1–5, default 3; `time`: the closed union below, default `{"mode":"current"}` |
+| `combined_context` | `query`: required string, length 1–8,192; `entity_ids`: optional array of 1–20 unique UUIDs; `k`: integer 1–100, default 50; `candidate_k`: optional integer 1–400; omitted means max(4*k, 60); `time`: the same closed fact-time union, default `{"mode":"current"}` |
 
 All objects forbid unknown fields. A present `entity_ids` array cannot be empty
-or contain duplicates, and `claims_and_sources_context.candidate_k` cannot be smaller
-than its `k`. Malformed UUIDs, unknown fields, invalid bounds, an invalid time
+or contain duplicates. On every content operation, explicit `candidate_k` cannot
+be smaller than `k`. The resolved default is 50 results per grain and 200
+candidates per channel. Rationale and measurement limits are in
+[the retrieval-depth analysis](../analysis/configurable_context_retrieval_20261022.md). Malformed UUIDs, unknown fields, invalid bounds, an invalid time
 shape, or `time.to < time.from` for overlap mode fail `invalid_parameter`
 before retrieval. PostgreSQL then confirms every supplied ID as a current
 survivor in the deployment. If any ID
@@ -313,8 +315,10 @@ They
 do not call the current-only public `semantic_facts` SRF and do not reuse
 `facts_as_of` accidentally. The operation returns supporting and contradicting
 current testimony, explicit `fact_evidence[]`, exact `evidence_totals[]`,
-contradiction co-members, support state, and the same 60-record evidence budget
-for every mode.
+contradiction co-members and support state in every mode. The evidence-association
+budget is max(60, 2*k), allocated in rounds across facts and both stances, so
+every selected fact can retain one available supporting and contradicting claim
+before deeper evidence is allocated. Exact per-stance totals disclose omitted depth.
 
 Fact identity is always the composite `(fact_kind, fact_id)`: relation and
 observation UUID namespaces can overlap. Every `fact_evidence[]` association
@@ -347,8 +351,9 @@ globally bounded P1 result followed by entity or time filtering is forbidden.
 P1 metadata remains a proposal: live PostgreSQL repeats every selector before
 returning data, so stale metadata can cost disclosed recall but never
 correctness. `claims_and_sources_context` applies its public `candidate_k` inside this
-scope. `facts_context` uses a descriptor-pinned internal candidate depth of 200
-with a hard ceiling of 400; it is not another public planning knob.
+scope. `facts_context` exposes the same bounded `candidate_k` control. Omitting
+it derives max(4*k, 60), with the same hard ceiling of 400. Fact confirmation
+keeps its bounded batches and one shared operation deadline at every depth.
 
 Ending a fact's world-valid interval does not delete its label from P1: an
 ended-but-still-believed fact remains searchable for `at`, `overlap`, and
@@ -366,11 +371,12 @@ relation ranks ahead of an otherwise comparable A-only fact. Association with
 any supplied ID remains sufficient—there is no public any/all switch. With no
 IDs, deployment-wide nomination is unchanged.
 
-`combined_context` passes the confirmed IDs unchanged to both children and the
-time selector to `facts_context`. It deliberately exposes no child depth knobs:
-`claims_and_sources_context` runs with `k=50, candidate_k=200`; `facts_context` runs with
-`k=15, evidence_per_fact=3`. Call a single-layer operation directly to tune its
-depth. The exact response is:
+`combined_context` passes the confirmed IDs, `k`, and `candidate_k` unchanged to
+both children, with time selecting the same scope. Its default is 50 facts plus
+50 claims and 50 chunks, not one shared 50-item list. A call with k=100 can return
+300 primary records plus attached fact evidence. The children preserve their
+separate typed results and existing ranking; there is no cross-grain competition.
+Call a single-layer operation to use a different depth for that authority. The exact response is:
 
 ```text
 ContextBundleV2 {

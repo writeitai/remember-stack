@@ -88,3 +88,8 @@ its [analysis](analysis/index_driven_ranked_search.md), the unchosen
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.
+
+For configurable context result counts, automatic fourfold candidate overfetch,
+and the separate full LoCoMo retrieval budget, start with
+[context operations](designs/open_query_space_design.md#31-platform-operations)
+and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
