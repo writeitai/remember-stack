@@ -868,6 +868,9 @@ class PostgresP1Index:
                 "indexed.embedding IS NOT NULL",
                 "indexed.embedding_model = :embedding_model",
                 "indexed.embedding_input_policy_version = :input_policy",
+                # HNSW cannot reach a zero vector, so neither may an exact tier
+                # (review r2 P2-6; cosine to it is NaN, which sorts first).
+                "vector_norm(indexed.embedding) > 0",
             ]
             score_sql = "1.0 - (indexed.embedding <=> CAST(:query_vector AS vector))"
             attestation = (
@@ -1167,6 +1170,7 @@ class PostgresP1Index:
             )
             search_predicate = """
               AND indexed.embedding IS NOT NULL
+              AND vector_norm(indexed.embedding) > 0
               AND indexed.embedding_model = :embedding_model
               AND indexed.embedding_input_policy_version = :input_policy
             """
@@ -1448,6 +1452,7 @@ class PostgresP1Index:
                   AND fact.fact_id = indexed.{id_column}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
+                   AND vector_norm(indexed.embedding) > 0
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {entity_sql} {key_sql} {filter_sql} {supporting_sql}
@@ -1751,6 +1756,7 @@ class PostgresP1Index:
                  {_FACT_AUTHORITY_JOIN.format(fact_kind=fact_kind, id_column=id_column)}
                  WHERE indexed.deployment_id = :deployment_id
                    AND indexed.embedding IS NOT NULL
+                   AND vector_norm(indexed.embedding) > 0
                    AND indexed.embedding_model = :embedding_model
                    AND indexed.embedding_input_policy_version = :input_policy
                    {time_sql} {scope_filter}
@@ -2505,6 +2511,10 @@ def _entity_tiers(
     results: list[p1_ranked.Candidate] = []
     fetched = rejected = rounds = 0
     termination = P1Termination.EXHAUSTED
+    # Review r2 P2-3: one candidate work budget for the whole search, shared
+    # by every tier loop (exact tiers are bounded by the mention budget).
+    budget = p1_ranked.work_budget(k)
+    loop_limits: Mapping[str, float] = {}
     for coverage in sorted(tiers, reverse=True):
         need = k - len(results)
         if need <= 0:
@@ -2527,13 +2537,19 @@ def _entity_tiers(
                 conn, query=query, ids=[item for item in ids if item in tier]
             )
 
+        remaining = budget - fetched
+        if remaining <= 0:
+            termination = P1Termination.WORK_BUDGET
+            break
         candidates, account = p1_ranked.nominate_and_confirm(
             connection,
             statement=_with_term_count(connection, query.nomination),
             k=need,
             confirm=confirm_tier,
             deadline=deadline,
+            budget=remaining,
         )
+        loop_limits = account.limits or {}
         fetched += account.fetched
         rejected += account.rejected
         rounds += account.fetch_rounds
@@ -2554,7 +2570,9 @@ def _entity_tiers(
             fetch_rounds=rounds,
             coverage_rows=read,
             limits={
+                **loop_limits,
                 "k": float(k),
+                "work_budget": float(budget),
                 "exact_tier_threshold": float(p1_ranked.EXACT_TIER_THRESHOLD),
                 "entity_work_budget": float(p1_ranked.ENTITY_WORK_BUDGET),
             },

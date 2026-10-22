@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 import math
+import struct
 from typing import Protocol
 from typing import runtime_checkable
 
@@ -33,9 +34,16 @@ def require_p1_vector(vector: tuple[float, ...]) -> None:
         raise ValueError(
             f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
         )
-    if not all(math.isfinite(item) for item in vector):
+    # pgvector stores float4: check the values it will store, so a finite
+    # Python value that overflows, or a tiny one that underflows to zero, is
+    # caught here (review r2 P2-6).
+    try:
+        stored = struct.unpack(f"{len(vector)}f", struct.pack(f"{len(vector)}f", *vector))
+    except (OverflowError, struct.error) as error:
+        raise ValueError("P1 vector has a component outside float4 range") from error
+    if not all(math.isfinite(item) for item in stored):
         raise ValueError("P1 vector has a non-finite component")
-    if not any(item != 0.0 for item in vector):
+    if not any(item != 0.0 for item in stored):
         raise ValueError("P1 vector has zero norm")
 
 

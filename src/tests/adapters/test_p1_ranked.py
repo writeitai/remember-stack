@@ -338,3 +338,17 @@ def test_every_p1_vector_writer_rejects_unreachable_vectors(
         require_p1_vector(vector)
     with pytest.raises(ValueError):
         profile_refresher._vector_literal(vector)  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    "vector",
+    [(1e-50,) * P1_VECTOR_DIMENSIONS, (1e39,) + (1.0,) * (P1_VECTOR_DIMENSIONS - 1)],
+    ids=["underflows_to_zero", "overflows_float4"],
+)
+def test_vectors_are_validated_as_pgvector_stores_them(
+    vector: tuple[float, ...],
+) -> None:
+    """Review r2 P2-6: finite Python values that store as float4 zero or
+    infinity are rejected before any write."""
+    with pytest.raises(ValueError):
+        require_p1_vector(vector)

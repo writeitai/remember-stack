@@ -5,6 +5,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
+from typing import Any
 from typing import Literal
 from unittest.mock import call
 from unittest.mock import MagicMock
@@ -20,6 +21,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from rememberstack.adapters import p1_ranked
+from rememberstack.adapters import postgres_p1
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.adapters.postgres_p1 import _configure_p1_connection
 from rememberstack.adapters.postgres_p1 import EmbeddingModelChangedError
@@ -33,6 +36,9 @@ from rememberstack.model import P1FactRow
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import CurrentFactTime
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1Termination
+from rememberstack.ports.p1_index import search_account
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import FactCatalog
 from rememberstack.spine.settings import load_database_settings
@@ -1002,3 +1008,39 @@ def test_observation_statement_is_the_embedding_fallback(
             ),
             {"deployment": _DEPLOYMENT_ID, "observation": observation_id},
         ).scalar_one()
+
+
+def test_coverage_tiers_share_one_candidate_work_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review r2 P2-3: two large tiers whose members authority rejects cannot
+    each spend a fresh work budget; the second gets what the first left."""
+    budgets: list[int] = []
+
+    def fake_loop(connection: object, **arguments: Any) -> tuple[list[Any], Any]:
+        budget = arguments["budget"]
+        budgets.append(budget)
+        spent = min(budget, 15_000)
+        return [], P1SearchAccount(
+            termination=P1Termination.EXHAUSTED
+            if spent < budget
+            else P1Termination.WORK_BUDGET,
+            fetched=spent,
+            rejected=spent,
+        )
+
+    monkeypatch.setattr(p1_ranked, "nominate_and_confirm", fake_loop)
+    monkeypatch.setattr(postgres_p1, "_require_entity_budget", lambda *a, **k: 12_000)
+    monkeypatch.setattr(postgres_p1, "_with_term_count", lambda c, s: s)
+    connection = MagicMock()
+    connection.execute.return_value.mappings.return_value = [
+        {"item_id": str(uuid4()), "coverage": tier}
+        for tier in (2, 1)
+        for _ in range(6_000)
+    ]
+    query = MagicMock(coverage_sql="SELECT 1", mentions_sql="SELECT 1", parameters={})
+    result = postgres_p1._entity_tiers(connection, query=query, k=10)  # noqa: SLF001
+    account = search_account(result)
+    assert budgets == [20_000, 5_000]
+    assert account.fetched <= p1_ranked.work_budget(10)
+    assert account.termination is P1Termination.WORK_BUDGET
