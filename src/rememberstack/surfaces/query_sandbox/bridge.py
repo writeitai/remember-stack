@@ -19,8 +19,6 @@ from contextlib import AbstractContextManager
 from contextlib import contextmanager
 from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import datetime
-from datetime import UTC
 from time import monotonic
 from typing import Any
 from typing import cast
@@ -40,6 +38,7 @@ from rememberstack.surfaces.query_sandbox.nomination import BodyConfirmation
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
+from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
@@ -378,6 +377,7 @@ def _resolve_one(
         settings.nominations_used += len(nominations)
 
         try:
+            clamp_statement_timeout(connection, deadline=settings.deadline)
             confirmation = confirm(
                 connection=connection,
                 target=target,
@@ -765,14 +765,14 @@ def _nominator(
         )
 
     def semantic_facts(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
-        evaluated_at = datetime.now(UTC)
+        # No evaluated_at: the adapter uses the imported request instant
+        # (review r2 P1-1), the same one confirmation applies.
         return search.search_facts_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
             vector=vector(query),
             k=k,
             kind=filters.get("fact_kind"),
             time=CurrentFactTime(),
-            evaluated_at=evaluated_at,
             equality_filters=narrow(filters),
         )
 

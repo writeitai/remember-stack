@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from dataclasses import field
 from datetime import datetime
 import json
+from time import monotonic
 from typing import Any
 from typing import Final
 from uuid import UUID
@@ -343,11 +344,26 @@ _CONFIRM_SQL: Final[dict[str, str]] = {
         " WHERE c.deployment_id = %(deployment)s"
         "   AND c.chunk_id = ANY(%(ids)s::uuid[])"
     ),
+    # facts_current applies statement_timestamp(); the bridge confirms at the
+    # request's one transaction instant instead (D142 §8.2, review r2 P1-1),
+    # with facts_current's own predicates, so every SRF of a request and the
+    # projection's nomination answer the same instant (reported as
+    # pg_confirmed_at).
     "facts": (
         "SELECT fact_id::text AS id{extra}, fact_id, fact_kind, fact_label, predicate,"
         " subject_entity_id, object_entity_id, evidence_count, contradict_count,"
         " support_state, evaluated_at"
-        " FROM memory_v1.facts_current"
+        " FROM (SELECT h.deployment_id, h.fact_id, h.fact_kind, h.fact_label,"
+        "   h.predicate, h.subject_entity_id, h.object_entity_id,"
+        "   h.evidence_count_current AS evidence_count,"
+        "   h.contradict_count_current AS contradict_count,"
+        "   h.support_state_current AS support_state, clock.at AS evaluated_at"
+        "   FROM (SELECT now() AS at) AS clock"
+        "   CROSS JOIN memory_v1.facts_visible_history AS h"
+        "   WHERE h.ingested_at <= clock.at AND h.invalidated_at IS NULL"
+        "     AND h.valid_from <= clock.at"
+        "     AND (h.valid_precision = 'open' OR h.valid_until > clock.at)"
+        " ) AS facts_at_request"
         " WHERE deployment_id = %(deployment)s AND fact_id = ANY(%(ids)s::uuid[])"
     ),
     "entities": (
@@ -824,4 +840,23 @@ def verify_bodies(
         absent_current=absent_current,
         absent_projection=absent_projection,
         mismatch_hash=mismatch_hash,
+    )
+
+
+def clamp_statement_timeout(
+    connection: psycopg.Connection, *, deadline: float | None
+) -> None:
+    """Give the next statement only the request budget that is left (D142 §8.6).
+
+    ``SET LOCAL`` semantics: the setting lasts to the end of the request
+    transaction. An exhausted budget leaves one millisecond, so the statement
+    is cancelled with the ordinary timeout outcome instead of starting a fresh
+    full-budget run.
+    """
+    if deadline is None:
+        return
+    remaining_ms = int((deadline - monotonic()) * 1000)
+    connection.execute(
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(min(max(1, remaining_ms), 2**31 - 1)),),
     )

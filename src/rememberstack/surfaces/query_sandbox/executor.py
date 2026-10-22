@@ -44,6 +44,7 @@ from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
@@ -621,6 +622,7 @@ class QuerySandboxExecutor:
                 principal,
             )
 
+        request_deadline = clock + effective_statement_timeout_ms / 1000
         try:
             with self._transaction(
                 limits_ms=limits, statement_timeout_ms=effective_statement_timeout_ms
@@ -671,7 +673,7 @@ class QuerySandboxExecutor:
                                 deployment_id=self._deployment_id,
                                 # D142 §8.6: every SRF spends the request's
                                 # one statement budget, not a fresh one each.
-                                deadline=clock + effective_statement_timeout_ms / 1000,
+                                deadline=request_deadline,
                             ),
                         )
                     executable, bridge_parameters = substitute(
@@ -697,6 +699,12 @@ class QuerySandboxExecutor:
                 # Always a mapping, never None: psycopg's placeholder binding is
                 # what the escaping in the gate assumes, and it must not
                 # switch on and off with the parameter count.
+                if validated.srf_bindings and not explain:
+                    # Review r2 P1-2: the outer statement gets only what the
+                    # bridged calls left of the request's budget.
+                    clamp_statement_timeout(
+                        cursor.connection, deadline=request_deadline
+                    )
                 cursor.execute(statement.encode(), bound)
                 descriptions = tuple(cursor.description or ())
                 columns = tuple(

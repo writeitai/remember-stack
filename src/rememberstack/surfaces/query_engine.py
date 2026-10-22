@@ -728,7 +728,32 @@ class QueryEngine:
         lemma = normalized_lemma(surface=name)
         if not lemma:
             return _unknown_entity(name=name)
-        with self._engine.connect() as connection:
+        # D142 §8.2 (review r2 P1-4): every tier, the ANN search, its
+        # confirmation and the context counts read one operation snapshot.
+        try:
+            with self._operation(evaluated_at=None):
+                return self._resolve_in_operation(
+                    deployment_id=deployment_id,
+                    name=name,
+                    lemma=lemma,
+                    context_entity_ids=context_entity_ids,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.FACT)
+
+    def _resolve_in_operation(
+        self,
+        *,
+        deployment_id: UUID,
+        name: str,
+        lemma: str,
+        context_entity_ids: tuple[UUID, ...],
+    ) -> Envelope:
+        """The tiers of ``resolve`` inside its operation context."""
+        stop_reason: str | None = None
+        with self._read() as connection:
             hits, truncated = _string_resolve_hits(
                 connection=connection, deployment_id=deployment_id, lemma=lemma
             )
@@ -738,10 +763,10 @@ class QueryEngine:
             )
             if isinstance(embedding, Envelope):
                 return embedding
-            hits, truncated = embedding
+            hits, truncated, stop_reason = embedding
         context_hits: dict[UUID, int] = {}
         if context_entity_ids:
-            with self._engine.connect() as connection:
+            with self._read() as connection:
                 context_hits = _context_hit_counts(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -767,13 +792,21 @@ class QueryEngine:
         )
         if not candidates:
             return _unknown_entity(name=name)
+        truncation = _resolve_truncation(returned=len(candidates), truncated=truncated)
+        if stop_reason is not None:
+            # review r2 P1-4: an early-stopped ANN tier stays disclosed
+            truncation = Truncation(
+                truncated=True,
+                returned=len(candidates),
+                estimated_total=len(candidates),
+                total_is_exact=False,
+                reason=stop_reason,
+            )
         return _envelope(
             grain=Grain.FACT,
             entities=candidates,
             freshness=_freshness(),
-            truncation=_resolve_truncation(
-                returned=len(candidates), truncated=truncated
-            ),
+            truncation=truncation,
         )
 
     def documents_about(
@@ -1047,6 +1080,10 @@ class QueryEngine:
                     _required_entity_ids=_required_entity_ids,
                     _optional_entity_nodes=_optional_entity_nodes,
                 )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.FACT)
         except P1EntityScopeTooBroadError as error:
             return _entity_scope_too_broad(
                 grain=Grain.FACT, explanation=str(error)
@@ -1093,9 +1130,13 @@ class QueryEngine:
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         gate_scope = TextScope.of(time=selected_time, evaluated_at=evaluation)
+        operation = self._fact_read_pool.operation() if self._fact_read_pool else None
+        # Review r2 P1-2: one operation deadline, not a fresh local budget.
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
+            else operation.deadline
+            if operation is not None
             else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
         if self._fact_read_pool is None:
@@ -1376,9 +1417,13 @@ class QueryEngine:
         _validate_default_facts_context_anchor_count(anchors=anchors)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
+        operation = self._fact_read_pool.operation() if self._fact_read_pool else None
+        # Review r2 P1-2: one operation deadline, not a fresh local budget.
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
+            else operation.deadline
+            if operation is not None
             else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
 
@@ -1618,6 +1663,10 @@ class QueryEngine:
                             fact_truncation is None or fact_truncation.total_is_exact
                         )
                     ),
+                    # review r2 P1-4: keep the fact search's stop reason
+                    reason=fact_truncation.reason
+                    if fact_truncation is not None
+                    else None,
                 ),
             }
         )
@@ -1997,15 +2046,20 @@ class QueryEngine:
         """
         # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
         # deadline and pinned instant even without a later confirmation.
-        with self._operation(evaluated_at=None):
-            nominated = self._nominate_claim_ids(
-                deployment_id=deployment_id,
-                query=query,
-                k=k,
-                channel=channel,
-                call_site=SurfaceCallSite.NOMINATE_CLAIMS,
-                time=time,
-            )
+        try:
+            with self._operation(evaluated_at=None):
+                nominated = self._nominate_claim_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.NOMINATE_CLAIMS,
+                    time=time,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
         )
@@ -2169,15 +2223,20 @@ class QueryEngine:
         """Rank source-chunk IDs without returning unconfirmed source text."""
         # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
         # deadline and pinned instant even without a later confirmation.
-        with self._operation(evaluated_at=None):
-            nominated = self._nominate_chunk_ids(
-                deployment_id=deployment_id,
-                query=query,
-                k=k,
-                channel=channel,
-                call_site=SurfaceCallSite.NOMINATE_CHUNKS,
-                time=time,
-            )
+        try:
+            with self._operation(evaluated_at=None):
+                nominated = self._nominate_chunk_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.NOMINATE_CHUNKS,
+                    time=time,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
         )
@@ -3886,7 +3945,7 @@ class QueryEngine:
 
     def _embedding_resolve_hits(
         self, *, deployment_id: UUID, name: str
-    ) -> tuple[tuple[_ResolveHit, ...], bool] | Envelope:
+    ) -> tuple[tuple[_ResolveHit, ...], bool, str | None] | Envelope:
         """Return T3 profile neighbors, or a terminal negative when none qualify.
 
         The semantic channel embeds the query string and ranks current entity
@@ -3918,6 +3977,10 @@ class QueryEngine:
             )
         except P1SearchUnavailableError:
             return _embedding_channel_boundary()
+        account = search_account(nominations)
+        stop_reason = (
+            None if account.termination.complete else f"p1_{account.termination.value}"
+        )
         # The channel returns this window in descending score order. Once the
         # tail is at or below the reject band, every later neighbor is too, so
         # a below-band row does not hide an above-band candidate past the cap.
@@ -3929,9 +3992,9 @@ class QueryEngine:
         truncated = len(kept) > QUERY_RESOLVE_CANDIDATE_LIMIT
         kept = kept[:QUERY_RESOLVE_CANDIDATE_LIMIT]
         if not kept:
-            return _unknown_entity(name=name)
+            return _resolve_miss(name=name, account=account)
         score_by_id = {UUID(item.item_id): item.score for item in kept}
-        with self._engine.connect() as connection:
+        with self._read() as connection:
             rows = (
                 connection.execute(
                     _CONFIRM_CONTEXT_ENTITIES,
@@ -3951,8 +4014,8 @@ class QueryEngine:
             if row["entity_id"] in score_by_id
         )
         if not hits:
-            return _unknown_entity(name=name)
-        return hits, truncated
+            return _resolve_miss(name=name, account=account)
+        return hits, truncated, stop_reason
 
     def _embed(
         self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
@@ -4430,7 +4493,9 @@ def _empty_negative(
 def _deadline_expired(error: Exception) -> bool:
     """Whether a read failed on the operation budget, not on a defect."""
     if isinstance(error, DBAPIError):
-        return getattr(error.orig, "sqlstate", None) == "57014"  # query_canceled
+        # 57014 query_canceled (statement_timeout); 25P04 transaction_timeout,
+        # which supersedes an equal statement timeout (review r2 P1-3).
+        return getattr(error.orig, "sqlstate", None) in {"57014", "25P04"}
     return True
 
 
@@ -4909,6 +4974,26 @@ def _embedding_channel_boundary() -> Envelope:
                 "entity embedding resolution is not published for this deployment"
             ),
             workaround="check spelling, or search claims and chunks",
+        ),
+    )
+
+
+def _resolve_miss(*, name: str, account: P1SearchAccount) -> Envelope:
+    """``unknown_entity`` only after the ANN tier proved it found nothing.
+
+    An early-stopped T3 search answers a boundary with its reason instead
+    (D142 §8.6, review r2 P1-4).
+    """
+    if account.termination.complete:
+        return _unknown_entity(name=name)
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        truncation=_account_truncation(account, returned=0),
+        negative=_empty_negative(
+            account,
+            explanation=f"nothing resolves for {name!r}",
+            workaround="check spelling, try search over claims or chunks",
         ),
     )
 

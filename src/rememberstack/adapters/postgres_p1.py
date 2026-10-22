@@ -1316,6 +1316,8 @@ class PostgresP1Index:
         ``documents`` keeps a fact only when at least one live supporting
         claim has a live occurrence in a matching document version (D134).
         """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -1417,10 +1419,13 @@ class PostgresP1Index:
                 deadline=deadline,
             )
         if entity_ids:
+            # Review r2 P1-5: the scoring scope matches survivor-resolved
+            # endpoints (facts_visible_history), so the budget counts the raw
+            # endpoints of every entity those survivors absorbed.
             self._require_fact_scope_budget(
                 required=required,
-                scope_sql="",
-                endpoint_sql="CAST(:entity_ids AS uuid[])",
+                scope_sql=_SURVIVOR_SCOPE_CTE,
+                endpoint_sql="ARRAY(SELECT entity_id FROM scoped_entities)",
                 parameters=parameters,
                 deadline=deadline,
             )
@@ -1484,6 +1489,9 @@ class PostgresP1Index:
         """
         read = 0
         for table in required:
+            remaining = p1_ranked.ENTITY_WORK_BUDGET + 1 - read
+            if remaining <= 0:
+                break
             endpoints = f"indexed.subject_entity_id = ANY({endpoint_sql})" + (
                 f" OR indexed.object_entity_id = ANY({endpoint_sql})"
                 if table == "relations"
@@ -1493,7 +1501,7 @@ class PostgresP1Index:
                 f"{scope_sql}SELECT count(*) AS n FROM (SELECT 1 FROM {table} AS indexed"
                 f" WHERE indexed.deployment_id = :deployment_id AND ({endpoints})"
                 " LIMIT :entity_budget) AS bounded",
-                {**parameters, "entity_budget": p1_ranked.ENTITY_WORK_BUDGET + 1},
+                {**parameters, "entity_budget": remaining},
                 deadline=deadline,
             )
             read += int(rows[0]["n"]) if rows else 0
@@ -1602,6 +1610,8 @@ class PostgresP1Index:
 
         The D140 §8.1 evidence gate is applied before each branch's ``LIMIT``.
         """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         if kind not in {None, "relation", "observation"}:
             raise ValueError(f"unknown fact kind {kind!r}")
@@ -1656,7 +1666,7 @@ class PostgresP1Index:
             result_order = "coverage DESC, distance, qualifier, item_id"
             self._require_fact_scope_budget(
                 required=required,
-                scope_sql=f"WITH {scope_cte.strip().rstrip(',')} ",
+                scope_sql=_SURVIVOR_SCOPE_CTE,
                 endpoint_sql="ARRAY(SELECT entity_id FROM scoped_entities)",
                 parameters=parameters,
                 deadline=deadline,
@@ -1795,6 +1805,8 @@ class PostgresP1Index:
 
         D142: the HNSW index nominates; ``entities_current`` confirms.
         """
+        # D142 §8.6 (review r2 P1-2): the enclosing operation bounds this call.
+        deadline = self._deadline(deadline)
         _require_vector(vector)
         self._require_channel(
             deployment_id=deployment_id,
@@ -2415,6 +2427,14 @@ def _exact_testimony(
         for row in rows
     ]
 
+
+_SURVIVOR_SCOPE_CTE = (
+    "WITH scoped_entities AS MATERIALIZED ("
+    " SELECT entity_id, survivor_entity_id FROM v_memory_entity_survivor"
+    " WHERE deployment_id = :deployment_id"
+    "   AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))) "
+)
+"""Every entity the requested survivors absorbed (merge redirects resolved)."""
 
 _FACT_AUTHORITY_JOIN = (
     " JOIN memory_v1.facts_visible_history AS fact"

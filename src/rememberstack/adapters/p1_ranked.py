@@ -39,6 +39,7 @@ from typing import Literal
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import DBAPIError
 
 from rememberstack.ports.p1_index import merge_accounts  # noqa: F401 -- re-export
 from rememberstack.ports.p1_index import P1EntityScopeTooBroadError  # noqa: F401
@@ -211,6 +212,23 @@ def attest_index_plan(
         )
 
 
+def clamp_deadline(connection: Connection, *, deadline: float | None) -> None:
+    """Give the next statement only the time the operation has left (§8.6).
+
+    Set transaction-locally before every attestation, FETCH and confirmation
+    of the loop, so no statement starts with a stale, larger timeout. An
+    expired deadline leaves one millisecond: the statement is cancelled with
+    SQLSTATE 57014, which public boundaries answer as ``p1_deadline``.
+    """
+    if deadline is None:
+        return
+    remaining_ms = int((deadline - monotonic()) * 1000)
+    connection.execute(
+        text("SELECT set_config('statement_timeout', :value, true)"),
+        {"value": str(min(max(1, remaining_ms), 2**31 - 1))},
+    )
+
+
 def _plan_nodes(node: Mapping[str, Any]) -> Any:
     yield node
     for child in node.get("Plans", ()) or ():
@@ -265,6 +283,16 @@ def nominate_and_confirm(
     # the work budget, the most this search may ever fetch from the cursor.
     sql = f"{statement.sql} LIMIT :nomination_limit"
     parameters = {**statement.parameters, "nomination_limit": limit}
+    clamp_deadline(connection, deadline=deadline)
+
+    def restore() -> None:
+        # The caller's own values, not the defaults (review r1 nit).
+        for name, value in previous.items():
+            connection.execute(
+                text("SELECT set_config(:name, :value, true)"),
+                {"name": name, "value": value},
+            )
+
     try:
         attest_index_plan(
             connection, sql=sql, parameters=parameters, index=statement.expected_index
@@ -274,13 +302,15 @@ def nominate_and_confirm(
         stream = connection.execute(
             text(sql), parameters, execution_options={"stream_results": True}
         )
-    finally:
-        # Restore the caller's own values, not the defaults (review r1 nit).
-        for name, value in previous.items():
-            connection.execute(
-                text("SELECT set_config(:name, :value, true)"),
-                {"name": name, "value": value},
-            )
+    except DBAPIError:
+        # A cancelled EXPLAIN/DECLARE aborts the transaction; restoring there
+        # would replace the original error (review r2 P1-3). The rollback
+        # that follows discards these transaction-local settings anyway.
+        raise
+    except BaseException:
+        restore()  # e.g. plan rejected: the transaction is healthy
+        raise
+    restore()
 
     confirmed: list[Candidate] = []
     fetched = rejected = rounds = 0
@@ -297,6 +327,7 @@ def nominate_and_confirm(
             if size <= 0:
                 termination = P1Termination.WORK_BUDGET
                 break
+            clamp_deadline(connection, deadline=deadline)  # each FETCH (r2 P1-2)
             rows = stream.fetchmany(size)
             rounds += 1
             fetched += len(rows)
@@ -324,6 +355,7 @@ def nominate_and_confirm(
                     else -float(last["score"])
                 )
             if batch:
+                clamp_deadline(connection, deadline=deadline)
                 eligible = confirm(connection, [item for item, _, _ in batch])
                 for item_id, score, sort_value in batch:
                     if item_id in eligible:

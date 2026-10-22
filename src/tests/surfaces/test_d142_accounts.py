@@ -7,8 +7,10 @@ the testimony hybrid's union, and fact fusion all carry the stop reason.
 from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from sqlalchemy.engine import Engine
 
+from rememberstack.adapters.testing import FakeModelProvider
 from rememberstack.model.envelope import Envelope
 from rememberstack.model.envelope import Grain
 from rememberstack.model.envelope import Negative
@@ -135,3 +137,47 @@ def test_fact_fusion_carries_a_capped_channel() -> None:
     assert account.termination is P1Termination.WORK_BUDGET
     assert account.fetched == 20_000
     assert len(fused) == 1
+
+
+class _CappedEntityIndex:
+    """The T3 entity search stops on its ANN scan bound."""
+
+    def __init__(self, rows: tuple[P1Nomination, ...]) -> None:
+        self._rows = rows
+
+    def entity_semantic_ready(self, **_: object) -> bool:
+        return True
+
+    def search_entities_scored(self, **_: object) -> P1SearchResult:
+        return P1SearchResult(
+            self._rows,
+            account=P1SearchAccount(
+                termination=P1Termination.ANN_SCAN_BOUND, fetched=20_000
+            ),
+        )
+
+
+def _resolving_engine(
+    monkeypatch: pytest.MonkeyPatch, rows: tuple[P1Nomination, ...]
+) -> QueryEngine:
+    monkeypatch.setattr(query_engine, "_string_resolve_hits", lambda **_: ((), False))
+    return QueryEngine(
+        engine=MagicMock(spec=Engine),
+        search_index=_CappedEntityIndex(rows),  # type: ignore[arg-type]
+        model_provider=FakeModelProvider(),
+        embedding_model="test-model",
+    )
+
+
+def test_a_capped_empty_entity_resolution_is_a_boundary_not_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review r2 P1-4: an early-stopped T3 search never claims the name is
+    unknown."""
+    envelope = _resolving_engine(monkeypatch, ()).resolve(
+        deployment_id=uuid4(), name="Zyxwvut"
+    )
+    assert envelope.negative is not None
+    assert envelope.negative.kind is NegativeKind.BOUNDARY
+    assert envelope.truncation is not None
+    assert envelope.truncation.reason == "p1_ann_scan_bound"
