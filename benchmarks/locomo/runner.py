@@ -617,6 +617,7 @@ def answer_sample(
     p3_root: Path,
     client: MemoryClient,
     provider: ModelProviderPort,
+    checkpoint: Callable[[AnswerRecord], None] | None = None,
 ) -> tuple[AnswerRecord, ...]:
     """Retrieve and answer one isolated conversation's selected questions."""
     context = _load_run(run_dir=run_dir)
@@ -793,6 +794,8 @@ def answer_sample(
                         )
             context.state.answers[question.item_id] = record
             _save_state(run_dir=run_dir, state=context.state)
+            if checkpoint is not None:
+                checkpoint(record)
     except ProviderInfrastructureError:
         _save_state(run_dir=run_dir, state=context.state)
         raise
@@ -812,6 +815,7 @@ def judge_sample(
     max_evaluator_cost_usd: Decimal,
     execute: bool,
     provider: ModelProviderPort,
+    checkpoint: Callable[[JudgeRecord], None] | None = None,
 ) -> tuple[JudgeRecord, ...]:
     """Judge one conversation's terminal answer records exactly once."""
     context = _load_run(run_dir=run_dir)
@@ -896,6 +900,8 @@ def judge_sample(
                         )
             context.state.judges[question.item_id] = judge
             _save_state(run_dir=run_dir, state=context.state)
+            if checkpoint is not None:
+                checkpoint(judge)
     except ProviderInfrastructureError:
         _save_state(run_dir=run_dir, state=context.state)
         raise
