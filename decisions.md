@@ -6789,7 +6789,12 @@ to it.
    changes only the window, never the fact's label or vector. Every period-dependent
    input is read by one SQL statement, and a basis is stored only from such a validated
    read, so a concurrent period writer leaves a stale basis that its fan-out reviews. An entity
-   profile is re-embedded only when its rendered text changed. See the design §8.2.)*
+   profile is re-embedded only when its rendered text changed. **Owner decision
+   (2026-10-22):** that re-embedding is accepted as is. Refreshing a profile whose displayed
+   fact windows changed is a cheap projection refresh of genuinely changed text; it
+   re-processes no document text, so it is outside the incremental-ingestion requirement
+   (CLAUDE.md Rule 4). A date-free embedded profile was considered and rejected: it saves
+   only that embedding call and has no measured matching benefit. See the design §8.2.)*
 4. **Section keys.** A trailing heading attribute `{#key}` gives a section a stable
    key; sections also store deterministic own-block and subtree hashes.
    `section_history` lists a key across versions, including absences.

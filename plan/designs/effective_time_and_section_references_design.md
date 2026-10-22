@@ -1080,7 +1080,15 @@ application would ever reach the adjudicator again. A **window review** closes t
   clear their vectors. The production profile refresher re-renders each profile and calls the
   embedding model only when the rendered text differs from the text its vector attests, for
   example when the reviewed fact is shown in the profile and its window moved. A profile that
-  does not show the fact costs no call. The repair job is keyed by the review's adjudication
+  does not show the fact costs no call.
+  This profile re-embedding is an accepted owner decision (2026-10-22): it refreshes a
+  projection whose text genuinely changed, re-processes no document text, and therefore sits
+  outside the incremental-ingestion requirement (CLAUDE.md Rule 4). A date-free embedded
+  profile was considered and rejected because it saves only that call and has no measured
+  matching benefit. If an evaluation ever shows distinct same-name events (two tournaments in
+  one month, say) merged into one entity, the remedy is an identity time on such entities
+  with a date-compatibility check in entity resolution, not dates in the profile vector
+  (backlog issue #509). The repair job is keyed by the review's adjudication
   receipt, so a correction cycle that repeats an earlier input (A → B → A → B) still repairs
   every time.
 - **Paid answers are reused.** Before calling the model, a review claims its fact and input
