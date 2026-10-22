@@ -1938,6 +1938,11 @@
                 "additionalProperties": false,
                 "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
                 "properties": {
+                  "complete": {
+                    "default": true,
+                    "title": "Complete",
+                    "type": "boolean"
+                  },
                   "count": {
                     "minimum": 0,
                     "title": "Count",
@@ -4275,6 +4280,11 @@
                 "additionalProperties": false,
                 "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
                 "properties": {
+                  "complete": {
+                    "default": true,
+                    "title": "Complete",
+                    "type": "boolean"
+                  },
                   "count": {
                     "minimum": 0,
                     "title": "Count",
@@ -6252,6 +6262,11 @@
                 "additionalProperties": false,
                 "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
                 "properties": {
+                  "complete": {
+                    "default": true,
+                    "title": "Complete",
+                    "type": "boolean"
+                  },
                   "count": {
                     "minimum": 0,
                     "title": "Count",
@@ -8295,6 +8310,11 @@
                 "additionalProperties": false,
                 "description": "Lineages whose in-force text for a time scope is still processing (D140 §3.7).\n\nA scoped read that returns nothing from a lineage may mean \"nothing is in\nforce\" or \"the version in force is not readable yet\"; this block names the\nsecond case for the lineages the request touched.",
                 "properties": {
+                  "complete": {
+                    "default": true,
+                    "title": "Complete",
+                    "type": "boolean"
+                  },
                   "count": {
                     "minimum": 0,
                     "title": "Count",
@@ -45196,5 +45216,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "3e3fbb7e7c3721fa6a8e667fad7b4275906b18db7c7512f19012323964a28355"
+  "surface_manifest_hash": "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
 }

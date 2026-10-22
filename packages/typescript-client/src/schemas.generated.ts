@@ -5542,6 +5542,11 @@ export default {
       "additionalProperties": false,
       "description": "Documents whose in-force text for the scope is still processing (D140 \u00a73.7).",
       "properties": {
+        "complete": {
+          "default": true,
+          "title": "Complete",
+          "type": "boolean"
+        },
         "count": {
           "minimum": 0,
           "title": "Count",
@@ -6076,6 +6081,11 @@ export default {
           "default": null,
           "title": "Embedder Generation"
         },
+        "fetched": {
+          "default": 0,
+          "title": "Fetched",
+          "type": "integer"
+        },
         "function": {
           "title": "Function",
           "type": "string"
@@ -6120,6 +6130,11 @@ export default {
           ],
           "default": null,
           "title": "Policy Generation"
+        },
+        "rejected": {
+          "default": 0,
+          "title": "Rejected",
+          "type": "integer"
         },
         "termination_reason": {
           "anyOf": [

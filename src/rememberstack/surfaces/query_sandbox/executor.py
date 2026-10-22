@@ -44,6 +44,8 @@ from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
 from rememberstack.surfaces.query_sandbox.limits import LimitTier
 from rememberstack.surfaces.query_sandbox.limits import TIER_LIMITS
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
+from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.result import GraphInvocation
 from rememberstack.surfaces.query_sandbox.result import QueryResult
 from rememberstack.surfaces.query_sandbox.result import ResultColumn
@@ -106,7 +108,11 @@ def _type_name(cursor: psycopg.Cursor, oid: int) -> str:
         row = cursor.connection.execute(
             "SELECT pg_catalog.format_type(%s::oid, NULL)", (oid,)
         ).fetchone()
-    except psycopg.Error:
+    except psycopg.Error as error:
+        if budget_exhausted(error):
+            # the request budget ran out: the transaction is aborted, so this
+            # is the request's statement_timeout, not a missing type name
+            raise
         return str(oid)
     return str(row[0]) if row and row[0] else str(oid)
 
@@ -621,6 +627,7 @@ class QuerySandboxExecutor:
                 principal,
             )
 
+        request_deadline = clock + effective_statement_timeout_ms / 1000
         try:
             with self._transaction(
                 limits_ms=limits, statement_timeout_ms=effective_statement_timeout_ms
@@ -667,7 +674,12 @@ class QuerySandboxExecutor:
                             connection=cursor.connection,
                             search=self._search,
                             embed=self._embed,
-                            settings=BridgeSettings(deployment_id=self._deployment_id),
+                            settings=BridgeSettings(
+                                deployment_id=self._deployment_id,
+                                # D142 §8.6: every SRF spends the request's
+                                # one statement budget, not a fresh one each.
+                                deadline=request_deadline,
+                            ),
                         )
                     executable, bridge_parameters = substitute(
                         validated.sql, resolutions
@@ -692,6 +704,12 @@ class QuerySandboxExecutor:
                 # Always a mapping, never None: psycopg's placeholder binding is
                 # what the escaping in the gate assumes, and it must not
                 # switch on and off with the parameter count.
+                if validated.srf_bindings and not explain:
+                    # Review r2 P1-2: the outer statement gets only what the
+                    # bridged calls left of the request's budget.
+                    clamp_statement_timeout(
+                        cursor.connection, deadline=request_deadline
+                    )
                 cursor.execute(statement.encode(), bound)
                 descriptions = tuple(cursor.description or ())
                 columns = tuple(
@@ -727,7 +745,8 @@ class QuerySandboxExecutor:
                 principal,
                 query_hash=_hash_with_parameter_types(validated.query_hash, parameters),
             )
-        except psycopg.errors.QueryCanceled:
+        except (psycopg.errors.QueryCanceled, psycopg.errors.TransactionTimeout):
+            # 57014 and 25P04 alike: the request budget ran out (r3 P2-1)
             return self._failure(
                 QueryErrorCode.STATEMENT_TIMEOUT,
                 "the statement exceeded its timeout",

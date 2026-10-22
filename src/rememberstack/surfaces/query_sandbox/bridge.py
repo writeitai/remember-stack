@@ -13,17 +13,23 @@ complete one.
 """
 
 from collections.abc import Callable
+from collections.abc import Iterator
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
+from contextlib import contextmanager
+from contextlib import ExitStack
 from dataclasses import dataclass
-from datetime import datetime
-from datetime import UTC
+from time import monotonic
 from typing import Any
+from typing import cast
 from typing import Final
 from typing import Protocol
 
 import psycopg
 
 from rememberstack.model.assured_operations import CurrentFactTime
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import search_account
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
 from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.nomination import BODY_COLUMNS
@@ -31,7 +37,10 @@ from rememberstack.surfaces.query_sandbox.nomination import BODY_TYPE_OIDS
 from rememberstack.surfaces.query_sandbox.nomination import BodyConfirmation
 from rememberstack.surfaces.query_sandbox.nomination import bounded_k
 from rememberstack.surfaces.query_sandbox.nomination import BridgeSettings
+from rememberstack.surfaces.query_sandbox.nomination import budget_exhausted
+from rememberstack.surfaces.query_sandbox.nomination import budget_rejection
 from rememberstack.surfaces.query_sandbox.nomination import chunk_id_list
+from rememberstack.surfaces.query_sandbox.nomination import clamp_statement_timeout
 from rememberstack.surfaces.query_sandbox.nomination import confirm
 from rememberstack.surfaces.query_sandbox.nomination import confirm_chunk_coordinates
 from rememberstack.surfaces.query_sandbox.nomination import Confirmation
@@ -341,48 +350,62 @@ def _resolve_one(
         policy_generation=policy_generation,
         embedder_generation=embedder_generation,
     )
-    try:
-        nominations = nominate(query_text, k, filters)
-    except SandboxRejection:
-        raise
-    except LookupError as error:  # a pin the projection cannot honour
-        raise SandboxRejection(
-            code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
-        ) from error
-    except Exception as error:  # the projection is a separate process
-        raise SandboxRejection(
-            code=QueryErrorCode.P1_UNAVAILABLE,
-            message="the projection could not be searched",
-        ) from error
-    # A projection that returns more than it was asked for does not get to
-    # spend the statement's budget: the cap is enforced here, not trusted.
-    if len(nominations) > k:
-        nominations = tuple(nominations)[:k]
-    settings.nominations_used += len(nominations)
+    # D142 §8.2 (review r1 P1-3): the imported snapshot stays open from
+    # nomination through confirmation and body hydration.
+    with ExitStack() as shared:
+        try:
+            shared.enter_context(
+                _shared_snapshot(
+                    connection=connection, search=search, settings=settings
+                )
+            )
+            nominations = nominate(query_text, k, filters)
+        except SandboxRejection:
+            raise
+        except LookupError as error:  # a pin the projection cannot honour
+            raise SandboxRejection(
+                code=QueryErrorCode.GENERATION_UNAVAILABLE, message=str(error)
+            ) from error
+        except Exception as error:  # the projection is a separate process
+            if budget_exhausted(error):
+                raise budget_rejection(error) from error
+            raise SandboxRejection(
+                code=QueryErrorCode.P1_UNAVAILABLE,
+                message="the projection could not be searched",
+            ) from error
+        account = search_account(nominations)
+        # A projection that returns more than it was asked for does not get to
+        # spend the statement's budget: the cap is enforced here, not trusted.
+        if len(nominations) > k:
+            nominations = tuple(nominations)[:k]
+        settings.nominations_used += len(nominations)
 
-    try:
-        confirmation = confirm(
-            connection=connection,
-            target=target,
-            nominations=nominations,
-            deployment_id=settings.deployment_id,
-            filters=filters,
-            generations=(policy_generation, embedder_generation),
-        )
-    except psycopg.Error as error:
-        raise SandboxRejection(
-            code=QueryErrorCode.CONFIRMATION_FAILED,
-            message="nominated rows could not be confirmed",
-        ) from error
+        try:
+            clamp_statement_timeout(connection, deadline=settings.deadline)
+            confirmation = confirm(
+                connection=connection,
+                target=target,
+                nominations=nominations,
+                deployment_id=settings.deployment_id,
+                filters=filters,
+                generations=(policy_generation, embedder_generation),
+            )
+        except psycopg.Error as error:
+            if budget_exhausted(error):  # D142 §8.6, review r3 P2-1
+                raise budget_rejection(error) from error
+            raise SandboxRejection(
+                code=QueryErrorCode.CONFIRMATION_FAILED,
+                message="nominated rows could not be confirmed",
+            ) from error
 
-    body: BodyConfirmation | None = None
-    if target == "chunks":
-        # §3.4: the chunk channels and the body fetch share one body path, so
-        # a nominated chunk carries its verified source text out with it
-        # rather than making the caller ask a second time.
-        confirmation, body = _hydrate(
-            confirmation=confirmation, search=search, settings=settings
-        )
+        body: BodyConfirmation | None = None
+        if target == "chunks":
+            # §3.4: the chunk channels and the body fetch share one body path,
+            # so a nominated chunk carries its verified source text out with
+            # it rather than making the caller ask a second time.
+            confirmation, body = _hydrate(
+                confirmation=confirmation, search=search, settings=settings
+            )
 
     return ResolvedInvocation(
         cte_name=cte_name,
@@ -405,9 +428,65 @@ def _resolve_one(
             embedder_generation=embedder_generation,
             generation=embedder_generation or policy_generation,
             pg_confirmed_at=confirmation.pg_confirmed_at,
-            termination_reason="completed",
+            termination_reason=_termination_reason(account),
+            fetched=account.fetched,
+            rejected=account.rejected,
         ),
     )
+
+
+def _termination_reason(account: P1SearchAccount) -> str:
+    """The invocation's D142 termination: ``completed`` or the early stop."""
+    if account.termination.complete:
+        return "completed"
+    return f"p1_{account.termination.value}"
+
+
+@contextmanager
+def _shared_snapshot(
+    *, connection: psycopg.Connection, search: object, settings: BridgeSettings
+) -> Iterator[None]:
+    """Nominate in the request transaction's own snapshot (D142 §8.2).
+
+    The executor's request transaction is READ ONLY, REPEATABLE READ; its
+    snapshot is exported and the P1 adapter imports it, so nomination,
+    continuation and the executor's D48 confirmation read one database state.
+    A projection without snapshot import (a test double) nominates as before.
+    """
+    imported = cast(
+        Callable[..., AbstractContextManager[None]] | None,
+        getattr(search, "imported_snapshot", None),
+    )
+    if not callable(imported):
+        yield
+        return
+    try:
+        # REPEATABLE READ freezes rows, not clocks (review r1 P1-4): the
+        # request's transaction instant pins every nested P1 scope.
+        row = connection.execute("SELECT pg_export_snapshot(), now()").fetchone()
+    except psycopg.Error as error:
+        if budget_exhausted(error):  # review r4: budget before the generic map
+            raise budget_rejection(error) from error
+        raise SandboxRejection(
+            code=QueryErrorCode.P1_UNAVAILABLE,
+            message="the request snapshot could not be shared with the projection",
+        ) from error
+    if row is None:
+        raise SandboxRejection(
+            code=QueryErrorCode.P1_UNAVAILABLE,
+            message="the request snapshot could not be shared with the projection",
+        )
+    deadline = (
+        settings.deadline
+        if settings.deadline is not None
+        else monotonic() + _SNAPSHOT_BUDGET_S
+    )
+    with imported(snapshot_id=str(row[0]), deadline=deadline, evaluated_at=row[1]):
+        yield
+
+
+_SNAPSHOT_BUDGET_S = 30.0
+"""Fallback budget when the caller set no request deadline (tests, tools)."""
 
 
 def _hydrate(
@@ -494,6 +573,8 @@ def _chunk_texts(
             embedder_generation=embedder_generation,
         )
     except Exception as error:  # the projection is a separate process
+        if budget_exhausted(error):
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.P1_UNAVAILABLE, message="chunk bodies could not be read"
         ) from error
@@ -570,6 +651,8 @@ def _pinned_generations(
             connection=connection, deployment_id=settings.deployment_id
         )
     except psycopg.Error as error:
+        if budget_exhausted(error):  # review r4: budget before the generic map
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="the current chunk generation could not be read",
@@ -694,14 +777,14 @@ def _nominator(
         )
 
     def semantic_facts(query: str, k: int, filters: dict[str, Any]):  # noqa: ANN202
-        evaluated_at = datetime.now(UTC)
+        # No evaluated_at: the adapter uses the imported request instant
+        # (review r2 P1-1), the same one confirmation applies.
         return search.search_facts_scored(  # type: ignore[attr-defined]
             deployment_id=deployment,
             vector=vector(query),
             k=k,
             kind=filters.get("fact_kind"),
             time=CurrentFactTime(),
-            evaluated_at=evaluated_at,
             equality_filters=narrow(filters),
         )
 
@@ -859,6 +942,8 @@ def _resolve_bodies(
     except SandboxRejection:
         raise
     except psycopg.Error as error:
+        if budget_exhausted(error):
+            raise budget_rejection(error) from error
         raise SandboxRejection(
             code=QueryErrorCode.CONFIRMATION_FAILED,
             message="chunk coordinates could not be confirmed",

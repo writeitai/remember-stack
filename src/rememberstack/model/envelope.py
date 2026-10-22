@@ -203,7 +203,7 @@ class KFreshness(BaseModel):
 
 
 SCOPE_PENDING_MAX_DOC_IDS = 50
-"""Most lineages ``scope_pending`` names; ``count`` is always exact."""
+"""Most lineages ``scope_pending`` names; ``count`` is exact when ``complete``."""
 
 
 class ScopePending(BaseModel):
@@ -218,6 +218,9 @@ class ScopePending(BaseModel):
 
     doc_ids: tuple[UUID, ...] = Field(max_length=SCOPE_PENDING_MAX_DOC_IDS)
     count: int = Field(ge=0)
+    #: D142 §8.6: false when a probe nomination stopped on a work bound; the
+    #: count is then a lower bound.
+    complete: bool = True
 
 
 class Freshness(BaseModel):

@@ -1,6 +1,5 @@
 """Repository-level clean-cut gates for the D98 graph replacement."""
 
-import hashlib
 from pathlib import Path
 import tomllib
 
@@ -29,12 +28,9 @@ _REMOVED_PUBLIC_GRAPH_TERMS = (
     "full-v13",
     "RS-LoCoMo-Full-v13",
 )
-_PG_TEXTSEARCH_REVISION = "578ff529894992fb9e67cae4c69424e65c84868e"
+_PG_TEXTSEARCH_REVISION = "fa142d049d08eac45a263f5abc250c8877ae076e"
 _PG_TEXTSEARCH_SOURCE_SHA256 = (
-    "8632f91231251dc3e19395ef6a0d4d158d5f5920ba420691471771418e2a7cc7"
-)
-_PG_TEXTSEARCH_PATCH_SHA256 = (
-    "a8c97f39714ab0193c82fcda3709d3e4df54bcc7f2804fde8f970710484dbdc6"
+    "445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0"
 )
 _PG_TEXTSEARCH_LICENSE_SHA256 = (
     "d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5"
@@ -96,15 +92,19 @@ def test_current_locomo_code_has_no_retired_protocol_identity() -> None:
     assert "_FULL_V13" not in code
 
 
-def test_postgres_image_verifies_extension_source_patch_and_license() -> None:
-    """The prerelease image binds pg_textsearch inputs and redistributes notices."""
+def test_postgres_image_verifies_extension_source_and_license() -> None:
+    """The prerelease image binds pg_textsearch inputs and redistributes notices.
+
+    D142: v1.5.1 supports PostgreSQL 19 upstream, so no local patch is applied.
+    """
     dockerfile = (_ROOT / "Dockerfile.postgres").read_text(encoding="utf-8")
     assert f"PG_TEXTSEARCH_REVISION={_PG_TEXTSEARCH_REVISION}" in dockerfile
     assert f"PG_TEXTSEARCH_SOURCE_SHA256={_PG_TEXTSEARCH_SOURCE_SHA256}" in dockerfile
-    assert f"PG_TEXTSEARCH_PATCH_SHA256={_PG_TEXTSEARCH_PATCH_SHA256}" in dockerfile
     assert f"PG_TEXTSEARCH_LICENSE_SHA256={_PG_TEXTSEARCH_LICENSE_SHA256}" in dockerfile
     assert f"PG_TEXTSEARCH_NOTICE_SHA256={_PG_TEXTSEARCH_NOTICE_SHA256}" in dockerfile
-    assert dockerfile.count("sha256sum --check --strict") == 4
+    assert dockerfile.count("sha256sum --check --strict") == 3
+    assert "PG_TEXTSEARCH_PATCH" not in dockerfile
+    assert "patch --batch" not in dockerfile
     assert "pg_textsearch uses the PostgreSQL License" in dockerfile
     assert "/usr/share/doc/pg_textsearch/LICENSE" in dockerfile
     assert "/usr/share/doc/pg_textsearch/NOTICE" in dockerfile
@@ -129,16 +129,12 @@ def test_postgres_image_verifies_extension_source_patch_and_license() -> None:
         "postgresql-19-partman="
     )
 
-    patch_path = _ROOT / "docker" / "pg_textsearch-pg19.patch"
-    assert hashlib.sha256(patch_path.read_bytes()).hexdigest() == (
-        _PG_TEXTSEARCH_PATCH_SHA256
-    )
+    assert not (_ROOT / "docker" / "pg_textsearch-pg19.patch").exists()
 
     provenance = (_ROOT / "docker" / "README.md").read_text(encoding="utf-8")
     for expected in (
         _PG_TEXTSEARCH_REVISION,
         _PG_TEXTSEARCH_SOURCE_SHA256,
-        _PG_TEXTSEARCH_PATCH_SHA256,
         _PG_TEXTSEARCH_LICENSE_SHA256,
         _PG_TEXTSEARCH_NOTICE_SHA256,
     ):

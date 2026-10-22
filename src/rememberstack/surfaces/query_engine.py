@@ -12,6 +12,7 @@ import base64
 import binascii
 from collections import Counter
 from collections.abc import Callable
+from collections.abc import Iterable
 from collections.abc import Iterator
 from collections.abc import Mapping
 from collections.abc import Sequence
@@ -110,10 +111,16 @@ from rememberstack.model.fact_windows import FactWindow
 from rememberstack.model.fact_windows import TemporalMatch
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
+from rememberstack.ports.p1_index import merge_accounts
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.p1_index import P1EntityScopeTooBroadError
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
 from rememberstack.ports.p1_index import P1SearchPort
+from rememberstack.ports.p1_index import P1SearchResult
 from rememberstack.ports.p1_index import P1SearchUnavailableError
+from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.surface_cost import open_surface_scope
@@ -285,7 +292,9 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
         call_kwargs["evaluated_at"] = evaluation
         call_kwargs["_database_deadline"] = deadline
         try:
-            with engine._fact_snapshot(deadline=deadline) as connection:
+            with engine._fact_snapshot(
+                deadline=deadline, evaluated_at=evaluation
+            ) as connection:
                 call_kwargs["_snapshot_connection"] = connection
                 return method(*args, **call_kwargs)
         except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError):
@@ -366,7 +375,80 @@ class QueryEngine:
         )
 
     @contextmanager
-    def _fact_snapshot(self, *, deadline: float) -> Iterator[Connection]:
+    def _ranked_read_context(self) -> Iterator[None]:
+        """Hold one read-only repeatable-read P1 snapshot for an operation.
+
+        D142 §8.2: every P1 nomination, continuation and confirmation of one
+        operation reads the same database state through the shared retrieval
+        pool. Without a pool (test doubles) each call reads its own snapshot.
+        """
+        snapshot = cast(
+            Callable[..., AbstractContextManager[Connection]] | None,
+            getattr(self._fact_read_pool, "snapshot", None),
+        )
+        in_snapshot = getattr(self._fact_read_pool, "in_snapshot", None)
+        if not callable(snapshot) or (callable(in_snapshot) and in_snapshot()):
+            yield  # no pool, or an enclosing operation already holds the snapshot
+            return
+        with snapshot(deadline=monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS):
+            yield
+
+    @contextmanager
+    def _operation(self, *, evaluated_at: datetime | None) -> Iterator[datetime]:
+        """Own one ranked operation's context; yield its pinned instant.
+
+        D142 §8.2 (review r1 P1-3, P1-4): readiness, nomination, confirmation,
+        hydration and pending/freshness reads of one operation share one
+        read-only REPEATABLE READ snapshot, one deadline and one authority
+        instant. An enclosing operation's context is joined, not nested.
+        """
+        pool = self._fact_read_pool
+        current = pool.operation() if pool is not None else None
+        if current is not None:
+            yield current.evaluated_at
+            return
+        if pool is None:
+            yield evaluated_at or datetime.now(UTC)
+            return
+        with pool.snapshot(
+            deadline=monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS,
+            evaluated_at=evaluated_at,
+        ):
+            operation = pool.operation()
+            yield (
+                operation.evaluated_at
+                if operation
+                else (evaluated_at or datetime.now(UTC))
+            )
+
+    @contextmanager
+    def _read(self) -> Iterator[Connection]:
+        """The operation's snapshot connection, else a fresh read connection."""
+        pool = self._fact_read_pool
+        if pool is not None and pool.operation() is not None:
+            with pool.connect(deadline=None) as connection:
+                yield connection
+            return
+        with self._engine.connect() as connection:
+            yield connection
+
+    @contextmanager
+    def _consistent_read(self) -> Iterator[Connection]:
+        """A multi-statement read on one snapshot: the operation's, else its own."""
+        pool = self._fact_read_pool
+        if pool is not None and pool.operation() is not None:
+            with pool.connect(deadline=None) as connection:
+                yield connection
+            return
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            yield connection
+
+    @contextmanager
+    def _fact_snapshot(
+        self, *, deadline: float, evaluated_at: datetime | None = None
+    ) -> Iterator[Connection]:
         """Open the common read-only repeatable-read cut for a compound recipe."""
         if self._fact_read_pool is None:
             raise SQLAlchemyTimeoutError(
@@ -377,7 +459,7 @@ class QueryEngine:
             getattr(self._fact_read_pool, "snapshot", None),
         )
         if callable(snapshot):
-            with snapshot(deadline=deadline) as connection:
+            with snapshot(deadline=deadline, evaluated_at=evaluated_at) as connection:
                 yield cast(Connection, connection)
             return
         with self._fact_connection(
@@ -427,25 +509,30 @@ class QueryEngine:
             for grain, channel, _ in probes
         ):
             return ()  # an index without scores cannot rank a probe
-        with self._engine.connect() as connection:
+        # Review r1 P1-8: explicit document restrictions apply before the cap,
+        # and one row past it marks the enumeration (and so the answer)
+        # incomplete even when no enumerated lineage is touched.
+        with self._read() as connection:
             candidates = tuple(
                 connection.execute(
                     _PENDING_IN_FORCE,
                     {
                         "deployment_id": deployment_id,
-                        "limit": SCOPE_PENDING_PROBE_LINEAGES,
+                        "limit": SCOPE_PENDING_PROBE_LINEAGES + 1,
+                        "pending_doc_ids": [str(item) for item in documents.doc_ids]
+                        if documents is not None and documents.doc_ids
+                        else None,
                         **scope.parameters(),
                     },
                 ).scalars()
             )
-        if documents is not None and documents.doc_ids:
-            allowed = set(documents.doc_ids)
-            candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+        enumerated = len(candidates) <= SCOPE_PENDING_PROBE_LINEAGES
+        candidates = candidates[:SCOPE_PENDING_PROBE_LINEAGES]
         if not candidates:
-            return ()
+            return _Touched((), complete=enumerated)
         testimony = getattr(index, "nominate_testimony_scored", None)
         if entity_ids and callable(testimony):
-            return self._touched_by_testimony(
+            touched_by_testimony = self._touched_by_testimony(
                 deployment_id=deployment_id,
                 scope=scope,
                 query=query,
@@ -454,11 +541,16 @@ class QueryEngine:
                 candidates=candidates,
                 testimony=testimony,
             )
+            return _Touched(
+                touched_by_testimony,
+                complete=enumerated and _touched_complete(touched_by_testimony),
+            )
         restricted = (documents or DocumentSearchFilters()).model_copy(
             update={"doc_ids": candidates}
         )
         readable = TextScope.of(time=HistoryReadTime(), evaluated_at=scope.evaluated_at)
         touched: dict[UUID, None] = {}
+        complete = enumerated
         for grain, channel, k in probes:
             method = getattr(index, methods[(grain, channel)], None)
             if not callable(method):
@@ -491,25 +583,31 @@ class QueryEngine:
                 tuple[P1Nomination, ...],
                 method(**arguments, documents=documents, time=scope),
             )
+            probed = cast(
+                tuple[P1Nomination, ...],
+                method(**arguments, documents=restricted, time=readable),
+            )
+            complete = (
+                complete
+                and search_account(answered).termination.complete
+                and search_account(probed).termination.complete
+            )
             floor = answered[-1].score if len(answered) >= k else None
             hits = [
                 item.item_id
-                for item in cast(
-                    tuple[P1Nomination, ...],
-                    method(**arguments, documents=restricted, time=readable),
-                )
+                for item in probed
                 if (channel != "bm25" or item.score > 0)
                 and (floor is None or item.score >= floor)
             ]
             if not hits:
                 continue
-            with self._engine.connect() as connection:
+            with self._read() as connection:
                 for doc_id in connection.execute(
                     _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
                     {"deployment_id": deployment_id, "ids": hits},
                 ).scalars():
                     touched[doc_id] = None
-        return tuple(touched)
+        return _Touched(touched, complete=complete)
 
     def _touched_by_testimony(
         self,
@@ -536,6 +634,7 @@ class QueryEngine:
         """
         pending = tuple(str(doc_id) for doc_id in candidates)
         touched: dict[UUID, None] = {}
+        complete = True
         for grain, channel, k in probes:
             arguments: dict[str, Any] = {
                 "deployment_id": str(deployment_id),
@@ -560,33 +659,42 @@ class QueryEngine:
                 )
             else:
                 arguments["query"] = query
-            hits = [
-                item.item_id
-                for item in cast(tuple[P1Nomination, ...], testimony(**arguments))
-            ]
+            replayed = cast(tuple[P1Nomination, ...], testimony(**arguments))
+            complete = complete and search_account(replayed).termination.complete
+            hits = [item.item_id for item in replayed]
             if not hits:
                 continue
-            with self._engine.connect() as connection:
+            with self._read() as connection:
                 for doc_id in connection.execute(
                     _PENDING_CLAIM_DOCS if grain == "claim" else _PENDING_ITEM_DOCS,
                     {"deployment_id": deployment_id, "ids": hits},
                 ).scalars():
                     if doc_id in candidates:
                         touched[doc_id] = None
-        return tuple(touched)
+        return _Touched(touched, complete=complete)
 
     def _scoped_freshness(
-        self, *, deployment_id: UUID, scope: TextScope, doc_ids: Sequence[UUID]
+        self,
+        *,
+        deployment_id: UUID,
+        scope: TextScope,
+        doc_ids: Sequence[UUID],
+        pending_complete: bool = True,
     ) -> Freshness:
-        """Freshness of a time-scoped read, with its pending lineages (§3.7)."""
-        if not doc_ids:
+        """Freshness of a time-scoped read, with its pending lineages (§3.7).
+
+        ``pending_complete`` (D142 §8.6) is false when a probe stopped on a
+        bound; the reported count is then a lower bound.
+        """
+        if not doc_ids and pending_complete:
             return _freshness()
-        with self._engine.connect() as connection:
+        with self._read() as connection:
             pending = _scope_pending(
                 connection=connection,
                 deployment_id=deployment_id,
                 scope=scope,
                 doc_ids=doc_ids,
+                complete=pending_complete,
             )
         return _freshness(scope_pending=pending)
 
@@ -620,7 +728,32 @@ class QueryEngine:
         lemma = normalized_lemma(surface=name)
         if not lemma:
             return _unknown_entity(name=name)
-        with self._engine.connect() as connection:
+        # D142 §8.2 (review r2 P1-4): every tier, the ANN search, its
+        # confirmation and the context counts read one operation snapshot.
+        try:
+            with self._operation(evaluated_at=None):
+                return self._resolve_in_operation(
+                    deployment_id=deployment_id,
+                    name=name,
+                    lemma=lemma,
+                    context_entity_ids=context_entity_ids,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.FACT)
+
+    def _resolve_in_operation(
+        self,
+        *,
+        deployment_id: UUID,
+        name: str,
+        lemma: str,
+        context_entity_ids: tuple[UUID, ...],
+    ) -> Envelope:
+        """The tiers of ``resolve`` inside its operation context."""
+        stop_reason: str | None = None
+        with self._read() as connection:
             hits, truncated = _string_resolve_hits(
                 connection=connection, deployment_id=deployment_id, lemma=lemma
             )
@@ -630,10 +763,10 @@ class QueryEngine:
             )
             if isinstance(embedding, Envelope):
                 return embedding
-            hits, truncated = embedding
+            hits, truncated, stop_reason = embedding
         context_hits: dict[UUID, int] = {}
         if context_entity_ids:
-            with self._engine.connect() as connection:
+            with self._read() as connection:
                 context_hits = _context_hit_counts(
                     connection=connection,
                     deployment_id=deployment_id,
@@ -659,13 +792,21 @@ class QueryEngine:
         )
         if not candidates:
             return _unknown_entity(name=name)
+        truncation = _resolve_truncation(returned=len(candidates), truncated=truncated)
+        if stop_reason is not None:
+            # review r2 P1-4: an early-stopped ANN tier stays disclosed
+            truncation = Truncation(
+                truncated=True,
+                returned=len(candidates),
+                estimated_total=len(candidates),
+                total_is_exact=False,
+                reason=stop_reason,
+            )
         return _envelope(
             grain=Grain.FACT,
             entities=candidates,
             freshness=_freshness(),
-            truncation=_resolve_truncation(
-                returned=len(candidates), truncated=truncated
-            ),
+            truncation=truncation,
         )
 
     def documents_about(
@@ -917,7 +1058,60 @@ class QueryEngine:
         _required_entity_ids: tuple[UUID, ...] | None = None,
         _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
     ) -> Envelope:
-        """Return adjudicated facts under an explicit current-belief time scope."""
+        """Return adjudicated facts under an explicit current-belief time scope.
+
+        D142 §8.2 (review r1 P1-3): standalone calls own one ranked-read
+        context (snapshot, deadline, pinned instant); calls from a compound
+        recipe join the recipe's.
+        """
+        selected_time = time or CurrentFactTime()
+        try:
+            with self._operation(evaluated_at=evaluated_at) as evaluation:
+                return self._facts_context_in_operation(
+                    deployment_id=deployment_id,
+                    query=query,
+                    entity_ids=entity_ids,
+                    k=k,
+                    evidence_per_fact=evidence_per_fact,
+                    predicate=predicate,
+                    time=time,
+                    evaluated_at=evaluation,
+                    _database_deadline=_database_deadline,
+                    _required_entity_ids=_required_entity_ids,
+                    _optional_entity_nodes=_optional_entity_nodes,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.FACT)
+        except P1EntityScopeTooBroadError as error:
+            return _entity_scope_too_broad(
+                grain=Grain.FACT, explanation=str(error)
+            ).model_copy(
+                update={
+                    "temporal_scope": _fact_temporal_scope(
+                        time=selected_time,
+                        evaluated_at=evaluated_at or datetime.now(UTC),
+                    )
+                }
+            )
+
+    def _facts_context_in_operation(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        entity_ids: tuple[UUID, ...] = (),
+        k: int = 15,
+        evidence_per_fact: int = 3,
+        predicate: str | None = None,
+        time: FactTime | None = None,
+        evaluated_at: datetime | None = None,
+        _database_deadline: float | None = None,
+        _required_entity_ids: tuple[UUID, ...] | None = None,
+        _optional_entity_nodes: Mapping[UUID, GraphNode] | None = None,
+    ) -> Envelope:
+        """The facts_context body inside its operation context."""
         _validate_facts_context_bounds(k=k, evidence_per_fact=evidence_per_fact)
         _validate_optional_predicate(predicate=predicate)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
@@ -936,9 +1130,13 @@ class QueryEngine:
         selected_time = time or CurrentFactTime()
         evaluation = evaluated_at or datetime.now(UTC)
         gate_scope = TextScope.of(time=selected_time, evaluated_at=evaluation)
+        operation = self._fact_read_pool.operation() if self._fact_read_pool else None
+        # Review r2 P1-2: one operation deadline, not a fresh local budget.
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
+            else operation.deadline
+            if operation is not None
             else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
         if self._fact_read_pool is None:
@@ -1141,6 +1339,8 @@ class QueryEngine:
         dropped = visited_candidates - len(confirmed_rows)
         candidate_depth_exhausted = len(nominated) > FACTS_CONTEXT_CANDIDATE_K
         confirmation_incomplete = visited_candidates < len(candidate_keys)
+        nomination_account = search_account(nominated)
+        nomination_stopped = not nomination_account.termination.complete
         return _envelope(
             grain=Grain.FACT,
             temporal_scope=_fact_temporal_scope(
@@ -1157,22 +1357,28 @@ class QueryEngine:
                     has_more_confirmed
                     or confirmation_incomplete
                     or candidate_depth_exhausted
+                    or nomination_stopped
                 ),
                 returned=len(facts),
                 estimated_total=len(confirmed_rows),
                 total_is_exact=(
-                    not candidate_depth_exhausted and not confirmation_incomplete
+                    not candidate_depth_exhausted
+                    and not confirmation_incomplete
+                    and not nomination_stopped
                 ),
+                reason=f"p1_{nomination_account.termination.value}"
+                if nomination_stopped
+                else None,
             ),
             dropped_by_hydration=(
                 dropped + len(optional_entity_nodes) - len(confirmed_optional_nodes)
             ),
             negative=None
             if facts
-            else Negative(
-                kind=NegativeKind.KNOWN_EMPTY,
+            else _empty_negative(
+                nomination_account,
                 explanation=f"no adjudicated facts match {query!r}",
-                workaround=("broaden the query or inspect source testimony"),
+                workaround="broaden the query or inspect source testimony",
             ),
         )
 
@@ -1211,9 +1417,13 @@ class QueryEngine:
         _validate_default_facts_context_anchor_count(anchors=anchors)
         evaluation = evaluated_at or datetime.now(UTC)
         selected_time = time or CurrentFactTime()
+        operation = self._fact_read_pool.operation() if self._fact_read_pool else None
+        # Review r2 P1-2: one operation deadline, not a fresh local budget.
         database_deadline = (
             _database_deadline
             if _database_deadline is not None
+            else operation.deadline
+            if operation is not None
             else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
         )
 
@@ -1238,6 +1448,8 @@ class QueryEngine:
                     _required_entity_ids=required_entity_ids,
                     _optional_entity_nodes=optional_entity_nodes,
                 )
+            except P1EntityScopeTooBroadError as error:
+                return _entity_scope_too_broad(grain=Grain.FACT, explanation=str(error))
             except P1SearchUnavailableError:
                 return _facts_context_graph_boundary(
                     time=selected_time,
@@ -1451,6 +1663,10 @@ class QueryEngine:
                             fact_truncation is None or fact_truncation.total_is_exact
                         )
                     ),
+                    # review r2 P1-4: keep the fact search's stop reason
+                    reason=fact_truncation.reason
+                    if fact_truncation is not None
+                    else None,
                 ),
             }
         )
@@ -1474,20 +1690,54 @@ class QueryEngine:
         """
         _validate_claims_and_sources_context_bounds(k=k, candidate_k=candidate_k)
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
-        evaluation = evaluated_at or datetime.now(UTC)
-        scope = TextScope.of(time=time, evaluated_at=evaluation)
-        if entity_ids:
-            with self._engine.connect() as connection:
-                if not _context_entities_are_current(
-                    connection=connection,
+        # D142 §8.2 (review r1 P1-3/P1-4): the entity check, every channel,
+        # confirmation, hydration and pending/freshness share one snapshot,
+        # deadline and authority instant.
+        try:
+            with self._operation(evaluated_at=evaluated_at) as evaluation:
+                scope = TextScope.of(time=time, evaluated_at=evaluation)
+                if entity_ids:
+                    with self._read() as connection:
+                        if not _context_entities_are_current(
+                            connection=connection,
+                            deployment_id=deployment_id,
+                            entity_ids=entity_ids,
+                        ):
+                            return _unknown_context_entity(
+                                grain=Grain.EVIDENCE,
+                                evaluated_at=evaluation,
+                                temporal_scope=_text_temporal_scope(scope=scope),
+                            )
+                return self._claims_and_sources_context_in_snapshot(
                     deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    candidate_k=candidate_k,
                     entity_ids=entity_ids,
-                ):
-                    return _unknown_context_entity(
-                        grain=Grain.EVIDENCE,
-                        evaluated_at=evaluation,
-                        temporal_scope=_text_temporal_scope(scope=scope),
-                    )
+                    scope=scope,
+                    evaluation=evaluation,
+                    nominate_in_scope=True,
+                )
+        except P1EntityScopeTooBroadError as error:
+            return _entity_scope_too_broad(grain=Grain.EVIDENCE, explanation=str(error))
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
+
+    def _claims_and_sources_context_in_snapshot(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        k: int,
+        candidate_k: int,
+        entity_ids: tuple[UUID, ...],
+        scope: TextScope,
+        evaluation: datetime,
+        nominate_in_scope: bool,
+    ) -> Envelope:
+        """The body of ``claims_and_sources_context`` inside one P1 snapshot."""
         answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
             query=query,
@@ -1495,7 +1745,7 @@ class QueryEngine:
             candidate_k=candidate_k,
             entity_ids=entity_ids,
             scope=scope,
-            nominate_in_scope=time is not None,
+            nominate_in_scope=nominate_in_scope,
         )
         touched = self._touched_pending(
             deployment_id=deployment_id,
@@ -1518,6 +1768,7 @@ class QueryEngine:
                 *(record.doc_id for record in answer.chunks),
                 *touched,
             ),
+            pending_complete=_touched_complete(touched),
         )
         return answer.model_copy(
             update={
@@ -1719,47 +1970,59 @@ class QueryEngine:
         periods is returned through its occurrence in each selected version.
         """
         documents = None if documents is None or is_empty(documents) else documents
-        scope = TextScope.of(time=time, evaluated_at=datetime.now(UTC))
-        nominated = self._nominate_claim_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.SEARCH_CLAIMS,
-            documents=documents,
-            time=scope if time is not None else None,
-        )
-        evidence, dropped, _coverage = self._confirm_claims(
-            deployment_id=deployment_id,
-            claim_ids=tuple(UUID(item) for item in nominated),
-            documents=documents,
-            scope=scope,
-        )
-        touched = self._touched_pending(
-            deployment_id=deployment_id,
-            scope=scope,
-            query=query,
-            documents=documents,
-            probes=(("claim", channel, k),),
-        )
+        # D142 §8.2 (review r1 P1-3/P1-4): one snapshot, deadline and instant
+        # for nomination, confirmation and the pending/freshness reads.
+        try:
+            with self._operation(evaluated_at=None) as evaluation:
+                scope = TextScope.of(time=time, evaluated_at=evaluation)
+                nominated = self._nominate_claim_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.SEARCH_CLAIMS,
+                    documents=documents,
+                    time=scope,
+                )
+                evidence, dropped, _coverage = self._confirm_claims(
+                    deployment_id=deployment_id,
+                    claim_ids=tuple(UUID(item) for item in nominated),
+                    documents=documents,
+                    scope=scope,
+                )
+                touched = self._touched_pending(
+                    deployment_id=deployment_id,
+                    scope=scope,
+                    query=query,
+                    documents=documents,
+                    probes=(("claim", channel, k),),
+                )
+                freshness = self._scoped_freshness(
+                    deployment_id=deployment_id,
+                    scope=scope,
+                    doc_ids=(
+                        *(record.doc_id for record in evidence),
+                        *(documents.doc_ids if documents is not None else ()),
+                        *touched,
+                    ),
+                    pending_complete=_touched_complete(touched),
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
+        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
             evidence=evidence,
-            freshness=self._scoped_freshness(
-                deployment_id=deployment_id,
-                scope=scope,
-                doc_ids=(
-                    *(record.doc_id for record in evidence),
-                    *(documents.doc_ids if documents is not None else ()),
-                    *touched,
-                ),
-            ),
+            freshness=freshness,
             dropped_by_hydration=dropped,
+            truncation=_account_truncation(account, returned=len(evidence)),
             negative=None
             if evidence
-            else Negative(
-                kind=NegativeKind.KNOWN_EMPTY,
+            else _empty_negative(
+                account,
                 explanation="no current-testimony claims match the query",
                 workaround="broaden the query or inspect the source artifacts",
             ),
@@ -1781,14 +2044,22 @@ class QueryEngine:
         parallel channels can fuse their candidate orderings before one
         `hydrate_claims` confirmation. Candidate UUIDs and ranks are not facts.
         """
-        nominated = self._nominate_claim_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.NOMINATE_CLAIMS,
-            time=time,
-        )
+        # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
+        # deadline and pinned instant even without a later confirmation.
+        try:
+            with self._operation(evaluated_at=None):
+                nominated = self._nominate_claim_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.NOMINATE_CLAIMS,
+                    time=time,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no claims were nominated"
         )
@@ -1813,47 +2084,59 @@ class QueryEngine:
         the version it came from.
         """
         documents = None if documents is None or is_empty(documents) else documents
-        scope = TextScope.of(time=time, evaluated_at=datetime.now(UTC))
-        nominated = self._nominate_chunk_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.SEARCH_CHUNKS,
-            documents=documents,
-            time=scope if time is not None else None,
-        )
-        chunks, dropped, _coverage = self._confirm_chunks(
-            deployment_id=deployment_id,
-            chunk_ids=tuple(UUID(item) for item in nominated),
-            documents=documents,
-            scope=scope,
-        )
-        touched = self._touched_pending(
-            deployment_id=deployment_id,
-            scope=scope,
-            query=query,
-            documents=documents,
-            probes=(("chunk", channel, k),),
-        )
+        # D142 §8.2 (review r1 P1-3/P1-4): one snapshot, deadline and instant
+        # for nomination, confirmation and the pending/freshness reads.
+        try:
+            with self._operation(evaluated_at=None) as evaluation:
+                scope = TextScope.of(time=time, evaluated_at=evaluation)
+                nominated = self._nominate_chunk_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.SEARCH_CHUNKS,
+                    documents=documents,
+                    time=scope,
+                )
+                chunks, dropped, _coverage = self._confirm_chunks(
+                    deployment_id=deployment_id,
+                    chunk_ids=tuple(UUID(item) for item in nominated),
+                    documents=documents,
+                    scope=scope,
+                )
+                touched = self._touched_pending(
+                    deployment_id=deployment_id,
+                    scope=scope,
+                    query=query,
+                    documents=documents,
+                    probes=(("chunk", channel, k),),
+                )
+                freshness = self._scoped_freshness(
+                    deployment_id=deployment_id,
+                    scope=scope,
+                    doc_ids=(
+                        *(record.doc_id for record in chunks),
+                        *(documents.doc_ids if documents is not None else ()),
+                        *touched,
+                    ),
+                    pending_complete=_touched_complete(touched),
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
+        account = search_account(nominated)
         return _envelope(
             grain=Grain.EVIDENCE,
             temporal_scope=_text_temporal_scope(scope=scope),
             chunks=chunks,
-            freshness=self._scoped_freshness(
-                deployment_id=deployment_id,
-                scope=scope,
-                doc_ids=(
-                    *(record.doc_id for record in chunks),
-                    *(documents.doc_ids if documents is not None else ()),
-                    *touched,
-                ),
-            ),
+            freshness=freshness,
             dropped_by_hydration=dropped,
+            truncation=_account_truncation(account, returned=len(chunks)),
             negative=None
             if chunks
-            else Negative(
-                kind=NegativeKind.KNOWN_EMPTY,
+            else _empty_negative(
+                account,
                 explanation="no live source chunks match the query",
                 workaround="broaden the query or inspect the source artifacts",
             ),
@@ -1938,14 +2221,22 @@ class QueryEngine:
         time: TextScope | None = None,
     ) -> Envelope:
         """Rank source-chunk IDs without returning unconfirmed source text."""
-        nominated = self._nominate_chunk_ids(
-            deployment_id=deployment_id,
-            query=query,
-            k=k,
-            channel=channel,
-            call_site=SurfaceCallSite.NOMINATE_CHUNKS,
-            time=time,
-        )
+        # D142 §8.6 (review r1 P1-7): the nomination runs under one operation
+        # deadline and pinned instant even without a later confirmation.
+        try:
+            with self._operation(evaluated_at=None):
+                nominated = self._nominate_chunk_ids(
+                    deployment_id=deployment_id,
+                    query=query,
+                    k=k,
+                    channel=channel,
+                    call_site=SurfaceCallSite.NOMINATE_CHUNKS,
+                    time=time,
+                )
+        except (DBAPIError, SQLAlchemyTimeoutError, TimeoutError) as error:
+            if not _deadline_expired(error):
+                raise
+            return _operation_deadline_boundary(grain=Grain.EVIDENCE)
         return _nomination_envelope(
             ids=nominated, empty_explanation="no source chunks were nominated"
         )
@@ -1960,7 +2251,7 @@ class QueryEngine:
         call_site: SurfaceCallSite,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Run exactly one validated P1 claim-nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
         # Passed only when present, so an index without document filters or
@@ -1995,7 +2286,7 @@ class QueryEngine:
         call_site: SurfaceCallSite,
         documents: DocumentSearchFilters | None = None,
         time: TextScope | None = None,
-    ) -> tuple[str, ...]:
+    ) -> P1SearchIds:
         """Run exactly one validated P1 source-chunk nomination channel."""
         _validate_nomination_request(k=k, channel=channel)
         scope = _nomination_scope(documents=documents, time=time)
@@ -2379,6 +2670,26 @@ class QueryEngine:
                 estimated_total=estimated_total,
                 total_is_exact=all(item.total_is_exact for item in truncations),
                 continuation=continuations[0] if continuations else None,
+                reason=next((item.reason for item in truncations if item.reason), None),
+            )
+        # review r1 P1-1: an input that stopped early or answered with a
+        # boundary makes an empty union a boundary, never known_empty.
+        boundary = next(
+            (
+                envelope.negative
+                for envelope in inputs
+                if envelope.negative is not None
+                and envelope.negative.kind is NegativeKind.BOUNDARY
+            ),
+            None,
+        )
+        if boundary is None and any(
+            (item.reason or "").startswith("p1_") for item in truncations
+        ):
+            boundary = Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation="a contributing search stopped on its work bound",
+                workaround="narrow the query or add filters, then retry",
             )
         return _envelope(
             grain=Grain.EVIDENCE,
@@ -2391,7 +2702,8 @@ class QueryEngine:
             ),
             negative=None
             if evidence or chunks
-            else Negative(
+            else boundary
+            or Negative(
                 kind=NegativeKind.KNOWN_EMPTY,
                 explanation="no claim or source evidence confirmed",
                 workaround="broaden the query or inspect the source artifacts",
@@ -2768,7 +3080,10 @@ class QueryEngine:
                 nomination_exhausted=(
                     len(semantic.ranking) >= candidate_k
                     or len(lexical.ranking) >= candidate_k
+                    or _nomination_stopped_early(semantic)
+                    or _nomination_stopped_early(lexical)
                 ),
+                stop_reason=_channel_stop_reason(semantic, lexical),
             )
 
         def hydrate_chunk_context() -> Envelope:
@@ -2807,7 +3122,10 @@ class QueryEngine:
                 nomination_exhausted=(
                     len(semantic.ranking) >= candidate_k
                     or len(lexical.ranking) >= candidate_k
+                    or _nomination_stopped_early(semantic)
+                    or _nomination_stopped_early(lexical)
                 ),
+                stop_reason=_channel_stop_reason(semantic, lexical),
             )
 
         claim_context = hydrate_claim_context()
@@ -3046,19 +3364,26 @@ class QueryEngine:
                     deadline=deadline,
                 ),
             )
+        except P1EntityScopeTooBroadError:
+            raise
         except P1SearchUnavailableError:
             # Profiles are an additive recall channel. During backfill or a
             # policy cut, authoritative fact search remains fully usable.
             return nominated
         profile_ids = tuple(UUID(item.item_id) for item in profile_entities)
         if not profile_ids:
-            return nominated
-        return _fuse_fact_nominations(
-            channels=(
+            # review r1 P1-1: an early-stopped profile channel stays disclosed
+            return P1SearchResult(
                 nominated,
-                nominate(scope=profile_ids, ranking_scope=profile_ids),
-            ),
+                account=merge_accounts(
+                    [search_account(nominated), search_account(profile_entities)]
+                ),
+            )
+        profiled = nominate(scope=profile_ids, ranking_scope=profile_ids)
+        return _fuse_fact_nominations(
+            channels=(nominated, profiled),
             limit=FACTS_CONTEXT_CANDIDATE_K + 1,
+            extra_accounts=(search_account(profile_entities),),
         )
 
     def _resolve_context_entity(
@@ -3184,7 +3509,7 @@ class QueryEngine:
         if not facts:
             return facts
         if connection is None:
-            with self._engine.connect() as own_connection:
+            with self._read() as own_connection:
                 return self._enrich_facts(
                     connection=own_connection,
                     deployment_id=deployment_id,
@@ -3418,9 +3743,7 @@ class QueryEngine:
         occurrences: dict[UUID, list[ClaimOccurrence]] = {}
         # Multiple chunks are one answer, so they must observe one database
         # snapshot rather than mixing currency states across round trips.
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
-        ) as connection:
+        with self._consistent_read() as connection:
             for batch in batched(claim_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
@@ -3518,9 +3841,7 @@ class QueryEngine:
             )
         rows: list[RowMapping] = []
         effective: dict[UUID, tuple[EffectiveInterval, ...]] = {}
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
-        ) as connection:
+        with self._consistent_read() as connection:
             for batch in batched(chunk_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
@@ -3594,9 +3915,7 @@ class QueryEngine:
         if not observation_ids:
             return (), 0
         rows: list[RowMapping] = []
-        with self._engine.connect().execution_options(
-            isolation_level="REPEATABLE READ"
-        ) as connection:
+        with self._consistent_read() as connection:
             for batch in batched(observation_ids, INTERACTIVE_HYDRATION_BATCH_SIZE):
                 rows.extend(
                     connection.execute(
@@ -3626,7 +3945,7 @@ class QueryEngine:
 
     def _embedding_resolve_hits(
         self, *, deployment_id: UUID, name: str
-    ) -> tuple[tuple[_ResolveHit, ...], bool] | Envelope:
+    ) -> tuple[tuple[_ResolveHit, ...], bool, str | None] | Envelope:
         """Return T3 profile neighbors, or a terminal negative when none qualify.
 
         The semantic channel embeds the query string and ranks current entity
@@ -3658,6 +3977,10 @@ class QueryEngine:
             )
         except P1SearchUnavailableError:
             return _embedding_channel_boundary()
+        account = search_account(nominations)
+        stop_reason = (
+            None if account.termination.complete else f"p1_{account.termination.value}"
+        )
         # The channel returns this window in descending score order. Once the
         # tail is at or below the reject band, every later neighbor is too, so
         # a below-band row does not hide an above-band candidate past the cap.
@@ -3669,9 +3992,9 @@ class QueryEngine:
         truncated = len(kept) > QUERY_RESOLVE_CANDIDATE_LIMIT
         kept = kept[:QUERY_RESOLVE_CANDIDATE_LIMIT]
         if not kept:
-            return _unknown_entity(name=name)
+            return _resolve_miss(name=name, account=account)
         score_by_id = {UUID(item.item_id): item.score for item in kept}
-        with self._engine.connect() as connection:
+        with self._read() as connection:
             rows = (
                 connection.execute(
                     _CONFIRM_CONTEXT_ENTITIES,
@@ -3691,8 +4014,8 @@ class QueryEngine:
             if row["entity_id"] in score_by_id
         )
         if not hits:
-            return _unknown_entity(name=name)
-        return hits, truncated
+            return _resolve_miss(name=name, account=account)
+        return hits, truncated, stop_reason
 
     def _embed(
         self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
@@ -3802,9 +4125,15 @@ def _validate_optional_predicate(*, predicate: str | None) -> None:
 
 
 def _fuse_fact_nominations(
-    *, channels: tuple[tuple[P1Nomination, ...], ...], limit: int
-) -> tuple[P1Nomination, ...]:
-    """Fuse fact coordinates without confusing relation/observation UUIDs."""
+    *,
+    channels: tuple[tuple[P1Nomination, ...], ...],
+    limit: int,
+    extra_accounts: tuple[P1SearchAccount, ...] = (),
+) -> P1SearchResult:
+    """Fuse fact coordinates without confusing relation/observation UUIDs.
+
+    The fused result carries every contributing search's account (D142 §8.6).
+    """
     scores: dict[tuple[str, str], float] = {}
     for channel in channels:
         seen: set[tuple[str, str]] = set()
@@ -3817,11 +4146,16 @@ def _fuse_fact_nominations(
             seen.add(key)
             scores[key] = scores.get(key, 0.0) + 1.0 / (DEFAULT_RRF_K + item.rank)
     ranked = sorted(scores.items(), key=lambda item: (-item[1], *item[0]))[:limit]
-    return tuple(
-        P1Nomination(
-            item_id=key[1], rank=rank, score=score, channel="rrf", qualifier=key[0]
-        )
-        for rank, (key, score) in enumerate(ranked, start=1)
+    return P1SearchResult(
+        (
+            P1Nomination(
+                item_id=key[1], rank=rank, score=score, channel="rrf", qualifier=key[0]
+            )
+            for rank, (key, score) in enumerate(ranked, start=1)
+        ),
+        account=merge_accounts(
+            [*(search_account(channel) for channel in channels), *extra_accounts]
+        ),
     )
 
 
@@ -3847,8 +4181,30 @@ def _validate_claims_and_sources_context_bounds(*, k: int, candidate_k: int) -> 
         )
 
 
+def _nomination_stopped_early(envelope: Envelope) -> bool:
+    """Whether a nomination channel stopped on a D142 bound (§8.6 propagation)."""
+    truncation = envelope.truncation
+    return (
+        truncation is not None
+        and truncation.truncated
+        and (truncation.reason or "").startswith("p1_")
+    )
+
+
+def _channel_stop_reason(*channels: Envelope) -> str | None:
+    """The first D142 stop reason among nomination channels (§8.6)."""
+    for channel in channels:
+        if _nomination_stopped_early(channel) and channel.truncation is not None:
+            return channel.truncation.reason
+    return None
+
+
 def _bound_testimony_result(
-    *, envelope: Envelope, k: int, nomination_exhausted: bool
+    *,
+    envelope: Envelope,
+    k: int,
+    nomination_exhausted: bool,
+    stop_reason: str | None = None,
 ) -> Envelope:
     """Apply one testimony list's public cap with an explicit D49 marker."""
     if envelope.evidence and envelope.chunks:
@@ -3871,6 +4227,18 @@ def _bound_testimony_result(
                 returned=len(selected),
                 estimated_total=len(records),
                 total_is_exact=not nomination_exhausted,
+                reason=stop_reason,
+            ),
+            # review r1 P1-1: never known_empty after a channel stopped early
+            "negative": envelope.negative
+            if records or stop_reason is None
+            else Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    "a nomination channel stopped on its work bound"
+                    f" ({stop_reason}) before any candidate confirmed"
+                ),
+                workaround="narrow the query or add filters, then retry",
             ),
         }
     )
@@ -4087,10 +4455,98 @@ def _unknown_context_entity(
     )
 
 
+def _account_truncation(
+    account: P1SearchAccount, *, returned: int
+) -> Truncation | None:
+    """The D142 §8.6 disclosure of an early-stopped search, else ``None``."""
+    if account.termination.complete:
+        return None
+    return Truncation(
+        truncated=True,
+        returned=returned,
+        estimated_total=max(returned, account.confirmed),
+        total_is_exact=False,
+        reason=f"p1_{account.termination.value}",
+    )
+
+
+def _empty_negative(
+    account: P1SearchAccount, *, explanation: str, workaround: str | None
+) -> Negative:
+    """``known_empty`` only after every contributing search proved exhaustion."""
+    if account.termination.complete:
+        return Negative(
+            kind=NegativeKind.KNOWN_EMPTY,
+            explanation=explanation,
+            workaround=workaround,
+        )
+    return Negative(
+        kind=NegativeKind.BOUNDARY,
+        explanation=(
+            "the search stopped on its work bound"
+            f" ({account.termination.value}) before finding a match"
+        ),
+        workaround="narrow the query or add filters, then retry",
+    )
+
+
+def _deadline_expired(error: Exception) -> bool:
+    """Whether a read failed on the operation budget, not on a defect."""
+    if isinstance(error, DBAPIError):
+        # 57014 query_canceled (statement_timeout); 25P04 transaction_timeout,
+        # which supersedes an equal statement timeout (review r2 P1-3).
+        return getattr(error.orig, "sqlstate", None) in {"57014", "25P04"}
+    return True
+
+
+def _entity_scope_too_broad(*, grain: Grain, explanation: str) -> Envelope:
+    """The typed boundary for an entity scope beyond the work budget (§8.4)."""
+    return _envelope(
+        grain=grain,
+        freshness=_freshness(),
+        truncation=Truncation(
+            truncated=True,
+            returned=0,
+            estimated_total=0,
+            total_is_exact=False,
+            reason="entity_scope_too_broad",
+        ),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation=explanation,
+            workaround="anchor on fewer or more specific entities, or add filters",
+        ),
+    )
+
+
+def _operation_deadline_boundary(*, grain: Grain) -> Envelope:
+    """The operation ran out of its database budget (D142 §8.6)."""
+    return _envelope(
+        grain=grain,
+        freshness=_freshness(),
+        truncation=Truncation(
+            truncated=True,
+            returned=0,
+            estimated_total=0,
+            total_is_exact=False,
+            reason="p1_deadline",
+        ),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation="the operation could not finish inside its database budget",
+            workaround="narrow the query or add filters, then retry",
+        ),
+    )
+
+
 def _scored_nomination_envelope(
     *, nominations: tuple[P1Nomination, ...], empty_explanation: str
 ) -> Envelope:
-    """Convert scored P1 nominations to the engine's ranking envelope."""
+    """Convert scored P1 nominations to the engine's ranking envelope.
+
+    D142 §8.6: a search that stopped on a bound is disclosed as truncated and
+    an empty result is ``known_empty`` only when the search was complete.
+    """
     ranking = tuple(
         RankedItem(
             item_id=UUID(item.item_id),
@@ -4099,18 +4555,44 @@ def _scored_nomination_envelope(
         )
         for item in nominations
     )
+    account = search_account(nominations)
+    complete = account.termination.complete
+    truncation = (
+        None
+        if complete
+        else Truncation(
+            truncated=True,
+            returned=len(ranking),
+            estimated_total=max(len(ranking), account.confirmed),
+            total_is_exact=False,
+            reason=f"p1_{account.termination.value}",
+        )
+    )
+    negative = None
+    if not ranking:
+        negative = (
+            Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=empty_explanation,
+                workaround="broaden the query or remove entity anchors",
+            )
+            if complete
+            else Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    "the search stopped on its work bound"
+                    f" ({account.termination.value}) before finding a match"
+                ),
+                workaround="narrow the query or add filters, then retry",
+            )
+        )
     return _envelope(
         grain=Grain.EVIDENCE,
         temporal_scope=current_temporal_scope(),
         ranking=ranking,
         freshness=_freshness(),
-        negative=None
-        if ranking
-        else Negative(
-            kind=NegativeKind.KNOWN_EMPTY,
-            explanation=empty_explanation,
-            workaround="broaden the query or remove entity anchors",
-        ),
+        truncation=truncation,
+        negative=negative,
     )
 
 
@@ -4212,7 +4694,11 @@ def _cosine_similarity(a: tuple[float, ...], b: tuple[float, ...]) -> float:
 
 
 def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envelope:
-    """Represent ordered projection IDs without claiming they are hydrated."""
+    """Represent ordered projection IDs without claiming they are hydrated.
+
+    D142 §8.6: an early-stopped search is disclosed as truncated, and an empty
+    one is ``known_empty`` only when the search was complete.
+    """
     ranking = tuple(
         RankedItem(
             item_id=UUID(item),
@@ -4221,17 +4707,40 @@ def _nomination_envelope(*, ids: Sequence[str], empty_explanation: str) -> Envel
         )
         for position, item in enumerate(ids, start=1)
     )
+    account = search_account(ids)
+    complete = account.termination.complete
+    negative = None
+    if not ranking:
+        negative = (
+            Negative(
+                kind=NegativeKind.KNOWN_EMPTY,
+                explanation=empty_explanation,
+                workaround="broaden the query or inspect the source artifacts",
+            )
+            if complete
+            else Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=(
+                    "the search stopped on its work bound"
+                    f" ({account.termination.value}) before finding a match"
+                ),
+                workaround="narrow the query or add filters, then retry",
+            )
+        )
     return _envelope(
         grain=Grain.EVIDENCE,
         ranking=ranking,
         freshness=_freshness(),
-        negative=None
-        if ranking
-        else Negative(
-            kind=NegativeKind.KNOWN_EMPTY,
-            explanation=empty_explanation,
-            workaround="broaden the query or inspect the source artifacts",
+        truncation=None
+        if complete
+        else Truncation(
+            truncated=True,
+            returned=len(ranking),
+            estimated_total=max(len(ranking), account.confirmed),
+            total_is_exact=False,
+            reason=f"p1_{account.termination.value}",
         ),
+        negative=negative,
     )
 
 
@@ -4465,6 +4974,26 @@ def _embedding_channel_boundary() -> Envelope:
                 "entity embedding resolution is not published for this deployment"
             ),
             workaround="check spelling, or search claims and chunks",
+        ),
+    )
+
+
+def _resolve_miss(*, name: str, account: P1SearchAccount) -> Envelope:
+    """``unknown_entity`` only after the ANN tier proved it found nothing.
+
+    An early-stopped T3 search answers a boundary with its reason instead
+    (D142 §8.6, review r2 P1-4).
+    """
+    if account.termination.complete:
+        return _unknown_entity(name=name)
+    return _envelope(
+        grain=Grain.FACT,
+        freshness=_freshness(),
+        truncation=_account_truncation(account, returned=0),
+        negative=_empty_negative(
+            account,
+            explanation=f"nothing resolves for {name!r}",
+            workaround="check spelling, try search over claims or chunks",
         ),
     )
 
@@ -5285,6 +5814,8 @@ _PENDING_IN_FORCE = text(
     WHERE s.deployment_id = :deployment_id
       AND NOT s.selectable
       AND s.in_force && {WINDOW_SQL}
+      AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
+           OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
@@ -5313,11 +5844,12 @@ def _scope_pending(
     deployment_id: UUID,
     scope: TextScope,
     doc_ids: Sequence[UUID],
+    complete: bool = True,
 ) -> ScopePending | None:
     """Touched lineages whose in-force version for the scope is not ready (§3.7)."""
     touched = tuple(dict.fromkeys(doc_ids))
     if not touched:
-        return None
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
     pending = tuple(
         connection.execute(
             _SCOPE_PENDING,
@@ -5329,8 +5861,12 @@ def _scope_pending(
         ).scalars()
     )
     if not pending:
-        return None
-    return ScopePending(doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS], count=len(pending))
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
+    return ScopePending(
+        doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS],
+        count=len(pending),
+        complete=complete,
+    )
 
 
 def _text_temporal_scope(*, scope: TextScope) -> object:
@@ -5877,3 +6413,20 @@ _OPEN_SUPPORT_FLAGS = text(
       AND (candidate ->> 'fact_id') = ANY(:fact_ids)
     """
 )
+
+
+class _Touched(tuple[UUID, ...]):
+    """Touched pending lineages plus whether every probe was complete (§8.6)."""
+
+    complete: bool
+
+    def __new__(cls, ids: Iterable[UUID], *, complete: bool) -> "_Touched":
+        """Build from the lineages found and the probes' completeness."""
+        result = super().__new__(cls, tuple(ids))
+        result.complete = complete
+        return result
+
+
+def _touched_complete(touched: Sequence[UUID]) -> bool:
+    """Whether a pending probe ran to completion (plain tuples: yes)."""
+    return bool(getattr(touched, "complete", True))

@@ -2,8 +2,8 @@
 
 `Dockerfile.postgres` is the only supported database image definition. It pins
 the PostgreSQL 19 beta base by digest, pins PGDG extension package versions, and
-builds pg_textsearch from a checksum-verified source archive plus a
-checksum-verified PostgreSQL 19 compatibility patch.
+builds pg_textsearch from a checksum-verified source archive (no local patch:
+v1.5.1 supports PostgreSQL 19 upstream, D142).
 
 Exact pgvector and pg_partman Debian versions resolve from PGDG's all-versions
 `trixie-pgdg-archive` repository, not the rotating current-version index. PGDG
@@ -13,15 +13,17 @@ released package version; retrieved 2026-08-27 from
 
 ## pg_textsearch provenance
 
-- source revision: `578ff529894992fb9e67cae4c69424e65c84868e`
+- source revision: `fa142d049d08eac45a263f5abc250c8877ae076e` (tag `v1.5.1`)
 - source archive SHA-256:
-  `8632f91231251dc3e19395ef6a0d4d158d5f5920ba420691471771418e2a7cc7`
-- local patch SHA-256:
-  `a8c97f39714ab0193c82fcda3709d3e4df54bcc7f2804fde8f970710484dbdc6`
-- upstream PostgreSQL 19 work: [timescale/pg_textsearch#460](https://github.com/timescale/pg_textsearch/pull/460), retrieved 2026-08-27; open and unmerged at retrieval
+  `445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0`
+- PostgreSQL 19: supported upstream since v1.5.0 as best effort with
+  non-blocking CI ([README at the pinned revision](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/README.md#postgresql-version-compatibility)),
+  so this image's own integration suite is the PostgreSQL 19 gate; the former
+  local compatibility patch is retired (retrieved 2026-10-21)
 - license determination: the pinned revision's `LICENSE` identifies **The
   PostgreSQL License** (`PostgreSQL` identifier), and its `NOTICE` says the
-  extension is licensed under that license; retrieved 2026-08-27
+  extension is licensed under that license; unchanged at v1.5.1 (same
+  checksums), retrieved 2026-10-21
 - license SHA-256:
   `d33de21a123ce25b41722a5d10750984cb9c844c4d9b01add9e1b31f3ff452e5`
 - notice SHA-256:

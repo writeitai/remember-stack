@@ -79,6 +79,12 @@ and its [analysis](analysis/version_effective_time_and_section_references.md); t
 [delivery plan](plans/effective_time_and_section_references.md) says which parts ship
 together. It also makes D56's version reuse hold for dated versions (text origin time).
 
+For why ranked search must use its indexes, how it keeps eligibility exact and
+reports every early stop, and how semantic recall is measured, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
+its [analysis](analysis/index_driven_ranked_search.md), the unchosen
+[distinct-text index proposal](proposals/distinct_text_search_index.md) and the
+[delivery plan](plans/index_driven_ranked_search.md).
+
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.

@@ -9,9 +9,14 @@ forward byte-identical. The measured hit rate is recorded in
 `plan/analysis/reuse_hit_rate_spike.md`.
 """
 
+from collections import Counter
 from collections.abc import Iterator
+from collections.abc import Mapping
+from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 import re
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -31,6 +36,7 @@ from rememberstack.core import chunker_version
 from rememberstack.core import ChunkerParams
 from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import ClaimedWork
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
@@ -173,7 +179,18 @@ class _ReuseRig:
         self.engine = engine
         raw_store = LocalFSObjectStore(root=root / "raw")
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.provider = FakeModelProvider(generate_router=_canned)
+        self.calls: list[tuple[str, str]] = []
+        """Every Selection/Claimify call as (response type, target span)."""
+
+        def route(prompt: str, type_name: str) -> dict[str, object]:
+            if type_name in {"SelectionResponse", "ClaimifyResponse"}:
+                match = _TARGET_PATTERN.search(prompt)
+                self.calls.append(
+                    (type_name, match.group(1).strip() if match is not None else "")
+                )
+            return _canned(prompt, type_name)
+
+        self.provider = FakeModelProvider(generate_router=route)
         self.chunk_catalog = ChunkCatalog(engine=engine)
         self.claim_catalog = ClaimCatalog(engine=engine)
         catalog = DocumentCatalog(engine=engine)
@@ -639,3 +656,253 @@ def test_pure_summary_seat_swap_reextracts_and_reprefixes_nothing(
     assert hashes_after == hashes_before
     assert rig.selection_calls() == base_selection
     assert rig.prefix_calls() == base_prefix
+
+
+def _sectioned(*, edited: bool) -> str:
+    """Three sections of eight paragraphs; version 2 rewrites one paragraph of B."""
+    blocks: list[str] = []
+    for name in ("A", "B", "C"):
+        blocks.append(f"# Section {name}")
+        for index in range(8):
+            line = f"Section {name} paragraph {index} states fact {index} about {name}."
+            if edited and name == "B" and index == 4:
+                line = (
+                    "Section B paragraph 4 now reports a completely different finding."
+                )
+            blocks.append(line)
+    return "\n\n".join(blocks)
+
+
+def _observe_mode(
+    rig: _ReuseRig, *, content: str, dated: bool, at: datetime
+) -> IngestedVersion:
+    """One observation of a stable lineage: living undated, or a dated snapshot."""
+    if not dated:
+        return rig.observe(content=content)
+    return rig.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="intranet",
+        source_ref="policy/sectioned",
+        upload=DocumentUpload(
+            filename="sectioned.md",
+            mime="text/markdown",
+            content=content.encode("utf-8"),
+        ),
+        versioning_mode="snapshot",
+        source_modified_at=at,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+
+
+def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
+    """Ingest v1 and the one-paragraph v2; return per-chunk reuse evidence."""
+    first = _observe_mode(
+        rig,
+        content=_sectioned(edited=False),
+        dated=dated,
+        at=datetime(2024, 1, 10, tzinfo=UTC),
+    )
+    rig.drain()
+    baseline_selection = rig.selection_calls()
+    baseline_embeds = len(rig.provider.embedded_texts)
+    baseline_calls = len(rig.calls)
+    second = _observe_mode(
+        rig,
+        content=_sectioned(edited=True),
+        dated=dated,
+        at=datetime(2025, 3, 1, tzinfo=UTC),
+    )
+    assert second.created
+    rig.drain()
+    columns = (
+        "c.chunk_id::text AS chunk_id, c.chunk_content_hash AS hash,"
+        " c.extraction_input_hash AS extraction, c.section_id::text AS section_id,"
+        " c.ordinal AS ordinal, s.embedding::text AS vector,"
+        " s.embedding_text_hash AS text_hash, c.claimify_input_hash AS claimify,"
+        " c.reuse_identity_hash AS reuse_identity, c.text_origin_at AS text_origin,"
+        " s.search_text AS search_text"
+    )
+    with rig.engine.connect() as connection:
+
+        def chunks(version_id: UUID) -> list[Mapping[str, Any]]:
+            return [
+                dict(row)
+                for row in connection.execute(
+                    text(
+                        f"SELECT {columns} FROM chunks c JOIN chunk_search s"
+                        "   ON s.deployment_id = c.deployment_id"
+                        "  AND s.chunk_id = c.chunk_id"
+                        " WHERE c.version_id = :v ORDER BY c.ordinal"
+                    ),
+                    {"v": version_id},
+                ).mappings()
+            ]
+
+        def claim_ids(chunk_id: str) -> set[str]:
+            return {
+                str(item)
+                for item in connection.execute(
+                    text("SELECT claim_id FROM chunk_claims WHERE chunk_id = :c"),
+                    {"c": chunk_id},
+                ).scalars()
+            }
+
+        v1, v2 = chunks(first.version_id), chunks(second.version_id)
+        minted = {
+            str(item)
+            for item in connection.execute(
+                text(
+                    "SELECT DISTINCT chunk_id::text FROM claims"
+                    " WHERE chunk_id = ANY(CAST(:ids AS uuid[]))"
+                ),
+                {"ids": [row["chunk_id"] for row in v2]},
+            ).scalars()
+        }
+        v1_claims = {row["extraction"]: claim_ids(row["chunk_id"]) for row in v1}
+        v2_claims = {row["chunk_id"]: claim_ids(row["chunk_id"]) for row in v2}
+    v1_extractions = {row["extraction"] for row in v1}
+    v1_contents = {row["hash"] for row in v1}
+    changed = [row for row in v2 if row["hash"] not in v1_contents]
+    extracted = {
+        row["chunk_id"] for row in v2 if row["extraction"] not in v1_extractions
+    }
+    position = {row["chunk_id"]: index for index, row in enumerate(v2)}
+    allowed: set[str] = set()
+    for row in changed:
+        allowed.add(row["chunk_id"])
+        for neighbour in (position[row["chunk_id"]] - 1, position[row["chunk_id"]] + 1):
+            if (
+                0 <= neighbour < len(v2)
+                and v2[neighbour]["section_id"] == row["section_id"]
+            ):
+                allowed.add(v2[neighbour]["chunk_id"])
+    embedded_hashes = {
+        embedding_text_hash(item)
+        for item in rig.provider.embedded_texts[baseline_embeds:]
+    }
+    v1_claimify = {row["claimify"] for row in v1}
+    calls = rig.calls[baseline_calls:]
+
+    def called_chunks(type_name: str) -> list[set[str]]:
+        """For each call of one stage, the v2 chunks whose text holds its target."""
+        return [
+            {row["chunk_id"] for row in v2 if span and span[:60] in row["search_text"]}
+            for kind, span in calls
+            if kind == type_name
+        ]
+
+    return {
+        "v1": v1,
+        "v2": v2,
+        "changed": changed,
+        "extracted": extracted,
+        "allowed": allowed,
+        "minted": minted,
+        "v1_claims": v1_claims,
+        "v2_claims": v2_claims,
+        "selection_v1": baseline_selection,
+        "selection_v2": rig.selection_calls() - baseline_selection,
+        "embedded": {
+            row["chunk_id"] for row in v2 if row["text_hash"] in embedded_hashes
+        },
+        "embeds_v2": len(rig.provider.embedded_texts) - baseline_embeds,
+        "claimify_changed": {
+            row["chunk_id"] for row in v2 if row["claimify"] not in v1_claimify
+        },
+        "selection_called": called_chunks("SelectionResponse"),
+        "claimify_called": called_chunks("ClaimifyResponse"),
+        "position": position,
+    }
+
+
+@pytest.mark.parametrize("dated", [False, True], ids=["living", "dated"])
+def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
+    rig: _ReuseRig, dated: bool
+) -> None:
+    """Owner invariant (D56/D80/D140, restated for D142): incremental ingestion.
+
+    v2 of a three-section document changes one paragraph in section B, for a
+    living undated lineage and a dated snapshot lineage. Selection and
+    embedding run only for the changed chunk and its immediate same-section
+    neighbours, traced per input: every other chunk keeps its extraction
+    input identity (no Selection call), its embedding input and v1 vector
+    (no embedding call), and — where Claimify was reused — exactly its v1
+    claim ids. Claimify's own window is a known Rule 4 gap, pinned by the
+    expected-failure test below.
+    """
+    trace = _edit_trace(rig, dated=dated)
+    v1, v2 = trace["v1"], trace["v2"]
+    assert len(v1) >= 9 and len(v2) >= 9  # a real multi-chunk, multi-section doc
+    assert trace["selection_v1"] >= len(v1)  # positive baseline: v1 extracted all
+    assert 1 <= len(trace["changed"]) <= 2, "one paragraph changes at most two chunks"
+    assert len({row["section_id"] for row in trace["changed"]}) == 1
+    allowed = trace["allowed"]
+    # Selection: only new extraction identities (the edited chunk and the
+    # neighbours whose bundles include it), one model call each, and every
+    # call's own target is one of those chunks
+    assert trace["extracted"] <= allowed
+    assert trace["selection_v2"] == len(trace["extracted"])
+    selection_targets = [targets for targets in trace["selection_called"]]
+    assert all(len(targets) == 1 for targets in selection_targets), (
+        "each Selection call maps to exactly one chunk"
+    )
+    assert Counter(next(iter(targets)) for targets in selection_targets) == Counter(
+        trace["extracted"]
+    ), "every new extraction identity is selected exactly once, and nothing else"
+    # Claimify: one call per new Claimify identity, each call's target among
+    # them, and the reruns confined to the known window (Rule 4 gap): the
+    # extracted chunks and the eight chunks after each in document order
+    claimify_changed = trace["claimify_changed"]
+    claimify_targets = [targets for targets in trace["claimify_called"]]
+    assert all(len(targets) == 1 for targets in claimify_targets), (
+        "each Claimify call maps to exactly one chunk"
+    )
+    assert Counter(next(iter(targets)) for targets in claimify_targets) == Counter(
+        claimify_changed
+    ), "every new Claimify identity is claimified exactly once, and nothing else"
+    window = set(trace["extracted"])
+    for chunk_id in trace["extracted"]:
+        start = trace["position"][chunk_id]
+        window |= {row["chunk_id"] for row in v2[start + 1 : start + 9]}
+    assert claimify_changed <= window
+    # Embedding: every embedded input belongs to the neighbourhood
+    assert trace["embedded"] <= allowed, "only the edited neighbourhood is re-embedded"
+    assert trace["embeds_v2"] <= len(allowed)
+    v1_by_extraction = {row["extraction"]: row for row in v1}
+    untouched = [row for row in v2 if row["chunk_id"] not in allowed]
+    assert all(row["extraction"] in v1_by_extraction for row in untouched)
+    assert len(untouched) >= len(v2) - 4
+    other_sections = {row["section_id"] for row in v2} - {
+        row["section_id"] for row in trace["changed"]
+    }
+    assert other_sections, "the document has sections the edit did not touch"
+    reused_claims = 0
+    for row in untouched:
+        before = v1_by_extraction[row["extraction"]]
+        assert row["vector"] == before["vector"], "v1 vector carried forward"
+        assert row["text_hash"] == before["text_hash"], "same embedding input"
+        assert row["reuse_identity"] == before["reuse_identity"]
+        assert row["text_origin"] == before["text_origin"], "text origin carried"
+        if row["chunk_id"] not in trace["claimify_changed"]:
+            # same Claimify identity: no call, the v1 claims reattach
+            assert row["chunk_id"] not in trace["minted"]
+            claims = trace["v2_claims"][row["chunk_id"]]
+            assert claims and claims == trace["v1_claims"][row["extraction"]]
+            reused_claims += 1
+    assert reused_claims > 0, "Claimify reuse reattaches v1 claim ids"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Rule 4 known gap: Claimify's input hashes the previous eight Selection"
+        " producers, so chunks after the edit re-run Claimify beyond the"
+        " same-section neighbourhood (no Selection or embedding call)."
+    ),
+)
+def test_claimify_reruns_stay_inside_the_edited_neighbourhood(rig: _ReuseRig) -> None:
+    """The requirement against the known gap only: every other expectation
+    lives in the passing test, so unrelated regressions fail normally."""
+    trace = _edit_trace(rig, dated=False)
+    assert trace["claimify_changed"] <= trace["allowed"]

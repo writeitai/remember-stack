@@ -117,7 +117,11 @@ class DocumentSearch:
         cursor = _decode_cursor(request.cursor)
         ranked = request.query is not None
         # One transaction: the trigram threshold below is transaction-local.
-        with self._engine.connect() as connection:
+        # D142 §8.2 (review r1 P1-3): one read-only REPEATABLE READ snapshot.
+        with self._engine.connect().execution_options(
+            isolation_level="REPEATABLE READ"
+        ) as connection:
+            connection.exec_driver_sql("SET TRANSACTION READ ONLY")
             if cursor is not None:
                 as_of = cursor.as_of
             elif ranked:
@@ -145,6 +149,7 @@ class DocumentSearch:
                 as_of=as_of,
                 time_scope=time_scope,
             )
+            pending_complete = True
             if request.query is None:
                 picks, next_cursor, examined = _filtered_page(
                     connection=connection,
@@ -158,17 +163,21 @@ class DocumentSearch:
                     connection=connection, scope=scope, query=request.query, k=request.k
                 )
                 next_cursor = None
-                examined = tuple(pick.doc_id for pick in picks) + _touched_pending(
+                touched, pending_complete = _touched_pending(
                     connection=connection,
                     scope=scope,
                     deployment_id=deployment_id,
                     request=request,
                     as_of=as_of,
                 )
+                examined = tuple(pick.doc_id for pick in picks) + touched
             documents = _describe(connection=connection, scope=scope, picks=picks)
             people = _people_matched(connection=connection, scope=scope)
             pending = _scope_pending(
-                connection=connection, scope=scope, doc_ids=examined
+                connection=connection,
+                scope=scope,
+                doc_ids=examined,
+                complete=pending_complete,
             )
         return DocumentSearchPage(
             documents=documents,
@@ -628,25 +637,34 @@ def _touched_pending(
     deployment_id: UUID,
     request: DocumentSearchRequest,
     as_of: datetime,
-) -> tuple[UUID, ...]:
+) -> tuple[tuple[UUID, ...], bool]:
     """Pending lineages a ranked query reaches through their served reading (§3.7).
+
+    Returns the lineages and whether the pending enumeration was complete.
 
     Runs only when some lineage has a version in force for the window that is
     not ready; such a lineage is excluded before ranking, so this bounded
     second pass over just those lineages is what lets an empty answer say the
     in-force text is still processing. Its picks never enter the results.
     """
+    # Review r1 P1-8: document restrictions before the cap; one row past it
+    # makes the pending answer a lower bound.
     candidates = tuple(
         connection.execute(
             _PENDING_IN_FORCE,
-            {**scope.parameters, "limit": SCOPE_PENDING_PROBE_LINEAGES},
+            {
+                **scope.parameters,
+                "limit": SCOPE_PENDING_PROBE_LINEAGES + 1,
+                "pending_doc_ids": [str(item) for item in request.filters.doc_ids]
+                if request.filters.doc_ids
+                else None,
+            },
         ).scalars()
     )
-    if request.filters.doc_ids:
-        allowed = set(request.filters.doc_ids)
-        candidates = tuple(doc_id for doc_id in candidates if doc_id in allowed)
+    complete = len(candidates) <= SCOPE_PENDING_PROBE_LINEAGES
+    candidates = candidates[:SCOPE_PENDING_PROBE_LINEAGES]
     if not candidates or request.query is None:
-        return ()
+        return (), complete
     probe = _Scope(
         deployment_id=deployment_id,
         filters=request.filters,
@@ -663,7 +681,7 @@ def _touched_pending(
             query=request.query,
             k=SCOPE_PENDING_MAX_DOC_IDS,
         )
-    )
+    ), complete
 
 
 SCOPE_PENDING_PROBE_LINEAGES: Final = 200
@@ -676,6 +694,8 @@ _PENDING_IN_FORCE: Final = text(
     WHERE s.deployment_id = :deployment_id
       AND NOT s.selectable
       AND s.in_force && {WINDOW_SQL}
+      AND (CAST(:pending_doc_ids AS uuid[]) IS NULL
+           OR s.doc_id = ANY(CAST(:pending_doc_ids AS uuid[])))
     ORDER BY s.doc_id
     LIMIT :limit
     """  # noqa: S608 -- interpolated fragment is a module constant
@@ -994,11 +1014,19 @@ def _effective(
 
 
 def _scope_pending(
-    *, connection: Connection, scope: _Scope, doc_ids: tuple[UUID, ...]
+    *,
+    connection: Connection,
+    scope: _Scope,
+    doc_ids: tuple[UUID, ...],
+    complete: bool = True,
 ) -> ScopePending | None:
-    """Examined lineages whose edition in force for the scope is not ready."""
+    """Examined lineages whose edition in force for the scope is not ready.
+
+    ``complete`` is false when the pending enumeration hit its cap; the
+    answer is then a lower bound, disclosed even when nothing was found.
+    """
     if not doc_ids:
-        return None
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
     pending = tuple(
         connection.execute(
             _SCOPE_PENDING
@@ -1008,8 +1036,12 @@ def _scope_pending(
         ).scalars()
     )
     if not pending:
-        return None
-    return ScopePending(doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS], count=len(pending))
+        return None if complete else ScopePending(doc_ids=(), count=0, complete=False)
+    return ScopePending(
+        doc_ids=pending[:SCOPE_PENDING_MAX_DOC_IDS],
+        count=len(pending),
+        complete=complete,
+    )
 
 
 _EDITIONS: Final = text(

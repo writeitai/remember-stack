@@ -34,6 +34,9 @@ from rememberstack.model import P1ClaimRow
 from rememberstack.model import P1FactRow
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.ports.p1_index import P1Nomination
+from rememberstack.ports.p1_index import P1SearchAccount
+from rememberstack.ports.p1_index import P1SearchIds
+from rememberstack.ports.p1_index import P1Termination
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
@@ -41,6 +44,8 @@ from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import LiveDocumentLineage
 from tests.surfaces.lineage_seed import seed_entity_mention
 from tests.surfaces.lineage_seed import seed_live_document_lineage
+
+_EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_ID = UUID("5f000000-0000-0000-0000-0000000d0134")
@@ -861,7 +866,7 @@ class _MetadataChangingIndex(PostgresP1Index):
         self._database = engine
         self._version_id = version_id
 
-    def search_chunks_lexical(self, **kwargs: object) -> tuple[str, ...]:
+    def search_chunks_lexical(self, **kwargs: object) -> P1SearchIds:
         nominated = super().search_chunks_lexical(**kwargs)  # type: ignore[arg-type]
         with self._database.begin() as connection:
             connection.execute(
@@ -872,7 +877,7 @@ class _MetadataChangingIndex(PostgresP1Index):
                 ),
                 {"v": self._version_id},
             )
-        return nominated
+        return P1SearchIds(nominated, account=_EXHAUSTED_ACCOUNT)
 
 
 def test_metadata_changed_after_nomination_drops_the_chunk_at_hydration(

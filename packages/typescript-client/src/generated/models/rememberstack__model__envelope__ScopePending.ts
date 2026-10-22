@@ -10,6 +10,7 @@
  * second case for the lineages the request touched.
  */
 export type rememberstack__model__envelope__ScopePending = {
+    complete?: boolean;
     count: number;
     doc_ids: Array<string>;
 };

@@ -101,6 +101,34 @@ def live_version_matches(
     ), parameters
 
 
+def live_matching_versions(
+    *, filters: DocumentSearchFilters, prefix: str
+) -> tuple[str, dict[str, Any]]:
+    """The live versions whose metadata matches, as a ``version_id`` query.
+
+    The set form of :func:`live_version_matches` (same parameters for the
+    same ``prefix``), for statements that start from the matching versions.
+    """
+    predicates, parameters = metadata_predicates(
+        filters=filters,
+        metadata="dm",
+        version="dm.version_id",
+        doc="dm.doc_id",
+        prefix=prefix,
+    )
+    where = "".join(f" AND {predicate}" for predicate in predicates)
+    return (
+        "SELECT dm.version_id FROM document_metadata dm"
+        " JOIN document_versions dv"
+        "   ON dv.deployment_id = dm.deployment_id AND dv.version_id = dm.version_id"
+        " JOIN documents dd"
+        "   ON dd.deployment_id = dv.deployment_id AND dd.doc_id = dv.doc_id"
+        " WHERE dm.deployment_id = :deployment_id"
+        "   AND dv.deleted_at IS NULL AND dd.deleted_at IS NULL"
+        f"{where}"
+    ), parameters
+
+
 def matching_occurrence_exists(
     *, filters: DocumentSearchFilters, claim: str, prefix: str
 ) -> tuple[str, dict[str, Any]]:
