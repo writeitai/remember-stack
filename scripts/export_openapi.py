@@ -145,6 +145,7 @@ def build_document(*, deployment_id: UUID | None = None) -> dict[str, Any]:
         effective_time=_Unused(),  # type: ignore[arg-type]
         graph=_Unused(),  # type: ignore[arg-type]
         build_info=_Unused(),  # type: ignore[arg-type]
+        processing_layers=_Unused(),  # type: ignore[arg-type]
     )
     return app.openapi()
 

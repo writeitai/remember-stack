@@ -265,6 +265,10 @@
           ],
           "query": "fixture"
         },
+        "layers": [
+          "sources",
+          "facts"
+        ],
         "name": "facts_context"
       },
       "responses": [
@@ -347,6 +351,10 @@
           ],
           "query": "fixture"
         },
+        "layers": [
+          "sources",
+          "facts"
+        ],
         "name": "facts_context"
       },
       "variant": "supplied",
@@ -362,7 +370,16 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/operations/facts_context",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "facts"
+            ]
+          ]
         }
       ]
     },
@@ -477,6 +494,10 @@
     {
       "method": "query_sql",
       "options": {
+        "layers": [
+          "sources",
+          "claims"
+        ],
         "max_rows": 0,
         "parameters": [
           1,
@@ -571,6 +592,10 @@
       },
       "typescriptMethod": "querySql",
       "typescriptOptions": {
+        "layers": [
+          "sources",
+          "claims"
+        ],
         "maxRows": 0,
         "parameters": [
           1,
@@ -595,7 +620,16 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/query/sql",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "claims"
+            ]
+          ]
         }
       ]
     },
@@ -937,6 +971,9 @@
     {
       "method": "explain_sql",
       "options": {
+        "layers": [
+          "sources"
+        ],
         "parameters": [
           1
         ],
@@ -1028,6 +1065,9 @@
       },
       "typescriptMethod": "explainSql",
       "typescriptOptions": {
+        "layers": [
+          "sources"
+        ],
         "parameters": [
           1
         ],
@@ -1046,7 +1086,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/query/sql/explain",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "sources"
+            ]
+          ]
         }
       ]
     },
@@ -1662,6 +1707,11 @@
     {
       "method": "combined_context",
       "options": {
+        "layers": [
+          "sources",
+          "claims",
+          "facts"
+        ],
         "query": "fixture",
         "time": {
           "mode": "current"
@@ -1817,6 +1867,11 @@
       },
       "typescriptMethod": "combinedContext",
       "typescriptOptions": {
+        "layers": [
+          "sources",
+          "claims",
+          "facts"
+        ],
         "query": "fixture",
         "time": {
           "mode": "current"
@@ -1835,7 +1890,20 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/operations/combined_context",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "claims"
+            ],
+            [
+              "layers",
+              "facts"
+            ]
+          ]
         }
       ]
     },
@@ -1937,6 +2005,9 @@
     {
       "method": "claims_and_sources_context",
       "options": {
+        "layers": [
+          "sources"
+        ],
         "query": "other",
         "time": {
           "mode": "history"
@@ -2016,6 +2087,9 @@
       },
       "typescriptMethod": "claimsAndSourcesContext",
       "typescriptOptions": {
+        "layers": [
+          "sources"
+        ],
         "query": "other",
         "time": {
           "mode": "history"
@@ -2034,7 +2108,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/operations/claims_and_sources_context",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "sources"
+            ]
+          ]
         }
       ]
     },
@@ -2590,6 +2669,9 @@
     {
       "method": "run_saved_query",
       "options": {
+        "layers": [
+          "claims"
+        ],
         "max_rows": 9,
         "name": "safe",
         "namespace": "examples",
@@ -2684,6 +2766,9 @@
       },
       "typescriptMethod": "runSavedQuery",
       "typescriptOptions": {
+        "layers": [
+          "claims"
+        ],
         "maxRows": 9,
         "name": "safe",
         "namespace": "examples",
@@ -2706,7 +2791,12 @@
           "contentType": "application/json",
           "method": "POST",
           "path": "/query/saved/examples/safe/run",
-          "query": []
+          "query": [
+            [
+              "layers",
+              "claims"
+            ]
+          ]
         }
       ]
     },
@@ -5102,6 +5192,60 @@
           "contentType": null,
           "method": "GET",
           "path": "/deployment",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "processing_layers",
+      "options": {},
+      "responses": [
+        {
+          "claims": "backfilling",
+          "facts": "disabled"
+        }
+      ],
+      "result": {
+        "claims": "backfilling",
+        "facts": "disabled"
+      },
+      "typescriptMethod": "processingLayers",
+      "typescriptOptions": {},
+      "variant": "defaults",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/processing-layers",
+          "query": []
+        }
+      ]
+    },
+    {
+      "method": "processing_layers",
+      "options": {},
+      "responses": [
+        {
+          "claims": "backfilling",
+          "facts": "disabled"
+        }
+      ],
+      "result": {
+        "claims": "backfilling",
+        "facts": "disabled"
+      },
+      "typescriptMethod": "processingLayers",
+      "typescriptOptions": {},
+      "variant": "supplied",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/processing-layers",
           "query": []
         }
       ]
@@ -7829,6 +7973,440 @@
       ]
     },
     {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "query_sql"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "query_sql"
+      },
+      "variant": "query_sql-layers",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql",
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "facts"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "explain_sql"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "sql": "SELECT 1"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "explain_sql"
+      },
+      "variant": "explain_sql-layers",
+      "wire": [
+        {
+          "body": {
+            "parameters": [],
+            "sql": "SELECT 1"
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/sql/explain",
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "facts"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {},
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "describe_query_space"
+      },
+      "responses": [
+        {}
+      ],
+      "result": {},
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {},
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "describe_query_space"
+      },
+      "variant": "describe_query_space-layers",
+      "wire": [
+        {
+          "body": null,
+          "contentBase64": null,
+          "contentType": null,
+          "method": "GET",
+          "path": "/query/space",
+          "query": [
+            [
+              "include_examples",
+              "false"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "method": "call_open_query",
+      "options": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "run_saved_query"
+      },
+      "responses": [
+        {
+          "columns": [],
+          "contract": "QueryResult/v1",
+          "deployment_id": "10000000-0000-0000-0000-000000000001",
+          "elapsed_ms": 0.0,
+          "empty_result": false,
+          "error_code": null,
+          "error_message": null,
+          "evaluated_at": null,
+          "exact_total": null,
+          "exact_total_known": false,
+          "execution_started_at": "2026-10-02T12:00:00Z",
+          "grade": "exploratory_tabular",
+          "graph_invocations": [],
+          "limits": {
+            "analytical_tier": false,
+            "byte_cap": 1000,
+            "row_cap": 10,
+            "statement_timeout_ms": 100
+          },
+          "negative_kind": null,
+          "ordered_result": false,
+          "pg_snapshot_at": null,
+          "query_hash": "fixture",
+          "query_language": "sql",
+          "query_space_schema": "memory_v1",
+          "referenced_functions": [],
+          "referenced_views": [],
+          "request_id": "10000000-0000-0000-0000-000000000001",
+          "returned_byte_count": 0,
+          "returned_row_count": 0,
+          "rows": [],
+          "saved_query": null,
+          "semantic_invocations": [],
+          "source_grain_tags": [],
+          "surface_manifest_hash": "fixture",
+          "termination_reason": "completed",
+          "truncated": false,
+          "truncation_reason": null,
+          "warnings": []
+        }
+      ],
+      "result": {
+        "columns": [],
+        "contract": "QueryResult/v1",
+        "deployment_id": "10000000-0000-0000-0000-000000000001",
+        "elapsed_ms": 0.0,
+        "empty_result": false,
+        "error_code": null,
+        "error_message": null,
+        "evaluated_at": null,
+        "exact_total": null,
+        "exact_total_known": false,
+        "execution_started_at": "2026-10-02T12:00:00Z",
+        "grade": "exploratory_tabular",
+        "graph_invocations": [],
+        "limits": {
+          "analytical_tier": false,
+          "byte_cap": 1000,
+          "row_cap": 10,
+          "statement_timeout_ms": 100
+        },
+        "negative_kind": null,
+        "ordered_result": false,
+        "pg_snapshot_at": null,
+        "query_hash": "fixture",
+        "query_language": "sql",
+        "query_space_schema": "memory_v1",
+        "referenced_functions": [],
+        "referenced_views": [],
+        "request_id": "10000000-0000-0000-0000-000000000001",
+        "returned_byte_count": 0,
+        "returned_row_count": 0,
+        "rows": [],
+        "saved_query": null,
+        "semantic_invocations": [],
+        "source_grain_tags": [],
+        "surface_manifest_hash": "fixture",
+        "termination_reason": "completed",
+        "truncated": false,
+        "truncation_reason": null,
+        "warnings": []
+      },
+      "typescriptMethod": "callOpenQuery",
+      "typescriptOptions": {
+        "arguments": {
+          "name": "safe",
+          "namespace": "examples"
+        },
+        "layers": [
+          "sources",
+          "facts"
+        ],
+        "name": "run_saved_query"
+      },
+      "variant": "run_saved_query-layers",
+      "wire": [
+        {
+          "body": {
+            "parameters": []
+          },
+          "contentBase64": null,
+          "contentType": "application/json",
+          "method": "POST",
+          "path": "/query/saved/examples/safe/run",
+          "query": [
+            [
+              "layers",
+              "sources"
+            ],
+            [
+              "layers",
+              "facts"
+            ]
+          ]
+        }
+      ]
+    },
+    {
       "method": "search_claims",
       "options": {
         "query": "fixture",
@@ -9649,6 +10227,38 @@
       }
     },
     {
+      "class": "LayerUnavailable",
+      "options": {
+        "detail": "this deployment does not process the facts layer",
+        "layer": "facts"
+      },
+      "result": {
+        "error": {
+          "agent_action": "Read the detail; fix the call. Do not retry it unchanged.",
+          "code": "layer_unavailable",
+          "detail": "this deployment does not process the facts layer",
+          "retryable": false,
+          "status_code": 409
+        }
+      }
+    },
+    {
+      "class": "layer_unavailable",
+      "options": {
+        "detail": "this deployment does not process the facts layer",
+        "layer": "claims"
+      },
+      "result": {
+        "error": {
+          "agent_action": "This deployment does not process the claims layer. Use the tools tools/list offers, such as claims_and_sources_context.",
+          "code": "layer_unavailable",
+          "detail": "this deployment does not process the facts layer",
+          "retryable": false,
+          "status_code": 409
+        }
+      }
+    },
+    {
       "class": "TimeoutError",
       "options": {
         "detail": "timed out waiting for pipeline readiness"
@@ -10133,6 +10743,26 @@
     },
     {
       "body": {
+        "claims": "enabled",
+        "facts": "paused"
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "GET /processing-layers returned an invalid response body",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 200
+      },
+      "method": "processing_layers",
+      "options": {},
+      "status": 200,
+      "typescriptMethod": "processingLayers",
+      "typescriptOptions": {},
+      "variant": "malformed-response"
+    },
+    {
+      "body": {
         "detail": {
           "code": "pg_unavailable",
           "message": "offline"
@@ -10312,6 +10942,162 @@
         "sql": "SELECT 1"
       },
       "variant": "error-envelope"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "layer_unavailable",
+          "layer": "facts",
+          "message": "this deployment does not process the facts layer",
+          "status": "disabled"
+        }
+      },
+      "error": {
+        "class": "LayerUnavailable",
+        "code": "layer_unavailable",
+        "detail": "this deployment does not process the facts layer",
+        "layer": "facts",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "run_operation",
+      "options": {
+        "name": "facts_context"
+      },
+      "status": 409,
+      "typescriptMethod": "runOperation",
+      "typescriptOptions": {
+        "name": "facts_context"
+      },
+      "variant": "layer-unavailable"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "layer_unavailable",
+          "layer": "facts",
+          "message": "this deployment does not process the facts layer",
+          "status": "disabled"
+        }
+      },
+      "error": {
+        "class": "LayerUnavailable",
+        "code": "layer_unavailable",
+        "detail": "this deployment does not process the facts layer",
+        "layer": "facts",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "facts_context",
+      "options": {
+        "query": "fixture"
+      },
+      "status": 409,
+      "typescriptMethod": "factsContext",
+      "typescriptOptions": {
+        "query": "fixture"
+      },
+      "variant": "layer-unavailable"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "layer_unavailable",
+          "layer": "facts",
+          "message": "",
+          "status": "disabled"
+        }
+      },
+      "error": {
+        "class": "LayerUnavailable",
+        "code": "layer_unavailable",
+        "detail": "",
+        "layer": "facts",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "combined_context",
+      "options": {
+        "layers": [
+          "facts"
+        ],
+        "query": "fixture"
+      },
+      "status": 409,
+      "typescriptMethod": "combinedContext",
+      "typescriptOptions": {
+        "layers": [
+          "facts"
+        ],
+        "query": "fixture"
+      },
+      "variant": "layer-unavailable"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "layer_unavailable",
+          "layer": "facts"
+        }
+      },
+      "error": {
+        "class": "LayerUnavailable",
+        "code": "layer_unavailable",
+        "detail": "",
+        "layer": "facts",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "graph_path",
+      "options": {
+        "from_entity_id": "10000000-0000-0000-0000-000000000001",
+        "to_entity_id": "10000000-0000-0000-0000-000000000002"
+      },
+      "status": 409,
+      "typescriptMethod": "graphPath",
+      "typescriptOptions": {
+        "fromEntityId": "10000000-0000-0000-0000-000000000001",
+        "toEntityId": "10000000-0000-0000-0000-000000000002"
+      },
+      "variant": "layer-unavailable"
+    },
+    {
+      "body": {
+        "detail": {
+          "code": "layer_unavailable",
+          "layer": "facts",
+          "message": "this deployment does not process the facts layer",
+          "status": "disabled"
+        }
+      },
+      "error": {
+        "class": "MemoryApiError",
+        "code": null,
+        "detail": "deployment API returned a malformed structured error",
+        "requestId": null,
+        "retryable": null,
+        "statusCode": 409
+      },
+      "method": "query_sql",
+      "options": {
+        "layers": [
+          "facts"
+        ],
+        "sql": "SELECT 1"
+      },
+      "status": 409,
+      "typescriptMethod": "querySql",
+      "typescriptOptions": {
+        "layers": [
+          "facts"
+        ],
+        "sql": "SELECT 1"
+      },
+      "variant": "layer-unavailable"
     },
     {
       "body": {
@@ -12006,6 +12792,10 @@
       "version_id": "10000000-0000-0000-0000-000000000002",
       "version_key": null,
       "versioning_mode": null
+    },
+    "processing_layers": {
+      "claims": "backfilling",
+      "facts": "disabled"
     },
     "query": {
       "columns": [],

@@ -123,6 +123,7 @@ _SURFACE: frozenset[tuple[str, str]] = frozenset(
         ("GET", "/lookup/observations"),
         ("GET", "/lookup/relations"),
         ("GET", "/operations"),
+        ("GET", "/processing-layers"),
         ("GET", "/query/saved"),
         ("GET", "/query/saved/{namespace}/{name}"),
         ("GET", "/query/space"),
@@ -175,6 +176,7 @@ _CAPABILITY_PORTS = frozenset(
         "effective_time",
         "graph",
         "build_info",
+        "processing_layers",
     }
 )
 

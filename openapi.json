@@ -7280,7 +7280,7 @@
     },
     "/processing-layers": {
       "get": {
-        "description": "D143 \u00a77.4: each switchable layer is enabled, backfilling or disabled.",
+        "description": "Each switchable layer is enabled, backfilling or disabled.",
         "operationId": "processing_layers_processing_layers_get",
         "responses": {
           "200": {

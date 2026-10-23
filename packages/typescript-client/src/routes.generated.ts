@@ -685,6 +685,25 @@ export default {
       }
     }
   },
+  "GET /processing-layers": {
+    "method": "GET",
+    "operationId": "processing_layers_processing_layers_get",
+    "parameters": [],
+    "path": "/processing-layers",
+    "requestBody": null,
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ProcessingLayerStates"
+            }
+          }
+        },
+        "description": "Successful Response"
+      }
+    }
+  },
   "GET /query/saved": {
     "method": "GET",
     "operationId": "list_saved_queries_query_saved_get",
@@ -1701,6 +1720,27 @@ export default {
           "title": "Name",
           "type": "string"
         }
+      },
+      {
+        "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+        "in": "query",
+        "name": "layers",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/components/schemas/ProcessingLayer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+          "title": "Layers"
+        }
       }
     ],
     "path": "/operations/{name}",
@@ -1767,6 +1807,27 @@ export default {
           "title": "Name",
           "type": "string"
         }
+      },
+      {
+        "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+        "in": "query",
+        "name": "layers",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/components/schemas/ProcessingLayer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+          "title": "Layers"
+        }
       }
     ],
     "path": "/query/saved/{namespace}/{name}/run",
@@ -1806,7 +1867,29 @@ export default {
   "POST /query/sql": {
     "method": "POST",
     "operationId": "query_sql_query_sql_post",
-    "parameters": [],
+    "parameters": [
+      {
+        "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+        "in": "query",
+        "name": "layers",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/components/schemas/ProcessingLayer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+          "title": "Layers"
+        }
+      }
+    ],
     "path": "/query/sql",
     "requestBody": {
       "content": {
@@ -1844,7 +1927,29 @@ export default {
   "POST /query/sql/explain": {
     "method": "POST",
     "operationId": "explain_sql_query_sql_explain_post",
-    "parameters": [],
+    "parameters": [
+      {
+        "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+        "in": "query",
+        "name": "layers",
+        "required": false,
+        "schema": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/components/schemas/ProcessingLayer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+          "title": "Layers"
+        }
+      }
+    ],
     "path": "/query/sql/explain",
     "requestBody": {
       "content": {

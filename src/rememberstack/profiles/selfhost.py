@@ -1185,6 +1185,7 @@ class SelfHostProfile:
                     root=self._settings.forget_manifest_root
                 )
             ),
+            processing_layers=ProcessingLayerCatalog(engine=self._engine),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
                 executor=OperationExecutor(

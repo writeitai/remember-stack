@@ -42,6 +42,15 @@ export class RateLimited extends MemoryApiError {
     this.retryAfter = options.retryAfter;
   }
 }
+/** The read needs a processing layer (claims or facts) the deployment does not serve; check processingLayers(). */
+export class LayerUnavailable extends MemoryApiError {
+  readonly layer: string;
+  /** Bind the missing layer at its bound 409 status and layer_unavailable code. */
+  constructor({ detail, layer }: { detail: string; layer: string }) {
+    super({ detail, statusCode: 409, code: 'layer_unavailable' });
+    this.layer = layer;
+  }
+}
 /** Project resolution failed; a signed key never falls back to localhost. */
 export class ProjectResolutionError extends MemoryApiError {}
 /** The recorded origin does not permit sending a file-loaded key here. */

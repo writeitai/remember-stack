@@ -135,11 +135,12 @@ from rememberstack.surfaces.direct_admission import DirectPathAdmission
 from rememberstack.surfaces.direct_admission import RequestHold
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from rememberstack.surfaces.operation_surface import FACTS_ONLY_OPERATIONS
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -516,6 +517,7 @@ def build_api(
     effective_time: EffectiveTimePort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
+    processing_layers: ProcessingLayersPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -767,7 +769,16 @@ def build_api(
         )
 
     if surface is not None:
-        _mount_operations(app=app, surface=surface)
+        _mount_operations(
+            app=app,
+            surface=surface,
+            layers=processing_layers,
+            deployment_id=deployment_id,
+        )
+    if processing_layers is not None:
+        _mount_processing_layers(
+            app=app, layers=processing_layers, deployment_id=deployment_id
+        )
     if open_query is not None:
         _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
@@ -814,13 +825,15 @@ def build_api(
             app=app, effective_time=effective_time, deployment_id=deployment_id
         )
     if graph is not None:
-        _mount_graph(app=app, graph=graph, engine=engine, deployment_id=deployment_id)
+        _mount_graph(
+            app=app, graph=graph, layers=processing_layers, deployment_id=deployment_id
+        )
     if build_info is not None:
         _mount_build_info(
             app=app,
             build_info=build_info,
             deployment_id=deployment_id,
-            engine=engine,
+            layers=processing_layers,
             tools=_served_tools(
                 operations=surface is not None,
                 open_query=open_query is not None,
@@ -1029,7 +1042,7 @@ def _mount_build_info(
     build_info: BuildInfoPort,
     deployment_id: UUID,
     tools: dict[str, int],
-    engine: QueryEngine,
+    layers: ProcessingLayersPort | None,
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -1054,22 +1067,16 @@ def _mount_build_info(
 
         D143 §7.4: tools that read only an unserved layer are not listed.
         """
-        served = engine.served_layers(deployment_id=deployment_id)
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
         return build_info.build_info(deployment_id=deployment_id).model_copy(
             update={
                 "tools": {
                     name: version
                     for name, version in tools.items()
-                    if ProcessingLayer.FACTS in served
-                    or name not in FACTS_ONLY_OPERATIONS
+                    if name not in unserved
                 }
             }
         )
-
-    @app.get("/processing-layers", response_model=ProcessingLayerStates)
-    def processing_layers() -> ProcessingLayerStates:
-        """D143 §7.4: each switchable layer is enabled, backfilling or disabled."""
-        return engine.layer_states(deployment_id=deployment_id)
 
 
 @contextmanager
@@ -1111,12 +1118,23 @@ def _layer_selection(
     return None if layers is None else frozenset(layers)
 
 
-_FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
-"""The entity graph's layer (D143 §7.2)."""
+def _require_facts(*, layers: ProcessingLayersPort | None, deployment_id: UUID) -> None:
+    """Refuse an entity-graph read when the deployment does not serve facts."""
+    if layers is not None and layers.states(deployment_id=deployment_id).facts == (
+        "disabled"
+    ):
+        raise LayerUnavailableError(
+            layer=ProcessingLayer.FACTS,
+            message="this deployment does not process the facts layer",
+        )
 
 
 def _mount_graph(
-    *, app: FastAPI, graph: GraphQueryPort, engine: QueryEngine, deployment_id: UUID
+    *,
+    app: FastAPI,
+    graph: GraphQueryPort,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
 ) -> None:
     """Mount the three server-owned graph operations.
 
@@ -1127,7 +1145,7 @@ def _mount_graph(
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
-        engine.layer_admission(deployment_id=deployment_id, channels=_FACTS_LAYER)
+        _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
             return graph.neighborhood(
                 entity_id=body.entity_id,
@@ -1143,7 +1161,7 @@ def _mount_graph(
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
-        engine.layer_admission(deployment_id=deployment_id, channels=_FACTS_LAYER)
+        _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
             return graph.path(
                 from_entity_id=body.from_entity_id,
@@ -1839,13 +1857,35 @@ def _mount_effective_time(
             raise _effective_time_errors(error) from error
 
 
-def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
+def _mount_processing_layers(
+    *, app: FastAPI, layers: ProcessingLayersPort, deployment_id: UUID
+) -> None:
+    """Mount ``GET /processing-layers`` (D143 §7.4)."""
+
+    @app.get("/processing-layers", response_model=ProcessingLayerStates)
+    def processing_layers() -> ProcessingLayerStates:
+        """Each switchable layer is enabled, backfilling or disabled."""
+        return layers.states(deployment_id=deployment_id)
+
+
+def _mount_operations(
+    *,
+    app: FastAPI,
+    surface: OperationSurface,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
+) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
     @app.get("/operations", response_model=list[ToolDescriptor])
     def list_operations() -> list[ToolDescriptor]:
         """The assured operations this deployment serves (D143: by its layers)."""
-        return list(surface.served_descriptors())
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
+        return [
+            descriptor
+            for descriptor in surface.descriptors()
+            if descriptor.name not in unserved
+        ]
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(

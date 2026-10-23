@@ -4,6 +4,7 @@ import copy
 from datetime import datetime
 import hashlib
 from typing import cast
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -15,6 +16,7 @@ from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
 from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.query_space.canonical import canonical_json_bytes
@@ -65,17 +67,6 @@ class OperationSurface:
             operations=self._registry.active(deployment_id=self._deployment_id)
         )
 
-    def served_descriptors(self) -> tuple[ToolDescriptor, ...]:
-        """The catalog this deployment serves: without the operations whose layer
-        it does not process (D143 §7.4). With every layer on, ``descriptors()``."""
-        served = self._executor.served_layers(deployment_id=self._deployment_id)
-        return tuple(
-            descriptor
-            for descriptor in self.descriptors()
-            if ProcessingLayer.FACTS in served
-            or descriptor.name not in FACTS_ONLY_OPERATIONS
-        )
-
     def run(
         self,
         *,
@@ -106,6 +97,29 @@ class OperationSurface:
 
 FACTS_ONLY_OPERATIONS: frozenset[str] = frozenset({"facts_context", "resolve_entity"})
 """Operations that read only the facts layer; not served without it (D143 §7.4)."""
+
+
+class ProcessingLayersPort(Protocol):
+    """The deployment's D143 layer states (``ProcessingLayerCatalog``)."""
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """Each switchable layer: enabled, backfilling or disabled."""
+        ...
+
+
+def unserved_operation_names(
+    *, layers: ProcessingLayersPort | None, deployment_id: UUID
+) -> frozenset[str]:
+    """Operation tools the deployment does not serve (D143 §7.4).
+
+    Without a composed layers port, or with the facts layer served, nothing
+    is withheld, so a deployment serving every layer lists every operation.
+    """
+    if layers is None:
+        return frozenset()
+    if layers.states(deployment_id=deployment_id).facts != "disabled":
+        return frozenset()
+    return FACTS_ONLY_OPERATIONS
 
 
 def operation_descriptors(

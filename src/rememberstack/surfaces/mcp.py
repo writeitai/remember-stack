@@ -71,7 +71,9 @@ from rememberstack.surfaces.http_api import SectionHistoryPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
 from rememberstack.surfaces.query_sandbox.discovery import (
     query_space_description_payload,
 )
@@ -273,6 +275,7 @@ class OperationMcpServer:
         document_search: DocumentSearchPort | None = None,
         section_history: SectionHistoryPort | None = None,
         document_references: DocumentReferencesPort | None = None,
+        processing_layers: ProcessingLayersPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -297,6 +300,7 @@ class OperationMcpServer:
                 " omitted — half-wired write tools are not allowed"
             )
         self._surface = surface
+        self._layers = processing_layers
         self._open_query = open_query
         self._write_backend: _LocalMemoryWriteBackend | None = None
         if ingest is not None and pipeline_readiness is not None:
@@ -359,8 +363,10 @@ class OperationMcpServer:
             names.append(DOCUMENT_REFERENCES_TOOL_NAME)
         # D143 §7.4: operations whose layer the deployment does not serve
         # (facts_context, resolve_entity without facts) are not listed.
-        served = {descriptor.name for descriptor in self._surface.served_descriptors()}
-        names.extend(name for name in OPERATION_TOOL_NAMES if name in served)
+        unserved = unserved_operation_names(
+            layers=self._layers, deployment_id=self._surface.deployment_id
+        )
+        names.extend(name for name in OPERATION_TOOL_NAMES if name not in unserved)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)

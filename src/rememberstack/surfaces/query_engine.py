@@ -106,7 +106,6 @@ from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.client import EffectiveInterval
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import ReadTime
 from rememberstack.model.envelope import SCOPE_PENDING_MAX_DOC_IDS
 from rememberstack.model.fact_windows import FactWindow
@@ -127,8 +126,6 @@ from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
-from rememberstack.spine.processing_layers import layer_configuration_on
-from rememberstack.spine.processing_layers import layer_states_on
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
@@ -802,18 +799,6 @@ class QueryEngine:
         return _freshness(scope_pending=pending)
 
     @_with_surface(SurfaceCostKind.LOOKUP)
-    def layer_states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
-        """Each switchable layer's state, for ``GET /processing-layers``."""
-        with self._engine.connect() as connection:
-            return layer_states_on(connection=connection, deployment_id=deployment_id)
-
-    def served_layers(self, *, deployment_id: UUID) -> frozenset[ProcessingLayer]:
-        """The layers the deployment serves now (D143 §1)."""
-        with self._engine.connect() as connection:
-            return layer_configuration_on(
-                connection=connection, deployment_id=deployment_id
-            ).served
-
     def layer_admission(
         self,
         *,
