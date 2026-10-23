@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 from PIL import Image
+from pydantic import SecretStr
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
@@ -986,6 +987,8 @@ def test_description_reasoning_and_provider_only_are_explicit_and_keyed() -> Non
 
 def test_empty_compose_description_effort_keeps_existing_identity() -> None:
     """An unset optional does not re-key unchanged image conversion."""
-    old = ImageDescriptionSettings(api_key="offline")
-    empty = ImageDescriptionSettings(api_key="offline", reasoning_effort="")
+    old = ImageDescriptionSettings(api_key=SecretStr("offline"))
+    empty = ImageDescriptionSettings.model_validate(
+        {"api_key": "offline", "reasoning_effort": ""}
+    )
     assert old.version_fingerprint() == empty.version_fingerprint()

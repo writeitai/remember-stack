@@ -5,6 +5,7 @@ from datetime import UTC
 from decimal import Decimal
 import json
 from pathlib import Path
+from typing import TypedDict
 from typing import TypeVar
 
 from benchmarks.locomo import judge_sidecar as sidecar
@@ -25,8 +26,20 @@ from rememberstack.model import GeneratedResponse
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import StructuredResponseModel
+from rememberstack.ports.model_provider import ModelProviderPort
 
 ResponseT = TypeVar("ResponseT", bound=StructuredResponseModel)
+
+
+class _GradeOptions(TypedDict):
+    """The concrete options shared by repeated calls in one resume proof."""
+
+    run_dir: Path
+    output: Path
+    max_calls: int
+    max_cost_usd: Decimal
+    execute: bool
+    provider: ModelProviderPort
 
 
 class FakeProvider:
@@ -161,7 +174,7 @@ def test_execute_resumes_without_regrading_and_preserves_original(
     """A saved answer is judged once under a separate, fully recorded policy."""
     provider = FakeProvider()
     before = {p.name: p.read_bytes() for p in source.iterdir()}
-    kwargs = dict(
+    kwargs = _GradeOptions(
         run_dir=source,
         output=tmp_path / "sidecar",
         max_calls=1,
@@ -182,7 +195,7 @@ def test_execute_resumes_without_regrading_and_preserves_original(
 
 def test_resume_rejects_changed_source_snapshot(source: Path, tmp_path: Path) -> None:
     """New answers or grades cannot silently alter a frozen comparison."""
-    kwargs = dict(
+    kwargs = _GradeOptions(
         run_dir=source,
         output=tmp_path / "sidecar",
         max_calls=1,
@@ -202,7 +215,7 @@ def test_interrupted_call_is_not_automatically_repeated(
 ) -> None:
     """An uncertain paid attempt remains visible and requires reconciliation."""
     provider = FakeProvider(interrupt=True)
-    kwargs = dict(
+    kwargs = _GradeOptions(
         run_dir=source,
         output=tmp_path / "sidecar",
         max_calls=2,
@@ -293,7 +306,7 @@ def test_received_capacity_rejection_resumes_without_repaying_prior_grades(
 
     provider = RejectSecond()
     output = tmp_path / "sidecar"
-    kwargs = dict(
+    kwargs = _GradeOptions(
         run_dir=source,
         output=output,
         max_calls=3,
