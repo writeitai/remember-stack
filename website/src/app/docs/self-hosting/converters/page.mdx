@@ -49,6 +49,23 @@ binary files). Formats that differ inside a family keep their own type:
 `.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
 reports the stored type in its `mime` field.
 
+## Image-description model settings
+
+For deployments routing supported images through the OCR-plus-description
+converter, `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` selects the vision model.
+`REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` optionally pins its effort;
+an unset value preserves the provider default. Set
+`REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` to a JSON list of OpenRouter
+endpoint slugs, for example `["openai/flex"]`, to restrict the description lane
+without marketplace fallback. OCR keeps its independent provider settings.
+
+These settings join the description checkpoint identity. Changing effort or
+routing redoes that lane once and reuses a successful unchanged OCR lane.
+Leaving both options unset preserves the fingerprint for the same explicitly
+configured model. Deployments using the former Gemini default now select Luna
+6, so their description identity changes once; an unchanged OCR lane remains
+reusable. No re-ingestion is performed by editing configuration.
+
 ## What each family becomes
 
 | Family | Extensions (examples) | Converter | Result |
@@ -322,9 +339,11 @@ so a retry does not repeat it.
 | Variable | Default | Meaning |
 |---|---|---|
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | none | OpenRouter key for the description call. Required when any route names this converter. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | Must accept image input; a text-only model fails. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | Must accept image input; a text-only model fails. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON endpoint allowlist; the LoCoMo Luna profile uses `["openai/flex"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |

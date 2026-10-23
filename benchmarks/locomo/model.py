@@ -32,23 +32,11 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
-ProtocolKey = Literal[
-    "full-v38", "full-v38-gemma-vertex", "full-v38-codex-subscription", "full-v38-glm"
-]
-ProtocolName = Literal[
-    "RS-LoCoMo-Full-v38",
-    "RS-LoCoMo-Full-v38-GemmaVertex",
-    "RS-LoCoMo-Full-v38-CodexSubscription",
-    "RS-LoCoMo-Full-v38-GLM",
-]
+ProtocolKey = Literal["full-v39"]
+ProtocolName = NonEmpty
 SourceTimezoneBasis = Literal["assumed_utc"]
-AnswerAgentModel = Literal[
-    "openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it-maas", "gpt-5.6-luna"
-]
-JudgeModel = Literal["openai/gpt-5.6-luna", "gpt-5.6-luna"]
-ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
-"""Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
-or the local keyless Codex ChatGPT-subscription bridge."""
+AnswerAgentModel = NonEmpty
+JudgeModel = NonEmpty
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]
@@ -133,10 +121,20 @@ class QuestionManifest(FrozenModel):
     item_ids_sha256: NonEmpty
 
 
+class ExecutionProfile(FrozenModel):
+    """Complete non-secret execution policy for an explicitly configured run."""
+
+    ingest_model_bindings: dict[str, str]
+    ingest_component_versions: dict[str, str]
+    ingest_environment: dict[str, str]
+    chat_provider_only: tuple[str, ...]
+    api_timeout_seconds: float = Field(gt=0)
+
+
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v38"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v39"
     adapter_version: NonEmpty
     prepared_at: datetime
     repository_revision: NonEmpty
@@ -152,14 +150,14 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
-    api_timeout_seconds: float = Field(default=60.0, gt=0)
+    api_timeout_seconds: float = Field(default=180.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     document_binding_generation: Literal["document-t0-v1"] = "document-t0-v1"
-    answer_agent_model: AnswerAgentModel = "openai/gpt-5.6-luna"
-    answer_agent_reasoning_effort: ReasoningEffort | None = "none"
+    answer_agent_model: AnswerAgentModel = "openai/gpt-6-luna"
+    answer_agent_reasoning_effort: ReasoningEffort | None = "high"
     answer_word_cap: int | None = Field(default=None, ge=1)
-    judge_model: JudgeModel = "openai/gpt-5.6-luna"
-    judge_reasoning_effort: ReasoningEffort | None = "none"
+    judge_model: JudgeModel = "openai/gpt-6-luna"
+    judge_reasoning_effort: ReasoningEffort | None = "high"
     answer_agent_temperature: float | None = Field(default=0.0, ge=0, le=2)
     judge_temperature: float | None = Field(default=0.0, ge=0, le=2)
     judge_repetitions: Literal[1] = 1
@@ -170,6 +168,7 @@ class RunConfiguration(FrozenModel):
     answer_schema_sha256: NonEmpty
     judge_schema_sha256: NonEmpty
     protocol_fingerprint: NonEmpty
+    execution_profile: ExecutionProfile | None = None
 
 
 class PreparedDocument(FrozenModel):
@@ -487,7 +486,7 @@ class SessionDiagnosticSummary(FrozenModel):
 class RunSummary(FrozenModel):
     """Publication-ready local aggregate with no hidden denominator."""
 
-    protocol_name: ProtocolName = "RS-LoCoMo-Full-v38"
+    protocol_name: ProtocolName = "RS-LoCoMo-Full-v39"
     protocol_fingerprint: NonEmpty
     tier: Tier
     questions: int = Field(ge=1)

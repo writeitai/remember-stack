@@ -235,7 +235,9 @@ See [File formats and converters](/docs/self-hosting/converters).
 | `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | Price used to record OCR cost. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Hard OpenRouter endpoint allowlist; for Flex use `["openai/flex"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |

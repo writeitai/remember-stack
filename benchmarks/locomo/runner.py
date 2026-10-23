@@ -64,10 +64,8 @@ from benchmarks.locomo.protocol import ADAPTER_VERSION
 from benchmarks.locomo.protocol import ANSWER_AGENT_MODEL
 from benchmarks.locomo.protocol import ANSWER_AGENT_REASONING_EFFORT
 from benchmarks.locomo.protocol import ANSWER_READER_RETRY_BUDGET
-from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_DOCUMENT_BINDING_GENERATION
-from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import JUDGE_MODEL
 from benchmarks.locomo.protocol import JUDGE_REASONING_EFFORT
@@ -210,7 +208,7 @@ def prepare_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
+        "api_timeout_seconds": selected_protocol.execution_profile.api_timeout_seconds,
         "knowledge_mode": "not_composed",
         "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
         "answer_agent_model": selected_protocol.answer_agent_model,
@@ -234,6 +232,9 @@ def prepare_run(
         "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
         "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
+    base["execution_profile"] = selected_protocol.execution_profile.model_dump(
+        mode="json"
+    )
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -265,11 +266,13 @@ def _readiness_matches_protocol(
     Model bindings come from the prepared protocol, so ingest-model variants
     check their own pins instead of the canonical module-global map.
     """
+    selected = protocol_for_name(protocol_name)
+    component_versions = selected.execution_profile.ingest_component_versions
     versions_ready = all(
         version.ready
         and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
         and {stage.stage: stage.component_version for stage in version.stages}
-        == dict(EXPECTED_INGEST_COMPONENT_VERSIONS)
+        == dict(component_versions)
         and all(
             stage.status in {"succeeded", "skipped"} and stage.finished_at is not None
             for stage in version.stages
@@ -294,14 +297,24 @@ def _readiness_matches_protocol(
         and capabilities_ready
         and readiness.document_binding_generation
         == EXPECTED_DOCUMENT_BINDING_GENERATION
-        and readiness.model_bindings
-        == dict(protocol_for_name(protocol_name).ingest_model_bindings)
+        and readiness.model_bindings == dict(selected.ingest_model_bindings)
         and repository_revision
         and readiness.build_revision == repository_revision
     )
 
 
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
+
+
+def _readiness_fingerprint(*, readiness: PipelineReadinessReport) -> str:
+    """Compare serving identity while ignoring probe times and row ordering."""
+    identity = readiness.model_dump(mode="json")
+    identity["versions"] = sorted(
+        identity["versions"], key=lambda value: value["version_id"]
+    )
+    for capability in identity["capabilities"].values():
+        capability.pop("checked_at", None)
+    return _canonical_hash(identity)
 
 
 class ProviderPreflightError(BenchmarkRunError):
@@ -604,7 +617,9 @@ def answer_sample(
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
-    if prior_readiness is not None and prior_readiness != readiness:
+    if prior_readiness is not None and _readiness_fingerprint(
+        readiness=prior_readiness
+    ) != _readiness_fingerprint(readiness=readiness):
         raise ExecutionGuardError(
             "deployment readiness fingerprint changed after it was checkpointed"
         )
@@ -849,7 +864,7 @@ def judge_sample(
 
 def summarize_run(*, run_dir: Path) -> RunSummary:
     """Aggregate the full manifest; absent or failed records score zero."""
-    context = _load_run(run_dir=run_dir)
+    context = load_recorded_run(run_dir=run_dir)
     questions = context.questions
     doc_sessions = {
         record.doc_id: record.session_id for record in context.state.ingests.values()
@@ -960,7 +975,8 @@ def summarize_run(*, run_dir: Path) -> RunSummary:
         tokens_out=sum(usage.tokens_out for usage in usages),
         evaluator_cost_usd=context.state.evaluator_cost_usd,
     )
-    _atomic_model(path=run_dir / _SUMMARY_FILE, value=summary)
+    if context.configuration.protocol_name == PROTOCOL_NAME:
+        _atomic_model(path=run_dir / _SUMMARY_FILE, value=summary)
     return summary
 
 
@@ -970,7 +986,7 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
         raise BenchmarkRunError("summarize requires at least one run directory")
     if len(run_dirs) == 1:
         return summarize_run(run_dir=run_dirs[0])
-    contexts = tuple(_load_run(run_dir=run_dir) for run_dir in run_dirs)
+    contexts = tuple(load_recorded_run(run_dir=run_dir) for run_dir in run_dirs)
     _require_merge_identity(run_dirs=run_dirs, contexts=contexts)
     recorded_samples = _require_disjoint_recorded_samples(
         run_dirs=run_dirs, contexts=contexts
@@ -1036,7 +1052,8 @@ def summarize_runs(*, run_dirs: tuple[Path, ...]) -> RunSummary:
             "missing_sample_ids": missing_sample_ids,
         }
     )
-    _atomic_model(path=first_run / _SUMMARY_FILE, value=merged)
+    if contexts[0].configuration.protocol_name == PROTOCOL_NAME:
+        _atomic_model(path=first_run / _SUMMARY_FILE, value=merged)
     return merged
 
 
@@ -1172,6 +1189,13 @@ def run_protocol(*, run_dir: Path) -> LoCoMoProtocol:
     return protocol_for_name(configuration.protocol_name)
 
 
+def run_api_timeout_seconds(*, run_dir: Path) -> float:
+    """Use the transport budget saved in this run, not an ambient default."""
+    return RunConfiguration.model_validate_json(
+        (run_dir / _RUN_FILE).read_text(encoding="utf-8")
+    ).api_timeout_seconds
+
+
 def load_recorded_run(*, run_dir: Path) -> _RunContext:
     """Load a finished run against its own recorded identity only.
 
@@ -1237,7 +1261,6 @@ def _validate_run(
     current_pins: bool = True,
 ) -> None:
     """Recompute immutable run identity before any local or remote stage."""
-    selected_protocol = protocol_for_name(configuration.protocol_name)
     if configuration.dataset_sha256 != DATASET_SHA256:
         raise BenchmarkRunError("run dataset hash is not RS-LoCoMo-Full-v38")
     if item_ids_hash(item_ids=manifest.item_ids) != manifest.item_ids_sha256:
@@ -1296,39 +1319,52 @@ def _validate_run(
         "answer_schema_sha256": configuration.answer_schema_sha256,
         "judge_schema_sha256": configuration.judge_schema_sha256,
     }
+    if configuration.execution_profile is not None:
+        base["execution_profile"] = configuration.execution_profile.model_dump(
+            mode="json"
+        )
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
-    current_pin = {
-        "answer_agent_model": selected_protocol.answer_agent_model,
-        "judge_model": selected_protocol.judge_model,
-        "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
-        "max_tool_calls_per_question": (selected_protocol.max_tool_calls_per_question),
-        "max_agent_calls_per_question": (
-            selected_protocol.max_agent_calls_per_question
-        ),
-        "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
-        "answer_agent_reasoning_effort": (
-            selected_protocol.answer_agent_reasoning_effort
-        ),
-        "answer_word_cap": selected_protocol.answer_word_cap,
-        "answer_agent_temperature": selected_protocol.answer_agent_temperature,
-        "judge_temperature": selected_protocol.judge_temperature,
-        "judge_repetitions": selected_protocol.judge_repetitions,
-        "surface_manifest_hash": selected_protocol.surface_manifest_hash,
-        "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
-        "answer_prompt_sha256": prompt_sha256(
-            template=selected_protocol.answer_prompt_template
-        ),
-        "judge_prompt_sha256": prompt_sha256(
-            template=selected_protocol.judge_prompt_template
-        ),
-        "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
-        "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
-    }
-    for field, expected in current_pin.items() if current_pins else ():
-        if getattr(configuration, field) != expected:
-            raise BenchmarkRunError(f"current {field} differs from prepared run")
+    if current_pins:
+        selected_protocol = protocol_for_name(configuration.protocol_name)
+        current_pin = {
+            "answer_agent_model": selected_protocol.answer_agent_model,
+            "judge_model": selected_protocol.judge_model,
+            "judge_reasoning_effort": selected_protocol.judge_reasoning_effort,
+            "max_tool_calls_per_question": (
+                selected_protocol.max_tool_calls_per_question
+            ),
+            "max_agent_calls_per_question": (
+                selected_protocol.max_agent_calls_per_question
+            ),
+            "answer_reader_retry_budget": (
+                selected_protocol.answer_reader_retry_budget
+            ),
+            "api_timeout_seconds": selected_protocol.execution_profile.api_timeout_seconds,
+            "answer_agent_reasoning_effort": (
+                selected_protocol.answer_agent_reasoning_effort
+            ),
+            "answer_word_cap": selected_protocol.answer_word_cap,
+            "answer_agent_temperature": selected_protocol.answer_agent_temperature,
+            "judge_temperature": selected_protocol.judge_temperature,
+            "judge_repetitions": selected_protocol.judge_repetitions,
+            "surface_manifest_hash": selected_protocol.surface_manifest_hash,
+            "tool_catalog_sha256": selected_protocol.tool_catalog_sha256,
+            "answer_prompt_sha256": prompt_sha256(
+                template=selected_protocol.answer_prompt_template
+            ),
+            "judge_prompt_sha256": prompt_sha256(
+                template=selected_protocol.judge_prompt_template
+            ),
+            "answer_schema_sha256": schema_sha256(
+                model=selected_protocol.answer_schema
+            ),
+            "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
+        }
+        current_pin["execution_profile"] = selected_protocol.execution_profile
+        for field, expected in current_pin.items():
+            if getattr(configuration, field) != expected:
+                raise BenchmarkRunError(f"current {field} differs from prepared run")
     _validate_documents(
         run_dir=run_dir,
         configuration=configuration,
@@ -2815,10 +2851,14 @@ def _provider_unavailable_reason(*, error: ProviderCallError) -> str | None:
     stable status prefix without parsing the body. Vertex signals lost access
     -- a revoked federated identity, a disabled API, or unlinked billing, which
     is exactly what the spend guardian does -- with a typed access error.
+    Known received unbilled capacity rejections also stop before a terminal
+    item checkpoint, allowing that item to retry without preserving a wrong.
     Anything else is one failed item, not a stopped run.
     """
     if isinstance(error, VertexAccessError):
         return "Vertex access unavailable"
+    if isinstance(error, OpenRouterProviderError) and error.retryable_unbilled:
+        return "OpenRouter capacity unavailable"
     if isinstance(error, OpenRouterProviderError) and " returned 402:" in str(error):
         return "OpenRouter credits unavailable"
     return None

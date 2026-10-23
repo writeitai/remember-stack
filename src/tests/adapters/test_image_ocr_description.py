@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 from PIL import Image
+from pydantic import SecretStr
 import pytest
 
 from rememberstack.adapters.converters import build_conversion_routes
@@ -391,7 +392,7 @@ def test_assemble_keeps_exact_ocr_text_and_labels_the_separator() -> None:
         ocr=ocr,
         description=ImageDescriptionOutput(observations="A desk.", interpretations=""),
         settings=settings,
-        description_model="google/gemini-2.5-flash-actual",
+        description_model="openai/gpt-6-luna-actual",
     )
     _require_coherent_envelope(result=result)
     ocr_range = next(
@@ -405,7 +406,7 @@ def test_assemble_keeps_exact_ocr_text_and_labels_the_separator() -> None:
         for component in result.manifest.components
         if component.name == "vision-description"
     )
-    assert vision.version == "google/gemini-2.5-flash-actual"
+    assert vision.version == "openai/gpt-6-luna-actual"
 
 
 def test_interpretations_are_labeled_separately_from_observations() -> None:
@@ -608,7 +609,7 @@ def test_changing_description_endpoint_invalidates_that_checkpoint() -> None:
 def test_cached_description_keeps_resolved_model_provenance() -> None:
     """Reload uses the provider-echoed model, not only settings.model."""
     store = MemoryLaneCheckpoints()
-    echoed = "google/gemini-2.5-flash-actual"
+    echoed = "openai/gpt-6-luna-actual"
     body = _description_body()
     body["model"] = echoed
     first = _converter(description_transport=_description_transport(body=body))
@@ -947,3 +948,47 @@ def test_inspection_does_not_mutate_process_pixel_limit(
     monkeypatch.setattr(Image, "open", checked_open)
     _converter(max_image_pixels=4).convert(content=_PNG, mime="image/png")
     assert Image.MAX_IMAGE_PIXELS == original_limit
+
+
+def test_description_reasoning_and_provider_only_are_explicit_and_keyed() -> None:
+    """A routing/effort change redoes only vision; unchanged OCR stays reusable."""
+    calls: list[str] = []
+    payloads: list[dict[str, object]] = []
+    store = MemoryLaneCheckpoints()
+    first = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=_description_transport(calls=calls),
+    )
+    first.convert(content=_PNG, mime="image/png", checkpoints=store)
+
+    def description(request: httpx.Request) -> httpx.Response:
+        """Capture the exact requested vision lane contract."""
+        payloads.append(json.loads(request.content))
+        calls.append("description")
+        return httpx.Response(200, json=_description_body())
+
+    changed = _converter(
+        ocr_transport=_ocr_transport(calls=calls),
+        description_transport=httpx.MockTransport(description),
+        reasoning_effort="low",
+        provider_only=("openai/flex",),
+    )
+    changed.convert(content=_PNG, mime="image/png", checkpoints=store)
+    assert calls.count("ocr") == 1
+    assert calls.count("description") == 2
+    assert payloads[0]["reasoning"] == {"effort": "low"}
+    assert payloads[0]["provider"] == {
+        "only": ["openai/flex"],
+        "allow_fallbacks": False,
+        "data_collection": "deny",
+    }
+    assert first.version != changed.version
+
+
+def test_empty_compose_description_effort_keeps_existing_identity() -> None:
+    """An unset optional does not re-key unchanged image conversion."""
+    old = ImageDescriptionSettings(api_key=SecretStr("offline"))
+    empty = ImageDescriptionSettings.model_validate(
+        {"api_key": "offline", "reasoning_effort": ""}
+    )
+    assert old.version_fingerprint() == empty.version_fingerprint()

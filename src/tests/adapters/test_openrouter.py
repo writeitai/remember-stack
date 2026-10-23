@@ -2006,3 +2006,104 @@ def test_invalid_terminal_under_rotation_attributes_targeted_slug(
 
     assert recorder.records[-1].outcome == "invalid"
     assert recorder.records[-1].provider_host == "deepinfra"
+
+
+@pytest.mark.parametrize("routed", [False, True])
+def test_unbilled_http_200_flex_capacity_error_is_retried(
+    routed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transport-success capacity failure must not become a failed question."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", chat_provider_only=["openai/flex"] if routed else None
+        )
+    )
+    calls: list[dict[str, object]] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> httpx.Response:
+        """Return the observed Flex envelope followed by one billed completion."""
+        calls.append(payload.copy())
+        if len(calls) == 1:
+            return httpx.Response(
+                200,
+                json={
+                    "error": {
+                        "message": "Flex processing is temporarily unavailable. Please try again later.",
+                        "code": 503,
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "model": "openai/gpt-6-luna",
+                "choices": [{"message": {"content": '{"answer":"ok"}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": "0.01"},
+            },
+        )
+
+    monkeypatch.setattr(provider, "_post_once", post)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda delay: None
+    )
+    response = provider.generate(
+        request=ModelRequest(model="openai/gpt-6-luna", prompt="offline"),
+        response_type=_Answer,
+    )
+    assert response.output.answer == "ok"
+    assert len(calls) == 2
+    assert response.usage.cost_usd == Decimal("0.01")
+    if routed:
+        routing = calls[-1]["provider"]
+        assert isinstance(routing, dict)
+        assert routing["only"] == ["openai/flex"]
+
+
+def test_capacity_retry_never_regenerates_a_billed_response() -> None:
+    """Usage, choices and explicit auth failures exclude HTTP-200 retries."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+
+    for body in (
+        {"error": {"code": 401, "message": "try again"}},
+        {"error": {"code": 503}, "usage": {"cost": "0.01"}},
+        {"error": {"code": 503}, "choices": []},
+    ):
+        assert not _retryable_upstream_error(response=httpx.Response(200, json=body))
+
+
+@pytest.mark.parametrize("routed", [False, True])
+def test_exhausted_flex_capacity_rejection_is_explicitly_unbilled(
+    routed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The caller can resume after a received rejection without replaying paid work."""
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline", chat_provider_only=["openai/flex"] if routed else None
+        )
+    )
+    calls: list[str] = []
+
+    def post(*, path: str, payload: dict[str, object]) -> httpx.Response:
+        """Decline before processing, using the observed Flex error envelope."""
+        calls.append(path)
+        return httpx.Response(
+            200,
+            json={
+                "error": {
+                    "code": 503,
+                    "message": "Flex processing is temporarily unavailable. Please try again later.",
+                }
+            },
+        )
+
+    monkeypatch.setattr(provider, "_post_once", post)
+    monkeypatch.setattr(
+        "rememberstack.adapters.openrouter.time.sleep", lambda delay: None
+    )
+    with pytest.raises(OpenRouterProviderError) as raised:
+        provider.generate(
+            request=ModelRequest(model="openai/gpt-6-luna", prompt="offline"),
+            response_type=_Answer,
+        )
+    assert raised.value.retryable_unbilled is True
+    assert len(calls) == 4
