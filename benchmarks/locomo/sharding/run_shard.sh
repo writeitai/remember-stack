@@ -61,13 +61,13 @@ backup_python() {
 }
 
 # One current protocol; retired execution branches live in Git and saved runs.
+[[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 profile_environment=$("$python_bin" -m benchmarks.locomo.profile_environment "$protocol")
 while IFS= read -r binding; do
   export "$binding"
 done <<<"$profile_environment"
 export REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR=/var/lib/rememberstack/invalid-completions
 
-[[ -x "$python_bin" ]] || die "Python is not executable: $python_bin"
 [[ -f "$dataset_path" ]] || die "dataset does not exist: $dataset_path"
 [[ -n ${REMEMBERSTACK_OPENROUTER_API_KEY:-} ]] ||
   die "REMEMBERSTACK_OPENROUTER_API_KEY must be exported for the benchmark CLI"

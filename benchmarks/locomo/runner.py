@@ -2851,10 +2851,14 @@ def _provider_unavailable_reason(*, error: ProviderCallError) -> str | None:
     stable status prefix without parsing the body. Vertex signals lost access
     -- a revoked federated identity, a disabled API, or unlinked billing, which
     is exactly what the spend guardian does -- with a typed access error.
+    Known received unbilled capacity rejections also stop before a terminal
+    item checkpoint, allowing that item to retry without preserving a wrong.
     Anything else is one failed item, not a stopped run.
     """
     if isinstance(error, VertexAccessError):
         return "Vertex access unavailable"
+    if isinstance(error, OpenRouterProviderError) and error.retryable_unbilled:
+        return "OpenRouter capacity unavailable"
     if isinstance(error, OpenRouterProviderError) and " returned 402:" in str(error):
         return "OpenRouter credits unavailable"
     return None

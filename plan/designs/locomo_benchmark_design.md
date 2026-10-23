@@ -36,7 +36,7 @@ categories               1, 2, 3, 4
 ingestion LLM            openai/gpt-6-luna, low reasoning, openai/flex
 visual-description LLM   openai/gpt-6-luna, low reasoning, openai/flex
 OCR                      configured dedicated Mistral OCR lane
-adjudication             jev-1.13.0, confidence floor 0.75, no prompt fallback
+adjudication             jev-latest, confidence floor 0.75, no prompt fallback
 answer-agent model       openai/gpt-6-luna, high reasoning, temperature 0
 judge model              openai/gpt-6-luna, high reasoning, temperature 0
 judge policy             existing semantic CORRECT/WRONG scorer

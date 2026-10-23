@@ -183,14 +183,7 @@ ProviderStage = Literal["ingest", "answer", "judge"]
 def _provider(
     *, run_dir: Path, stage: ProviderStage, recorder: GenerationRecorder | None = None
 ) -> ModelProviderPort:
-    """Compose only the provider needed by this frozen protocol stage.
-
-    Ingest uses OpenRouter for the deployment embedding preflight and routes
-    its chat probe to the answer provider. Answer and judge select their
-    independently pinned seats. Stage-local composition lets a
-    Codex-subscription evaluation run without an OpenRouter key once its store
-    has already been ingested.
-    """
+    """Compose the current run's explicit OpenRouter/Flex evaluation binding."""
     protocol = run_protocol(run_dir=run_dir)
     profile = protocol.execution_profile
     return _seat_provider(

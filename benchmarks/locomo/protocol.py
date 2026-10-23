@@ -37,7 +37,7 @@ from rememberstack.model import ToolDescriptor
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v39"
 DEFAULT_PROTOCOL_KEY: Final = "full-v39"
 ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-current-v39"
-"""Adapter identity for Full-v38: clean-temporal fact labels, entity-first retrieval hierarchy, and concise adjudication."""
+"""Current Full-v39 evaluation identity, with explicit Luna/Flex and Jev roles."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
@@ -121,7 +121,7 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
             ),
             ANSWER_AGENT_MODEL,
         ),
-        "fact_adjudication": "jev-1.13.0",
+        "fact_adjudication": "jev-latest",
         "openrouter_embedding_provider": "nebius",
         "openrouter_embedding_provider_order": "unset",
         "openrouter_max_completion_tokens": "32000",
@@ -148,7 +148,7 @@ INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
         "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE": "jev",
         "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR": "0.75",
         "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT": "false",
-        "REMEMBERSTACK_TYPESAFE_MODEL": "jev-1.13.0",
+        "REMEMBERSTACK_TYPESAFE_MODEL": "jev-latest",
         "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT": "low",
         "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP": '{"openai/gpt-6-luna": "low"}',
         "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY": "openai/flex",

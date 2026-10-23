@@ -80,6 +80,6 @@ def test_backup_preserves_jev_engine_and_flex_instead_of_dormant_prompt_slot(
         run_dir=tmp_path, sample_id="fixture"
     )
     assert environment["REMEMBERSTACK_FACT_ADJUDICATION_ENGINE"] == "jev"
-    assert environment["REMEMBERSTACK_TYPESAFE_MODEL"] == "jev-1.13.0"
+    assert environment["REMEMBERSTACK_TYPESAFE_MODEL"] == "jev-latest"
     assert environment["REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT"] == "false"
     assert environment["REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY"] == "openai/flex"
