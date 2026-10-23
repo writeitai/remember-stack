@@ -42,7 +42,8 @@ document dates. It must not treat a session/upload timestamp as an event date
 inside fictional or quoted content merely because they share a chunk.
 
 These are input and faithfulness improvements, not a deterministic guarantee
-that every useful proposition will be retained. Existing Selection outcomes,+Claimify omission accounting and source-reviewed evaluation remain necessary.
+that every useful proposition will be retained. Existing Selection outcomes,
+Claimify omission accounting and source-reviewed evaluation remain necessary.
 No new inference model, reranker, entity whitelist, gold lookup, or question-ID
 branch is introduced.
 
@@ -66,7 +67,8 @@ summaries, model-produced card names or source-map pixel coordinates. Equivalent
 adjacent label ranges normalize to the same identity. Editing another section
 must not change an untouched chunk's provenance basis.
 
-The E2 extractor generation changes once to declare the new prompt/input policy.
+The E2 extractor, D122 reference-policy and date-free reuse-identity generations
+change once to declare the new prompt/input and key layouts.
 This is a paid extraction boundary when data is processed under that generation;
 no automatic processing is launched. Packing, embedding policy/model and stored
 source bytes do not change. Embedding reuse stays independent. D122's existing

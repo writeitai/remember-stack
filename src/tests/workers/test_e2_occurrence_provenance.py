@@ -351,9 +351,8 @@ def test_missing_conversion_manifest_does_not_persist_claims() -> None:
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="conversion manifest"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.claims == ()
 
@@ -368,9 +367,8 @@ def test_corrupt_conversion_manifest_is_terminal_and_persists_nothing() -> None:
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(NonRetryableHandlerError, match="corrupt"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -387,9 +385,8 @@ def test_missing_referenced_source_map_does_not_persist_claims() -> None:
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="source map"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
