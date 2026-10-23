@@ -405,10 +405,12 @@ exists and is the sole D87 exception to §1.13.
 **Processing layers (D143).** The equality above holds per admitted channel
 set: the `claims_and_sources` member equals a direct call with the same admitted
 channels, and the `facts` member equals a direct `facts_context` call when facts
-are admitted. When facts are not admitted (disabled or excluded), the `facts`
-member is the one synthetic child the bundle builds: fact grain, no results,
-the `temporal_scope` `facts_context` would report for the request's time
-selector, the bundle's freshness, no truncation and a `boundary` negative. The
+are admitted. A member none of whose channels is admitted (disabled or
+excluded) is the only child the bundle builds itself, symmetrically: fact grain
+when facts are not admitted, evidence grain when neither sources nor claims is;
+no results, the `temporal_scope` its direct operation would report for the
+request's time selector, the bundle's freshness, no truncation and a `boundary`
+negative. The
 canonical four-operation registry, its descriptors and the manifest are
 unchanged; only the served operation list is filtered
 ([processing layers design §7.3](processing_layers_design.md#73-saying-what-is-missing--inside-the-existing-contract)).

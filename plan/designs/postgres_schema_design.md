@@ -385,6 +385,7 @@ CREATE TABLE processing_layer_gaps (
   version_id    uuid NOT NULL,
   doc_id        uuid NOT NULL,
   layer         text NOT NULL CHECK (layer IN ('claims','facts')),
+  lane          processing_lane NOT NULL,   -- route used when the version is entered
   recorded_at   timestamptz NOT NULL,
   entered_at    timestamptz,
   discharged_at timestamptz,

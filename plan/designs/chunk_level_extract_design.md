@@ -66,9 +66,13 @@ Full argument: analysis §2–3.
 Inputs: `ClaimedWork` from embed (or equivalent), `ChunkSource`, chunk list for
 `representation_id` + current chunker version.
 
-This is the **claims boundary** (D143). When the version does not enter the
-claims layer — the layer is disabled, or the lineage has an earlier open claims
-gap — nothing below is enqueued and claims and facts gaps are recorded instead.
+This is the **claims boundary** (D143). In a deployment without a layer
+configuration it enters as described here. In a configured deployment it records
+a claims gap and runs the one admission procedure (advance), which enters the
+version only when the claims layer is enabled and every earlier version of the
+lineage reached its claims frontier — whether or not that version had a gap;
+otherwise nothing below is enqueued yet
+([processing layers design §4.1, §5.2](processing_layers_design.md#41-boundaries)).
 When it enters:
 
 | Case | Follow-up |
@@ -139,7 +143,8 @@ transaction:
    enters the facts layer, open the E3 normalisation fan-out (D88: one
    `normalize_relations` row per claim; the D90 empty observation flush when
    there are no claims), idempotently. Otherwise record a facts gap and open the
-   claims tail: `embed_claim` and `reconcile` at `reconcile-2026.07:claims`
+   claims tail — `embed_claim` and `reconcile` at `reconcile-2026.07:claims` —
+   once no earlier version of the lineage has fact work in flight
    ([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
 
 Handler returns no normalize follow-up itself; the worker calls

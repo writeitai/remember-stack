@@ -1739,8 +1739,9 @@ config choice.
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
 > claims-mode component version that applies the same currency and counting logic but opens no
-> fact follow-ups; a reconcile skips `living` supersession while the lineage's current version
-> still has an open claims gap. The currency and counting contract is unchanged.
+> fact follow-ups. In a configured deployment a reconcile computes `living` supersession only once
+> the lineage's current version has complete claim occurrences, and a version's claims tail waits
+> for earlier fact work of its lineage. The currency and counting contract is unchanged.
 
 **Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
 counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
@@ -3753,7 +3754,8 @@ Unknown **predicates** remain D5.
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The exact-composition rule holds per admitted processing-layer set. When the facts layer is
 > disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
-> `boundary` negative, and the evidence child runs only its admitted channels. With every layer
+> `boundary` negative, and the evidence child runs only its admitted channels (or is the symmetric
+> synthetic evidence-grain envelope when neither sources nor claims is admitted). With every layer
 > admitted, this entry is binding as written.
 
 > **D114 amendment (2026-09-07).** The three retrieval operation names become
@@ -5659,7 +5661,8 @@ assertion provenance. Implementation and release remain separate gates.
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
 > The exact-composition rule holds per admitted processing-layer set. When the facts layer is
 > disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
-> `boundary` negative, and the evidence child runs only its admitted channels. With every layer
+> `boundary` negative, and the evidence child runs only its admitted channels (or is the symmetric
+> synthetic evidence-grain envelope when neither sources nor claims is admitted). With every layer
 > admitted, this entry is binding as written.
 
 **Status:** accepted when merged. **Date:** 2026-09-07.
@@ -7177,10 +7180,12 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   `reconcile-2026.07:claims`, which runs the full reconcile logic but opens no `label_relation`
   and no window review, so existing facts stay exact while facts are off (profile refresh is the
   one paid exception, only when facts exist).
-- **Configured deployments only:** living supersession waits until the current version reached its
-  claims frontier, checked and applied in one transaction under the lineage lock; fact application
-  admits only current-testimony claims, revalidated under the claim row lock, so retired testimony
-  never becomes a fact in any order of work.
+- **Configured deployments only:** living supersession waits until the current version's claim
+  occurrences are complete, checked and applied in one transaction under the lineage lock; and a
+  version's claims tail waits until no earlier version of its lineage has fact work in flight, so
+  older fact work always runs while its claims are current — the always-on order — and retired
+  testimony never becomes a fact. The claims frontier includes the version's `embed_claim`, so a
+  successor never reuses a claim that has no vector.
 - **Off drains:** boundaries stop entering; versions that entered finish the layer; retrieval
   and readiness stop using it; data is kept. Only lineage-level window reviews are held. Deletion
   and hard forget are never gated.
@@ -7188,8 +7193,9 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   boundaries, frontiers, deletions (including current-version repointing) and `setup`'s seeding.
   Snapshot lineages are processed every version oldest first (equal to always-on processing);
   living lineages at their current version only — older unentered gaps are discharged, and reopened
-  if deletion makes their version current again. Backfill work and all its follow-ups (including
-  fact-application projection repair and window reviews) stay on the backfill lane. Coverage is
+  if deletion makes their version current again. Backfill rows and the follow-up rows they open
+  (including fact-application projection repair and window reviews) take the backfill lane; lanes
+  order and budget work rows but do not isolate the shared per-entity application stream. Coverage is
   derived from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse
   identities, each later snapshot version pays only for its edit.
 - **Readiness** expects the enabled layers' stages (all on: unchanged; facts off: `reconcile` at
@@ -7205,8 +7211,8 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   with an unconsulted channel is a `boundary`, never `known_empty`; backfilling sandbox reads warn;
   `GET /processing-layers` reports states; catalogues list only served tools. **No response model
   changes**, so default responses, descriptors and the manifest hash are byte-identical.
-  `combined_context` composes exactly per admitted set; with facts not admitted its fact child is a
-  synthetic empty `boundary` envelope. P3 serves only a snapshot built for the served set; the
+  `combined_context` composes exactly per admitted set; a child with no admitted channel is a
+  synthetic empty `boundary` envelope of its grain (fact or evidence). P3 serves only a snapshot built for the served set; the
   knowledge mount is not published without facts.
 
 **Alternatives rejected.** Finer-grained scopes; serving or deleting an off layer; holding queued

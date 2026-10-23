@@ -92,7 +92,8 @@ CREATE TABLE processing_layer_gaps (
   doc_id        uuid NOT NULL,
   layer         text NOT NULL CHECK (layer IN ('claims', 'facts')),
   recorded_at   timestamptz NOT NULL,
-  entered_at    timestamptz,   -- the backfill entered the version (§5.2)
+  lane          processing_lane NOT NULL,  -- route used when the version is entered (§4.1)
+  entered_at    timestamptz,   -- advance entered the version (§5.2)
   discharged_at timestamptz,   -- superseded in a living lineage; never processed (§5.3)
   PRIMARY KEY (deployment_id, version_id, layer),
   CHECK (entered_at IS NULL OR discharged_at IS NULL)
@@ -103,7 +104,8 @@ CREATE INDEX ix_layer_gaps_open
 ```
 
 **No row in `deployment_processing_layers` means both layers enabled.** Existing deployments
-need no data migration. A gap is *open* while `discharged_at` is null; a layer is backfilling
+need no data migration. A gap row is inserted once per version and layer and keeps its lane
+through discharge and reopening until it is deleted. A gap is *open* while `discharged_at` is null; a layer is backfilling
 while it is enabled and has an open gap of a live version. Like `obs_flush_version_state`, gap
 rows carry no foreign key; deletion and hard forget delete them explicitly (§6.3).
 
@@ -161,11 +163,14 @@ and its component versions are unchanged.
    **claims tail** (§4.2).
 2. If the version or its lineage is **deleted**: enter as today, so the chain's reconcile retires
    the late work (D135); record no gap.
-3. Otherwise record a gap for the version (with the lane of the completing work) and run
-   **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
+3. Otherwise record a gap for the version (lane `steady`, or the lane of the completing work)
+   and run **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
    version — stamping its gap entered — or leaves it waiting behind a predecessor that has not
-   reached its frontier. If the facts boundary leaves the version waiting, it opens the claims
-   tail.
+   reached its frontier. What a facts boundary does for a version that does not enter facts is
+   governed by §4.3.
+
+Gaps recorded in step 1 carry lane `backfill`: the version will only be processed by a later
+backfill.
 
 So in a configured deployment the boundary and the backfill share one admission rule: a version
 enters a layer only when every earlier version of its lineage has reached that layer's frontier,
@@ -197,32 +202,38 @@ ends in the full reconcile at `reconcile-2026.07` — a different idempotency ke
 
 **Living supersession guard (configured deployments).** A reconcile retires a `living` lineage's
 claims that are not attached to the lineage's current version. In a configured deployment the
-current version may not have reached its claims frontier yet — it may still be converting,
-chunking, deferred behind a predecessor, or claims may be disabled — and its occurrence set is
-then incomplete; retiring against it would retire claims the current version will reuse, and
-reuse does not restore currency. So the supersession step reads the current version, checks that
-it is this reconcile's own version or has reached its claims frontier, computes the stale set and
+current version's occurrences may not be complete yet (§5.1) — it may still be converting,
+chunking, deferred behind a predecessor, or claims may be disabled — and retiring against them
+would retire claims the current version will reuse; reuse does not restore currency. So the
+supersession step reads the current version, checks that it is this reconcile's own version or that
+its occurrences are complete, computes the stale set and
 applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
 step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
 deployment without a configuration row the step runs exactly as today.
 
-### 4.3 Fact application admits current testimony only (configured deployments)
+### 4.3 The claims tail waits for earlier fact work (configured deployments)
 
-The E3 handlers do not filter on currency: the normalisation fan-out takes every claim occurrence
-of the version and adjudication can create a fact from a claim that is no longer current. In a
-configured deployment, facts work can run after a later version retired some of its claims — a
-backfill or deferred version, or a version draining after facts were switched off — so a
-configured deployment applies one eligibility rule:
+The E3 handlers do not filter on currency: they normalise and adjudicate every claim of the
+version they are given. In ordinary ingestion that is safe because a version's facts are built
+before any later version's reconcile can retire its claims. A configured deployment keeps exactly
+that ordering instead of filtering testimony: a version's **claims tail is opened only when no
+earlier version of its lineage has fact work in flight** — that is, every earlier live version that
+completed the sources layer has reached its facts frontier, or never entered facts (an unentered or
+discharged facts gap). Until then the version waits with its facts gap, and nothing is enqueued for
+it.
 
-- the facts fan-out selects only the version's **current-testimony** claims (that set is the
-  D88 expected set; when it is empty the D90 empty observation flush applies);
-- fact application re-reads the incoming claim's currency under its row lock and **contributes
-  nothing** from a claim that is no longer current. Currency transitions take the same row lock,
-  so a retirement and an application serialize: either the application sees the claim retired, or
-  the retirement's own recount and zero-support policy see the new support.
+So for a version that does not enter facts at its facts boundary (facts disabled, or enabled but
+deferred behind an earlier unentered gap), the boundary opens the claims tail at once if the
+lineage has no fact work in flight, and otherwise leaves it to advance (§5.2), which opens it when
+the last earlier fact work reaches its frontier. Opening a claims tail is idempotent (its two work
+rows have fixed idempotency keys), so advance may re-issue it safely.
 
-Retired testimony therefore never becomes a fact, whichever order the work runs in. A deployment
-without a configuration row keeps today's handlers unchanged.
+Consequences: an older version's fact work — including work draining after facts were switched off
+(§4.4) — always runs while its claims are still current; the later version's reconcile then retires
+and closes exactly as always-on processing would, with the same history. No fact is created from
+retired testimony and no suppression state exists. Snapshot lineages never retire testimony by
+succession, so for them the wait only orders work. A deployment without a configuration row keeps
+today's chain unchanged.
 
 ### 4.4 Switching off drains; it never holds
 
@@ -273,16 +284,25 @@ and do not delay its receipt. Pricing, including of a later backfill, belongs to
 
 ### 5.1 Gaps and frontiers
 
-Boundaries are the only writers of new gap rows (§4.1). A version reaches a layer's **frontier**
-when its products are reusable by later versions:
+Boundaries are the only writers of new gap rows (§4.1). Two predicates are used, both read from
+the work ledger, never from the mere absence of rows:
 
-- **claims** — its extract barrier is ready (every chunk's Selection and Claimify results are
-  committed), or it has no chunks;
-- **facts** — its full reconcile succeeded.
+- A version's **occurrences are complete** when its `embed_chunk` row succeeded for its current
+  representation and chunker generation (so its chunk grid exists and is final) and either its
+  extract barrier is ready — every chunk's Selection and Claimify results are committed, so every
+  claim occurrence of the version is attached — or that grid is empty. A version that has not run
+  `embed_chunk` is never "complete with zero chunks".
+- A version reaches a layer's **frontier** when its products are reusable by later versions:
+  - **claims** — its occurrences are complete and its `embed_claim` succeeded, so every claim it
+    carries, including claims later versions will reuse by id, has its vector;
+  - **facts** — its full reconcile succeeded.
 
 Reaching the frontier deletes the version's gap of that layer. The frontier is only the ordering
-point: readiness and receipts additionally wait for `embed_claim`, `label_relation` and the other
-tail stages (§4.5). Deleting or forgetting a version deletes its gaps (§6.3).
+point: readiness and receipts additionally wait for `label_relation` and the other tail stages
+(§4.5). Deleting or forgetting a version deletes its gaps (§6.3). In a facts-enabled lineage the
+claims frontier comes after the version's fact adjudication (that is when `embed_claim` runs), so a
+successor's extraction waits for it; this is the price of never admitting a successor whose reused
+claims are not yet embedded.
 
 ### 5.2 One advance procedure
 
@@ -299,7 +319,9 @@ lock, and is invoked by:
 
 Steps:
 
-1. If the layer is disabled, stop.
+1. If the layer is disabled: for claims, stop; for facts, only open the claims tails that §4.3 now
+   allows (versions with an open facts gap whose occurrences are complete and whose earlier versions
+   have no fact work in flight), then stop.
 2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
    every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
    discharged: their work is running and must finish.
@@ -312,14 +334,15 @@ Steps:
    layer's frontier and has no discharged gap, stop: that version's frontier will run advance again.
    This includes versions entered before a switch and still draining, and dead-lettered versions,
    which block until they are replayed or deleted.
-6. For facts: if the target has not reached its claims frontier, stop: its facts boundary will run
-   advance again.
+6. For facts: if the target's occurrences are not complete, stop: its facts boundary will run
+   advance again. For claims tails (§4.3): when facts are disabled or the target is deferred behind
+   an earlier unentered facts gap, and no earlier version has fact work in flight, open the target's
+   claims tail (idempotent) instead of entering facts.
 7. **Enter** the target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
    have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the
-   current-testimony E3 fan-out (or the empty observation flush) for facts (§4.3) — on the gap's
-   recorded lane (steady for a version deferred during ingestion, backfill for a gap recorded while
-   the layer was disabled). A zero-chunk target reaches its claims frontier at once, which runs
-   advance again in the same transaction.
+   ordinary E3 fan-out (or the empty observation flush) for facts — on the gap's recorded lane
+   (`steady` for a version deferred during ingestion, `backfill` for a gap recorded while the layer
+   was disabled). A zero-chunk target goes straight to its facts boundary in the same transaction.
 
 Every gap is thus eventually entered by an event that is certain to happen — its own boundary, a
 predecessor's frontier, a deletion, or `setup` — with no polling job and no new stage.
@@ -349,14 +372,23 @@ backfilling while an open gap of a live version exists, and complete otherwise (
 
 ### 5.5 Lanes
 
-Backfill work runs on the backfill lane (orchestration §3): it never delays fresh ingestion and has
-its own budget (`WorkLedgerSettings.budgets`). The lane of every follow-up of entered work is the
-lane of the work that caused it, **including the follow-ups opened outside the version chain**:
-fact-application projection repair (`label_relation` on fact-application targets) and the window
-reviews requested by a reconcile both take the originating lane instead of a fixed steady lane;
-steady stays the default for work with no originating lane, and D67's promotion rule still lets a
-steady enqueue promote a backfill duplicate. A self-host worker serves its stage's backfill route
-whenever its steady route has no due row.
+Backfill work is enqueued on the backfill lane (orchestration §3) with its own budget
+(`WorkLedgerSettings.budgets`), and a self-host worker serves its stage's backfill route only when
+its steady route has no due row. **Lane is queue priority and budget attribution for work rows; it
+is not isolation of shared state.** Precisely:
+
+- Every follow-up row that entered work opens takes the lane of the work row that opened it,
+  including the rows opened outside the version chain: fact-application projection repair
+  (`label_relation` on fact-application targets) and the window reviews requested by a reconcile.
+  These no longer hard-code `steady`; `steady` remains the default where no work row is the cause.
+  D67's promotion rule (a steady enqueue promotes a backfill duplicate of the same row) is unchanged.
+- Fact applications are applied in each entity's canonical order by whichever observation-flush
+  unit holds that entity's stream (D90/D118); a steady unit can therefore apply a backfill
+  version's earlier application on a shared entity. Its model calls are metered on the route of the
+  unit that applies it, and the projection repair it opens takes that unit's lane. A backfill that
+  shares entities with fresh ingestion can thus spend on the steady route and wait on the same
+  entity locks; the backfill budget bounds the rows the backfill lane claims, not every call its
+  applications cause. Budgets are checked when a row is claimed, as today.
 
 ### 5.6 Rule 4: what a backfill pays for
 
@@ -469,10 +501,13 @@ every layer served and complete, every response is byte-identical to today's.
 composition of its two children, each field-for-field equal to the direct call. With a narrowed
 set, the `claims_and_sources` child equals a direct `claims_and_sources_context` call with the same
 admitted channels (its nomination runs only those channels), and the `facts` child equals a direct
-`facts_context` call when facts are admitted. When facts are not admitted the `facts` child is the
-one synthetic child the bundle may build: a fact-grain envelope with no results, the
-`temporal_scope` that `facts_context` would report for the request's time selector, the bundle's
-snapshot freshness, no truncation, and the `boundary` negative above. The canonical
+`facts_context` call when facts are admitted. A child none of whose channels is admitted is the
+only kind of child the bundle may build itself, and it is symmetric: when facts are not admitted,
+a fact-grain envelope with no results; when neither sources nor claims is admitted (for example
+`layers=facts`), an evidence-grain envelope with no results. Either synthetic child carries the
+`temporal_scope` its direct operation would report for the request's time selector, the bundle's
+snapshot freshness, no truncation, and a `boundary` negative naming the unadmitted layers. Every
+non-empty selection therefore has exactly one valid bundle. The canonical
 four-operation registry, its descriptors and their manifest entries are unchanged; only the
 *served* list (`GET /operations`, catalogues) is filtered (§7.4).
 
@@ -586,12 +621,17 @@ database-level, with recorded or fake model providers:
 9. **Facts later.** A snapshot lineage processed with facts off and switched to facts on gets the
    facts an always-on run produces. Facts on → off (a living version removes a fact's only claim
    inside a connector cycle that finalizes) → on leaves the fact closed. With facts enabled and v1
-   entered but not yet normalised, a living v2 that removes claim C runs its reconcile first; v1's
-   E3 then creates no fact from C (a fake normaliser yielding an open-window fact for C proves it)
-   and makes no adjudication call for it.
-10. **Lanes.** A facts backfill with a zero backfill budget for `label_relation` and an available
-    steady budget leaves its projection repairs parked on the backfill lane, with no
-    steady-attributed provider calls.
+   entered but not yet normalised, a living v2 that removes claim C opens neither facts nor its
+   claims tail until v1's full reconcile succeeded; v1 builds its fact from C (a fake normaliser
+   yielding an open-window fact) and v2's reconcile then closes it, exactly as an always-on run does.
+   The same holds when facts are switched off while v1's fact work drains. Every non-empty `layers`
+   selection of `combined_context` returns a valid bundle (facts-only included).
+10. **Lanes and inherited embeddings.** A facts backfill on a lineage that shares no entity with
+    steady work leaves its projection repairs on the backfill lane with zero backfill budget; with a
+    shared entity, the attribution follows §5.5. With claims enabled and facts off, v1 backfilled
+    to grounding but its `embed_claim` pending (then dead-lettered) keeps v2 un-entered; after v1's
+    replay, v2 enters and every claim v2 reuses has exactly one vector. Gaps recorded while a layer
+    was disabled enter on `backfill`, gaps deferred during ingestion on `steady`, across a restart.
 11. **Receipts.** A version measured under `doc-text-standard-v1` whose facts boundary falls after
     facts are switched off gets `failed` / `processing_profile_changed`; with the full reconcile
     succeeded but `embed_claim` or `label_relation` pending the receipt waits, and a dead letter there

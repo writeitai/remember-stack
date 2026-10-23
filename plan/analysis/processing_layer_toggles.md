@@ -328,13 +328,24 @@ all scoped to configured deployments or to the new backfill:
 - living supersession is computed only once the current version reached its claims frontier, in one
   transaction with its transitions — an open-gap test missed a current version still in the sources
   layer;
-- fact application admits only current-testimony claims, revalidated under the claim row lock —
-  choosing only the current version is not enough when a newer version retires claims while older
-  fact work is still queued;
+- a newer version's claims tail waits until no older version of its lineage has fact work in
+  flight — choosing only the current version is not enough when a newer version retires claims
+  while older fact work is still queued. (A round-2 draft filtered non-current testimony at fact
+  application instead; round 3 showed that this needs a suppression outcome through the D118
+  application stream and barriers, a restoration path when deletion makes the testimony current
+  again, and checks on every supplementary assertion. Keeping always-on ordering needs none of
+  that.);
 - every follow-up of backfill work keeps the backfill lane, including fact-application projection
   repair and window reviews that today hard-code the steady lane;
 - the frontier (an ordering point) is distinct from readiness and receipts, which keep waiting for
-  `embed_claim`, `label_relation` and today's dead-letter handling.
+  `label_relation` and today's dead-letter handling; round 3 added that the claims frontier includes
+  the version's `embed_claim`, because a successor's embed stage only embeds claims whose origin
+  chunk it owns, so a successor admitted before its predecessor's claim vectors exist could be
+  ready with reused claims never embedded. Round 3 also asked for a definition of "occurrences
+  complete" that never mistakes a version that has not chunked yet for an empty one, a symmetric
+  synthetic evidence child for `combined_context(layers=facts)`, a lane column on gaps, and an
+  honest statement that lanes order work rows but cannot isolate the shared per-entity fact
+  application stream.
 
 It also fixed two surface gaps: the exact `combined_context` composition rule (D87/D114) now holds per
 admitted layer set with one synthetic fact child, and a published P3 snapshot records the layer set
