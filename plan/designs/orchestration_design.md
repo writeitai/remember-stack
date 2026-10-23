@@ -32,7 +32,11 @@ composition of three things that already exist:
    rate limiting (Cloud Tasks in the reference adapter; Postgres wake-ups when self-hosted);
 2. **`processing_state`** — state, idempotency, application retries, scheduling, and dead
    letters (D12/D67);
-3. **the chain rule** — a completing worker enqueues the next stage for its target.
+3. **the chain rule** — a completing worker enqueues the next stage for its target. Where a
+   deployment's claims or facts layer begins, the next stage is decided at one **layer
+   boundary** inside the completing transaction (D143,
+   [processing layers design §4](processing_layers_design.md#4-ingestion)); a worker never
+   claims work of a layer the deployment has switched off.
 
 A workflow engine would duplicate all three, add a second stateful system to operate, and put
 pipeline state somewhere other than the spine — against the grain of "state has one home"
@@ -95,12 +99,20 @@ pipeline, same workers, same idempotency keys** — but **separate lanes**, so a
 backfill can never starve a fresh document's freshness SLA ("plane E processes promptly per
 document" — requirements). Rules:
 
-- **A backfill is defined by a version filter, nothing else** (D12): "all documents where
-  `converter_version < X`", "all chunks where `extractor_version < Y`". A deterministic
-  **backfill seeder** job — the one worker this document adds to the inventory — enumerates
-  the filter into the backfill lane in bounded batches. Resumability is free: re-seeding is a
-  no-op for every already-succeeded `(target, stage, version)` row, so a crashed or paused
-  backfill continues by re-running the seeder.
+- **A version-bump backfill is defined by a version filter, nothing else** (D12): "all
+  documents where `converter_version < X`", "all chunks where `extractor_version < Y`". A
+  deterministic **backfill seeder** job — the one worker this document adds to the inventory —
+  enumerates the filter into the backfill lane in bounded batches. Resumability is free:
+  re-seeding is a no-op for every already-succeeded `(target, stage, version)` row, so a
+  crashed or paused backfill continues by re-running the seeder.
+- **A layer backfill is defined by gap rows** (D143): when a deployment switches its claims or
+  facts layer on, the versions that skipped the layer are entered **one version per lineage at a
+  time, oldest first**, because cross-version reuse only looks at earlier versions (Rule 4).
+  `setup` advances every lineage once; from then on each completion advances its own lineage
+  through the chain rule. Its work runs on this lane
+  ([processing layers design §5](processing_layers_design.md#5-switching-a-layer-on-later)).
+- **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
+  claims from its stage's backfill route whenever its steady route has no due row.
 - **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately, never a
   surprise on the steady-state budget. The two dominant backfill costs are metered per lane
   and known in advance: extraction-side LLM calls (volume-proportional — design-review F8) and

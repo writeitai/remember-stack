@@ -1,5 +1,12 @@
 # Design: chunk-level extract (E2 work grain)
 
+> **D143 amendment (processing layers).** Extract work exists only when the deployment's
+> claims layer is entered for the version at `embed_chunk` completion. When the barrier below
+> fires, it opens E3 normalisation only if the facts layer is entered for the version;
+> otherwise it opens the claims tail (`embed_claim` and `reconcile` at
+> `reconcile-2026.07:claims`) and records a facts gap.
+> [Processing layers design §4](processing_layers_design.md#4-ingestion).
+
 **Status:** accepted for implementation (binding once merged to `main`)  
 **Date:** 2026-08-07  
 **Analysis:** [`../analysis/chunk_level_extract_analysis.md`](../analysis/chunk_level_extract_analysis.md)  

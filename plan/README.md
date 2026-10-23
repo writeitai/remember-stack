@@ -88,3 +88,8 @@ its [analysis](analysis/index_driven_ranked_search.md), the unchosen
 For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.
+
+To switch the claims or facts layer off for a deployment, narrow a request to some layers, or
+understand how a layer switched on later is backfilled without re-paying for unchanged text,
+start with [D143's processing layers design](designs/processing_layers_design.md) and its
+[analysis](analysis/processing_layer_toggles.md).

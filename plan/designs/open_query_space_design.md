@@ -894,10 +894,20 @@ The public error codes are exhaustive:
 
 | Phase | Codes |
 |---|---|
-| Parse/validation | `parse_error`, `multiple_statements`, `statement_not_allowed`, `relation_not_allowed`, `function_not_allowed`, `function_placement_not_allowed`, `operator_not_allowed`, `invalid_parameter`, `schema_version_mismatch`, `unbounded_recursion` |
+| Parse/validation | `parse_error`, `multiple_statements`, `statement_not_allowed`, `relation_not_allowed`, `function_not_allowed`, `function_placement_not_allowed`, `operator_not_allowed`, `invalid_parameter`, `schema_version_mismatch`, `unbounded_recursion`, `layer_unavailable` |
 | Admission | `quota_exceeded`, `concurrency_exceeded`, `saved_query_not_found`, `saved_query_disabled`, `saved_query_incompatible`, `saved_query_revalidation_pending` |
 | Execution | `statement_timeout`, `lock_timeout`, `cancelled`, `resource_limit`, `execution_error` |
 | Store/confirmation | `pg_unavailable`, `p1_unavailable`, `graph_unavailable`, `corpus_body_unavailable`, `confirmation_failed` |
+
+`layer_unavailable` (HTTP 409, D143) means the statement references a view or
+function of a processing layer that the deployment does not serve or that the
+request's `layers` selection excludes. Every view and function belongs to one
+layer — sources, claims or facts; a view reading several belongs to the highest —
+and the check runs after validation and before any planning, so a deployment
+without facts never answers a fact view with an empty result that reads as "no
+facts". The mapping lives in code beside the view contracts and is not a member
+of the hashed manifest (§6); saved queries are checked the same way
+([processing layers design §7.5](processing_layers_design.md#75-the-query-sandbox)).
 
 `graph_unavailable` means the live graph catalog, views, or bounded functions
 failed readiness. Zero rows is success with `empty_result = true`, never an

@@ -364,6 +364,33 @@ CREATE TABLE p1_search_channels (
 COMMENT ON TABLE p1_search_channels IS
   'D94 current target/channel configuration and readiness. One row only; no historical generations. Incompatible maintenance sets ready=false, rebuilds/verifies derived state, then overwrites this row with the new current configuration and ready=true.';
 
+-- D143 processing layers. One row only when the configured layers differ from the default
+-- (no row = claims and facts enabled, coverage complete); written only by `setup`.
+CREATE TABLE deployment_processing_layers (
+  deployment_id   uuid PRIMARY KEY REFERENCES deployments ON DELETE CASCADE,
+  claims_enabled  boolean NOT NULL,
+  facts_enabled   boolean NOT NULL,
+  claims_coverage text NOT NULL CHECK (claims_coverage IN ('complete','backfilling')),
+  facts_coverage  text NOT NULL CHECK (facts_coverage IN ('complete','backfilling')),
+  changed_at      timestamptz NOT NULL,
+  CHECK (claims_enabled OR NOT facts_enabled)
+);
+
+-- D143 gaps: a live version not (yet) processed by a layer. Written only by the layer
+-- boundaries; `entered_at` stamped when the lineage-ordered backfill enters the version;
+-- deleted when the layer completes for it, and by deletion/forget (no FK, like
+-- obs_flush_version_state).
+CREATE TABLE processing_layer_gaps (
+  deployment_id uuid NOT NULL,
+  version_id    uuid NOT NULL,
+  doc_id        uuid NOT NULL,
+  layer         text NOT NULL CHECK (layer IN ('claims','facts')),
+  recorded_at   timestamptz NOT NULL,
+  entered_at    timestamptz,
+  PRIMARY KEY (deployment_id, version_id, layer)
+);
+CREATE INDEX ix_layer_gaps_lineage ON processing_layer_gaps (deployment_id, layer, doc_id);
+
 -- DATA BOUNDARY (D69): Alembic creates this table but inserts no deployment row. After schema
 -- head, the library-owned bootstrap described below creates or verifies the one real row from
 -- typed profile inputs before any deployment-scoped registry FK row is inserted.
@@ -2869,6 +2896,7 @@ Labs."*
 | D5 governed predicate registry + `other:` | `predicates` (`synonyms`, `tier='other'` upsert, `usage_count` funnel) |
 | D6/D98 graph is a read-only view; validity has one home | adjudicated validity only on `relations`; generated `status`; claim-validity is evidence, not a second home (D41); live views/property graphs/functions in `p2_graph_design.md` |
 | D7/D94/D98 projection amendment | `projection_snapshots` is P3-only; P1 is current PostgreSQL derived state and live graph metadata has no generation |
+| D143 processing layers | `deployment_processing_layers` (enabled layers, coverage); `processing_layer_gaps` (versions a layer has not processed; drives the lineage-ordered backfill) |
 | D94 PostgreSQL-native P1 | one `chunk_search` sidecar; one current embedding on natural claim/relation/observation/entity rows; current-only `p1_search_channels` readiness; normalized joins for filters; no opaque cross-store refs or generalized mirror tables |
 | D9 search/rerank; evidence-count + graph-distance | `relations.evidence_count`; bounded live-graph frontier distance; degree is computed from indexed live adjacency only where consumed |
 | D11 graph analytics/community writeback | superseded by D98; no analytics/community tables or producer |

@@ -1736,6 +1736,11 @@ config choice.
 
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> When a deployment's facts layer is off (or deferred for a version), reconciliation runs in a
+> claims-only mode that applies testimony currency and nothing else; the full reconcile later
+> counts those transitions as its own. The currency and counting contract is unchanged.
+
 **Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
 counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
 the count stays `COUNT(DISTINCT doc_id)`. This entry is binding as written.
@@ -3635,6 +3640,11 @@ its input.
 
 ## D84. Extract work is leased per chunk so Claimify can run in parallel
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> Extract work exists only when the claims layer is entered at `embed_chunk` completion, and
+> the extract barrier opens E3 normalisation only when the facts layer is entered; otherwise it
+> opens the claims tail (`embed_claim`, claims-only `reconcile`).
+
 **Decision (2026-08-07).** Stage `extract_claims` is addressed primarily at
 **chunk** grain: `target_kind = chunk`, `target_id = chunk_id`, same
 `E2_EXTRACTOR_VERSION` Claimify generation as before. After E1 embedding
@@ -3844,6 +3854,9 @@ changes either child still must pass the ordinary evidence gate.
 
 ## D88. E3 normalize work is leased per claim so large documents can normalize in parallel
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The claim normalize fan-out is opened only when the facts layer is entered for the version.
+
 **Decision (2026-08-10).** Stage `normalize_relations` is addressed primarily at
 **claim** grain: `target_kind = claim`, `target_id = claim_id`, same
 `E3_NORMALIZER_VERSION` generation as D86. When the extract barrier would
@@ -3938,6 +3951,10 @@ for an unused benchmark harness.
 **Analysis.** `plan/analysis/fact_context_authority_performance.md`.
 
 ## D90. Observation flush work is leased per version-scoped entity unit so post-barrier D43 can run in parallel
+
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The empty path opens `adjudicate_supersession` and `embed_claim` only when the facts layer is
+> entered; otherwise it opens the claims tail (`embed_claim`, claims-only `reconcile`).
 
 **Decision (2026-08-12).** Stage `adjudicate_observations` under the entity
 fan-out generation is addressed at **version-scoped entity flush units**, not
@@ -7106,3 +7123,76 @@ patch pin.
 reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 [r2](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r2_2026-10-21.md),
 [r3](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r3_2026-10-21.md).
+
+
+## D143. Processing layers can be switched off per deployment and per request
+
+**Status:** accepted on merge of the design pull request; implementation is not implied.
+**Date:** 2026-10-23.
+
+**Context.** Every version ran the whole pipeline and every read consulted every kind of
+result. The owner asked (2026-10-23): "It should be possible to turn the layers on and off —
+both in ingestion and retrieval. However, they must be on by default." The motivating corpus,
+a Czech-legislation product of about 118,000 statute versions, is answered from binding text,
+declared effective periods (D140), section keys, supplied references and embeddings; the owner
+decided its first full ingestion runs without the fact layer and that claim extraction is
+evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14): sources
+1.5–4%, claims 18–46%, facts 50–80% (analysis §1.1).
+
+**Decision.**
+
+- **Three layers in a line:** *sources* (conversion, structure with section summaries,
+  cross-references, chunks, chunk embeddings), *claims* (Selection, Claimify, claim embeddings,
+  testimony currency), *facts* (normalisation, entity resolution, fact adjudication and
+  follow-ups, fact reconciliation, labels, window reviews, profiles, graph, plane K).
+  Sources ← claims ← facts; sources is always on.
+- **Deployment scope only.** `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` and
+  `REMEMBERSTACK_SELFHOST_FACTS_LAYER`, both default `true`; `setup` reconciles them into
+  `deployment_processing_layers` (no row = all on) and refuses facts without claims. No
+  per-document, per-source-kind or per-ingest setting, and no runtime API.
+- **One boundary per layer:** the claims boundary at `embed_chunk` completion, the facts
+  boundary at the extract barrier and the D90 empty path, decided in the completing
+  transaction. A layer not entered records a gap. When facts are not entered, the facts
+  boundary opens the **claims tail**: `embed_claim` and `reconcile` at
+  `reconcile-2026.07:claims` (testimony currency only). The full reconcile counts the
+  transitions of a claims-only run of the same version as its own.
+- **Off** stops entering the layer, holds its queued work unclaimed, stops serving it and stops
+  readiness expecting it; data is kept. Deletion and hard forget are never gated.
+- **On later** marks the layer `backfilling` and advances each lineage oldest first, one
+  version at a time, on the backfill lane: a completion advances its lineage; a boundary defers
+  a version whose lineage has an earlier gap. This preserves Rule 4 exactly — no re-chunking,
+  no chunk re-embedding, unchanged reuse identities, and each later version pays only for its
+  edit. Coverage becomes `complete` when the last gap is removed. Living-lineage fact history
+  starts when facts cover the lineage.
+- **Readiness** expects the enabled layers' stages; with all on it is unchanged.
+  `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
+  `doc-text-sources-v1` by enabled layers.
+- **Retrieval** reads the served (enabled) layers by default. A `layers` selection on
+  `POST /operations/{name}`, the sandbox execution routes, both SDKs, the CLI and
+  `remember mcp --layers` narrows it without changing any agent tool schema. Single-layer
+  reads of an unserved layer, explicit requests for one, and sandbox statements referencing one
+  are refused with 409 `layer_unavailable`; mixed operations answer from what is served and
+  carry `Envelope.layers` notices (`off`, `excluded`, `backfilling`), omitted when empty. The
+  MCP catalogue lists only tools whose layers are served; `GET /deployment` reports layer
+  states when not all on.
+
+**Alternatives rejected.** Finer-grained scopes (coverage becomes per-document and cannot be
+disclosed honestly per result); keeping an off layer served (incomplete and unreconciled);
+deleting an off layer's data (destroys paid work); unordered backfill (re-pays unchanged
+chunks); a `layers` argument on agent tools (changes the pinned agent surface); separate
+summary or entity layers (analysis §3).
+
+**Consequences.** Two tables and one migration. A facts-off deployment is ready after the
+claims reconcile; a claims-off deployment after `embed_chunk`. Self-host workers serve the
+backfill lane when their steady route is idle. The managed cloud must register the two new
+profile ids before a managed deployment switches a layer off. LoCoMo, existing deployments
+and existing clients are unaffected while every layer is on.
+
+**Refines.** D90 (the empty path opens the claims tail when facts are not entered); D54 and
+the evidence lifecycle's reconciliation (a claims-only mode); D84/D88 (the extract barrier
+opens normalisation only when facts are entered); orchestration §3 (self-host serves the
+backfill lane).
+
+**Authority:** [design](plan/designs/processing_layers_design.md),
+[analysis](plan/analysis/processing_layer_toggles.md),
+[delivery](plan/plans/processing_layers.md).

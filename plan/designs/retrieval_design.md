@@ -324,6 +324,17 @@ does not add a retrieval path; it returns the complete claims-and-sources and fa
 members of `ContextBundle/v2`. The exact contracts and bounds live in
 `open_query_space_design.md` §3.1.
 
+**Processing layers (D143).** Every read belongs to one or more layers — *sources* (chunks,
+documents, sections, references), *claims* and *facts* (entities, relations, observations, the
+entity graph, plane-K pages). A request reads the layers the deployment serves (its enabled
+layers); a caller may narrow that with a `layers` selection on `POST /operations/{name}` and
+the sandbox execution routes, outside the operations' argument schemas. A single-layer read
+of an unserved layer is refused with 409 `layer_unavailable`; `claims_and_sources_context`
+and `combined_context` answer from the served layers and say what they left out in the
+envelope's `layers` notices. With facts unserved, `facts_context` and `resolve_entity` are not
+listed. The per-read table and the rules are in the
+[processing layers design §7](processing_layers_design.md#7-retrieval).
+
 ## 5. The response envelope — the contract is the answer's self-account (D49)
 
 Most systems return rows. This one returns rows **plus machine-readable claims about the
@@ -365,6 +376,8 @@ answer itself** — because the caller is an agent that must *reason about* the 
   truncation:   {truncated: bool, returned, estimated_total, continuation} | null,  // S18/S49
   dropped_by_hydration: n,                             // §2 nominate-then-drop honesty (paths drop as units)
   negative:     null | {kind, explanation, workaround}  // §below
+  layers:       [ {layer: sources | claims | facts,      // D143; omitted when empty
+                   status: off | excluded | backfilling} ]?
 }
 ```
 

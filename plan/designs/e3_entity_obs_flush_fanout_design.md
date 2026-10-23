@@ -4,6 +4,11 @@
 > [Authoritative contract and supersession map](mutable_fact_windows_design.md#10-authority-and-supersession-map).
 > Conflicting temporal rules in the historical body below are superseded by that map.
 
+> **D143 amendment (processing layers).** This fan-out runs only when the deployment's facts
+> layer is entered for the version at the extract barrier; otherwise the barrier opens the claims
+> tail (`embed_claim`, claims-only `reconcile`) instead.
+> [Processing layers design §4](processing_layers_design.md#4-ingestion).
+
 **Status:** revised through dual design r3 — Claude APPROVE_WITH_NITS (r3+r4); Codex
 r3 ordering gap closed in this revision — binding once landed on `main`  
 **Date:** 2026-08-12  
