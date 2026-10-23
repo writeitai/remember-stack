@@ -33,6 +33,7 @@ from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
+from remember.mcp_tools import layer_unavailable
 from remember.mcp_tools import map_error
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
@@ -59,6 +60,8 @@ from rememberstack.model.documents import ChunkNotFoundError
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.surfaces.http_api import DocumentDeletionPort
 from rememberstack.surfaces.http_api import DocumentReferencesPort
 from rememberstack.surfaces.http_api import DocumentSearchPort
@@ -354,7 +357,10 @@ class OperationMcpServer:
             names.append(SECTION_HISTORY_TOOL_NAME)
         if self._references_backend is not None:
             names.append(DOCUMENT_REFERENCES_TOOL_NAME)
-        names.extend(OPERATION_TOOL_NAMES)
+        # D143 §7.4: operations whose layer the deployment does not serve
+        # (facts_context, resolve_entity without facts) are not listed.
+        served = {descriptor.name for descriptor in self._surface.served_descriptors()}
+        names.extend(name for name in OPERATION_TOOL_NAMES if name in served)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)
@@ -452,6 +458,12 @@ class OperationMcpServer:
             )
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
+        except LayerSelectionError as error:
+            return error_result(invalid_arguments(detail=str(error)))
+        except LayerUnavailableError as error:
+            return error_result(
+                layer_unavailable(layer=error.layer.value, detail=str(error))
+            )
         except Exception:  # noqa: BLE001 — the MCP wire boundary
             return _internal_error(name=name)
         return {

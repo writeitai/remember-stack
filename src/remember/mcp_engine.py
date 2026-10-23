@@ -134,18 +134,26 @@ class EngineMcpServer:
     """The memory tool catalogue, served against one engine's HTTP API."""
 
     def __init__(
-        self, *, client: MemoryClient, read_only: bool = False, path_ingest: bool
+        self,
+        *,
+        client: MemoryClient,
+        read_only: bool = False,
+        path_ingest: bool,
+        layers: tuple[str, ...] | None = None,
     ) -> None:
         """Bind one engine client.
 
         ``read_only`` omits and refuses every ``memory:write`` tool.
         ``path_ingest`` offers ``ingest``'s local ``path`` body (stdio only:
-        the caller runs on this machine).
+        the caller runs on this machine). ``layers`` (D143) narrows the
+        session to those processing layers: every operation and query call
+        carries it, and tools that read only excluded layers are not listed.
         """
         self._client = client
         self._backend = _ClientBackend(client=client)
         self._read_only = read_only
         self._path_ingest = path_ingest
+        self._layers = layers
 
     def list_tools(self) -> dict[str, object]:
         """The catalogue tools this deployment serves at the same version.
@@ -158,6 +166,7 @@ class EngineMcpServer:
             definition
             for definition in memory_tools()
             if served.get(definition.name) == definition.tool_version
+            and _tool_admitted(name=definition.name, layers=self._layers)
         ]
         return {
             "tools": render_tools_list(
@@ -220,7 +229,9 @@ class EngineMcpServer:
         try:
             if name in OPEN_QUERY_TOOL_NAMES:
                 text = json.dumps(
-                    self._client.call_open_query(name=name, arguments=arguments),
+                    self._client.call_open_query(
+                        name=name, arguments=arguments, layers=self._layers
+                    ),
                     default=str,
                 )
             elif name == ADJACENT_CHUNKS_TOOL_NAME:
@@ -233,7 +244,7 @@ class EngineMcpServer:
             else:
                 validate_arguments(name, arguments)
                 text = self._client.run_operation(
-                    name=name, arguments=arguments
+                    name=name, arguments=arguments, layers=self._layers
                 ).model_dump_json()
         except ToolArgumentError as error:
             return error_result(error.error)
@@ -243,6 +254,28 @@ class EngineMcpServer:
                 logger.exception("MCP tool %s failed with %s", name, mapped.code)
             return error_result(mapped)
         return {"content": [{"type": "text", "text": text}], "isError": False}
+
+
+_TOOL_LAYERS: dict[str, frozenset[str]] = {
+    "facts_context": frozenset({"facts"}),
+    "resolve_entity": frozenset({"facts"}),
+    "claims_and_sources_context": frozenset({"sources", "claims"}),
+    ADJACENT_CHUNKS_TOOL_NAME: frozenset({"sources"}),
+    SEARCH_DOCUMENTS_TOOL_NAME: frozenset({"sources"}),
+    SECTION_HISTORY_TOOL_NAME: frozenset({"sources"}),
+    DOCUMENT_REFERENCES_TOOL_NAME: frozenset({"sources"}),
+}
+"""The processing layers a read tool can answer from (D143 §7.2).
+
+Tools not listed (``combined_context``, the open-query and write tools) are
+offered whatever the session's selection; the engine applies it per call.
+"""
+
+
+def _tool_admitted(*, name: str, layers: tuple[str, ...] | None) -> bool:
+    """Whether a session narrowed to ``layers`` lists the tool."""
+    readable = _TOOL_LAYERS.get(name)
+    return layers is None or readable is None or bool(readable & set(layers))
 
 
 def _refusal(*, code: str, detail: str, agent_action: str) -> dict[str, object]:

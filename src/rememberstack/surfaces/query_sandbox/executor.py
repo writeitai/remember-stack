@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from typing import Final
+from typing import Protocol
 from uuid import UUID
 from uuid import uuid4
 
@@ -23,6 +24,10 @@ import psycopg
 from psycopg import sql as pgsql
 from pydantic import ValidationError
 
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.processing_layers import LayerAdmission
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
@@ -38,6 +43,8 @@ from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
+from rememberstack.surfaces.query_sandbox.layers import entity_filtered_claim_search
+from rememberstack.surfaces.query_sandbox.layers import statement_layers
 from rememberstack.surfaces.query_sandbox.limits import clamp_bytes
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
 from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
@@ -353,6 +360,28 @@ def _sql_type_family(value: object) -> str:
     return type(value).__name__.lower()
 
 
+class LayerAdmissionPort(Protocol):
+    """The D143 layer admission the sandbox consults (``ProcessingLayerCatalog``)."""
+
+    def admission(
+        self,
+        *,
+        deployment_id: UUID,
+        channels: frozenset[ProcessingLayer],
+        requested: frozenset[ProcessingLayer] | None,
+        mandatory: frozenset[ProcessingLayer] = frozenset(),
+    ) -> LayerAdmission:
+        """Which of the read's channels it may consult."""
+        ...
+
+
+def _with_warnings(*, result: QueryResult, warnings: tuple[str, ...]) -> QueryResult:
+    """Append D143 backfill warnings; an unchanged result when there are none."""
+    if not warnings:
+        return result
+    return result.model_copy(update={"warnings": (*result.warnings, *warnings)})
+
+
 class QuerySandboxExecutor:
     """One deployment's sandboxed SQL surface.
 
@@ -372,6 +401,7 @@ class QuerySandboxExecutor:
         analytical_entitlement: bool = False,
         search: object | None = None,
         embed: Callable[..., tuple[float, ...]] | None = None,
+        layers: LayerAdmissionPort | None = None,
     ) -> None:
         # The public functions need a projection to nominate from and a way to
         # embed a query; without them the statement still parses, and a call
@@ -386,6 +416,9 @@ class QuerySandboxExecutor:
         self._audit = audit or AuditTrail.disabled()
         self._kills = kill_switches or KillSwitches()
         self._manifest_hash = surface_manifest_hash(build_hash_members())
+        # D143 §7.5: which processing layers the deployment serves. Absent,
+        # every layer is served (a composition without the configuration).
+        self._layers = layers
 
     @property
     def deployment_id(self) -> UUID:
@@ -404,6 +437,7 @@ class QuerySandboxExecutor:
         max_bytes: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """One sandboxed statement; `QueryResult/v1` in every outcome.
 
@@ -420,6 +454,7 @@ class QuerySandboxExecutor:
             tier=tier,
             principal=principal,
             explain=False,
+            layers=layers,
         )
 
     def explain_sql(
@@ -429,6 +464,7 @@ class QuerySandboxExecutor:
         parameters: Sequence[object] = (),
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """`EXPLAIN (FORMAT JSON)` without execution; the same gates apply."""
         return self._run(
@@ -440,6 +476,7 @@ class QuerySandboxExecutor:
             tier=tier,
             principal=principal,
             explain=True,
+            layers=layers,
         )
 
     # -- the request pipeline -------------------------------------------------
@@ -455,6 +492,7 @@ class QuerySandboxExecutor:
         tier: LimitTier,
         principal: str,
         explain: bool,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         request_id = uuid4()
         started = datetime.now().astimezone()
@@ -523,6 +561,11 @@ class QuerySandboxExecutor:
             )
         if len(parameters) > limits.parameters_max:
             return failed(QueryErrorCode.INVALID_PARAMETER, "too many parameters")
+        layer_refusal, layer_warnings = self._gate_layers(
+            validated=validated, parameters=parameters, requested=layers
+        )
+        if layer_refusal is not None:
+            return failed(*layer_refusal)
         encoded_parameter_bytes = sum(_encoded_size(value) for value in parameters)
         if encoded_parameter_bytes > limits.parameters_bytes:
             return failed(
@@ -549,19 +592,22 @@ class QuerySandboxExecutor:
             return failed(code, admission)
 
         try:
-            return self._execute(
-                validated=validated,
-                parameters=parameters,
-                limits_model=result_limits,
-                row_cap=row_cap,
-                byte_cap=byte_cap,
-                statement_timeout_ms=timeout_ms,
-                tier=tier,
-                explain=explain,
-                request_id=request_id,
-                started=started,
-                clock=clock,
-                principal=principal,
+            return _with_warnings(
+                result=self._execute(
+                    validated=validated,
+                    parameters=parameters,
+                    limits_model=result_limits,
+                    row_cap=row_cap,
+                    byte_cap=byte_cap,
+                    statement_timeout_ms=timeout_ms,
+                    tier=tier,
+                    explain=explain,
+                    request_id=request_id,
+                    started=started,
+                    clock=clock,
+                    principal=principal,
+                ),
+                warnings=layer_warnings,
             )
         finally:
             self._kills.record_spend(
@@ -570,6 +616,78 @@ class QuerySandboxExecutor:
                 seconds=time.monotonic() - clock,
             )
             self._kills.release(deployment_id=self._deployment_id, principal=principal)
+
+    def _gate_layers(
+        self,
+        *,
+        validated: ValidatedQuery,
+        parameters: Sequence[object],
+        requested: frozenset[ProcessingLayer] | None,
+    ) -> tuple[tuple[QueryErrorCode, str] | None, tuple[str, ...]]:
+        """D143 §7.5: refuse a statement reading an unserved or excluded layer.
+
+        Runs after validation and before any planning. Returns the refusal (code
+        and message) or None, and the ``layer_backfilling:<layer>`` warnings for
+        layers the statement reads that are still being backfilled.
+        """
+        if self._layers is None and requested is None:
+            return None, ()
+        needed = statement_layers(
+            views=validated.referenced_views, functions=validated.referenced_functions
+        )
+        entity_search = entity_filtered_claim_search(
+            bindings=validated.srf_bindings, parameters=parameters
+        )
+        try:
+            admission = (
+                self._layers.admission(
+                    deployment_id=self._deployment_id,
+                    channels=frozenset(needed) | {ProcessingLayer.SOURCES},
+                    requested=requested,
+                    mandatory=(
+                        frozenset({ProcessingLayer.FACTS})
+                        if entity_search is not None
+                        else frozenset()
+                    ),
+                )
+                if self._layers is not None
+                else LayerAdmission(
+                    consulted=frozenset(ProcessingLayer)
+                    if requested is None
+                    else requested
+                )
+            )
+        except (LayerUnavailableError, LayerSelectionError) as error:
+            return (QueryErrorCode.INVALID_PARAMETER, str(error)), ()
+        if entity_search is not None and not admission.admits(
+            layer=ProcessingLayer.FACTS
+        ):
+            return (
+                QueryErrorCode.INVALID_PARAMETER,
+                f"{entity_search} with an entity_id filter needs the facts layer,"
+                " which this request does not admit",
+            ), ()
+        for layer, names in sorted(needed.items(), key=lambda item: item[0].value):
+            if admission.admits(layer=layer):
+                continue
+            views = [name for name in names if name in validated.referenced_views]
+            if views:
+                return (
+                    QueryErrorCode.RELATION_NOT_ALLOWED,
+                    f"{views[0]} belongs to the {layer.value} layer, which this"
+                    " deployment does not process or this request excludes",
+                ), ()
+            return (
+                QueryErrorCode.FUNCTION_NOT_ALLOWED,
+                f"{names[0]} belongs to the {layer.value} layer, which this"
+                " deployment does not process or this request excludes",
+            ), ()
+        warnings = tuple(
+            f"layer_backfilling:{layer.value}"
+            for layer in sorted(admission.backfilling, key=lambda item: item.value)
+            if layer in needed
+        )
+        return None, warnings
 
     def _execute(
         self,

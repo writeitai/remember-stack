@@ -21,7 +21,9 @@ from rememberstack.model import PipelineRouteStatus
 from rememberstack.model import PoisonTargetRecord
 from rememberstack.model import PoisonTargetReport
 from rememberstack.model import ProjectionSnapshotState
+from rememberstack.model.operations import ProcessingLayersReport
 from rememberstack.spine.lifecycle import CURRENCY_CACHE_MISMATCH_SQL
+from rememberstack.spine.processing_layers import layer_states_on
 
 _ERROR_CLASS = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 
@@ -71,6 +73,11 @@ class OperationalCatalog:
                 ).mappings()
             )
             currency = self._currency(connection=connection, parameters=parameters)
+            states = layer_states_on(connection=connection, deployment_id=deployment_id)
+            gaps = {
+                f"{row['layer']}_{row['kind']}": int(row["count"])
+                for row in connection.execute(_LAYER_GAPS, parameters).mappings()
+            }
         return OperationalReport(
             deployment_id=deployment_id,
             generated_at=generated_at,
@@ -79,6 +86,9 @@ class OperationalCatalog:
             poison_targets=poison_targets,
             latest_projections=latest_projections,
             currency=currency,
+            processing_layers=ProcessingLayersReport(
+                claims=states.claims, facts=states.facts, gaps=gaps
+            ),
         )
 
     def _dead_letters(
@@ -151,6 +161,20 @@ def error_class_from_traceback(error: str | None) -> str:
         return "unknown"
     candidate = lines[-1].split(":", maxsplit=1)[0].strip()
     return candidate if _ERROR_CLASS.fullmatch(candidate) is not None else "unknown"
+
+
+_LAYER_GAPS = text(
+    """
+    SELECT layer,
+           CASE WHEN discharged_at IS NOT NULL THEN 'discharged'
+                WHEN entered_at IS NOT NULL THEN 'entered'
+                ELSE 'open' END AS kind,
+           count(*) AS count
+    FROM processing_layer_gaps
+    WHERE deployment_id = :deployment_id
+    GROUP BY 1, 2
+    """
+)
 
 
 def _count(
