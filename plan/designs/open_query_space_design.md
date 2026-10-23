@@ -257,7 +257,11 @@ and semantic and lexical current-source chunk nominations, then confirms each
 final list through PostgreSQL. It returns only `evidence[]` and `chunks[]`.
 `candidate_k` applies to each of the four nomination channels and `k` applies
 separately to the final claim and chunk lists; the maximum payload is therefore
-`k` claims plus `k` chunks, never an ambiguously shared cut.
+`k` claims plus `k` chunks, never an ambiguously shared cut. When a processing
+layer is not admitted (disabled for the deployment or excluded by the request's
+`layers` selection, D143), only the admitted channels nominate — claims, chunks
+or both — and an empty result is a `boundary`, not `known_empty`
+([processing layers design §7.2–§7.3](processing_layers_design.md#72-which-layers-each-read-uses)).
 Omitting IDs preserves deployment-wide semantic retrieval. The operation never
 returns entity candidates.
 
@@ -397,6 +401,17 @@ active embedding configuration, and evaluation clock, each member is field-for-f
 equal to its direct child call; no child field is exempt or regenerated at the
 bundle layer. This pure composition is the only reason the fourth operation
 exists and is the sole D87 exception to §1.13.
+
+**Processing layers (D143).** The equality above holds per admitted channel
+set: the `claims_and_sources` member equals a direct call with the same admitted
+channels, and the `facts` member equals a direct `facts_context` call when facts
+are admitted. When facts are not admitted (disabled or excluded), the `facts`
+member is the one synthetic child the bundle builds: fact grain, no results,
+the `temporal_scope` `facts_context` would report for the request's time
+selector, the bundle's freshness, no truncation and a `boundary` negative. The
+canonical four-operation registry, its descriptors and the manifest are
+unchanged; only the served operation list is filtered
+([processing layers design §7.3](processing_layers_design.md#73-saying-what-is-missing--inside-the-existing-contract)).
 
 `question_context`, `current_context`, `include_facts`, and `include_entities`
 are absent from the catalog, registry, manifest, API/SDK/CLI/MCP descriptors,

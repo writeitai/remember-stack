@@ -316,10 +316,12 @@ not reached a version yet, the version's reconcile runs at component version
 exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
 and connector-cycle closure still defers to finalization — but opens no fact label and no window
 review. When the facts layer later reaches the version, the full reconcile runs under its own
-key and opens them. **Living supersession guard:** while the lineage's current version has an
-open claims gap (its claims are deferred or not yet backfilled), a reconcile skips step 2's
-`version_superseded` transitions, because the current version's occurrences do not exist yet;
-the current version's own reconcile computes them lineage-wide
+key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
+and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
+and only when the lineage's current version is its own version or has reached its claims frontier
+(every chunk's Selection and Claimify committed); otherwise the current version's occurrences may
+not exist yet and the step is skipped — the current version's own reconcile computes it
+lineage-wide. Deployments without a layer configuration run step 2 exactly as before
 ([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
 
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;

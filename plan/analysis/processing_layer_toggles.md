@@ -315,6 +315,31 @@ outcome is computed; otherwise a standard-profile measurement could be certified
 its fact work. Outcomes are therefore evaluated against the measured profile's layers, and a
 version that can no longer complete them gets `failed` / `processing_profile_changed`.
 
+### 5.6 What review round 2 added
+
+Round 2 found that live switching still left schedules where the boundary and the backfill
+disagreed, so the design now has **one admission procedure** (*advance*) for configured
+deployments, used by boundaries, frontiers, deletions and seeding alike: a version enters a layer
+only after every earlier version of its lineage reached that layer's reuse *frontier*, whether the
+earlier version entered before a switch, during one, or through the backfill. A deployment without
+a configuration row keeps today's paths byte for byte. The same round led to four narrower rules,
+all scoped to configured deployments or to the new backfill:
+
+- living supersession is computed only once the current version reached its claims frontier, in one
+  transaction with its transitions — an open-gap test missed a current version still in the sources
+  layer;
+- fact application admits only current-testimony claims, revalidated under the claim row lock —
+  choosing only the current version is not enough when a newer version retires claims while older
+  fact work is still queued;
+- every follow-up of backfill work keeps the backfill lane, including fact-application projection
+  repair and window reviews that today hard-code the steady lane;
+- the frontier (an ordering point) is distinct from readiness and receipts, which keep waiting for
+  `embed_claim`, `label_relation` and today's dead-letter handling.
+
+It also fixed two surface gaps: the exact `combined_context` composition rule (D87/D114) now holds per
+admitted layer set with one synthetic fact child, and a published P3 snapshot records the layer set
+it was built for, so the mount never keeps serving `entities/` after facts are switched off.
+
 ## 6. Retrieval semantics
 
 ### 6.1 Defaults and per-request selection

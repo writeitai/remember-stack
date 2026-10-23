@@ -3750,6 +3750,12 @@ Unknown **predicates** remain D5.
 
 ## D87. Context operations mirror identity, testimony, and fact authorities
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The exact-composition rule holds per admitted processing-layer set. When the facts layer is
+> disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
+> `boundary` negative, and the evidence child runs only its admitted channels. With every layer
+> admitted, this entry is binding as written.
+
 > **D114 amendment (2026-09-07).** The three retrieval operation names become
 > `claims_and_sources_context`, `facts_context`, and `combined_context` as one
 > clean break. Their D87 authorities and composition are unchanged. The
@@ -5650,6 +5656,12 @@ assertion provenance. Implementation and release remain separate gates.
 
 ## D114. Context operations use literal claims, sources, facts, and composition names
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The exact-composition rule holds per admitted processing-layer set. When the facts layer is
+> disabled or excluded, the bundle's fact child is a synthetic empty fact-grain envelope with a
+> `boundary` negative, and the evidence child runs only its admitted channels. With every layer
+> admitted, this entry is binding as written.
+
 **Status:** accepted when merged. **Date:** 2026-09-07.
 
 **Context.** D87's boundaries are correct, but `testimony_context` hides that
@@ -7157,24 +7169,34 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   facts without claims. No per-document, per-source-kind or per-ingest setting, no runtime API.
 - **One boundary per layer** — claims at `embed_chunk` completion, facts at the extract barrier
   and the D90 empty path — decided in the completing transaction under the shared layer fence and
-  the D135 lineage lock. A version that does not enter a layer gets a *gap* row. When facts are
-  not entered, the facts boundary opens the **claims tail**: `embed_claim` and `reconcile` at
+  the D135 lineage lock. Without a configuration row it enters exactly as today. In a *configured*
+  deployment it records a *gap* and runs the same **advance** procedure the backfill uses, so a
+  version enters a layer only after every earlier version of its lineage reached that layer's
+  reuse *frontier* (claims: extract barrier; facts: full reconcile). When facts are not entered,
+  the facts boundary opens the **claims tail**: `embed_claim` and `reconcile` at
   `reconcile-2026.07:claims`, which runs the full reconcile logic but opens no `label_relation`
-  and no window review, so existing facts stay exact while facts are off.
+  and no window review, so existing facts stay exact while facts are off (profile refresh is the
+  one paid exception, only when facts exist).
+- **Configured deployments only:** living supersession waits until the current version reached its
+  claims frontier, checked and applied in one transaction under the lineage lock; fact application
+  admits only current-testimony claims, revalidated under the claim row lock, so retired testimony
+  never becomes a fact in any order of work.
 - **Off drains:** boundaries stop entering; versions that entered finish the layer; retrieval
   and readiness stop using it; data is kept. Only lineage-level window reviews are held. Deletion
   and hard forget are never gated.
-- **On later backfills in lineage order** on the backfill lane: a completion or deletion advances
-  its lineage, a boundary defers a version whose lineage has an earlier open gap, `setup` seeds
-  every lineage. Snapshot lineages are backfilled every version oldest first (equal to always-on
-  processing); living lineages at their current version only, older gaps discharged. A reconcile
-  skips living supersession while the current version has an open claims gap. Coverage is derived
-  from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse identities,
-  each later snapshot version pays only for its edit.
+- **On later backfills in lineage order** through the same advance procedure, invoked by
+  boundaries, frontiers, deletions (including current-version repointing) and `setup`'s seeding.
+  Snapshot lineages are processed every version oldest first (equal to always-on processing);
+  living lineages at their current version only — older unentered gaps are discharged, and reopened
+  if deletion makes their version current again. Backfill work and all its follow-ups (including
+  fact-application projection repair and window reviews) stay on the backfill lane. Coverage is
+  derived from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse
+  identities, each later snapshot version pays only for its edit.
 - **Readiness** expects the enabled layers' stages (all on: unchanged; facts off: `reconcile` at
   either version). `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
-  `doc-text-sources-v1`; `profile_complete` certifies the measured profile, otherwise
-  `failed` / `processing_profile_changed`.
+  `doc-text-sources-v1`; `profile_complete` certifies every stage the measured profile requires
+  (standard: today's predicate), otherwise `failed` / `processing_profile_changed`. Frontiers order
+  lineages; they are not readiness.
 - **Retrieval** reads the served (enabled) layers. A `layers` selection on
   `POST /operations/{name}`, the sandbox execution routes, both SDKs, the CLI and
   `remember mcp --layers` narrows it without changing any agent tool schema. Reads have channels
@@ -7183,6 +7205,9 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   with an unconsulted channel is a `boundary`, never `known_empty`; backfilling sandbox reads warn;
   `GET /processing-layers` reports states; catalogues list only served tools. **No response model
   changes**, so default responses, descriptors and the manifest hash are byte-identical.
+  `combined_context` composes exactly per admitted set; with facts not admitted its fact child is a
+  synthetic empty `boundary` envelope. P3 serves only a snapshot built for the served set; the
+  knowledge mount is not published without facts.
 
 **Alternatives rejected.** Finer-grained scopes; serving or deleting an off layer; holding queued
 work; a currency-only claims reconcile; unordered backfill; backfilling old living versions; a
@@ -7199,7 +7224,8 @@ unaffected while every layer is on.
 evidence lifecycle's reconciliation (a claims-mode component version; the living supersession
 guard); D84/D88 (the extract barrier opens normalisation only when facts are entered);
 orchestration §3 (layer backfill; self-host serves the backfill lane); D136 §3.4 (the tool list
-follows served layers).
+follows served layers); D87 and D114 (exact composition per admitted layer set; the synthetic
+fact child).
 
 **Authority:** [design](plan/designs/processing_layers_design.md),
 [analysis](plan/analysis/processing_layer_toggles.md),

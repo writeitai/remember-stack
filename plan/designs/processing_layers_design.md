@@ -33,10 +33,15 @@ re-extracting or re-embedding anything. The Czech-legislation product that motiv
   sets are {sources}, {sources, claims} and {sources, claims, facts}. Sources is always on.
 - **Enabled.** A layer the deployment is configured to process (§3).
 - **Served.** A layer retrieval may read: exactly the enabled layers.
+- **Configured deployment.** One that has a row in `deployment_processing_layers` — every
+  deployment whose operator has ever set a layer variable to a non-default value. A deployment
+  without a row takes exactly today's code paths everywhere.
 - **Boundary.** The single point in the chain where a version enters a layer (§4.1).
-- **Entered / complete.** A version has *entered* a layer when its boundary enqueued the
-  layer's work; it is *complete* in the layer when that work finished (§5.1).
-- **Gap.** A record that a live version did not enter a layer at its boundary (§5.1).
+- **Entered.** A version has entered a layer when its layer work was enqueued.
+- **Frontier.** The point after which a version's layer products can be reused by later
+  versions of its lineage (§5.1). It is what lineage ordering waits for. It is *not* readiness
+  and not receipt completeness, which also wait for the layer's tail stages (§4.5).
+- **Gap.** A record that a live version has not (yet) entered a layer (§5.1).
 - **Backfilling.** An enabled layer with at least one open gap. Coverage is derived from the
   gap table, never stored.
 
@@ -121,10 +126,13 @@ barrier locks of the completing stage → the D135 lineage lock (`documents` row
 1. It refuses facts on with claims off, naming both variables.
 2. Under the exclusive fence it compares the configured set with the stored one (or the
    default) and, if they differ, writes the row and logs one structured line per changed layer
-   (layer, from, to, open gap count). Nothing else is written; switching off needs no other
-   action (§6).
+   (layer, from, to, open gap count). Once written, the row stays — a deployment that has been
+   configured keeps the configured code paths even if both layers are switched back on. Nothing
+   else is written; switching off needs no other action (§6).
 3. After committing it **seeds** every enabled layer that has open gaps (§5.4). It does this on
    every run, so an interrupted seed resumes on the next start.
+4. When the facts setting changed, it builds and publishes a P3 snapshot for the new served set
+   (§7.6) before the mounts are served.
 
 No engine API changes layers: it is deployment configuration with a cost, not a caller action
 (D60).
@@ -134,7 +142,7 @@ No engine API changes layers: it is deployment configuration with a cost, not a 
 ### 4.1 Boundaries
 
 Each layer is entered at exactly one boundary, decided inside the transaction that completes
-the previous stage, under the layer fence and the lineage lock (§3.3):
+the previous stage, under the layer fence and the D135 lineage lock (§3.3):
 
 - **claims boundary** — `embed_chunk` completion (today: one `extract_claims` job per chunk, or
   the D90 empty path for a version without chunks);
@@ -142,18 +150,27 @@ the previous stage, under the layer fence and the lineage lock (§3.3):
   version is grounded) and the D90 empty path (today: the E3 normalisation fan-out, or the empty
   observation flush).
 
-At each boundary:
+**A deployment without a configuration row** enters every layer exactly as today. No gap is
+written and no check runs beyond reading that the row is absent, so the chain, its work rows
+and its component versions are unchanged.
 
-| Condition (checked in order) | Action |
-| --- | --- |
-| The layer is disabled | Do not enter. Record a gap (at the claims boundary: a claims gap and a facts gap) unless the version or its lineage is deleted. The facts boundary opens the **claims tail** (§4.2). |
-| The version or its lineage is deleted | Enter as today, so the chain's reconcile retires the late work (D135); record no gap. |
-| An earlier live version of the lineage has an open gap of this layer | Do not enter; record a gap. The facts boundary opens the claims tail. The version waits for the backfill (§5.2). |
-| Otherwise | Enter the layer exactly as today. |
+**A configured deployment** decides by one procedure:
 
-With no configuration row and no gaps — every deployment that configures nothing — only the last
-row ever applies, so the chain, its work rows and its component versions are unchanged. Stages
-after a boundary need no check: their work exists only if the boundary opened it.
+1. If the layer is **disabled**: do not enter. Record a gap (at the claims boundary a claims gap
+   and a facts gap) unless the version or its lineage is deleted. The facts boundary opens the
+   **claims tail** (§4.2).
+2. If the version or its lineage is **deleted**: enter as today, so the chain's reconcile retires
+   the late work (D135); record no gap.
+3. Otherwise record a gap for the version (with the lane of the completing work) and run
+   **advance** for the lineage (§5.2) in the same transaction. Advance either enters this
+   version — stamping its gap entered — or leaves it waiting behind a predecessor that has not
+   reached its frontier. If the facts boundary leaves the version waiting, it opens the claims
+   tail.
+
+So in a configured deployment the boundary and the backfill share one admission rule: a version
+enters a layer only when every earlier version of its lineage has reached that layer's frontier,
+whether the earlier version was entered by a boundary, by a backfill, or before a switch.
+Stages after a boundary need no check: their work exists only if the boundary opened it.
 
 ### 4.2 The claims tail and the two reconcile modes
 
@@ -169,36 +186,58 @@ The claims-mode reconcile runs **the same handler logic as the full reconcile** 
 transitions, recount, the zero-support policy (including the connector-cycle deferral to
 `CycleFinalizer`), review flags, `evidence_changed`, entity-profile refresh, and the D135
 deleted-testimony path with its document-binding rebuild — and differs in one thing: it opens
-**no `label_relation` and no fact-window review**. So facts that already exist (from a period
-when facts were on) keep their support counts and closures exact while facts are off, and the
-work is a no-op when no facts exist. No union of transitions across runs is needed, and cycle
-finalization sees correct counts.
+**no `label_relation` and no fact-window review**. Facts that already exist (from a period when
+facts were on) therefore keep their support counts and closures exact while facts are off. This
+is a deliberate cost exception: when such facts exist, the profile refresh can make embedding
+calls while the facts layer is off; when no facts exist it does nothing.
 
 When the facts layer later reaches a version that ran the claims tail, the ordinary facts chain
-ends in the full reconcile at `reconcile-2026.07` — a different idempotency key — which finds no
-new transitions, and opens `label_relation` and the window review as today.
+ends in the full reconcile at `reconcile-2026.07` — a different idempotency key — which opens
+`label_relation` and the window review as today.
 
-**Living lineages and an unprocessed current version.** A reconcile computes `living`-mode
-supersession against the lineage's current version's claim occurrences. If the current version
-has an open claims gap (its claims are deferred or not yet backfilled), those occurrences do not
-exist yet, and retiring against them would wrongly retire claims the current version will reuse.
-In that case the reconcile skips the supersession step; the current version's own reconcile
-computes it lineage-wide when it runs. Without gaps — every unconfigured deployment — the step
-runs exactly as today.
+**Living supersession guard (configured deployments).** A reconcile retires a `living` lineage's
+claims that are not attached to the lineage's current version. In a configured deployment the
+current version may not have reached its claims frontier yet — it may still be converting,
+chunking, deferred behind a predecessor, or claims may be disabled — and its occurrence set is
+then incomplete; retiring against it would retire claims the current version will reuse, and
+reuse does not restore currency. So the supersession step reads the current version, checks that
+it is this reconcile's own version or has reached its claims frontier, computes the stale set and
+applies the transitions **in one transaction under the lineage lock**; otherwise it skips the
+step. The current version's own reconcile computes supersession lineage-wide when it runs. In a
+deployment without a configuration row the step runs exactly as today.
 
-### 4.3 Switching off drains; it never holds
+### 4.3 Fact application admits current testimony only (configured deployments)
 
-A version that entered a layer finishes that layer: work already queued for it is claimed and
-runs as normal after the layer is switched off. Every version therefore ends either complete in
-a layer or with a gap — never half-processed — and no claims tail can be stranded behind held
-fact work. Only one kind of work is held: **`review_fact_windows` rows are not claimed while
-facts are disabled.** They are lineage-level reviews that declarations and reconciles queue
-outside the version chain; they run when facts are switched back on. A caller that needs spend
-to stop at once uses the existing lane budgets (orchestration §4).
+The E3 handlers do not filter on currency: the normalisation fan-out takes every claim occurrence
+of the version and adjudication can create a fact from a claim that is no longer current. In a
+configured deployment, facts work can run after a later version retired some of its claims — a
+backfill or deferred version, or a version draining after facts were switched off — so a
+configured deployment applies one eligibility rule:
 
-### 4.4 Readiness
+- the facts fan-out selects only the version's **current-testimony** claims (that set is the
+  D88 expected set; when it is empty the D90 empty observation flush applies);
+- fact application re-reads the incoming claim's currency under its row lock and **contributes
+  nothing** from a claim that is no longer current. Currency transitions take the same row lock,
+  so a retirement and an application serialize: either the application sees the claim retired, or
+  the retirement's own recount and zero-support policy see the new support.
 
-`PipelineReadinessCatalog` expects the stages of the enabled layers, in today's order:
+Retired testimony therefore never becomes a fact, whichever order the work runs in. A deployment
+without a configuration row keeps today's handlers unchanged.
+
+### 4.4 Switching off drains; it never holds
+
+A version that entered a layer finishes that layer: work already queued for it is claimed and runs
+as normal after the layer is switched off. Every version therefore ends either past its frontier
+in a layer or with a gap — never half-processed — and no claims tail can be stranded behind held
+fact work. Only one kind of work is held: **`review_fact_windows` rows are not claimed while facts
+are disabled.** They are lineage-level reviews that declarations and reconciles queue outside the
+version chain; they run when facts are switched back on. A caller that needs spend to stop at once
+uses the existing lane budgets (orchestration §4).
+
+### 4.5 Readiness and receipts
+
+**Serving readiness.** `PipelineReadinessCatalog` expects the stages of the enabled layers, in
+today's order:
 
 | Enabled layers | Expected stages |
 | --- | --- |
@@ -207,95 +246,116 @@ to stop at once uses the existing lane budgets (orchestration §4).
 | sources | `convert`, `structure`, `chunk`, `embed_chunk` |
 
 With facts disabled, `reconcile` is satisfied by a succeeded row at **either** component version,
-so a version that finished the full pipeline before facts were switched off stays ready. A
-version whose gap was discharged (§5.3) reports that layer's stages as `skipped`. The capability
-checks (`p1`, `live_graph`, `p3`) are unchanged: they check configuration and publication, not
-data. A version with an open gap in an enabled layer is not ready until the backfill processes it.
+so a version that finished the full pipeline before facts were switched off stays ready. A version
+whose gap was discharged (§5.3) reports that layer's stages as `skipped`. The capability checks
+(`p1`, `live_graph`, `p3`) are unchanged. A version with an open gap in an enabled layer is not
+ready until it is processed.
 
-### 4.5 Metering
+**Metering.** Every model call is metered per stage in `cost_ledger` as today. The managed text
+meter stamps the `processing_profile_id` from the layers enabled at measurement time:
 
-Every model call is metered per stage in `cost_ledger` as today. The managed text meter stamps the
-`processing_profile_id` from the layers enabled at measurement time:
+| Enabled layers | `processing_profile_id` | Stages its receipt requires |
+| --- | --- | --- |
+| sources, claims, facts | `doc-text-standard-v1` (unchanged) | today's twelve |
+| sources, claims | `doc-text-claims-v1` | the eight above (`reconcile` at either version) |
+| sources | `doc-text-sources-v1` | the four above |
 
-| Enabled layers | `processing_profile_id` |
-| --- | --- |
-| sources, claims, facts | `doc-text-standard-v1` (unchanged) |
-| sources, claims | `doc-text-claims-v1` |
-| sources | `doc-text-sources-v1` |
-
-The outcome receipt certifies **the measured profile**, not the current configuration:
-`profile_complete` is true only when the version is complete in every layer of the profile it was
-measured under. A version that cannot reach that state — it has a gap in a measured layer that is
-now disabled, or a discharged gap — gets a `failed` outcome with reason
-`processing_profile_changed`. Layers enabled after measurement are not part of the profile and do
-not delay its receipt. Pricing, including of a later backfill, belongs to the managed cloud (D60),
-whose rate registry must know a profile id before a managed deployment uses it.
+The outcome receipt certifies **the measured profile**, not the current configuration and not a
+frontier: `profile_complete` is true only when every stage the measured profile requires succeeded,
+with the completion time and dead-letter handling of today's receipts (for the standard profile,
+exactly today's predicate). A version that can no longer complete its measured profile — it has a
+gap in a measured layer that is now disabled, or a discharged gap — gets a `failed` outcome with
+reason `processing_profile_changed`. Layers enabled after measurement are not part of the profile
+and do not delay its receipt. Pricing, including of a later backfill, belongs to the managed cloud
+(D60), whose rate registry must know a profile id before a managed deployment uses it.
 
 ## 5. Switching a layer on later
 
-### 5.1 Gaps, entry and completion
+### 5.1 Gaps and frontiers
 
-Boundaries are the only writers of new gap rows (§4.1). A version is **complete** in a layer when:
+Boundaries are the only writers of new gap rows (§4.1). A version reaches a layer's **frontier**
+when its products are reusable by later versions:
 
-- **claims** — its extract barrier is ready (every chunk grounded), or it has no chunks;
+- **claims** — its extract barrier is ready (every chunk's Selection and Claimify results are
+  committed), or it has no chunks;
 - **facts** — its full reconcile succeeded.
 
-Completion deletes the version's gap of that layer, if any. Deleting or forgetting a version
-deletes its gaps (§6.3). Unconfigured deployments never write a gap.
+Reaching the frontier deletes the version's gap of that layer. The frontier is only the ordering
+point: readiness and receipts additionally wait for `embed_claim`, `label_relation` and the other
+tail stages (§4.5). Deleting or forgetting a version deletes its gaps (§6.3).
 
-### 5.2 Advance and defer
+### 5.2 One advance procedure
 
 Reuse across versions only looks at earlier versions of a lineage (Selection reuse requires a
-smaller `version_no`; Claimify and claim attachment follow from it). A backfill therefore enters
-**one version of a lineage at a time**, and different lineages run in parallel. Two rules, both
-under the fence and the lineage lock:
+smaller `version_no`; Claimify and claim attachment follow from it). So a configured deployment
+enters a layer **one version of a lineage at a time**, and different lineages run in parallel. One
+procedure, **advance(lineage, layer)**, decides it. It runs under the layer fence and the lineage
+lock, and is invoked by:
 
-- **Defer** (at the boundary, §4.1): a version whose lineage has an earlier open gap of the layer
-  records a gap instead of entering, so a fresh version waits behind its predecessors instead of
-  being extracted before them.
-- **Advance**: whenever a version completes a layer, or a version is deleted, while the layer is
-  enabled and the lineage has an open, unentered gap of it, the transaction picks the lineage's
-  **next target** (§5.3) and enters it if every earlier live version of the lineage that
-  completed the sources layer is complete in this layer or has a discharged gap. For facts, the
-  target must also be complete in claims; if it is not, its own facts boundary enters facts when
-  claims complete. A target whose predecessor is still running waits for that predecessor's
-  completion, which advances again.
+- a boundary that recorded a gap (§4.1);
+- a version reaching the layer's frontier;
+- a version deletion and any current-version repointing it causes;
+- `setup`'s seeding (§5.4).
 
-**Entering** a version stamps its gap's `entered_at` and enqueues exactly what its boundary would
-have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the E3
-normalisation fan-out (or the empty observation flush) for facts — on the **backfill lane**.
-Versions that never completed the sources layer (a failed conversion) are ignored. A version whose
-layer work dead-letters stops its lineage at that version until it is replayed or deleted; both are
-visible in `remember ops inspect`.
+Steps:
 
-### 5.3 Which versions a backfill processes
+1. If the layer is disabled, stop.
+2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
+   every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
+   discharged: their work is running and must finish.
+3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
+   for a snapshot lineage the oldest version with an open unentered gap. No target: stop.
+4. If the target has not completed the sources layer, stop: its own claims boundary will record its
+   gap and run advance again. (A target whose sources work failed terminally stays unprocessed and
+   visible in `remember ops inspect`.)
+5. If any earlier live version of the lineage that completed the sources layer has not reached this
+   layer's frontier and has no discharged gap, stop: that version's frontier will run advance again.
+   This includes versions entered before a switch and still draining, and dead-lettered versions,
+   which block until they are replayed or deleted.
+6. For facts: if the target has not reached its claims frontier, stop: its facts boundary will run
+   advance again.
+7. **Enter** the target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
+   have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the
+   current-testimony E3 fan-out (or the empty observation flush) for facts (§4.3) — on the gap's
+   recorded lane (steady for a version deferred during ingestion, backfill for a gap recorded while
+   the layer was disabled). A zero-chunk target reaches its claims frontier at once, which runs
+   advance again in the same transaction.
+
+Every gap is thus eventually entered by an event that is certain to happen — its own boundary, a
+predecessor's frontier, a deletion, or `setup` — with no polling job and no new stage.
+
+### 5.3 Which versions are processed
 
 - **Snapshot lineages** — version succession changes no claim's currency, which is D140's model for
-  editions — are backfilled **every version, oldest first**. Each version finds its predecessor's
-  results exactly as in normal ingestion.
-- **Living lineages** — the document *is* its current version — are backfilled **at their current
-  version only**. When advance reaches a living lineage, it enters the current version and
-  discharges (`discharged_at`) every other open, unentered gap of the layer in that lineage. Content
-  that only older versions carried is never extracted (claims) or turned into facts (facts): a
-  living lineage's claim and fact history in a backfilled layer starts at its current version.
-
-This keeps the ordinary handlers' inputs truthful. The E3 handlers normalise and adjudicate every
-claim of the version they are given, current or not; processing an old living version would turn
-retired testimony into new facts. For snapshot lineages every claim stays current, so the facts a
-backfill builds equal those always-on processing would have built.
+  editions — are processed **every version, oldest first**. Each version finds its predecessor's
+  results exactly as in normal ingestion, and the facts built later equal those always-on processing
+  would have built.
+- **Living lineages** — the document *is* its current version — are processed **at their current
+  version only**. Older unentered gaps are discharged (their stages read `skipped`), so content that
+  only older versions carried is never extracted (claims) or turned into facts (facts): a living
+  lineage's history in a layer it did not process starts at its current version.
+- **Deletion that repoints a living lineage** to an older version reopens that version's discharged
+  gaps (step 2), so it is processed like any current version. Its claims are extracted as ordinary
+  ingestion of that version would extract them: reuse comes from earlier live versions only, and
+  testimony of the deleted version is never reused (D135). Its chunks and their embeddings, which
+  exist from the sources layer, are untouched.
 
 ### 5.4 Seeding and coverage
 
-`setup` seeds an enabled layer by running **advance** once for every lineage with an open,
-unentered gap of that layer, in bounded batches. From then on completions and deletions advance
-their own lineages; there is no polling job and no new stage. Coverage is derived: an enabled layer
-is backfilling while an open gap of a live version exists, and complete otherwise (one indexed
-`EXISTS`). Nothing stores or settles a coverage value, so no race can leave it stale.
+`setup` seeds an enabled layer by running advance once for every lineage with an open unentered gap
+of that layer, in bounded batches, on every run. Coverage is derived: an enabled layer is
+backfilling while an open gap of a live version exists, and complete otherwise (one indexed
+`EXISTS`). Nothing stores or settles a coverage value.
 
 ### 5.5 Lanes
 
 Backfill work runs on the backfill lane (orchestration §3): it never delays fresh ingestion and has
-its own budget (`WorkLedgerSettings.budgets`). A self-host worker serves its stage's backfill route
+its own budget (`WorkLedgerSettings.budgets`). The lane of every follow-up of entered work is the
+lane of the work that caused it, **including the follow-ups opened outside the version chain**:
+fact-application projection repair (`label_relation` on fact-application targets) and the window
+reviews requested by a reconcile both take the originating lane instead of a fixed steady lane;
+steady stays the default for work with no originating lane, and D67's promotion rule still lets a
+steady enqueue promote a backfill duplicate. A self-host worker serves its stage's backfill route
 whenever its steady route has no due row.
 
 ### 5.6 Rule 4: what a backfill pays for
@@ -304,7 +364,7 @@ A backfill re-enters only the layer that was missing. It never re-chunks, never 
 and changes no reuse input: chunking (D58), `extraction_input_hash` and `reuse_identity_hash` (D56,
 D140 text origin, fixed when the chunk was created), embedding carry-forward (D80) and the D122
 Claimify window are those of normal ingestion, because the backfill runs the ordinary handlers in
-lineage order. A snapshot lineage backfilled oldest first pays what always-on ingestion of the same
+lineage order. A snapshot lineage processed oldest first pays what always-on ingestion of the same
 versions would have paid: for the first version everything; for each later version, Selection for
 its changed chunks and their immediate same-section neighbours, and Claimify additionally within the
 known D122 window (a Rule 4 gap that D143 neither causes nor fixes). A living lineage pays for its
@@ -315,15 +375,16 @@ current version once. Claim embeddings skip claims that are already embedded.
 ### 6.1 Effects
 
 - Boundaries stop entering the layer (§4.1); new versions get gaps.
-- Versions that already entered the layer finish it (§4.3).
-- Retrieval stops serving the layer immediately (§7); readiness stops expecting it (§4.4).
+- Versions that already entered the layer finish it (§4.4).
+- Retrieval stops serving the layer immediately (§7); readiness stops expecting it (§4.5).
 - The layer's data is kept. It is not deleted, tombstoned or served. Facts that exist keep exact
   support counts and closures through the claims-mode reconcile (§4.2). Switching the layer back
-  on reuses everything: versions complete in the layer have no gap and are not re-processed.
+  on reuses everything: versions past the layer's frontier have no gap and are not
+  re-processed.
 
 ### 6.2 Work outside the version chain
 
-Window reviews are held while facts are off (§4.3). Review-queue verdicts that an operator applies
+Window reviews are held while facts are off (§4.4). Review-queue verdicts that an operator applies
 still run their own fact updates; they are explicit operator actions.
 
 ### 6.3 Deletion and forgetting are never gated
@@ -404,6 +465,17 @@ query-surface manifest, so D143 adds **no response field**. Disclosure uses what
 Non-empty results from a backfilling layer carry no marker, as with any other processing lag. With
 every layer served and complete, every response is byte-identical to today's.
 
+**Composition (refines D87/D114).** With every channel admitted, `combined_context` stays the exact
+composition of its two children, each field-for-field equal to the direct call. With a narrowed
+set, the `claims_and_sources` child equals a direct `claims_and_sources_context` call with the same
+admitted channels (its nomination runs only those channels), and the `facts` child equals a direct
+`facts_context` call when facts are admitted. When facts are not admitted the `facts` child is the
+one synthetic child the bundle may build: a fact-grain envelope with no results, the
+`temporal_scope` that `facts_context` would report for the request's time selector, the bundle's
+snapshot freshness, no truncation, and the `boundary` negative above. The canonical
+four-operation registry, its descriptors and their manifest entries are unchanged; only the
+*served* list (`GET /operations`, catalogues) is filtered (§7.4).
+
 ### 7.4 Discovery
 
 - **`GET /processing-layers`** (new route, `memory:read`) returns
@@ -438,8 +510,19 @@ or function of a disabled or excluded layer is refused with the existing `relati
 ### 7.6 Plane K and P3
 
 Plane K compiles pages about entities and predicates from facts, so it runs only while facts are
-served; the page views are facts views (§7.5). The P3 corpus filesystem omits its `entities/` tree
-when facts are not served; its `documents/` tree is unchanged.
+served; the page views are facts views (§7.5), and the knowledge mount is not published while facts
+are not served.
+
+The P3 corpus filesystem is an immutable published snapshot behind an atomically swapped pointer.
+Each P3 snapshot records whether it was built with facts (with `entities/` and the entity indexes)
+or without them; a snapshot built without facts omits `entities/` and every index or orientation
+line that links to it, so the tree it exposes is self-consistent. The mount publisher activates the
+**latest published snapshot built for the currently served set**, never an incompatible one; until
+one exists it serves the empty-corpus placeholder. `setup` builds and publishes a matching snapshot
+when the facts setting changes (§3.4), and a build that started under the old configuration and
+finishes later is recorded for that configuration, so it is never activated for the new one. The
+retained data is untouched. Without a configuration row every snapshot is built and served exactly
+as today.
 
 ## 8. Compatibility
 
@@ -485,24 +568,42 @@ database-level, with recorded or fake model providers:
    per-stage provider call counts equal those of an always-on run of the same versions. The D122
    window and packing-boundary cases are covered by expected-failure tests naming the known gap. The
    existing Rule 4 tests (`test_reuse_lifecycle.py`, `test_d140_text_origin_pg.py`) pass unchanged.
-7. **Living backfill.** A living lineage with three versions ingested with claims off is backfilled
+7. **Living backfill.** A living lineage with three versions ingested with claims off is processed
    at its current version only: older gaps are discharged and report `skipped`; current testimony
-   after the backfill equals the current version's claims; a version ingested during the backfill is
-   deferred, and the earlier version's reconcile does not retire claims it later reuses.
-8. **Ordering and races.** A version crossing its boundary while its predecessor is in the backfill
-   records a gap and enters only after the predecessor completes; a zero-chunk successor advances; a
-   dead-lettered head blocks until replay or deletion, and deleting it advances the successor; a
-   late boundary for a deleted version writes no gap; a configuration change concurrent with a
-   boundary decision serializes on the fence.
+   afterwards equals the current version's claims. With v2 paused between `structure` and
+   `embed_chunk` (already current), v1's reconcile skips supersession; after v2 completes, every
+   reused unchanged claim is current. Deleting the current version after claims and facts were
+   discharged on the older one reopens and processes it; the cycle repeats correctly after another
+   off/on switch.
+8. **Ordering and races.** Claims on → v1 entered → claims off (v1 draining) → v2 ingested → claims
+   on before v1 reaches its frontier: v2 records a gap and enters only after v1's frontier, with
+   provider-call counts and claim-id reuse equal to an always-on run. A version crossing its boundary
+   while its predecessor is backfilling waits the same way. A living lineage whose current version
+   is still in the sources layer at seeding completes without another `setup` run, including when
+   that version has no chunks. A dead-lettered head blocks until replay or deletion, and deleting it
+   advances the successor; a late boundary for a deleted version writes no gap; a configuration
+   change concurrent with a boundary decision serializes on the fence.
 9. **Facts later.** A snapshot lineage processed with facts off and switched to facts on gets the
-   facts an always-on run produces; switching facts on → off (a living version removes a fact's only
-   claim inside a connector cycle that finalizes) → on leaves the fact closed.
-10. **Receipts.** A version measured under `doc-text-standard-v1` whose facts boundary falls after
-    facts are switched off gets `failed` / `processing_profile_changed`; a version measured under
-    `doc-text-sources-v1` succeeds when sources complete even if claims are switched on meanwhile;
-    default receipts are unchanged.
-11. **Deletion.** Deleting a document while facts are off closes its facts, rebuilds its document
+   facts an always-on run produces. Facts on → off (a living version removes a fact's only claim
+   inside a connector cycle that finalizes) → on leaves the fact closed. With facts enabled and v1
+   entered but not yet normalised, a living v2 that removes claim C runs its reconcile first; v1's
+   E3 then creates no fact from C (a fake normaliser yielding an open-window fact for C proves it)
+   and makes no adjudication call for it.
+10. **Lanes.** A facts backfill with a zero backfill budget for `label_relation` and an available
+    steady budget leaves its projection repairs parked on the backfill lane, with no
+    steady-attributed provider calls.
+11. **Receipts.** A version measured under `doc-text-standard-v1` whose facts boundary falls after
+    facts are switched off gets `failed` / `processing_profile_changed`; with the full reconcile
+    succeeded but `embed_claim` or `label_relation` pending the receipt waits, and a dead letter there
+    fails it as today; a version measured under `doc-text-sources-v1` succeeds when its four stages
+    complete even if claims are switched on meanwhile; default receipts are unchanged.
+12. **Deletion.** Deleting a document while facts are off closes its facts, rebuilds its document
     bindings and deletes its gaps, without switching facts on.
+13. **Mounts.** An all-on P3 publication followed by switching facts off serves a snapshot without
+    `entities/` (and no index line pointing to it) and no knowledge mount; a build that started before
+    the switch and publishes after it is not activated.
+14. **Off/on cost.** Provider-call fixtures for facts off record the profile-refresh exception only
+    when facts exist.
 
 ## 10. Non-goals and scope boundaries
 

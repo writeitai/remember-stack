@@ -110,7 +110,9 @@ document" — requirements). Rules:
   time** — every version oldest first for snapshot lineages, the current version only for living
   ones — because cross-version reuse only looks at earlier versions (Rule 4). `setup` advances
   every lineage once; from then on each completion or deletion advances its own lineage through
-  the chain rule. Its work runs on this lane
+  the chain rule. Its work, and every follow-up it causes — including fact-application
+  projection repair and window reviews, which therefore take their originating lane rather than a
+  fixed steady lane — runs on this lane
   ([processing layers design §5](processing_layers_design.md#5-switching-a-layer-on-later)).
 - **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
   claims from its stage's backfill route whenever its steady route has no due row.
