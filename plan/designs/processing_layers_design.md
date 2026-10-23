@@ -320,15 +320,15 @@ lock, and is invoked by:
 
 Steps, in this order:
 
-1. If the layer is disabled: for claims, stop; for facts, run step 5 (release owed claims tails)
-   and stop.
-2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
-   every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
-   discharged: their work is running and must finish. **Discharge and reopening follow the layer
-   dependency:** discharging a version's claims gap also records its facts gap as discharged (it
-   will never extract, so it can never reach a facts boundary), and reopening a current version's
-   claims gap also reopens its facts gap, so both layers become eligible again in dependency
-   order.
+1. **Living lineages, always first — even when the layer is disabled:** reopen any discharged gap of
+   the lineage's current version (reopening a claims gap also reopens its facts gap), so a version
+   made current again by a deletion is never left discharged. A disabled layer enqueues nothing for
+   the reopened gap; it waits for the layer to be switched on and seeded.
+2. If the layer is disabled: for claims, stop; for facts, run step 5 (release owed claims tails)
+   and stop. Otherwise, for living lineages, discharge every open, *unentered* gap of the lineage's
+   other versions (§5.3). Entered gaps are never discharged: their work is running and must finish.
+   **Discharge follows the layer dependency:** discharging a version's claims gap also records its
+   facts gap as discharged (it will never extract, so it can never reach a facts boundary).
 3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
    for a snapshot lineage the oldest version with an open unentered gap.
 4. Decide whether the target is **admitted**:
@@ -378,7 +378,7 @@ predecessor's frontier, a deletion, or `setup` — with no polling job and no ne
   only older versions carried is never extracted (claims) or turned into facts (facts): a living
   lineage's history in a layer it did not process starts at its current version.
 - **Deletion that repoints a living lineage** to an older version reopens that version's discharged
-  gaps (step 2), so it is processed like any current version. Its claims are extracted as ordinary
+  gaps (step 1, even while its layers are disabled), so it is processed like any current version. Its claims are extracted as ordinary
   ingestion of that version would extract them: reuse comes from earlier live versions only, and
   testimony of the deleted version is never reused (D135). Its chunks and their embeddings, which
   exist from the sources layer, are untouched.
@@ -629,7 +629,11 @@ database-level, with recorded or fake model providers:
    `embed_chunk` (already current), v1's reconcile skips supersession; after v2 completes, every
    reused unchanged claim is current. Deleting the current version after claims and facts were
    discharged on the older one reopens and processes it; the cycle repeats correctly after another
-   off/on switch.
+   off/on switch. Discharge older versions → finish the current one → switch both layers off →
+   delete the current version while they are off → switch them on: the restored version's gaps
+   reopen at the deletion, `setup` seeds it without any other event, coverage reads backfilling
+   until its work completes, its stages are no longer `skipped`, and its chunks, D140 identities
+   and chunk vectors survive with no chunk-embedding call.
 8. **Ordering and races.** Claims on → v1 entered → claims off (v1 draining) → v2 ingested → claims
    on before v1 reaches its frontier: v2 records a gap and enters only after v1's frontier, with
    provider-call counts and claim-id reuse equal to an always-on run. A version crossing its boundary
