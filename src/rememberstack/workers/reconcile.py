@@ -38,6 +38,7 @@ from rememberstack.model import EnqueueWork
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
@@ -45,6 +46,8 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.lifecycle import LifecycleCatalog
+from rememberstack.spine.processing_layers import lineage_changed_on
+from rememberstack.spine.processing_layers import take_layer_fence_on
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
@@ -53,6 +56,14 @@ from rememberstack.workers.p1 import P1Settings
 
 RECONCILE_VERSION = "reconcile-2026.07"
 """The reconcile stage's component version (D12 idempotency key member)."""
+
+RECONCILE_CLAIMS_VERSION = f"{RECONCILE_VERSION}:claims"
+"""The claims-mode reconcile of a version that did not enter facts (D143 §4.2).
+
+Same logic as the full reconcile; it opens no ``label_relation`` and no fact
+window review. A distinct component version so the full reconcile can still
+run for the version when the facts layer later reaches it.
+"""
 
 _logger = logging.getLogger(__name__)
 
@@ -108,11 +119,22 @@ class ReconcileHandler:
             context["versioning_mode"] == "living"
             and context["current_version_id"] is not None
         ):
-            source_acted = self._catalog.stale_for_supersession(
-                deployment_id=deployment_id,
-                doc_id=context["doc_id"],  # type: ignore[arg-type]
-                current_version_id=context["current_version_id"],  # type: ignore[arg-type]
-            )
+            if self._catalog.layers_configured(deployment_id=deployment_id):
+                # D143 §4.2: retire only against a current version whose
+                # claim occurrences are complete, checked and applied in one
+                # transaction under the lineage lock.
+                source_acted = self._catalog.apply_guarded_supersession(
+                    deployment_id=deployment_id,
+                    doc_id=context["doc_id"],  # type: ignore[arg-type]
+                    version_id=version_id,
+                    reconciliation_id=reconciliation_id,
+                )
+            else:
+                source_acted = self._catalog.stale_for_supersession(
+                    deployment_id=deployment_id,
+                    doc_id=context["doc_id"],  # type: ignore[arg-type]
+                    current_version_id=context["current_version_id"],  # type: ignore[arg-type]
+                )
         transcription = self._catalog.stale_for_reextraction(
             version_id=version_id,
             representation_id=representation_id,
@@ -231,6 +253,9 @@ class ReconcileHandler:
             raise NonRetryableHandlerError(
                 f"version {version_id} reconciliation context has no doc_id"
             )
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
+            # D143 §4.2: the claims mode opens no fact label and no review.
+            return HandlerOutcome()
         return HandlerOutcome(
             follow_up=(
                 *_window_review(
@@ -241,6 +266,7 @@ class ReconcileHandler:
                     request_id=uuid5(
                         NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                     ),
+                    lane=work.lane,
                 ),
                 EnqueueWork(
                     deployment_id=work.deployment_id,
@@ -343,7 +369,10 @@ class ReconcileHandler:
                 reconciliation_id,
             )
         # D140 §8.2: late testimony retired from a deleted version changes
-        # the lineage's evidence; review its facts (only if it had periods)
+        # the lineage's evidence; review its facts (only if it had periods).
+        # The claims mode opens no review (D143 §4.2).
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
+            return HandlerOutcome()
         return HandlerOutcome(
             follow_up=_window_review(
                 catalog=self._catalog,
@@ -353,6 +382,7 @@ class ReconcileHandler:
                 request_id=uuid5(
                     NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                 ),
+                lane=work.lane,
             )
         )
 
@@ -592,6 +622,9 @@ class DeletionService:
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
+        # D143: a deleted head never blocks its successors; a repointed living
+        # lineage processes its new current version.
+        self._catalog.advance_layers(deployment_id=deployment_id, doc_id=doc_id)
         return delta
 
     def delete_lineage(
@@ -614,6 +647,7 @@ class DeletionService:
             self._refresh_profiles(
                 deployment_id=deployment_id, delta=delta, meter=meter
             )
+        self._catalog.advance_layers(deployment_id=deployment_id, doc_id=doc_id)
         return delta
 
     def _refresh_profiles(
@@ -710,6 +744,8 @@ class DocumentDeleter:
             raise ForgetInProgressError(
                 f"deployment {deployment_id} is honoring a hard forget"
             )
+        # D143 §3.3 lock order: the layer fence before the lineage lock.
+        take_layer_fence_on(connection=connection, deployment_id=deployment_id)
         catalog = LifecycleCatalog.on_connection(connection=connection)
         # Lock the lineage BEFORE reading its state: a concurrent delete of
         # the same document waits here, then reads the committed tombstone
@@ -750,6 +786,10 @@ class DocumentDeleter:
             raise DocumentNotFoundError(str(doc_id))
         # D140 §8.2: catalog.delete_lineage queued the window review in this
         # transaction (only for a lineage that ever had periods)
+        # D143: the deleted lineage's gaps go in the same transaction.
+        lineage_changed_on(
+            connection=connection, deployment_id=deployment_id, doc_id=doc_id
+        )
         return delta, deleted_at
 
 
@@ -928,8 +968,12 @@ def _window_review(
     doc_id: UUID,
     reason: str,
     request_id: UUID,
+    lane: ProcessingLane | None,
 ) -> tuple[EnqueueWork, ...]:
-    """A D140 §8.2 lineage review job, only for a lineage that had periods."""
+    """A D140 §8.2 lineage review job, only for a lineage that had periods.
+
+    It takes the lane of the reconcile that requests it (D143 §5.5).
+    """
     from rememberstack.spine.period_adjudication import review_request
 
     if not catalog.lineage_ever_periodised(deployment_id=deployment_id, doc_id=doc_id):
@@ -940,5 +984,6 @@ def _window_review(
             doc_id=doc_id,
             reason=reason,
             request_id=request_id,
+            lane=lane,
         ),
     )

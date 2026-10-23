@@ -127,6 +127,65 @@ class LifecycleCatalog:
             )
         return dict(row)
 
+    def advance_layers(self, *, deployment_id: UUID, doc_id: UUID) -> None:
+        """D143: after a deletion, drop deleted versions' gaps and advance the lineage."""
+        from rememberstack.spine.processing_layers import lineage_changed_on
+
+        with self._engine.begin() as connection:
+            lineage_changed_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+
+    def layers_configured(self, *, deployment_id: UUID) -> bool:
+        """Whether the deployment has a D143 processing-layer configuration."""
+        from rememberstack.spine.processing_layers import layer_configuration_on
+
+        with self._engine.connect() as connection:
+            return layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).configured
+
+    def apply_guarded_supersession(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        version_id: UUID,
+        reconciliation_id: UUID,
+    ) -> tuple[CurrencyTransition, ...]:
+        """D143 §4.2: living supersession against a settled current version only.
+
+        In one transaction under the lineage lock: read the current version,
+        require it to be ``version_id`` or to have complete claim occurrences,
+        compute the stale set and apply it. Otherwise nothing is retired; the
+        current version's own reconcile settles the lineage when it runs.
+        """
+        from rememberstack.spine.processing_layers import occurrences_complete_on
+
+        with self.transaction() as catalog, catalog._engine.connect() as connection:
+            current = connection.execute(
+                text(
+                    "SELECT current_version_id FROM documents"
+                    " WHERE doc_id = :doc_id FOR SHARE"
+                ),
+                {"doc_id": doc_id},
+            ).scalar_one_or_none()
+            if current is None:
+                return ()
+            if current != version_id and not occurrences_complete_on(
+                connection=connection, version_id=current
+            ):
+                return ()
+            stale = catalog.stale_for_supersession(
+                deployment_id=deployment_id, doc_id=doc_id, current_version_id=current
+            )
+            catalog.apply_transitions(
+                deployment_id=deployment_id,
+                reconciliation_id=reconciliation_id,
+                transitions=stale,
+            )
+            return stale
+
     def stale_for_supersession(
         self, *, deployment_id: UUID, doc_id: UUID, current_version_id: UUID
     ) -> tuple[CurrencyTransition, ...]:

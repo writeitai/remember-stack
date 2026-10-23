@@ -61,6 +61,15 @@ from rememberstack.spine.work_ledger import enqueue_on
 class DocumentCatalog:
     """E0 row writes and stage loads over an explicitly composed engine."""
 
+    def processing_profile_id(self, *, deployment_id: UUID) -> str:
+        """The managed-meter processing profile of the layers enabled now (D143)."""
+        from rememberstack.spine.processing_layers import layer_configuration_on
+
+        with self._engine.connect() as connection:
+            return layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).processing_profile_id
+
     def __init__(self, *, engine: Engine) -> None:
         """Bind the catalog to the spine database."""
         self._engine = engine

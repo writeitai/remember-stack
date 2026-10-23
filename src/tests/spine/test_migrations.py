@@ -663,7 +663,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
         "observation_evidence": 64,
         "relation_evidence": 64,
     }
-    assert len(fresh_inventory.tables) == 83
+    assert len(fresh_inventory.tables) == 85
     assert fresh_inventory.empty_tables == ("deployments", "entity_types", "predicates")
 
     engine = create_engine(database_url)

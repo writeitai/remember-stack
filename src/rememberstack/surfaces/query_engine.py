@@ -109,10 +109,13 @@ from rememberstack.model.assured_operations import OverlapFactTime
 from rememberstack.model.claims import EvidenceSpan
 from rememberstack.model.client import DocumentSearchFilters
 from rememberstack.model.client import EffectiveInterval
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import ReadTime
 from rememberstack.model.envelope import SCOPE_PENDING_MAX_DOC_IDS
 from rememberstack.model.fact_windows import FactWindow
 from rememberstack.model.fact_windows import TemporalMatch
+from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ClaimVectorLookupPort
 from rememberstack.ports.p1_index import merge_accounts
@@ -127,6 +130,9 @@ from rememberstack.ports.p1_index import P1SearchUnavailableError
 from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
+from rememberstack.spine.processing_layers import admit_layers_on
+from rememberstack.spine.processing_layers import layer_configuration_on
+from rememberstack.spine.processing_layers import layer_states_on
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
@@ -265,6 +271,103 @@ def _with_surface[**P, T](
         return wrapped
 
     return decorator
+
+
+def _requires_layer[**P](
+    layer: ProcessingLayer,
+) -> Callable[[Callable[P, Envelope]], Callable[P, Envelope]]:
+    """Gate a single-layer read on the deployment's processing layers (D143 §7.2).
+
+    A layer the deployment does not serve is ``LayerUnavailableError`` before
+    any read; an empty answer while the layer is still being backfilled is a
+    ``boundary``, never ``known_empty``. A deployment that serves the layer
+    fully gets the method's own envelope unchanged.
+    """
+
+    def decorator(method: Callable[P, Envelope]) -> Callable[P, Envelope]:
+        @wraps(method)
+        def wrapped(*args: P.args, **kwargs: P.kwargs) -> Envelope:
+            engine = cast("QueryEngine", args[0])
+            admission = engine.layer_admission(
+                deployment_id=cast(UUID, kwargs["deployment_id"]),
+                channels=frozenset({layer}),
+            )
+            return disclose_layers(
+                envelope=method(*args, **kwargs), admission=admission
+            )
+
+        return wrapped
+
+    return decorator
+
+
+def unconsulted_layer_envelope(
+    *,
+    grain: Grain,
+    time: FactTime | None,
+    evaluated_at: datetime,
+    layers: frozenset[ProcessingLayer],
+) -> Envelope:
+    """The synthetic ``combined_context`` child none of whose channels is admitted.
+
+    D143 §7.3: an empty envelope of the child's grain, with the temporal scope
+    its direct operation would report, the bundle's freshness, no truncation
+    and a ``boundary`` naming the layers that were not consulted.
+    """
+    names = ", ".join(sorted(layer.value for layer in layers))
+    if grain is Grain.FACT:
+        return _facts_context_graph_boundary(
+            time=time or CurrentFactTime(),
+            evaluated_at=evaluated_at,
+            explanation=(
+                f"the {names} layer was not consulted: this deployment does not"
+                " process it, or the request excluded it"
+            ),
+            workaround="answer from claims_and_sources_context",
+        )
+    return _envelope(
+        grain=Grain.EVIDENCE,
+        temporal_scope=_text_temporal_scope(
+            scope=TextScope.of(time=time, evaluated_at=evaluated_at)
+        ),
+        freshness=_freshness(at=evaluated_at),
+        negative=Negative(
+            kind=NegativeKind.BOUNDARY,
+            explanation=(
+                f"the {names} layers were not consulted: this deployment does not"
+                " process them, or the request excluded them"
+            ),
+            workaround="answer from facts_context",
+        ),
+    )
+
+
+_EVIDENCE_LAYERS: Final = frozenset({ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS})
+"""The channels of the claims-and-sources operation (D143 §7.2)."""
+
+_FACTS_ONLY: Final = frozenset({ProcessingLayer.FACTS})
+"""The mandatory dependency of an entity-scoped read."""
+
+
+def disclose_layers(*, envelope: Envelope, admission: LayerAdmission) -> Envelope:
+    """Turn an empty ``known_empty`` answer into a ``boundary`` when a layer was
+    not consulted or is still being backfilled (D143 §7.3)."""
+    if admission.complete or envelope.negative is None:
+        return envelope
+    if envelope.negative.kind is not NegativeKind.KNOWN_EMPTY:
+        return envelope
+    return envelope.model_copy(
+        update={
+            "negative": Negative(
+                kind=NegativeKind.BOUNDARY,
+                explanation=f"nothing found, but {admission.boundary_explanation()}",
+                workaround=(
+                    "check GET /processing-layers; retry once the backfill finishes,"
+                    " or widen the layers selection"
+                ),
+            )
+        }
+    )
 
 
 def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envelope]:
@@ -691,6 +794,37 @@ class QueryEngine:
         return _freshness(scope_pending=pending)
 
     @_with_surface(SurfaceCostKind.LOOKUP)
+    def layer_states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """Each switchable layer's state, for ``GET /processing-layers``."""
+        with self._engine.connect() as connection:
+            return layer_states_on(connection=connection, deployment_id=deployment_id)
+
+    def served_layers(self, *, deployment_id: UUID) -> frozenset[ProcessingLayer]:
+        """The layers the deployment serves now (D143 §1)."""
+        with self._engine.connect() as connection:
+            return layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).served
+
+    def layer_admission(
+        self,
+        *,
+        deployment_id: UUID,
+        channels: frozenset[ProcessingLayer],
+        requested: frozenset[ProcessingLayer] | None = None,
+        mandatory: frozenset[ProcessingLayer] = frozenset(),
+    ) -> LayerAdmission:
+        """Which of a read's channels it may consult (D143 §7.2)."""
+        with self._engine.connect() as connection:
+            return admit_layers_on(
+                connection=connection,
+                deployment_id=deployment_id,
+                channels=channels,
+                requested=requested,
+                mandatory=mandatory,
+            )
+
+    @_requires_layer(ProcessingLayer.FACTS)
     def resolve(
         self,
         *,
@@ -1035,6 +1169,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.OPERATION)
+    @_requires_layer(ProcessingLayer.FACTS)
     def facts_context(
         self,
         *,
@@ -1383,6 +1518,7 @@ class QueryEngine:
 
     @_with_surface(SurfaceCostKind.OPERATION)
     @_with_fact_snapshot
+    @_requires_layer(ProcessingLayer.FACTS)
     def default_facts_context(
         self,
         *,
@@ -1686,16 +1822,52 @@ class QueryEngine:
         candidate_k: int | None = None,
         evaluated_at: datetime | None = None,
         time: ReadTime | FactTime | None = None,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> Envelope:
         """Return current claims and source passages, never facts or entities.
 
         ``time`` (D140 §3.1, default ``current``) selects the text in force
         for the scope in every nomination channel and at confirmation.
+        ``layers`` (D143 §7.1) narrows the consulted channels — claims,
+        sources or both; entity scoping needs the facts layer.
         """
         candidate_k = ContextRetrievalBudget(
             k=k, candidate_k=candidate_k
         ).candidate_depth
         entity_ids = _validate_context_entity_ids(entity_ids=entity_ids)
+        admission = self.layer_admission(
+            deployment_id=deployment_id,
+            channels=_EVIDENCE_LAYERS,
+            requested=layers,
+            mandatory=_FACTS_ONLY if entity_ids else frozenset(),
+        )
+        return disclose_layers(
+            envelope=self._claims_and_sources_context_admitted(
+                deployment_id=deployment_id,
+                query=query,
+                entity_ids=entity_ids,
+                k=k,
+                candidate_k=candidate_k,
+                evaluated_at=evaluated_at,
+                time=time,
+                channels=admission.consulted,
+            ),
+            admission=admission,
+        )
+
+    def _claims_and_sources_context_admitted(
+        self,
+        *,
+        deployment_id: UUID,
+        query: str,
+        entity_ids: tuple[UUID, ...],
+        k: int,
+        candidate_k: int,
+        evaluated_at: datetime | None,
+        time: ReadTime | FactTime | None,
+        channels: frozenset[ProcessingLayer],
+    ) -> Envelope:
+        """The operation body over the channels its layer admission allows."""
         # D142 §8.2 (review r1 P1-3/P1-4): the entity check, every channel,
         # confirmation, hydration and pending/freshness share one snapshot,
         # deadline and authority instant.
@@ -1723,6 +1895,7 @@ class QueryEngine:
                     scope=scope,
                     evaluation=evaluation,
                     nominate_in_scope=True,
+                    channels=channels,
                 )
         except P1EntityScopeTooBroadError as error:
             return _entity_scope_too_broad(grain=Grain.EVIDENCE, explanation=str(error))
@@ -1742,8 +1915,15 @@ class QueryEngine:
         scope: TextScope,
         evaluation: datetime,
         nominate_in_scope: bool,
+        channels: frozenset[ProcessingLayer] = frozenset(
+            {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
+        ),
     ) -> Envelope:
-        """The body of ``claims_and_sources_context`` inside one P1 snapshot."""
+        """The body of ``claims_and_sources_context`` inside one P1 snapshot.
+
+        Only the admitted ``channels`` nominate, and the D140 pending probes
+        follow them (D143 §7.2 rule 4).
+        """
         answer = self._claims_and_sources_context_retrieval(
             deployment_id=deployment_id,
             query=query,
@@ -1752,18 +1932,28 @@ class QueryEngine:
             entity_ids=entity_ids,
             scope=scope,
             nominate_in_scope=nominate_in_scope,
+            channels=channels,
+        )
+        probes: tuple[
+            tuple[Literal["claim", "chunk"], Literal["semantic", "bm25"], int], ...
+        ] = (
+            *(
+                (("claim", "semantic", candidate_k), ("claim", "bm25", candidate_k))
+                if ProcessingLayer.CLAIMS in channels
+                else ()
+            ),
+            *(
+                (("chunk", "semantic", candidate_k), ("chunk", "bm25", candidate_k))
+                if ProcessingLayer.SOURCES in channels
+                else ()
+            ),
         )
         touched = self._touched_pending(
             deployment_id=deployment_id,
             scope=scope,
             query=query,
             documents=None,
-            probes=(
-                ("claim", "semantic", candidate_k),
-                ("claim", "bm25", candidate_k),
-                ("chunk", "semantic", candidate_k),
-                ("chunk", "bm25", candidate_k),
-            ),
+            probes=probes,
             entity_ids=entity_ids,
         )
         scoped = self._scoped_freshness(
@@ -1788,6 +1978,7 @@ class QueryEngine:
             }
         )
 
+    @_requires_layer(ProcessingLayer.FACTS)
     def lookup_relations(
         self,
         *,
@@ -1862,6 +2053,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.LOOKUP)
+    @_requires_layer(ProcessingLayer.FACTS)
     def lookup_observations(
         self,
         *,
@@ -1950,6 +2142,7 @@ class QueryEngine:
         )
 
     @_with_surface(SurfaceCostKind.SEARCH)
+    @_requires_layer(ProcessingLayer.CLAIMS)
     def search_claims(
         self,
         *,
@@ -2316,6 +2509,7 @@ class QueryEngine:
             **scope,
         )
 
+    @_requires_layer(ProcessingLayer.FACTS)
     def hydrate_relation(self, *, deployment_id: UUID, relation_id: UUID) -> Envelope:
         """The S5 chain: relation → evidence claims → source documents.
 
@@ -2447,6 +2641,7 @@ class QueryEngine:
             ),
         )
 
+    @_requires_layer(ProcessingLayer.FACTS)
     def transcript_relation(
         self, *, deployment_id: UUID, relation_id: UUID
     ) -> Envelope:
@@ -3035,6 +3230,9 @@ class QueryEngine:
         entity_ids: tuple[UUID, ...] = (),
         scope: TextScope | None = None,
         nominate_in_scope: bool = False,
+        channels: frozenset[ProcessingLayer] = frozenset(
+            {ProcessingLayer.SOURCES, ProcessingLayer.CLAIMS}
+        ),
     ) -> Envelope:
         """Run the testimony hybrid, optionally ranking inside an entity scope.
 
@@ -3134,9 +3332,15 @@ class QueryEngine:
                 stop_reason=_channel_stop_reason(semantic, lexical),
             )
 
-        claim_context = hydrate_claim_context()
-        chunk_context = hydrate_chunk_context()
-        return self.combine_evidence(inputs=(claim_context, chunk_context))
+        contexts = (
+            *((hydrate_claim_context(),) if ProcessingLayer.CLAIMS in channels else ()),
+            *(
+                (hydrate_chunk_context(),)
+                if ProcessingLayer.SOURCES in channels
+                else ()
+            ),
+        )
+        return self.combine_evidence(inputs=contexts)
 
     def _nominate_claims_and_sources_claims(
         self,

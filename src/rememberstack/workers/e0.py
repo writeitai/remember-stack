@@ -68,7 +68,6 @@ from rememberstack.core.storage_routing import storage_class_for_derived
 from rememberstack.core.text_metering import classify_doc_text
 from rememberstack.core.text_metering import DOC_TEXT_CLASSIFIER_VERSION
 from rememberstack.core.text_metering import DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION
-from rememberstack.core.text_metering import DOC_TEXT_PROCESSING_PROFILE_ID
 from rememberstack.model import Block
 from rememberstack.model import ClaimedWork
 from rememberstack.model import ConversionError
@@ -247,7 +246,9 @@ class UploadIngestor:
             content_hash=content_hash,
         )
         upload = self._detect_upload(upload=upload)
-        upload, metering = self._prepare_managed_text(upload=upload)
+        upload, metering = self._prepare_managed_text(
+            deployment_id=deployment_id, upload=upload
+        )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:upload:{deployment_id}:{content_hash}"
         )
@@ -318,7 +319,9 @@ class UploadIngestor:
             content_hash=content_hash,
         )
         upload = self._detect_upload(upload=upload)
-        upload, metering = self._prepare_managed_text(upload=upload)
+        upload, metering = self._prepare_managed_text(
+            deployment_id=deployment_id, upload=upload
+        )
         doc_id = uuid5(
             NAMESPACE_URL, f"rememberstack:{source_kind}:{deployment_id}:{source_ref}"
         )
@@ -367,9 +370,12 @@ class UploadIngestor:
         )
 
     def _prepare_managed_text(
-        self, *, upload: DocumentUpload
+        self, *, deployment_id: UUID, upload: DocumentUpload
     ) -> tuple[DocumentUpload, ManagedTextMeasurementDraft | None]:
-        """Measure managed text after the common byte-class admission check."""
+        """Measure managed text after the common byte-class admission check.
+
+        The processing profile follows the layers enabled now (D143 §4.5).
+        """
         scope = self._meter_scope
         if scope is None:
             return upload, None
@@ -387,7 +393,9 @@ class UploadIngestor:
             canonical_source_bytes=classified.canonical_source_bytes,
             classifier_version=DOC_TEXT_CLASSIFIER_VERSION,
             measurement_algorithm_version=(DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION),
-            processing_profile_id=DOC_TEXT_PROCESSING_PROFILE_ID,
+            processing_profile_id=self._catalog.processing_profile_id(
+                deployment_id=deployment_id
+            ),
             measured_at=datetime.now(timezone.utc),
             identity_key=scope.identity_key,
             staged_content=upload.content,

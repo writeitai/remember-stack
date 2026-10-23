@@ -28,6 +28,7 @@ from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import NormalizationResponse
 from rememberstack.model import ObservationCandidate
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
@@ -636,6 +637,7 @@ class AdjudicateObservationsHandler:
             subject_entity_id=entity_id,
             meter=meter,
             call_key=f"observation_flush:{entity_id}",
+            lane=work.lane or ProcessingLane.STEADY,
         )
         profile_call_key = f"profile:observation_flush:{entity_id}"
         _run_profile_refresh(

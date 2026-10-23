@@ -95,8 +95,14 @@ class SelfHostWorkerLoop:
         bucket: TokenBucket,
         database_url: str,
         fallback_poll_s: float = 30.0,
+        serve_backfill: bool = False,
     ) -> None:
-        """Bind the loop to its route, rate limit, and LISTEN connection source."""
+        """Bind the loop to its route, rate limit, and LISTEN connection source.
+
+        ``serve_backfill`` lets a steady-route loop also claim its stage's
+        backfill route whenever the steady route has no due row (D143 §5.5),
+        so priority stays structural: steady first, every time.
+        """
         self._worker = worker
         self._deployment_id = deployment_id
         self._stage = stage
@@ -104,6 +110,7 @@ class SelfHostWorkerLoop:
         self._bucket = bucket
         self._database_url = database_url
         self._fallback_poll_s = fallback_poll_s
+        self._serve_backfill = serve_backfill and lane is ProcessingLane.STEADY
 
     def drain_due(self) -> tuple[RunResult, ...]:
         """Claim and run due work on the route until none remains or tokens run out."""
@@ -112,6 +119,12 @@ class SelfHostWorkerLoop:
             result = self._worker.run_one(
                 deployment_id=self._deployment_id, stage=self._stage, lane=self._lane
             )
+            if result.outcome is RunResultOutcome.NO_WORK and self._serve_backfill:
+                result = self._worker.run_one(
+                    deployment_id=self._deployment_id,
+                    stage=self._stage,
+                    lane=ProcessingLane.BACKFILL,
+                )
             if result.outcome is RunResultOutcome.NO_WORK:
                 break
             results.append(result)
