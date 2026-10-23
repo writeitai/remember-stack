@@ -85,6 +85,12 @@ def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> Non
     assert "regardless of claim form" in rendered
     assert "relative expression inside quoted or attributed text" in rendered
     assert "you MUST resolve the expression" in rendered
+    assert "that actually anchors that source utterance" in rendered
+    assert (
+        "An upload/session date does not anchor relative speech inside an attached"
+        in rendered
+    )
+    assert "Direct dialogue whose source" in rendered
     assert "WRITE THE RESOLVED DATE INTO claim_text" in rendered
     assert "exactly like a pronoun" in rendered
     assert "valid-time fields" in rendered

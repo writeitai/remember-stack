@@ -338,13 +338,19 @@ when claim_text preserves a direct quotation or attributed speech:
 a relative expression inside quoted or attributed text is never exempt.
 Whenever the source utterance contains a relative temporal expression
 ("yesterday", "last Saturday", "last year", "three hours ago", "a few weeks ago",
-and similar) AND the DOCUMENT HEADER provides an absolute date or timestamp,
+and similar) AND the DOCUMENT HEADER provides an absolute date or timestamp
+that actually anchors that source utterance,
 you MUST resolve the expression against that anchor and emit valid_kind,
 valid_from_iso, valid_until_iso, and valid_precision when the source supports
 an interval representable by the schema. Otherwise keep time unknown; never
 turn an uncertain part of a day into an invented instant. Unrepresentable
 timing alone must not drop an otherwise entailed claim: keep its source-faithful
 text and use null valid_kind/from/until with unknown precision.
+An upload/session date does not anchor relative speech inside an attached
+document, quoted fiction or a historical account merely because they share
+a chunk. Use that content's own supported anchor; without one, preserve its
+relative phrase and keep its valid time unknown. Direct dialogue whose source
+date is the header date still resolves against that header normally.
 
 WRITE THE RESOLVED DATE INTO claim_text. A relative time expression is context
 a standalone claim must not depend on, exactly like a pronoun: whenever you

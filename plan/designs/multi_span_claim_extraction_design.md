@@ -149,7 +149,12 @@ Never infer a converter origin from a prose heading. Direct source wording,
 OCR, visual observation and interpretation do not establish the same authority
 or the same speaker. Quoted document content must not silently become the
 surrounding author's biography, and source/upload time must not replace a real
-date inside an attachment. OCR remains eligible evidence about document content.
+date inside an attachment. A relative expression resolves only against an anchor
+that actually dates its source utterance; an upload/session timestamp alone
+cannot date dialogue inside quoted fiction or a historical attachment. Without
+a supported internal anchor, preserve the relative phrase and unknown valid
+time. Direct dialogue still uses its genuine source-date anchor. OCR remains
+eligible evidence about document content.
 
 A target mixing direct source expression with OCR or model-mediated material
 also exposes its direct source slices before the ordinary catalog, within the
