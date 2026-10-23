@@ -5941,7 +5941,7 @@ reference, text-origin, chunk-row and embed-delivery generations declare the
 input boundary; packing and the embedding model/policy do not change. Exact
 embedding inputs reuse vectors, including from an earlier processing generation
 of the same document version. Existing stores are not automatically reprocessed.
-See [current extraction design §6](plan/designs/multi_span_claim_extraction_design.md#6-media-evidence-and-provenance)
+See [current extraction design §6](plan/designs/multi_span_claim_extraction_design.md#6-media-provenance-lifecycle-and-recovery)
 and [source-origin analysis](plan/analysis/source-origins-at-extraction-20261023.md).
 
 **Status:** accepted by the user (2026-09-14); runtime implementation proceeds

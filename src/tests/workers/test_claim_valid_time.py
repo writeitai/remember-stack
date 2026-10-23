@@ -70,6 +70,7 @@ def test_document_header_keeps_absent_source_time_unknown() -> None:
 def test_rendered_claimify_prompt_requires_anchored_temporal_resolution() -> None:
     """The extraction request resolves relative time into both text and fields."""
     rendered = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="- Melanie painted a lake sunrise last year.",
         passages="[S1] TARGET (origin-eligible):\nMelanie painted a lake sunrise last year.",
@@ -331,12 +332,14 @@ def test_two_same_day_sources_keep_distinct_temporal_anchors() -> None:
         update={"source_modified_at": datetime(2023, 5, 8, 22, tzinfo=UTC)}
     )
     first_prompt = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="the final ended three hours ago",
         passages="",
         bundle=_header_text(source=source, chunk=_UNDATED_CHUNK),
     )
     later_prompt = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps="the final ended three hours ago",
         passages="",
