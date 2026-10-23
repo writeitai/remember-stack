@@ -231,8 +231,8 @@ _CLAIMIFY_PROMPT: Final = """You are the Claimify stage of a claim extractor.
 Conversion-origin labels are interpretation metadata, never additional source
 words. Keep quotation/speaker ownership: document contents, observations and
 interpretations must not silently become the surrounding author's biography.
-Preserve real document dates; a surrounding upload/session date does not date
-events inside a quotation. Do not let long attachment content displace a brief
+Preserve real document dates; a surrounding upload/session date alone does not
+date events inside an attached or quoted document. Do not let long attachment content displace a brief
 kept direct-source assertion.
 
 {source_focus}
