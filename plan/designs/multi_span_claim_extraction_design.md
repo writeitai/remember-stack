@@ -159,12 +159,12 @@ eligible evidence about document content.
 A target mixing direct source expression with OCR or model-mediated material
 also exposes its direct source slices before the ordinary catalog, within the
 existing Selection/Claimify calls. This improves visibility without hiding OCR,
-adding another model pass or guaranteeing exhaustive extraction. Renderer labels
-only boost known deterministic direct-text kinds (`passthrough`, `prose`,
+adding another model pass or guaranteeing exhaustive extraction. The focus block
+only boosts known deterministic direct-text kinds (`passthrough`, `prose`,
 `markitdown`) in source-expression mode. OCR page headers/footers and unrecognized
 kinds remain ordinary source evidence and cannot be promoted to direct text by
-that mode alone. Renderer labels
-do not enter the grounding token union. D122 card fitting measures the same
+that mode alone. Renderer labels do not enter the grounding token union.
+D122 card fitting measures the same
 origin-aware rendering actually sent to Claimify, so provenance cannot silently
 exceed the reference-context bound.
 
@@ -178,8 +178,8 @@ The chunk-row generation also advances so old rows cannot replay stale hashes;
 the embed delivery generation advances to process those fresh rows. Packing,
 source bytes and embedding policy/model remain unchanged. Embed delivery includes
 the chunker base generation so a future base bump cannot reuse an old completed
-delivery job. Exact full-input
-vector reuse includes prior processing generations of the same version. No processing of
+delivery job. Exact full-input vector reuse includes prior processing generations
+of the same version. No processing of
 retained data is implied by the code change. See the
 [source-origin analysis](../analysis/source-origins-at-extraction-20261023.md).
 
