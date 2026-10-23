@@ -868,7 +868,7 @@ def test_runtime_environment_replays_saved_non_secret_bindings(tmp_path: Path) -
     """Restore derives model/routing settings without copying deployment secrets."""
 
     run_dir = tmp_path / "run"
-    run_dir.mkdir()
+    _run_json(run_dir)
     bindings = {
         name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
         for name in store_backup.MODEL_BINDING_ENVIRONMENT

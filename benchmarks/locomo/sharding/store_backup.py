@@ -79,6 +79,14 @@ NonEmpty = Annotated[str, Field(min_length=1)]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 
+class _RuntimeExecutionProfile(BaseModel):
+    """Read the backup-relevant fields without importing the benchmark runtime."""
+
+    model_config = ConfigDict(extra="ignore")
+    ingest_model_bindings: dict[str, str]
+    ingest_environment: dict[str, str]
+
+
 class StoreBackupError(RuntimeError):
     """Report a safety failure that must preserve the current store."""
 
@@ -453,6 +461,18 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
     if not isinstance(bindings, dict):
         raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
 
+    profile_data = _load_object(run_dir / "run.json").get("execution_profile")
+    if profile_data is not None:
+        profile = _RuntimeExecutionProfile.model_validate(profile_data)
+        if profile.ingest_model_bindings != bindings:
+            raise StoreBackupError("saved readiness differs from the execution profile")
+        for name, value in profile.ingest_environment.items():
+            if not name.startswith("REMEMBERSTACK_") or any(
+                c in value for c in "\r\n\x00"
+            ):
+                raise StoreBackupError("execution profile contains unsafe environment")
+        return dict(profile.ingest_environment)
+
     environment: dict[str, str] = {}
     for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
         value = bindings.get(binding)
@@ -498,6 +518,15 @@ def _compose_runtime_command(
         item
         for variable in (
             *MODEL_BINDING_ENVIRONMENT.values(),
+            "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY",
+            "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER",
+            "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE",
+            "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR",
+            "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
+            "REMEMBERSTACK_TYPESAFE_MODEL",
+            "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL",
+            "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT",
+            "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY",
             "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID",
             "REMEMBERSTACK_BUILD_REVISION",
         )

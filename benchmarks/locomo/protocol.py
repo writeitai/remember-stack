@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from dataclasses import replace
 import hashlib
 import json
 import string
@@ -18,6 +19,7 @@ from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerStepSchema
 from benchmarks.locomo.model import DiscriminatedAnswerAgentStep
+from benchmarks.locomo.model import ExecutionProfile
 from benchmarks.locomo.model import JudgeModel
 from benchmarks.locomo.model import JudgeOutput
 from benchmarks.locomo.model import LoCoMoSample
@@ -174,6 +176,62 @@ GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "section_summary": GLM_GENERATION_MODEL,
         "skeleton_check": GLM_GENERATION_MODEL,
         "structure_fallback": GLM_GENERATION_MODEL,
+    }
+)
+
+LUNA6_PROTOCOL_KEY: Final = "full-v38-luna6-jev-flex"
+LUNA6_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-Luna6JevFlex"
+LUNA6_MODEL: Final = "openai/gpt-6-luna"
+LUNA6_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        **EXPECTED_INGEST_MODEL_BINDINGS,
+        **dict.fromkeys(
+            (
+                "claim_extraction",
+                "entity_resolution",
+                "relation_normalization",
+                "section_role",
+                "section_summary",
+                "skeleton_check",
+                "structure_fallback",
+            ),
+            LUNA6_MODEL,
+        ),
+        "fact_adjudication": "jev-1.13.0",
+        "openrouter_reasoning_effort": "low",
+        "openrouter_reasoning_effort_map": '{"openai/gpt-6-luna": "low"}',
+    }
+)
+LUNA6_INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        **dict.fromkeys(
+            (
+                "REMEMBERSTACK_STRUCTURER_MODEL",
+                "REMEMBERSTACK_SKELETON_CHECK_MODEL",
+                "REMEMBERSTACK_ROLE_MODEL",
+                "REMEMBERSTACK_SUMMARY_MODEL",
+                "REMEMBERSTACK_E2_EXTRACT_MODEL",
+                "REMEMBERSTACK_E3_NORMALIZE_MODEL",
+                "REMEMBERSTACK_OBS_SMALL_MODEL",
+                "REMEMBERSTACK_FACT_MODEL",
+            ),
+            LUNA6_MODEL,
+        ),
+        "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE": "jev",
+        "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR": "0.75",
+        "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT": "false",
+        "REMEMBERSTACK_TYPESAFE_MODEL": "jev-1.13.0",
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT": "low",
+        "REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP": '{"openai/gpt-6-luna": "low"}',
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ONLY": "openai/flex",
+        "REMEMBERSTACK_OPENROUTER_CHAT_PROVIDER_ORDER": "",
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER": "nebius",
+        "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER": "",
+        "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS": "32000",
+        "REMEMBERSTACK_P1_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b",
+        "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL": LUNA6_MODEL,
+        "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT": "low",
+        "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY": '["openai/flex"]',
     }
 )
 
@@ -368,6 +426,7 @@ class LoCoMoProtocol:
     """Exact readiness model bindings this protocol ingests with. Variants that
     swap ingest models override it; the runner checks readiness against the
     selected protocol, never the module-global canonical map."""
+    execution_profile: ExecutionProfile | None = None
 
 
 _FULL_V25 = LoCoMoProtocol(
@@ -463,9 +522,59 @@ _FULL_V25_GLM = LoCoMoProtocol(
     ingest_model_bindings=GLM_INGEST_MODEL_BINDINGS,
 )
 
+_LUNA6_COMPONENTS = {
+    **EXPECTED_INGEST_COMPONENT_VERSIONS,
+    "chunk": (
+        "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs:"
+        "blockizer-heading-metadata:eligibility-cuts"
+    ),
+    "adjudicate_observations": (
+        EXPECTED_INGEST_COMPONENT_VERSIONS["adjudicate_observations"].split(
+            ":relation-adjudicator-", maxsplit=1
+        )[0]
+        + ":relation-adjudicator-2026.09a:jev-choice-match-3:"
+        "obs-adjudicator-2026.09a:jev-choice-match-3"
+    ),
+}
+_LUNA6_JEV_FLEX = replace(
+    _FULL_V25,
+    key=LUNA6_PROTOCOL_KEY,
+    name=LUNA6_PROTOCOL_NAME,
+    answer_agent_model=LUNA6_MODEL,
+    judge_model=LUNA6_MODEL,
+    answer_agent_reasoning_effort="high",
+    judge_reasoning_effort="high",
+    answer_prompt_template=(
+        ANSWER_AGENT_PROMPT_TEMPLATE + "\n\n"
+        "Before answering, identify the distinct evidence needed by the question. "
+        "A duration needs its start and end; a list or count needs the distinct "
+        "items or events across the relevant time range; a shared attribute "
+        "needs support for each participant. Search for missing parts rather "
+        "than repeatedly retrieving the same evidence. Check event identity "
+        "and chronology before combining or counting mentions.\n"
+        "When a preference or reference depends on dialogue, inspect the question "
+        "and its direct answer together. Read adjacent source chunks when a "
+        "boundary separates them. Match attachment descriptions to their own "
+        "source turn and speaker before using them to resolve a reference. "
+        "Use source text to check a derived claim when their attributions conflict. "
+        "Before finalizing, check that the answer covers every requested part "
+        "and includes the requested type of value. Stay within the existing "
+        "tool and model-call budgets."
+    ),
+    ingest_model_bindings=LUNA6_INGEST_MODEL_BINDINGS,
+    execution_profile=ExecutionProfile(
+        ingest_model_bindings=dict(LUNA6_INGEST_MODEL_BINDINGS),
+        ingest_component_versions=_LUNA6_COMPONENTS,
+        ingest_environment=dict(LUNA6_INGEST_ENVIRONMENT),
+        chat_provider_only=("openai/flex",),
+        api_timeout_seconds=180.0,
+    ),
+)
+
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
     {
         _FULL_V25.key: _FULL_V25,
+        _LUNA6_JEV_FLEX.key: _LUNA6_JEV_FLEX,
         _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
         _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
         _FULL_V25_GLM.key: _FULL_V25_GLM,

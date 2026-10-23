@@ -66,7 +66,12 @@ backup_python() {
 # prompts, budgets, answer, and judge stay canonical) and routes chat through
 # the ordered shortlist with fallbacks so D127 rotation can engage; pinning
 # CHAT_PROVIDER_ONLY would leave rotation nowhere to advance to.
-if [[ "$protocol" == "full-v38-glm" ]]; then
+if [[ "$protocol" == "full-v38-luna6-jev-flex" ]]; then
+  profile_environment=$("$python_bin" -m benchmarks.locomo.profile_environment "$protocol")
+  while IFS= read -r binding; do
+    export "$binding"
+  done <<<"$profile_environment"
+elif [[ "$protocol" == "full-v38-glm" ]]; then
   glm_model=z-ai/glm-5.3-flash
   export REMEMBERSTACK_STRUCTURER_MODEL="$glm_model"
   export REMEMBERSTACK_SKELETON_CHECK_MODEL="$glm_model"
@@ -177,6 +182,17 @@ attest_worker_environment() {
     REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP
     REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR
   )
+  if [[ "$protocol" == "full-v38-luna6-jev-flex" ]]; then
+    frozen_variables+=(
+      REMEMBERSTACK_FACT_ADJUDICATION_ENGINE
+      REMEMBERSTACK_FACT_CONFIDENCE_FLOOR
+      REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT
+      REMEMBERSTACK_TYPESAFE_MODEL
+      REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL
+      REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT
+      REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY
+    )
+  fi
 
   while IFS= read -r container_id; do
     [[ -n "$container_id" ]] || continue

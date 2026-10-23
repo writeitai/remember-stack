@@ -23,6 +23,7 @@ from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
+from benchmarks.locomo.runner import run_api_timeout_seconds
 from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
@@ -59,7 +60,9 @@ def main(argv: list[str] | None = None) -> int:
             print(configuration.model_dump_json())
             return 0
         if args.command == "ingest":
-            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+            with MemoryClient(
+                timeout=run_api_timeout_seconds(run_dir=args.run)
+            ) as client:
                 records = ingest_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -77,7 +80,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "answer":
             provider = _provider(run_dir=args.run, stage="answer", recorder=recorder)
-            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+            with MemoryClient(
+                timeout=run_api_timeout_seconds(run_dir=args.run)
+            ) as client:
                 records = answer_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -194,9 +199,18 @@ def _provider(
     has already been ingested.
     """
     protocol = run_protocol(run_dir=run_dir)
+    chat_provider_only = (
+        protocol.execution_profile.chat_provider_only
+        if protocol.execution_profile is not None
+        else None
+    )
     codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
     if stage == "ingest":
-        openrouter = _seat_provider(provider_key="openrouter", recorder=recorder)
+        openrouter = _seat_provider(
+            provider_key="openrouter",
+            recorder=recorder,
+            chat_provider_only=chat_provider_only,
+        )
         if protocol.answer_agent_provider == "openrouter":
             return openrouter
         answer_provider = _seat_provider(
@@ -216,6 +230,7 @@ def _provider(
         codex_audit_path=codex_audit_path,
         codex_audit_stage=stage,
         recorder=recorder,
+        chat_provider_only=chat_provider_only,
     )
 
 
@@ -225,11 +240,20 @@ def _seat_provider(
     codex_audit_path: Path | None = None,
     codex_audit_stage: str = "generation",
     recorder: GenerationRecorder | None = None,
+    chat_provider_only: tuple[str, ...] | None = None,
 ) -> ModelProviderPort:
     """Build one configured provider without reading unrelated credentials."""
     if provider_key == "openrouter":
         return OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({}), recorder=recorder
+            settings=OpenRouterSettings.model_validate(
+                {
+                    "chat_provider_only": list(chat_provider_only),
+                    "chat_provider_order": None,
+                }
+                if chat_provider_only is not None
+                else {}
+            ),
+            recorder=recorder,
         )
     if provider_key == "vertex":
         return VertexModelProvider(

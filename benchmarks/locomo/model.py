@@ -33,19 +33,27 @@ Category = Literal[1, 2, 3, 4, 5]
 RetainedCategory = Literal[1, 2, 3, 4]
 Tier = Literal["smoke", "development", "publication"]
 ProtocolKey = Literal[
-    "full-v38", "full-v38-gemma-vertex", "full-v38-codex-subscription", "full-v38-glm"
+    "full-v38",
+    "full-v38-gemma-vertex",
+    "full-v38-codex-subscription",
+    "full-v38-glm",
+    "full-v38-luna6-jev-flex",
 ]
 ProtocolName = Literal[
     "RS-LoCoMo-Full-v38",
     "RS-LoCoMo-Full-v38-GemmaVertex",
     "RS-LoCoMo-Full-v38-CodexSubscription",
     "RS-LoCoMo-Full-v38-GLM",
+    "RS-LoCoMo-Full-v38-Luna6JevFlex",
 ]
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = Literal[
-    "openai/gpt-5.6-luna", "google/gemma-4-26b-a4b-it-maas", "gpt-5.6-luna"
+    "openai/gpt-5.6-luna",
+    "google/gemma-4-26b-a4b-it-maas",
+    "gpt-5.6-luna",
+    "openai/gpt-6-luna",
 ]
-JudgeModel = Literal["openai/gpt-5.6-luna", "gpt-5.6-luna"]
+JudgeModel = Literal["openai/gpt-5.6-luna", "gpt-5.6-luna", "openai/gpt-6-luna"]
 ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
 """Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
 or the local keyless Codex ChatGPT-subscription bridge."""
@@ -133,6 +141,16 @@ class QuestionManifest(FrozenModel):
     item_ids_sha256: NonEmpty
 
 
+class ExecutionProfile(FrozenModel):
+    """Complete non-secret execution policy for an explicitly configured run."""
+
+    ingest_model_bindings: dict[str, str]
+    ingest_component_versions: dict[str, str]
+    ingest_environment: dict[str, str]
+    chat_provider_only: tuple[str, ...]
+    api_timeout_seconds: float = Field(gt=0)
+
+
 class RunConfiguration(FrozenModel):
     """Immutable identity of one prepared benchmark run."""
 
@@ -170,6 +188,7 @@ class RunConfiguration(FrozenModel):
     answer_schema_sha256: NonEmpty
     judge_schema_sha256: NonEmpty
     protocol_fingerprint: NonEmpty
+    execution_profile: ExecutionProfile | None = None
 
 
 class PreparedDocument(FrozenModel):

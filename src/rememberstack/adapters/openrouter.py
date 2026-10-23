@@ -674,9 +674,10 @@ class OpenRouterModelProvider:
                     f"OpenRouter /chat/completions returned 402: {response.text[:500]}",
                     provider_host=slug,
                 )
-            if response.status_code == 429:
+            if _retryable_upstream_error(response=response):
                 last_error = (
-                    f"OpenRouter /chat/completions returned 429: {response.text[:500]}"
+                    f"OpenRouter /chat/completions returned {response.status_code}: "
+                    f"transient capacity error: {response.text[:500]}"
                 )
                 if throttle_used >= settings.chat_throttle_retries:
                     raise OpenRouterProviderError(last_error, provider_host=slug)
@@ -697,16 +698,13 @@ class OpenRouterModelProvider:
                 )
                 if len(remaining) > 1:
                     _logger.warning(
-                        "OpenRouter %s overloaded (429); rotating after %.1fs",
-                        slug,
-                        wait_s,
+                        "OpenRouter %s overloaded; rotating after %.1fs", slug, wait_s
                     )
                     time.sleep(wait_s)
                     remaining.pop(0)
                 else:
                     _logger.warning(
-                        "OpenRouter %s overloaded (429); retrying last "
-                        "survivor after %.1fs",
+                        "OpenRouter %s overloaded; retrying last survivor after %.1fs",
                         slug,
                         wait_s,
                     )
@@ -916,11 +914,16 @@ class OpenRouterModelProvider:
             )
             if overload_wait is not None and attempt < _IN_FLIGHT_BUDGET_RETRIES:
                 _logger.warning(
-                    "OpenRouter upstream overloaded (429); retrying after %.1fs",
+                    "OpenRouter upstream overloaded; retrying after %.1fs",
                     overload_wait,
                 )
                 time.sleep(overload_wait)
                 continue
+            if overload_wait is not None:
+                raise OpenRouterProviderError(
+                    f"OpenRouter {path} returned {response.status_code}: "
+                    "transient capacity retries exhausted"
+                )
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
@@ -993,17 +996,54 @@ def _response_retry_after_s(*, response: httpx.Response) -> float | None:
     return parsed
 
 
+def _retryable_upstream_error(*, response: httpx.Response) -> bool:
+    """Recognize capacity errors, including unbilled HTTP-200 error envelopes.
+
+    Never regenerate a completion carrying choices or usage. Authentication,
+    validation and ordinary successful-but-malformed responses are not capacity
+    retries. This applies equally to Flex and standard providers.
+    """
+    transient_codes = {429, 500, 502, 503, 504, 529}
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    if isinstance(body, dict) and any(
+        key in body for key in ("usage", "choices", "id")
+    ):
+        return False
+    if response.status_code in transient_codes:
+        return True
+    if response.status_code != 200 or not isinstance(body, dict):
+        return False
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return False
+    code = str(error.get("code", ""))
+    if code.isdecimal():
+        return int(code) in transient_codes
+    message = str(error.get("message", "")).lower()
+    return any(
+        phrase in message
+        for phrase in (
+            "temporarily unavailable",
+            "try again",
+            "overloaded",
+            "rate limit",
+        )
+    )
+
+
 def _upstream_overload_retry_after(
     *, response: httpx.Response, attempt: int
 ) -> float | None:
-    """Return one bounded wait for a transient upstream 429 overload.
+    """Return one bounded wait for an upstream capacity error.
 
-    Only 429 responses are retried; anything else falls through to the typed
-    error. An explicit Retry-After (header or provider metadata) wins, capped
+    An explicit Retry-After (header or provider metadata) wins, capped
     at the bound; otherwise a small linear backoff keeps a hot shared pool
     from being hammered while the worker's own attempt budget still applies.
     """
-    if response.status_code != 429:
+    if not _retryable_upstream_error(response=response):
         return None
     parsed = _response_retry_after_s(response=response)
     if parsed is None or parsed < 0:

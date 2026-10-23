@@ -470,6 +470,7 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
     assert tuple(PROTOCOL_REGISTRY) == (
         "full-v38",
+        "full-v38-luna6-jev-flex",
         "full-v38-gemma-vertex",
         "full-v38-codex-subscription",
         "full-v38-glm",

@@ -130,6 +130,60 @@ thing:
 
 Scores from different protocols or variants are not comparable.
 
+### Luna 6 with Flex and Jev
+
+The explicit `full-v38-luna6-jev-flex` variant uses `openai/gpt-6-luna`
+with low reasoning for ingestion, `jev-1.13.0` for adjudication, and Luna 6
+with high reasoning for answering and judging. Its OpenRouter generation
+allowlist is `openai/flex`; capacity failures do not silently switch to
+standard-priced capacity. Embeddings remain Qwen through Nebius.
+
+Select the variant with `prepare --protocol full-v38-luna6-jev-flex` and
+`LOCOMO_PROTOCOL=full-v38-luna6-jev-flex` for the shard runner. The saved run
+records its non-secret ingestion environment, expected component/model
+bindings, Flex restriction and 180-second API transport budget. The shard
+runner attests its workers against those settings and backups preserve them.
+This is a different ingestion identity from older stores. Choosing it does
+not retroactively turn Luna 5.6-ingested data into Luna 6-ingested data.
+
+Its answering instructions check question completeness, distinct events and
+participants, and adjacent dialogue. The existing judge policy is retained.
+No score is established for this variant by its offline tests.
+
+### Independent Mem0-like grading of saved answers
+
+`python -m benchmarks.locomo.judge_sidecar` prepares a separate grading result
+without changing answers or canonical grades. It does not retrieve, ingest,
+or regenerate answers. The following command plans the work without model calls:
+
+```bash
+python -m benchmarks.locomo.judge_sidecar \
+  --run /data/locomo/frozen-run \
+  --output /data/locomo/mem0-like-results \
+  --max-calls 2000 --max-cost-usd 10
+```
+
+Execution requires `--execute` and OpenRouter credentials. The sidecar uses
+Luna 6, high reasoning and the Flex allowlist. Its policy accepts one correct
+list item, dates within fourteen days, durations within fifty percent and
+broad paraphrases. This is a policy inspired by the
+[pinned Mem0 source](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/benchmarks/locomo/prompts.py),
+not an exact reproduction of Mem0's published evaluation.
+
+Optional `--with-evidence` supplies gold-referenced source turn text and dates
+to the judge and permits evidence only to increase acceptance. It does not
+supply original image pixels. Category-three gold answers use the text before
+the first semicolon, as in that upstream policy. This preprocessing is local
+to the sidecar; original data stays unchanged.
+
+The output has a separate identity, per-item prompt hashes, model settings,
+usage, explanations and result files. Resume requires the identical frozen
+input snapshot. A call interrupted before its outcome was saved remains
+visible as in flight and must be reconciled before resuming. Missing answers,
+source failures and judge failures are reported separately. The cost setting
+is a reported-spend stop threshold; the provider account cap is the hard
+monetary boundary. Keep alternate-policy scores separate from canonical scores.
+
 ## BEAM
 
 BEAM ("Beyond a Million Tokens", Tavakoli et al., ICLR 2026) tests memory

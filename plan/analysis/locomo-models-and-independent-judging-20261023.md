@@ -78,3 +78,22 @@ Primary documentation retrieved 2026-10-23:
 
 No score improvement is established by offline code tests. Required review is
 Claude Code with Opus 5.5 at high effort, as explicitly requested by the owner.
+
+## Image-description default and paid reuse
+
+The owner explicitly requested Luna for visual processing too. Both the native
+image converter default and Compose now select `openai/gpt-6-luna`; the LoCoMo
+profile pins low vision effort and the Flex allowlist. Mistral remains the
+dedicated OCR lane. The old Gemini default is not retained as a fallback.
+
+The configured vision model already joins the converter and lane checkpoint
+identity. Changing that default therefore re-keys affected default-configured
+image conversions when processed under the new code. Explicit model overrides
+remain explicit. Effort and routing join the vision identity when configured;
+unchanged successful OCR is independently reusable. No global E0/E1/E2 version
+is bumped by these configuration changes, and no retained store is reprocessed
+by editing configuration. Offline checkpoint tests count both lane calls.
+
+The new named protocol also pins the current main chunker generation with
+eligibility cuts. Historical v38 retains its recorded old chunker pin. These
+identities must not be silently exchanged while restoring old stores.

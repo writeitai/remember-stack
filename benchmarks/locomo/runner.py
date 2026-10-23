@@ -210,7 +210,11 @@ def prepare_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
+        "api_timeout_seconds": (
+            selected_protocol.execution_profile.api_timeout_seconds
+            if selected_protocol.execution_profile is not None
+            else API_TIMEOUT_SECONDS
+        ),
         "knowledge_mode": "not_composed",
         "document_binding_generation": EXPECTED_DOCUMENT_BINDING_GENERATION,
         "answer_agent_model": selected_protocol.answer_agent_model,
@@ -234,6 +238,10 @@ def prepare_run(
         "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
         "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
+    if selected_protocol.execution_profile is not None:
+        base["execution_profile"] = selected_protocol.execution_profile.model_dump(
+            mode="json"
+        )
     configuration = RunConfiguration(
         **base,
         prepared_at=datetime.now(timezone.utc),
@@ -265,11 +273,17 @@ def _readiness_matches_protocol(
     Model bindings come from the prepared protocol, so ingest-model variants
     check their own pins instead of the canonical module-global map.
     """
+    selected = protocol_for_name(protocol_name)
+    component_versions = (
+        selected.execution_profile.ingest_component_versions
+        if selected.execution_profile is not None
+        else EXPECTED_INGEST_COMPONENT_VERSIONS
+    )
     versions_ready = all(
         version.ready
         and tuple(stage.stage for stage in version.stages) == EXPECTED_PIPELINE_STAGES
         and {stage.stage: stage.component_version for stage in version.stages}
-        == dict(EXPECTED_INGEST_COMPONENT_VERSIONS)
+        == dict(component_versions)
         and all(
             stage.status in {"succeeded", "skipped"} and stage.finished_at is not None
             for stage in version.stages
@@ -294,14 +308,24 @@ def _readiness_matches_protocol(
         and capabilities_ready
         and readiness.document_binding_generation
         == EXPECTED_DOCUMENT_BINDING_GENERATION
-        and readiness.model_bindings
-        == dict(protocol_for_name(protocol_name).ingest_model_bindings)
+        and readiness.model_bindings == dict(selected.ingest_model_bindings)
         and repository_revision
         and readiness.build_revision == repository_revision
     )
 
 
 _PREFLIGHT_PROMPT = "Reply with ok=true. This is a connectivity probe, not a task."
+
+
+def _readiness_fingerprint(*, readiness: PipelineReadinessReport) -> str:
+    """Compare serving identity while ignoring probe times and row ordering."""
+    identity = readiness.model_dump(mode="json")
+    identity["versions"] = sorted(
+        identity["versions"], key=lambda value: value["version_id"]
+    )
+    for capability in identity["capabilities"].values():
+        capability.pop("checked_at", None)
+    return _canonical_hash(identity)
 
 
 class ProviderPreflightError(BenchmarkRunError):
@@ -604,7 +628,9 @@ def answer_sample(
         )
     _require_serving_revision(context=context, readiness=readiness)
     prior_readiness = context.state.readiness.get(sample_id)
-    if prior_readiness is not None and prior_readiness != readiness:
+    if prior_readiness is not None and _readiness_fingerprint(
+        readiness=prior_readiness
+    ) != _readiness_fingerprint(readiness=readiness):
         raise ExecutionGuardError(
             "deployment readiness fingerprint changed after it was checkpointed"
         )
@@ -1172,6 +1198,13 @@ def run_protocol(*, run_dir: Path) -> LoCoMoProtocol:
     return protocol_for_name(configuration.protocol_name)
 
 
+def run_api_timeout_seconds(*, run_dir: Path) -> float:
+    """Use the transport budget saved in this run, not an ambient default."""
+    return RunConfiguration.model_validate_json(
+        (run_dir / _RUN_FILE).read_text(encoding="utf-8")
+    ).api_timeout_seconds
+
+
 def load_recorded_run(*, run_dir: Path) -> _RunContext:
     """Load a finished run against its own recorded identity only.
 
@@ -1296,6 +1329,10 @@ def _validate_run(
         "answer_schema_sha256": configuration.answer_schema_sha256,
         "judge_schema_sha256": configuration.judge_schema_sha256,
     }
+    if configuration.execution_profile is not None:
+        base["execution_profile"] = configuration.execution_profile.model_dump(
+            mode="json"
+        )
     if _canonical_hash(base) != configuration.protocol_fingerprint:
         raise BenchmarkRunError("run protocol fingerprint changed")
     current_pin = {
@@ -1307,7 +1344,11 @@ def _validate_run(
             selected_protocol.max_agent_calls_per_question
         ),
         "answer_reader_retry_budget": (selected_protocol.answer_reader_retry_budget),
-        "api_timeout_seconds": API_TIMEOUT_SECONDS,
+        "api_timeout_seconds": (
+            selected_protocol.execution_profile.api_timeout_seconds
+            if selected_protocol.execution_profile is not None
+            else API_TIMEOUT_SECONDS
+        ),
         "answer_agent_reasoning_effort": (
             selected_protocol.answer_agent_reasoning_effort
         ),
@@ -1326,6 +1367,11 @@ def _validate_run(
         "answer_schema_sha256": schema_sha256(model=selected_protocol.answer_schema),
         "judge_schema_sha256": schema_sha256(model=selected_protocol.judge_schema),
     }
+    if (
+        selected_protocol.execution_profile is not None
+        or configuration.execution_profile is not None
+    ):
+        current_pin["execution_profile"] = selected_protocol.execution_profile
     for field, expected in current_pin.items() if current_pins else ():
         if getattr(configuration, field) != expected:
             raise BenchmarkRunError(f"current {field} differs from prepared run")
