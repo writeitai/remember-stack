@@ -813,12 +813,14 @@ def test_switching_facts_off_drains_entered_work_and_keeps_versions_ready(
     )
     # run until the pending version entered facts (its normalize rows exist)
     for _ in range(200):
-        if rig.stage_rows(stages=("normalize_relations",)) > rig.scalar(
+        settled = rig.scalar(
             "SELECT count(*) FROM processing_state p JOIN claims c ON c.claim_id = p.target_id"
             " JOIN chunks k ON k.chunk_id = c.chunk_id WHERE k.version_id = :v"
             " AND p.stage = 'normalize_relations'",
             v=done.version_id,
-        ):
+        )
+        assert isinstance(settled, int)
+        if rig.stage_rows(stages=("normalize_relations",)) > settled:
             break
         for stage in _STAGES[:6]:
             rig.worker.run_one(

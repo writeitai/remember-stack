@@ -1,6 +1,6 @@
 import {Agent as HttpAgent,request as httpRequest} from 'node:http';
 import {Agent as HttpsAgent,request as httpsRequest} from 'node:https';
-import { AbortError, InputValidationError, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError } from './errors';
+import { AbortError, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, RequestTimeoutError } from './errors';
 import { parseJson } from './json';
 import constants from './constants.generated';
 
@@ -198,6 +198,8 @@ export async function checkedResponse({ response, path }: { response: Response; 
           code = detailObject.code as string; detail = detailObject.message as string;
           retryable = detailObject.retryable as boolean | undefined; requestId = detailObject.request_id as string | undefined;
         } else detail = 'deployment API returned a malformed structured error';
+      } else if (detailObject.code === 'layer_unavailable') {
+        throw new LayerUnavailable({ detail: detailObject.message ? String(detailObject.message) : '', layer: detailObject.layer ? String(detailObject.layer) : '' });
       } else detail = JSON.stringify(detailObject);
     } else detail = typeof envelope.detail==='object' ? JSON.stringify(envelope.detail) : String(envelope.detail);
   }

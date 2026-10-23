@@ -25,6 +25,8 @@ export class ToolArgumentError extends Error {
 }
 /** Produce a safe local invalid-argument refusal. */
 export function invalidArguments({detail}:{detail:string}):ToolError {return new ToolError({code:'invalid_arguments',detail,status_code:null,retryable:false,agent_action:'Fix the tool arguments and retry.'});}
+/** D143: the call needs a processing layer the deployment does not serve. */
+export function layerUnavailable({layer,detail}:{layer:string;detail:string}):ToolError {return new ToolError({code:'layer_unavailable',detail,status_code:409,retryable:false,agent_action:`This deployment does not process the ${layer} layer. Use the tools tools/list offers, such as claims_and_sources_context.`});}
 /** Render a transport-neutral MCP result; hosts own tool execution. */
 export function errorResult({error}:{error:ToolError}):{content:{type:'text';text:string}[];isError:true} {return {content:[{type:'text',text:JSON.stringify(error.asDict())}],isError:true};}
 const retryableQuery=new Set(['quota_exceeded','concurrency_exceeded','saved_query_revalidation_pending','statement_timeout','lock_timeout','pg_unavailable','p1_unavailable','graph_unavailable','corpus_body_unavailable','generation_unavailable']);

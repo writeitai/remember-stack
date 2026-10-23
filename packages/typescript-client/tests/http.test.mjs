@@ -5,7 +5,7 @@ import {createServer} from 'node:http';
 import {readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {Client,MemoryClient,MemoryApiError,RequestTimeoutError,AbortError,TimeoutError,PipelineDeadLettered,InputValidationError,RateLimited,NumericPrecisionError,clearHostCache,clearMetadataCache} from '../dist/index.js';
+import {Client,MemoryClient,MemoryApiError,RequestTimeoutError,AbortError,TimeoutError,PipelineDeadLettered,InputValidationError,RateLimited,LayerUnavailable,NumericPrecisionError,clearHostCache,clearMetadataCache} from '../dist/index.js';
 const fixtures=JSON.parse(readFileSync(new URL('./fixtures/python-methods.json',import.meta.url))).responses;
 const id='10000000-0000-0000-0000-000000000001';
 process.env.REMEMBER_CONFIG_DIR=join(tmpdir(),`remember-http-fixture-${process.pid}`);
@@ -103,6 +103,23 @@ test('numeric precision, malformed lists and admission errors retain public type
     responseKind='list';await assert.rejects(client.searchQuerySpace({query:'fixture'}),MemoryApiError);
     responseKind='admission';await assert.rejects(client.listOperations(),error=>error instanceof RateLimited&&error.retryAfter===7&&error.code==='concurrency_limited');
     assert.equal(engine.requests.length,3);
+  }finally{client.close();await engine.close();}
+});
+
+test('processing layers travel as repeated query parameters and layer_unavailable maps to LayerUnavailable',async()=>{
+  const engine=await server({handler:({recorded,response})=>{
+    if(recorded.url==='/processing-layers')json({response,value:{claims:'backfilling',facts:'disabled'}});
+    else json({response,status:409,value:{detail:{code:'layer_unavailable',layer:'facts',status:'disabled',message:'facts layer is disabled'}}});
+  }});
+  const client=new Client({apiKey:'fixture',baseUrl:engine.url});
+  try {
+    assert.deepEqual(await client.processingLayers(),{claims:'backfilling',facts:'disabled'});
+    await assert.rejects(client.combinedContext({query:'fixture',layers:['sources','facts']}),error=>{
+      assert(error instanceof LayerUnavailable&&error instanceof MemoryApiError);
+      assert.equal(error.statusCode,409);assert.equal(error.code,'layer_unavailable');assert.equal(error.layer,'facts');assert.equal(error.detail,'facts layer is disabled');
+      return true;
+    });
+    assert.equal(engine.requests[1].url,'/operations/combined_context?layers=sources&layers=facts');
   }finally{client.close();await engine.close();}
 });
 

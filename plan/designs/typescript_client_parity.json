@@ -497,6 +497,11 @@
         "arguments": "*, detail: str",
         "returns": "ToolError"
       },
+      "remember.mcp_tools._errors.layer_unavailable": {
+        "typescript": "layerUnavailable",
+        "arguments": "*, layer: str, detail: str",
+        "returns": "ToolError"
+      },
       "remember.mcp_tools._errors.map_error": {
         "typescript": "mapError",
         "arguments": "error: BaseException",
@@ -875,6 +880,10 @@
         },
         "invalid_arguments": {
           "typescript": "invalidArguments",
+          "disposition": "public client support export"
+        },
+        "layer_unavailable": {
+          "typescript": "layerUnavailable",
           "disposition": "public client support export"
         },
         "handle_memory_write_tool": {

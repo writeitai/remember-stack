@@ -4498,6 +4498,37 @@ export default {
       "type": "object",
       "x-extra": "forbid"
     },
+    "ProcessingLayerStates": {
+      "additionalProperties": false,
+      "description": "What ``GET /processing-layers`` reports for the two switchable layers.\n\n``backfilling`` means the layer is enabled but some versions processed\nwhile it was off have not been processed by it yet.",
+      "properties": {
+        "claims": {
+          "enum": [
+            "enabled",
+            "backfilling",
+            "disabled"
+          ],
+          "title": "Claims",
+          "type": "string"
+        },
+        "facts": {
+          "enum": [
+            "enabled",
+            "backfilling",
+            "disabled"
+          ],
+          "title": "Facts",
+          "type": "string"
+        }
+      },
+      "required": [
+        "claims",
+        "facts"
+      ],
+      "title": "ProcessingLayerStates",
+      "type": "object",
+      "x-extra": "forbid"
+    },
     "QueryErrorCode": {
       "description": "Every public failure code, exactly as bound in design \u00a74.1.",
       "enum": [

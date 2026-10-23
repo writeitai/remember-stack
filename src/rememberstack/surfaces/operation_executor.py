@@ -70,10 +70,6 @@ class OperationExecutor:
                 layers=layers,
             )
 
-    def served_layers(self, *, deployment_id: UUID) -> frozenset[ProcessingLayer]:
-        """The layers the deployment serves (filters the served operation list)."""
-        return self._engine.served_layers(deployment_id=deployment_id)
-
     def adjacent_chunks(
         self, *, deployment_id: UUID, chunk_id: UUID, window: int = 1
     ) -> Envelope:
