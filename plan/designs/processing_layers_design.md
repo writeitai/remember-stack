@@ -314,23 +314,29 @@ procedure, **advance(lineage, layer)**, decides it. It runs under the layer fenc
 lock, and is invoked by:
 
 - a boundary that recorded a gap (§4.1);
-- a version reaching the layer's frontier;
+- a version reaching the layer's frontier, and (for facts) a claims-mode reconcile succeeding;
 - a version deletion and any current-version repointing it causes;
 - `setup`'s seeding (§5.4).
 
 Steps:
 
 0. **For facts, first release pending claims tails.** A version *owes a claims tail* when its claim
-   occurrences are complete, it has not entered facts (its facts gap is unentered — open *or
-   discharged*), and it has no claims-tail rows yet. This obligation is derived from the gap and
-   work-ledger state of every version of the lineage, never only from the current version's gap, so
-   discharging a superseded version's facts gap (step 2) cannot strand its already-entered claims
-   layer. Every owed tail whose earlier versions have no fact work in flight (§4.3) is opened now
-   (idempotently), before any target selection or early return below.
+   occurrences are complete, it has no claims-tail rows yet, and it **will not enter facts now**:
+   facts are disabled, its facts gap is discharged, or (snapshot lineages) it waits behind an
+   earlier unentered facts gap. The version this invocation admits to facts in step 7 never owes a
+   tail — its ordinary facts chain embeds its claims and runs its full reconcile. The obligation is
+   derived from the gap and work-ledger state of every version of the lineage, never only from the
+   current version's gap, so discharging a superseded version's facts gap (step 2) cannot strand its
+   already-entered claims layer. Every owed tail whose earlier versions have no fact work in flight
+   (§4.3) is opened now (idempotently), before any target selection or early return below.
 1. If the layer is disabled, stop (for facts, after step 0).
 2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
    every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
-   discharged: their work is running and must finish.
+   discharged: their work is running and must finish. **Discharge and reopening follow the layer
+   dependency:** discharging a version's claims gap also records its facts gap as discharged (it
+   will never extract, so it can never reach a facts boundary), and reopening a current version's
+   claims gap also reopens its facts gap, so both layers become eligible again in dependency
+   order.
 3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
    for a snapshot lineage the oldest version with an open unentered gap. No target: stop.
 4. If the target has not completed the sources layer, stop: its own claims boundary will record its
@@ -341,8 +347,10 @@ Steps:
    This includes versions entered before a switch and still draining, and dead-lettered versions,
    which block until they are replayed or deleted.
 6. For facts: if the target's occurrences are not complete, stop: its facts boundary will run
-   advance again. (A target that cannot enter facts yet got its claims tail in step 0 if §4.3
-   allows it.)
+   advance again. If the target already has a claims tail (it waited, or facts were off) and its
+   claims-mode reconcile has not succeeded, stop: that reconcile's completion runs advance again.
+   A version's currency-changing claims-mode reconcile thus never overlaps its own admitted fact
+   work.
 7. **Enter** the target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
    have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the
    ordinary E3 fan-out (or the empty observation flush) for facts — on the gap's recorded lane
@@ -621,7 +629,10 @@ database-level, with recorded or fake model providers:
    while its predecessor is backfilling waits the same way. A living lineage whose current version
    is still in the sources layer at seeding completes without another `setup` run, including when
    that version has no chunks. A dead-lettered head blocks until replay or deletion, and deleting it
-   advances the successor; a late boundary for a deleted version writes no gap; a configuration
+   advances the successor; a living version whose deferred claims gap is discharged because a newer
+   version became current never blocks that version's facts (its facts gap is discharged with it),
+   and deleting the newer version reopens both of its layers; a late boundary for a deleted version
+   writes no gap; a configuration
    change concurrent with a boundary decision serializes on the fence.
 9. **Facts later.** A snapshot lineage processed with facts off and switched to facts on gets the
    facts an always-on run produces. In a facts-enabled living lineage, with v1 paused after its
@@ -629,6 +640,9 @@ database-level, with recorded or fake model providers:
    becomes current: when v1's reconcile completes, v2's discharged facts gap still gets its claims
    tail, both of v2's gaps settle, v3 enters and becomes ready, and v2's Selection, Claimify and
    vectors are reused, not repeated; the same holds with facts switched off and on while v2 waits.
+   A version admitted to facts gets no claims tail; a version whose claims-mode reconcile is still
+   pending when facts are switched on enters facts only after it succeeds — in both schedules a
+   newer current version that drops claim C never lets C's fact stay open with zero support.
    Facts on → off (a living version removes a fact's only claim
    inside a connector cycle that finalizes) → on leaves the fact closed. With facts enabled and v1
    entered but not yet normalised, a living v2 that removes claim C opens neither facts nor its
