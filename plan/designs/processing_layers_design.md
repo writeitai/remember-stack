@@ -224,9 +224,9 @@ it.
 
 So for a version that does not enter facts at its facts boundary (facts disabled, or enabled but
 deferred behind an earlier unentered gap), the boundary opens the claims tail at once if the
-lineage has no fact work in flight, and otherwise leaves it to advance (§5.2 step 0), which opens it
-when the last earlier fact work reaches its frontier — including for a version whose facts gap was
-meanwhile discharged because a newer version of its living lineage became current. Opening a claims tail is idempotent (its two work
+lineage has no fact work in flight, and otherwise leaves it to advance (§5.2 step 5), which opens it
+when the last earlier fact work reaches its frontier — including for a version whose facts gap is
+discharged, in the same advance, because a newer version of its living lineage became current. Opening a claims tail is idempotent (its two work
 rows have fixed idempotency keys), so advance may re-issue it safely.
 
 Consequences: an older version's fact work — including work draining after facts were switched off
@@ -318,18 +318,10 @@ lock, and is invoked by:
 - a version deletion and any current-version repointing it causes;
 - `setup`'s seeding (§5.4).
 
-Steps:
+Steps, in this order:
 
-0. **For facts, first release pending claims tails.** A version *owes a claims tail* when its claim
-   occurrences are complete, it has no claims-tail rows yet, and it **will not enter facts now**:
-   facts are disabled, its facts gap is discharged, or (snapshot lineages) it waits behind an
-   earlier unentered facts gap. The version this invocation admits to facts in step 7 never owes a
-   tail — its ordinary facts chain embeds its claims and runs its full reconcile. The obligation is
-   derived from the gap and work-ledger state of every version of the lineage, never only from the
-   current version's gap, so discharging a superseded version's facts gap (step 2) cannot strand its
-   already-entered claims layer. Every owed tail whose earlier versions have no fact work in flight
-   (§4.3) is opened now (idempotently), before any target selection or early return below.
-1. If the layer is disabled, stop (for facts, after step 0).
+1. If the layer is disabled: for claims, stop; for facts, run step 5 (release owed claims tails)
+   and stop.
 2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
    every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
    discharged: their work is running and must finish. **Discharge and reopening follow the layer
@@ -338,20 +330,32 @@ Steps:
    claims gap also reopens its facts gap, so both layers become eligible again in dependency
    order.
 3. Choose the **target**: for a living lineage its current version, if it has an open unentered gap;
-   for a snapshot lineage the oldest version with an open unentered gap. No target: stop.
-4. If the target has not completed the sources layer, stop: its own claims boundary will record its
-   gap and run advance again. (A target whose sources work failed terminally stays unprocessed and
-   visible in `remember ops inspect`.)
-5. If any earlier live version of the lineage that completed the sources layer has not reached this
-   layer's frontier and has no discharged gap, stop: that version's frontier will run advance again.
-   This includes versions entered before a switch and still draining, and dead-lettered versions,
-   which block until they are replayed or deleted.
-6. For facts: if the target's occurrences are not complete, stop: its facts boundary will run
-   advance again. If the target already has a claims tail (it waited, or facts were off) and its
-   claims-mode reconcile has not succeeded, stop: that reconcile's completion runs advance again.
-   A version's currency-changing claims-mode reconcile thus never overlaps its own admitted fact
-   work.
-7. **Enter** the target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
+   for a snapshot lineage the oldest version with an open unentered gap.
+4. Decide whether the target is **admitted**:
+   - its sources layer is complete (otherwise its own claims boundary will record its gap and run
+     advance again; a target whose sources work failed terminally stays unprocessed and visible in
+     `remember ops inspect`);
+   - every earlier live version of the lineage that completed the sources layer has reached this
+     layer's frontier or has a discharged gap (otherwise that version's frontier runs advance again;
+     this includes versions entered before a switch and still draining, and dead-lettered versions,
+     which block until they are replayed or deleted);
+   - for facts: its claim occurrences are complete (otherwise its facts boundary runs advance
+     again), and, if it already has a claims tail (it waited, or facts were off), that tail's
+     claims-mode reconcile has succeeded (otherwise that reconcile's completion runs advance again).
+     A version's currency-changing claims-mode reconcile thus never overlaps its own admitted fact
+     work.
+5. **For facts, release owed claims tails** — after the discharges of step 2 and the admission
+   decision of step 4, before anything returns. A version *owes a claims tail* when its claim
+   occurrences are complete, it has no claims-tail rows yet, and it will not enter facts now: facts
+   are disabled, its facts gap is discharged (including by step 2 of this invocation), or (snapshot
+   lineages) it waits behind an earlier unentered facts gap. The version admitted in step 4 never
+   owes a tail — its ordinary facts chain embeds its claims and runs its full reconcile. The
+   obligation is derived from the gap and work-ledger state of every version of the lineage, never
+   only from the current version's gap, so discharging a superseded version's facts gap cannot
+   strand its already-entered claims layer. Every owed tail whose earlier versions have no fact
+   work in flight (§4.3) is opened now (idempotently).
+6. If no target was admitted, stop.
+7. **Enter** the admitted target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
    have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the
    ordinary E3 fan-out (or the empty observation flush) for facts — on the gap's recorded lane
    (`steady` for a version deferred during ingestion, `backfill` for a gap recorded while the layer
@@ -639,7 +643,9 @@ database-level, with recorded or fake model providers:
    `embed_claim` and before its full reconcile, v2 reaches its facts boundary and waits, and v3
    becomes current: when v1's reconcile completes, v2's discharged facts gap still gets its claims
    tail, both of v2's gaps settle, v3 enters and becomes ready, and v2's Selection, Claimify and
-   vectors are reused, not repeated; the same holds with facts switched off and on while v2 waits.
+   vectors are reused, not repeated — the first facts advance after v1's full reconcile opens v2's
+   tail although that same invocation discharges v2's facts gap; the same holds with facts switched
+   off and on while v2 waits.
    A version admitted to facts gets no claims tail; a version whose claims-mode reconcile is still
    pending when facts are switched on enters facts only after it succeeds — in both schedules a
    newer current version that drops claim C never lets C's fact stay open with zero support.
