@@ -28,11 +28,13 @@ from remember.client import Client
 from remember.connection import clear_host_cache
 from remember.connection import Connection
 from remember.connection import resolve_project
+from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import RateLimited
 from remember.issuer import clear_metadata_cache
 from remember.issuer import fetch_issuer_metadata
 from remember.issuer import signed_key_claims
+from remember.mcp_tools import layer_unavailable
 from remember.mcp_tools import map_error
 from remember.mcp_tools import McpMemorySettings
 from remember.mcp_tools import memory_tools
@@ -60,19 +62,29 @@ def scenarios() -> list[dict[str, Any]]:
             {
                 "name": "facts_context",
                 "arguments": {"query": "fixture", "entity_ids": [ID]},
+                "layers": ["sources", "facts"],
             },
         ),
         (
             "query_sql",
             {"sql": "SELECT 1"},
-            {"sql": "SELECT $1", "parameters": [1, "text", None], "max_rows": 0},
+            {
+                "sql": "SELECT $1",
+                "parameters": [1, "text", None],
+                "max_rows": 0,
+                "layers": ["sources", "claims"],
+            },
         ),
         (
             "open_query",
             {"sql": "SELECT 1"},
             {"sql": "SELECT $1", "parameters": [1], "max_rows": 7},
         ),
-        ("explain_sql", {"sql": "SELECT 1"}, {"sql": "SELECT $1", "parameters": [1]}),
+        (
+            "explain_sql",
+            {"sql": "SELECT 1"},
+            {"sql": "SELECT $1", "parameters": [1], "layers": ["sources"]},
+        ),
         ("explain_query", {"sql": "SELECT 1"}, {"sql": "SELECT $1", "parameters": [1]}),
         (
             "facts_context",
@@ -88,12 +100,16 @@ def scenarios() -> list[dict[str, Any]]:
         (
             "combined_context",
             {"query": "fixture"},
-            {"query": "fixture", "time": {"mode": "current"}},
+            {
+                "query": "fixture",
+                "time": {"mode": "current"},
+                "layers": ["sources", "claims", "facts"],
+            },
         ),
         (
             "claims_and_sources_context",
             {"query": "fixture"},
-            {"query": "other", "time": {"mode": "history"}},
+            {"query": "other", "time": {"mode": "history"}, "layers": ["sources"]},
         ),
         ("resolve_entity", {"name": "fixture"}, {"name": "other"}),
         ("describe_query_space", {}, {"pattern": "memory_*", "include_examples": True}),
@@ -113,6 +129,7 @@ def scenarios() -> list[dict[str, Any]]:
                 "version": 2,
                 "parameters": [1],
                 "max_rows": 9,
+                "layers": ["claims"],
             },
         ),
         (
@@ -193,6 +210,7 @@ def scenarios() -> list[dict[str, Any]]:
             {"from_doc_id": ID, "to_doc_id": OTHER_ID, "max_hops": 3},
         ),
         ("deployment_build_info", {}, {}),
+        ("processing_layers", {}, {}),
         (
             "pipeline_readiness",
             {"version_ids": [ID], "require": REQUIRE},
@@ -393,6 +411,23 @@ def scenarios() -> list[dict[str, Any]]:
             "options": {"name": name, "arguments": arguments},
         }
         for name, arguments in query_args.items()
+    )
+    result.extend(
+        {
+            "method": "call_open_query",
+            "variant": name + "-layers",
+            "options": {
+                "name": name,
+                "arguments": query_args[name],
+                "layers": ["sources", "facts"],
+            },
+        }
+        for name in (
+            "query_sql",
+            "explain_sql",
+            "describe_query_space",
+            "run_saved_query",
+        )
     )
     result.extend(
         [
@@ -638,6 +673,9 @@ def responses() -> dict[str, Any]:
             observations_closed=0,
         ).model_dump(mode="json"),
         "deployment": models.DeploymentBuildInfo().model_dump(mode="json"),
+        "processing_layers": models.ProcessingLayerStates(
+            claims="backfilling", facts="disabled"
+        ).model_dump(mode="json"),
         "connector": models.ConnectorDescriptor(
             connector_id=UUID(ID), kind="custom", name="fixture", status="active"
         ).model_dump(mode="json"),
@@ -675,6 +713,7 @@ def select_response(*, request: httpx.Request, fixtures: dict[str, Any]) -> Any:
         "/readiness": "readiness",
         "/ingest": "ingest",
         "/deployment": "deployment",
+        "/processing-layers": "processing_layers",
         "/documents": "document_page",
         "/documents/search": "search_page",
     }
@@ -898,6 +937,7 @@ def failure_fixtures() -> list[dict[str, Any]]:
         ("delete_document", {"doc_id": ID}, {}),
         ("connectors", {}, [{}]),
         ("describe_query_space", {}, []),
+        ("processing_layers", {}, {"claims": "enabled", "facts": "paused"}),
     ]
     for method, options, body in malformed:
         cases.append(
@@ -933,6 +973,38 @@ def failure_fixtures() -> list[dict[str, Any]]:
                 "status": status,
                 "body": {"detail": detail},
                 "variant": "error-envelope",
+            }
+        )
+    unavailable = {
+        "code": "layer_unavailable",
+        "layer": "facts",
+        "status": "disabled",
+        "message": "this deployment does not process the facts layer",
+    }
+    for method, options, status, detail in [
+        ("run_operation", {"name": "facts_context"}, 409, unavailable),
+        ("facts_context", {"query": "fixture"}, 409, unavailable),
+        (
+            "combined_context",
+            {"query": "fixture", "layers": ["facts"]},
+            409,
+            {**unavailable, "message": ""},
+        ),
+        (
+            "graph_path",
+            {"from_entity_id": ID, "to_entity_id": OTHER_ID},
+            409,
+            {"code": "layer_unavailable", "layer": "facts"},
+        ),
+        ("query_sql", {"sql": "SELECT 1", "layers": ["facts"]}, 409, unavailable),
+    ]:
+        cases.append(
+            {
+                "method": method,
+                "options": options,
+                "status": status,
+                "body": {"detail": detail},
+                "variant": "layer-unavailable",
             }
         )
     cases.append(
@@ -998,6 +1070,8 @@ def failure_fixtures() -> list[dict[str, Any]]:
                     }
                     if isinstance(error, RateLimited):
                         case["error"]["retryAfter"] = error.retry_after
+                    if isinstance(error, LayerUnavailable):
+                        case["error"]["layer"] = error.layer
                 else:
                     raise AssertionError(
                         f"malformed fixture unexpectedly succeeded: {case}"
@@ -1391,6 +1465,25 @@ def error_mapping_fixtures() -> list[dict[str, Any]]:
                 "result": map_error(error).as_dict(),
             }
         )
+    unavailable = LayerUnavailable(
+        detail="this deployment does not process the facts layer", layer="facts"
+    )
+    cases.append(
+        {
+            "options": {"detail": unavailable.detail, "layer": unavailable.layer},
+            "class": "LayerUnavailable",
+            "result": map_error(unavailable).as_dict(),
+        }
+    )
+    cases.append(
+        {
+            "options": {"detail": unavailable.detail, "layer": "claims"},
+            "class": "layer_unavailable",
+            "result": layer_unavailable(
+                layer="claims", detail=unavailable.detail
+            ).as_dict(),
+        }
+    )
     timeout = TimeoutError("timed out waiting for pipeline readiness")
     cases.append(
         {

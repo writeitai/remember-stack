@@ -118,6 +118,7 @@ EXPECTED_TABLES: Final = (
     "content_objects",
     "cost_ledger",
     "deployment_extension_packs",
+    "deployment_processing_layers",
     "deployments",
     "document_crossrefs",
     "document_effective_periods",
@@ -169,6 +170,7 @@ EXPECTED_TABLES: Final = (
     "perimeter_state",
     "pipeline_component_versions",
     "predicates",
+    "processing_layer_gaps",
     "processing_state",
     "projection_snapshots",
     "relation_adjudications",
@@ -371,10 +373,10 @@ EMPTY_AT_HEAD: Final = ("deployments", "entity_types", "predicates")
 # pg_constraint. The catalog contract pins them with the other structural
 # constraint kinds instead of pretending the database still exposes PG16's shape.
 EXPECTED_CONSTRAINT_COUNTS: Final = {
-    "c": 115,
-    "f": 147,
-    "n": 633,
-    "p": 83,
+    "c": 118,
+    "f": 148,
+    "n": 643,
+    "p": 85,
     "t": 7,
     "u": 41,
 }

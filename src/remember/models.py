@@ -935,6 +935,33 @@ class PipelineReadinessReport(BaseModel):
     build_revision: str = Field(default="")
 
 
+class ProcessingLayer(StrEnum):
+    """The three processing layers a request may read (D143).
+
+    ``sources`` (documents, sections, chunks) is always processed; ``claims``
+    and ``facts`` can be switched off per deployment.
+    """
+
+    SOURCES = "sources"
+    CLAIMS = "claims"
+    FACTS = "facts"
+
+
+ProcessingLayerState: TypeAlias = Literal["enabled", "backfilling", "disabled"]
+
+
+class ProcessingLayerStates(BaseModel):
+    """What ``GET /processing-layers`` reports for the two switchable layers.
+
+    ``backfilling`` means the layer is enabled but some versions processed
+    while it was off have not been processed by it yet.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    claims: ProcessingLayerState
+    facts: ProcessingLayerState
+
+
 class DeploymentBuildInfo(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     build_revision: str = Field(default="")

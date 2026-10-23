@@ -59,6 +59,8 @@ _READ_ROUTES: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
         # Build revision and model bindings: what this deployment is, not what
         # it holds. `remember doctor` checks it with whatever token it has.
         ("GET", r"^/deployment$"),
+        # D143: which processing layers the deployment serves.
+        ("GET", r"^/processing-layers$"),
     )
 )
 

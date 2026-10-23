@@ -21,6 +21,7 @@ from rememberstack.core.concise_adjudication import translate_prompt_decision
 from rememberstack.core.concise_adjudication import translator_rejection_note
 from rememberstack.core.fact_windows import fact_window_from_raw
 from rememberstack.model import ModelRequest
+from rememberstack.model import ProcessingLane
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model.claims import ClaimValidPrecision
@@ -291,8 +292,13 @@ class FactAdjudicator:
         subject_entity_id: UUID,
         meter: CostMeterPort,
         call_key: str,
+        lane: ProcessingLane = ProcessingLane.STEADY,
     ) -> tuple[UUID, ...]:
-        """Finish the eligible canonical stream; retries reuse completed receipts."""
+        """Finish the eligible canonical stream; retries reuse completed receipts.
+
+        ``lane`` is the route of the flush unit draining the stream; the
+        projection repairs the applications open take it (D143 §5.5).
+        """
         results: list[UUID] = []
         while True:
             prepared = self.prepare(
@@ -327,6 +333,7 @@ class FactAdjudicator:
                 deployment_id=deployment_id,
                 subject_entity_id=subject_entity_id,
                 application_id=prepared.application_id,
+                lane=lane,
             )
             if result is not None:
                 results.append(UUID(result["fact_id"]))
@@ -766,7 +773,12 @@ class FactAdjudicator:
             )
 
     def apply(
-        self, *, deployment_id: UUID, subject_entity_id: UUID, application_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        subject_entity_id: UUID,
+        application_id: UUID,
+        lane: ProcessingLane = ProcessingLane.STEADY,
     ) -> dict[str, Any] | None:
         """Re-read the head and every input after locks; stale output has no effects."""
         active_rel, active_obs = active_adjudicator_versions(self._settings.engine)
@@ -891,6 +903,7 @@ class FactAdjudicator:
                         connection=connection,
                         snapshot=snapshot,
                         decision=decision,
+                        lane=lane,
                         method="small_model"
                         if snapshot["facts"] or _periodised(snapshot["claims"])
                         else "novelty_gate",

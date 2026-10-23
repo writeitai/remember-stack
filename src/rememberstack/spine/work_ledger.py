@@ -14,7 +14,9 @@ from datetime import datetime
 from datetime import timedelta
 from decimal import Decimal
 from typing import cast
+from typing import Literal
 from typing import Self
+from typing import TYPE_CHECKING
 from uuid import UUID
 from uuid import uuid4
 
@@ -52,6 +54,9 @@ from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_applications import register_version_applications_on
 from rememberstack.spine.fact_applications import version_applications_ready_on
+
+if TYPE_CHECKING:
+    from rememberstack.workers.base import EmptyObsFlushComplete
 
 
 class WorkLedgerSettings(BaseSettings):
@@ -124,6 +129,8 @@ class WorkLedger:
         clears any defer reason, moves it to running, and increments attempts
         exactly once immediately before the handler begins.
         """
+        from rememberstack.spine.processing_layers import hold_window_reviews_on
+
         _require_valid_lane(stage=stage, lane=lane)
         with self._engine.begin() as connection:
             if stage is not PipelineStage.HARD_FORGET:
@@ -135,6 +142,12 @@ class WorkLedger:
                         f"deployment {deployment_id} is honoring forget_id"
                         f" {active_forget}"
                     )
+            if stage is PipelineStage.REVIEW_FACT_WINDOWS and hold_window_reviews_on(
+                connection=connection, deployment_id=deployment_id
+            ):
+                # D143 §4.4: lineage-level window reviews wait while the
+                # facts layer is off; they run when it is switched back on.
+                return None
             row = (
                 connection.execute(
                     _CLAIM_SELECT,
@@ -185,6 +198,9 @@ class WorkLedger:
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
+            completing = _layer_frontier_of(
+                connection=connection, processing_id=processing_id
+            )
             updated = connection.execute(
                 _COMPLETE, {"processing_id": processing_id}
             ).rowcount
@@ -192,8 +208,74 @@ class WorkLedger:
                 raise WorkNotRunningError(
                     f"processing row {processing_id} is not running; cannot complete"
                 )
-            return tuple(
+            outcomes = [
                 enqueue_on(connection=connection, work=work) for work in follow_up
+            ]
+            if completing is not None:
+                outcomes.extend(
+                    _reach_layer_frontier(connection=connection, row=completing)
+                )
+            return tuple(outcomes)
+
+    def complete_at_claims_boundary(
+        self,
+        *,
+        processing_id: UUID,
+        boundary: object,
+        follow_up: tuple[EnqueueWork, ...] = (),
+        empty: object | None = None,
+    ) -> tuple[EnqueueOutcome, ...]:
+        """Complete ``embed_chunk`` and decide the claims layer (D143 §4.1).
+
+        An unconfigured deployment enqueues the handler's follow-ups (one
+        ``extract_claims`` job per chunk) or runs the D90 empty path exactly as
+        before. A configured deployment records the version's gap and lets the
+        lineage-ordered advance decide.
+        """
+        from rememberstack.spine.processing_layers import claims_boundary_on
+        from rememberstack.spine.processing_layers import layer_configuration_on
+        from rememberstack.spine.processing_layers import take_layer_fence_on
+        from rememberstack.workers.base import ClaimsBoundary
+        from rememberstack.workers.base import EmptyObsFlushComplete
+
+        if not isinstance(boundary, ClaimsBoundary):
+            raise TypeError("boundary must be ClaimsBoundary")
+        if empty is not None and not isinstance(empty, EmptyObsFlushComplete):
+            raise TypeError("empty must be EmptyObsFlushComplete")
+        for work in follow_up:
+            _require_valid_lane(stage=work.stage, lane=work.lane)
+        with self._engine.begin() as connection:
+            take_layer_fence_on(
+                connection=connection, deployment_id=boundary.deployment_id
+            )
+            configured = layer_configuration_on(
+                connection=connection, deployment_id=boundary.deployment_id
+            ).configured
+            if not configured and empty is not None:
+                return _complete_empty_obs_flush_on(
+                    connection=connection,
+                    processing_id=processing_id,
+                    empty=empty,
+                    follow_up=follow_up,
+                )
+            if (
+                connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+                == 0
+            ):
+                raise WorkNotRunningError(
+                    f"processing row {processing_id} is not running; cannot complete"
+                )
+            if not configured:
+                return tuple(
+                    enqueue_on(connection=connection, work=work) for work in follow_up
+                )
+            return tuple(
+                claims_boundary_on(
+                    connection=connection,
+                    deployment_id=boundary.deployment_id,
+                    version_id=boundary.version_id,
+                    lane=boundary.lane,
+                )
             )
 
     def complete_chunk_selection(
@@ -287,6 +369,9 @@ class WorkLedger:
         extractor version **and** claim/decision/occurrence extract evidence.
         Only then enqueue version-level ``normalize_relations`` (idempotent).
         """
+        from rememberstack.spine.processing_layers import facts_boundary_on
+        from rememberstack.spine.processing_layers import layer_configuration_on
+        from rememberstack.spine.processing_layers import take_layer_fence_on
         from rememberstack.workers.base import ExtractChunkBarrier
 
         if not isinstance(barrier, ExtractChunkBarrier):
@@ -294,6 +379,10 @@ class WorkLedger:
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
+            # D143 §3.3: the layer fence comes before the barrier locks.
+            take_layer_fence_on(
+                connection=connection, deployment_id=barrier.deployment_id
+            )
             # Serialize barrier evaluation for one representation (P1.1 dual-review).
             # PostgreSQL supports one bigint key or two integer keys, never two
             # bigint keys. Hash a namespaced UUID to one stable bigint, matching
@@ -319,6 +408,19 @@ class WorkLedger:
                 chunker_version=barrier.chunker_version,
                 extractor_version=barrier.extractor_version,
             ):
+                if layer_configuration_on(
+                    connection=connection, deployment_id=barrier.deployment_id
+                ).configured:
+                    # D143: the facts boundary of a configured deployment.
+                    outcomes.extend(
+                        facts_boundary_on(
+                            connection=connection,
+                            deployment_id=barrier.deployment_id,
+                            version_id=barrier.version_id,
+                            lane=barrier.lane,
+                        )
+                    )
+                    return tuple(outcomes)
                 # D88: materialize the full claim normalize set atomically with
                 # the extract barrier handoff (no partial fan-out).
                 outcomes.extend(
@@ -567,95 +669,19 @@ class WorkLedger:
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
         """D90: complete upstream work and durable-empty obs flush for a version."""
-        from rememberstack.model import ProcessingTarget
-        from rememberstack.spine.supersession import ADJUDICATOR_VERSION
         from rememberstack.workers.base import EmptyObsFlushComplete
-        from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 
         if not isinstance(empty, EmptyObsFlushComplete):
             raise TypeError("empty must be EmptyObsFlushComplete")
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
-            connection.execute(
-                _ADVISORY_LOCK_NORMALIZE_BARRIER,
-                {"representation_id": empty.representation_id},
+            return _complete_empty_obs_flush_on(
+                connection=connection,
+                processing_id=processing_id,
+                empty=empty,
+                follow_up=follow_up,
             )
-            updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
-            ).rowcount
-            if updated == 0:
-                raise WorkNotRunningError(
-                    f"processing row {processing_id} is not running; cannot complete"
-                )
-            outcomes = [
-                enqueue_on(connection=connection, work=work) for work in follow_up
-            ]
-            existing = connection.execute(
-                _SELECT_OBS_FLUSH_VERSION_STATE,
-                {
-                    "deployment_id": empty.deployment_id,
-                    "version_id": empty.version_id,
-                    "normalizer_version": empty.normalizer_version,
-                },
-            ).first()
-            if existing is None:
-                connection.execute(
-                    _UPSERT_OBS_FLUSH_VERSION_STATE,
-                    {
-                        "deployment_id": empty.deployment_id,
-                        "version_id": empty.version_id,
-                        "normalizer_version": empty.normalizer_version,
-                        "representation_id": empty.representation_id,
-                        "chunker_version": empty.chunker_version,
-                        "extractor_version": empty.extractor_version,
-                        "content_hash": empty.content_hash,
-                        "fanout_status": "empty_complete",
-                    },
-                )
-            # Always ensure supersession + embed are present for empty paths.
-            outcomes.append(
-                enqueue_on(
-                    connection=connection,
-                    work=EnqueueWork(
-                        deployment_id=empty.deployment_id,
-                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                        target_id=empty.version_id,
-                        stage=PipelineStage.ADJUDICATE_SUPERSESSION,
-                        component_version=ADJUDICATOR_VERSION,
-                        content_hash=empty.content_hash,
-                        lane=empty.lane,
-                        payload={
-                            "version_id": str(empty.version_id),
-                            "representation_id": str(empty.representation_id),
-                            "doc_id": (
-                                str(empty.doc_id) if empty.doc_id is not None else None
-                            ),
-                            "normalizer_version": empty.normalizer_version,
-                            "chunker_version": empty.chunker_version,
-                        },
-                    ),
-                )
-            )
-            outcomes.append(
-                enqueue_on(
-                    connection=connection,
-                    work=EnqueueWork(
-                        deployment_id=empty.deployment_id,
-                        target_kind=ProcessingTarget.DOCUMENT_VERSION,
-                        target_id=empty.version_id,
-                        stage=PipelineStage.EMBED_CLAIM,
-                        component_version=P1_EMBED_CLAIMS_VERSION,
-                        content_hash=empty.content_hash,
-                        lane=empty.lane,
-                        payload={
-                            "version_id": str(empty.version_id),
-                            "representation_id": str(empty.representation_id),
-                        },
-                    ),
-                )
-            )
-            return tuple(outcomes)
 
     def fail(
         self, *, processing_id: UUID, error: str, retryable: bool
@@ -933,6 +959,208 @@ class WorkLedger:
             ),
             None,
         )
+
+
+def extract_barrier_ready_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    representation_id: UUID,
+    chunker_version: str,
+    extractor_version: str,
+) -> bool:
+    """Whether every chunk of the grid finished extraction (public D84 barrier)."""
+    return _extract_barrier_ready(
+        connection=connection,
+        deployment_id=deployment_id,
+        representation_id=representation_id,
+        chunker_version=chunker_version,
+        extractor_version=extractor_version,
+    )
+
+
+def enqueue_claim_normalize_fanout_on(
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    version_id: UUID,
+    representation_id: UUID,
+    chunker_version: str,
+    extractor_version: str,
+    normalize_component_version: str,
+    content_hash: str,
+    lane: ProcessingLane | None,
+) -> list[EnqueueOutcome]:
+    """Open the D88 claim normalize fan-out for a version (public entry, D143)."""
+    return _enqueue_claim_normalize_fanout(
+        connection=connection,
+        deployment_id=deployment_id,
+        version_id=version_id,
+        representation_id=representation_id,
+        chunker_version=chunker_version,
+        extractor_version=extractor_version,
+        normalize_component_version=normalize_component_version,
+        content_hash=content_hash,
+        lane=lane,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _CompletingRow:
+    """A completing work row whose success may move a D143 layer frontier."""
+
+    deployment_id: UUID
+    version_id: UUID
+    event: Literal["claims_frontier", "facts_frontier", "claims_reconciled"]
+
+
+def _layer_frontier_of(
+    *, connection: Connection, processing_id: UUID
+) -> _CompletingRow | None:
+    """Take the layer fence when the completing row can move a layer frontier.
+
+    ``embed_claim`` moves the claims frontier; the full reconcile moves the
+    facts frontier; the claims-mode reconcile releases a version waiting to
+    enter facts. Other rows return None and take no lock.
+    """
+    from rememberstack.spine.processing_layers import take_layer_fence_on
+    from rememberstack.workers.reconcile import RECONCILE_CLAIMS_VERSION
+    from rememberstack.workers.reconcile import RECONCILE_VERSION
+
+    row = (
+        connection.execute(_SELECT_COMPLETING_ROW, {"processing_id": processing_id})
+        .mappings()
+        .first()
+    )
+    if row is None or row["target_kind"] != "document_version":
+        return None
+    stage = PipelineStage(str(row["stage"]))
+    event: Literal["claims_frontier", "facts_frontier", "claims_reconciled"]
+    if stage is PipelineStage.EMBED_CLAIM:
+        event = "claims_frontier"
+    elif stage is PipelineStage.RECONCILE and row["component_version"] == (
+        RECONCILE_VERSION
+    ):
+        event = "facts_frontier"
+    elif stage is PipelineStage.RECONCILE and row["component_version"] == (
+        RECONCILE_CLAIMS_VERSION
+    ):
+        event = "claims_reconciled"
+    else:
+        return None
+    take_layer_fence_on(connection=connection, deployment_id=row["deployment_id"])
+    return _CompletingRow(
+        deployment_id=row["deployment_id"], version_id=row["target_id"], event=event
+    )
+
+
+def _reach_layer_frontier(
+    *, connection: Connection, row: _CompletingRow
+) -> list[EnqueueOutcome]:
+    """Run the D143 frontier hook for a configured deployment (no-op otherwise)."""
+    from rememberstack.model.client import ProcessingLayer
+    from rememberstack.spine.processing_layers import frontier_reached_on
+    from rememberstack.spine.processing_layers import layer_configuration_on
+
+    if not layer_configuration_on(
+        connection=connection, deployment_id=row.deployment_id
+    ).configured:
+        return []
+    return frontier_reached_on(
+        connection=connection,
+        deployment_id=row.deployment_id,
+        version_id=row.version_id,
+        layer=ProcessingLayer.FACTS
+        if row.event != "claims_frontier"
+        else ProcessingLayer.CLAIMS,
+        delete_gap=row.event != "claims_reconciled",
+    )
+
+
+def _complete_empty_obs_flush_on(
+    *,
+    connection: Connection,
+    processing_id: UUID,
+    empty: "EmptyObsFlushComplete",
+    follow_up: tuple[EnqueueWork, ...],
+) -> tuple[EnqueueOutcome, ...]:
+    """D90 empty path inside the caller's transaction (unconfigured deployments)."""
+    from rememberstack.model import ProcessingTarget
+    from rememberstack.spine.supersession import ADJUDICATOR_VERSION
+    from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
+
+    connection.execute(
+        _ADVISORY_LOCK_NORMALIZE_BARRIER, {"representation_id": empty.representation_id}
+    )
+    updated = connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+    if updated == 0:
+        raise WorkNotRunningError(
+            f"processing row {processing_id} is not running; cannot complete"
+        )
+    outcomes = [enqueue_on(connection=connection, work=work) for work in follow_up]
+    existing = connection.execute(
+        _SELECT_OBS_FLUSH_VERSION_STATE,
+        {
+            "deployment_id": empty.deployment_id,
+            "version_id": empty.version_id,
+            "normalizer_version": empty.normalizer_version,
+        },
+    ).first()
+    if existing is None:
+        connection.execute(
+            _UPSERT_OBS_FLUSH_VERSION_STATE,
+            {
+                "deployment_id": empty.deployment_id,
+                "version_id": empty.version_id,
+                "normalizer_version": empty.normalizer_version,
+                "representation_id": empty.representation_id,
+                "chunker_version": empty.chunker_version,
+                "extractor_version": empty.extractor_version,
+                "content_hash": empty.content_hash,
+                "fanout_status": "empty_complete",
+            },
+        )
+    # Always ensure supersession + embed are present for empty paths.
+    outcomes.append(
+        enqueue_on(
+            connection=connection,
+            work=EnqueueWork(
+                deployment_id=empty.deployment_id,
+                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                target_id=empty.version_id,
+                stage=PipelineStage.ADJUDICATE_SUPERSESSION,
+                component_version=ADJUDICATOR_VERSION,
+                content_hash=empty.content_hash,
+                lane=empty.lane,
+                payload={
+                    "version_id": str(empty.version_id),
+                    "representation_id": str(empty.representation_id),
+                    "doc_id": (str(empty.doc_id) if empty.doc_id is not None else None),
+                    "normalizer_version": empty.normalizer_version,
+                    "chunker_version": empty.chunker_version,
+                },
+            ),
+        )
+    )
+    outcomes.append(
+        enqueue_on(
+            connection=connection,
+            work=EnqueueWork(
+                deployment_id=empty.deployment_id,
+                target_kind=ProcessingTarget.DOCUMENT_VERSION,
+                target_id=empty.version_id,
+                stage=PipelineStage.EMBED_CLAIM,
+                component_version=P1_EMBED_CLAIMS_VERSION,
+                content_hash=empty.content_hash,
+                lane=empty.lane,
+                payload={
+                    "version_id": str(empty.version_id),
+                    "representation_id": str(empty.representation_id),
+                },
+            ),
+        )
+    )
+    return tuple(outcomes)
 
 
 def _extract_barrier_ready(
@@ -1632,6 +1860,15 @@ _VERSIONS_WITH_CLAIM_OCCURRENCE = text(
     WHERE cc.claim_id = :claim_id
       AND c.deployment_id = :deployment_id
       AND cl.extractor_version = :extractor_version
+    """
+)
+
+_SELECT_COMPLETING_ROW = text(
+    """
+    SELECT deployment_id, target_kind::text AS target_kind, target_id,
+           stage::text AS stage, component_version
+    FROM processing_state
+    WHERE processing_id = :processing_id
     """
 )
 

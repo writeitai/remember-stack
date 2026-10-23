@@ -148,6 +148,18 @@ without the spend lease URL.
 
 </Cloud>
 
+## Processing layers
+
+Which parts of the pipeline the deployment runs and serves. Both are on by
+default; see [Processing layers](/docs/concepts/pipeline#processing-layers).
+`setup` applies a change.
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` | `true` | bool | Extract, embed and serve claims. Turning it off also requires `REMEMBERSTACK_SELFHOST_FACTS_LAYER=false`. |
+| `REMEMBERSTACK_SELFHOST_FACTS_LAYER` | `true` | bool | Build and serve entities, facts, the entity graph and knowledge pages. Requires the claims layer. |
+| `REMEMBERSTACK_SELFHOST_LAYER_SEED_BATCH_SIZE` | `500` | int ≥ 1 | Documents `setup` queues per batch when it starts processing a layer that was switched on. |
+
 ## Pools and workers
 
 | Variable | Default | Type | Purpose |

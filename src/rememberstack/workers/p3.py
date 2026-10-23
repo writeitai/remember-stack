@@ -103,8 +103,13 @@ class CorpusFsBuilder:
             version=version,
             store_prefix=prefix,
         )
+        # D143 §7.6: a snapshot is built for the served set it was rendered
+        # under; the mount publisher activates only a matching one.
+        include_entities = self._catalog.facts_served(deployment_id=deployment_id)
         try:
-            files = self._render(deployment_id=deployment_id)
+            files = self._render(
+                deployment_id=deployment_id, include_entities=include_entities
+            )
             for path, content in sorted(files.items()):
                 self._snapshot_store.write_bytes(
                     key=ObjectKey(f"{prefix}/{path}"),
@@ -134,7 +139,13 @@ class CorpusFsBuilder:
             snapshot_id=snapshot_id,
             plane="P3_corpusfs",
             row_counts={"files": len(files)},
-            validation={"gate": "passed", "builder": P3_BUILDER_VERSION},
+            validation={
+                "gate": "passed",
+                "builder": P3_BUILDER_VERSION,
+                # Recorded only for a snapshot without the facts layer, so a
+                # deployment serving every layer keeps today's record.
+                **({} if include_entities else {"facts": False}),
+            },
             built_from_watermark=None,
         )
         return {
@@ -144,12 +155,16 @@ class CorpusFsBuilder:
             "published": published,
         }
 
-    def _render(self, *, deployment_id: UUID) -> dict[str, str]:
-        """Render every file of the tree, keyed by its snapshot-relative path."""
+    def _render(self, *, deployment_id: UUID, include_entities: bool) -> dict[str, str]:
+        """Render every file of the tree, keyed by its snapshot-relative path.
+
+        Without the facts layer (D143 §7.6) the tree has no ``entities/`` and
+        no orientation line points at one.
+        """
         with self._catalog.corpus_export(deployment_id=deployment_id) as export:
             documents = export.documents()
-            entities = export.entities()
-            links = export.entity_document_links()
+            entities = export.entities() if include_entities else ()
+            links = export.entity_document_links() if include_entities else ()
         by_entity: dict[UUID, list[UUID]] = {}
         for link in links:
             by_entity.setdefault(UUID(str(link["entity_id"])), []).append(
@@ -202,6 +217,7 @@ class CorpusFsBuilder:
                 entities=entities,
                 directories=directories,
                 facets=self._settings.facets,
+                include_entities=include_entities,
             )
         )
         return files
@@ -527,6 +543,7 @@ def _level_indexes(
     entities: tuple[dict[str, object], ...],
     directories: dict[str, list[dict[str, object]]],
     facets: tuple[str, ...],
+    include_entities: bool = True,
 ) -> dict[str, str]:
     """Orientation for EVERY level: leaves, intermediates, facets, root.
 
@@ -561,12 +578,19 @@ def _level_indexes(
             directory=directory, members=members, children=children
         )
     rendered[f"documents/{INDEX_FILE}"] = _tier_one_documents_index(documents=documents)
-    rendered[f"entities/{INDEX_FILE}"] = _tier_one_entities_index(entities=entities)
+    if include_entities:
+        rendered[f"entities/{INDEX_FILE}"] = _tier_one_entities_index(entities=entities)
     rendered[MANIFEST_FILE] = _root_manifest(
-        documents=documents, entities=entities, facets=facets
+        documents=documents,
+        entities=entities,
+        facets=facets,
+        include_entities=include_entities,
     )
     rendered[INDEX_FILE] = _root_index(
-        documents=documents, entities=entities, facets=facets
+        documents=documents,
+        entities=entities,
+        facets=facets,
+        include_entities=include_entities,
     )
     return rendered
 
@@ -614,8 +638,11 @@ def _root_index(
     documents: tuple[dict[str, object], ...],
     entities: tuple[dict[str, object], ...],
     facets: tuple[str, ...],
+    include_entities: bool = True,
 ) -> str:
     """The root `_index.md`: how to navigate, and the durable-path contract."""
+    if not include_entities:
+        return _root_index_without_entities(documents=documents, facets=facets)
     lines = [
         "# Corpus",
         "",
@@ -654,8 +681,11 @@ def _root_manifest(
     documents: tuple[dict[str, object], ...],
     entities: tuple[dict[str, object], ...],
     facets: tuple[str, ...],
+    include_entities: bool = True,
 ) -> str:
     """The root orientation file an agent reads first."""
+    if not include_entities:
+        return _root_manifest_without_entities(documents=documents, facets=facets)
     lines = [
         "# Corpus filesystem",
         "",
@@ -680,6 +710,76 @@ def _root_manifest(
             "Paths under `documents/` and `entities/` are stable across"
             " rebuilds and safe to store. View paths may reorganize; every"
             " view stub carries its canonical path in frontmatter.",
+            "",
+            "Originals live off this path: follow a stub's `raw_uri`"
+            " deliberately — those reads are audited.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _root_index_without_entities(
+    *, documents: tuple[dict[str, object], ...], facets: tuple[str, ...]
+) -> str:
+    """The root `_index.md` of a deployment that does not serve facts (D143)."""
+    lines = [
+        "# Corpus",
+        "",
+        f"{len(documents)} document(s).",
+        "",
+        "## How to navigate",
+        "",
+        "1. `cat llms.txt` — facets and where things live.",
+        f"2. `cat <facet>/{INDEX_FILE}` — what kinds of things exist there.",
+        f"3. `cat <directory>/{INDEX_FILE}` — the member table: every file's"
+        " one-line meaning.",
+        "4. `cat <stub>.md` — orientation, canonical path, artifact pointer.",
+        "",
+        "## Facets",
+        "",
+    ]
+    lines.extend(
+        f"- [`{facet}/`]({facet}/{INDEX_FILE}) — view paths (reorganizable)"
+        for facet in facets
+    )
+    lines.extend(
+        [
+            f"- [`documents/`](documents/{INDEX_FILE}) — canonical, stable per lineage",
+            "",
+            "Durable paths live under `documents/` (Tier 1) and never move; view"
+            " subtrees reorganize as the corpus grows.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _root_manifest_without_entities(
+    *, documents: tuple[dict[str, object], ...], facets: tuple[str, ...]
+) -> str:
+    """The root orientation file of a deployment that does not serve facts."""
+    lines = [
+        "# Corpus filesystem",
+        "",
+        "> A generated, rebuildable view over the memory's documents. Nothing"
+        " here is source of truth; every file names the artifact it points at.",
+        "",
+        f"- {len(documents)} document lineage(s)",
+        "",
+        "## Facets",
+        "",
+    ]
+    lines.extend(f"- `{facet}/` (view paths — reorganizable)" for facet in facets)
+    lines.extend(
+        [
+            "- `documents/` (canonical, stable per lineage)",
+            "",
+            "## Contract",
+            "",
+            "Paths under `documents/` are stable across rebuilds and safe to store."
+            " View paths may reorganize; every view stub carries its canonical"
+            " path in frontmatter.",
             "",
             "Originals live off this path: follow a stub's `raw_uri`"
             " deliberately — those reads are audited.",

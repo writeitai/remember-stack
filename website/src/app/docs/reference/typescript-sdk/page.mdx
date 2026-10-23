@@ -132,6 +132,7 @@ objects and arrays, with validated defaults.
 | `graphPath` | `Envelope` |
 | `graphCitationPath` | `Envelope` |
 | `deploymentBuildInfo` | `DeploymentBuildInfo` |
+| `processingLayers` | `ProcessingLayerStates` |
 | `pipelineReadiness` | `PipelineReadinessReport` |
 | `waitForReadiness` | `PipelineReadinessReport` |
 | `ingest` | `IngestedVersion` |
@@ -156,7 +157,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -277,7 +278,8 @@ optional retryable/requestId diagnostics. RateLimited also has retryAfter in
 seconds. Hints are carried for callers; the client does not interpret them as
 permission to retry writes. ProjectResolutionError, StoredKeyRefused,
 AccountApiUnavailable, IssuerError, NumericPrecisionError and RequestTimeoutError
-extend MemoryApiError. InputValidationError and CredentialError are TypeErrors.
+extend MemoryApiError, as does LayerUnavailable (status 409, code
+`layer_unavailable`, with the missing `layer`). InputValidationError and CredentialError are TypeErrors.
 PipelineDeadLettered, TimeoutError, ConnectorNotFoundError and AbortError are
 outside MemoryApiError.
 

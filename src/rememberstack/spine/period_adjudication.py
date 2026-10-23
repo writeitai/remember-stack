@@ -526,6 +526,7 @@ def review_request(
     reason: str,
     request_id: UUID | None = None,
     after: tuple[str, str] | None = None,
+    lane: Any = None,
 ) -> Any:
     """The lineage fan-out job: find this lineage's facts whose basis moved.
 
@@ -548,7 +549,7 @@ def review_request(
         stage=PipelineStage.REVIEW_FACT_WINDOWS,
         component_version=FACT_WINDOW_REVIEW_VERSION,
         content_hash=target.hex,
-        lane=ProcessingLane.STEADY,
+        lane=lane or ProcessingLane.STEADY,
         payload={
             "doc_id": str(doc_id),
             "reason": reason,

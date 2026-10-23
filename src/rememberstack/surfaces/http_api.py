@@ -120,10 +120,14 @@ from rememberstack.model import VersionKeyConflictError
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
 from rememberstack.model.client import SECTION_HISTORY_MAX_K
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -134,7 +138,9 @@ from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -511,6 +517,7 @@ def build_api(
     effective_time: EffectiveTimePort | None = None,
     graph: GraphQueryPort | None = None,
     build_info: BuildInfoPort | None = None,
+    processing_layers: ProcessingLayersPort | None = None,
     ingest_body_max_bytes: int | None = None,
     trusted_principal_source: bool = False,
     browser_origins: tuple[str, ...] = (),
@@ -594,6 +601,30 @@ def build_api(
         """Any route whose embedding call fails answers 503, never 500."""
         return JSONResponse(
             status_code=503, content={"detail": "model provider unavailable"}
+        )
+
+    @app.exception_handler(LayerUnavailableError)
+    def layer_unavailable(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: a read needs a processing layer this deployment does not serve."""
+        assert isinstance(error, LayerUnavailableError)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "layer_unavailable",
+                    "layer": error.layer.value,
+                    "status": "disabled",
+                    "message": str(error),
+                }
+            },
+        )
+
+    @app.exception_handler(LayerSelectionError)
+    def layer_selection_invalid(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: the ``layers`` selection cannot be honoured by this read."""
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"code": "invalid_parameter", "message": str(error)}},
         )
 
     @app.get("/resolve", response_model=Envelope)
@@ -738,7 +769,16 @@ def build_api(
         )
 
     if surface is not None:
-        _mount_operations(app=app, surface=surface)
+        _mount_operations(
+            app=app,
+            surface=surface,
+            layers=processing_layers,
+            deployment_id=deployment_id,
+        )
+    if processing_layers is not None:
+        _mount_processing_layers(
+            app=app, layers=processing_layers, deployment_id=deployment_id
+        )
     if open_query is not None:
         _mount_open_query(app=app, open_query=open_query, perimeter=perimeter_dep)
     if ingest is not None:
@@ -785,12 +825,15 @@ def build_api(
             app=app, effective_time=effective_time, deployment_id=deployment_id
         )
     if graph is not None:
-        _mount_graph(app=app, graph=graph)
+        _mount_graph(
+            app=app, graph=graph, layers=processing_layers, deployment_id=deployment_id
+        )
     if build_info is not None:
         _mount_build_info(
             app=app,
             build_info=build_info,
             deployment_id=deployment_id,
+            layers=processing_layers,
             tools=_served_tools(
                 operations=surface is not None,
                 open_query=open_query is not None,
@@ -999,6 +1042,7 @@ def _mount_build_info(
     build_info: BuildInfoPort,
     deployment_id: UUID,
     tools: dict[str, int],
+    layers: ProcessingLayersPort | None,
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -1019,9 +1063,19 @@ def _mount_build_info(
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
-        """Report which code, model bindings and tools are serving, before any work."""
+        """Report which code, model bindings and tools are serving, before any work.
+
+        D143 §7.4: tools that read only an unserved layer are not listed.
+        """
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
         return build_info.build_info(deployment_id=deployment_id).model_copy(
-            update={"tools": dict(tools)}
+            update={
+                "tools": {
+                    name: version
+                    for name, version in tools.items()
+                    if name not in unserved
+                }
+            }
         )
 
 
@@ -1051,12 +1105,47 @@ def _graph_errors() -> Iterator[None]:
 _TRANSACTION_TIMEOUT: Final = "25P04"
 
 
-def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
-    """Mount the three server-owned graph operations."""
+_LAYERS_HELP: Final = (
+    "D143: the processing layers this request may read (sources, claims,"
+    " facts); default every layer the deployment serves."
+)
+
+
+def _layer_selection(
+    layers: list[ProcessingLayer] | None,
+) -> frozenset[ProcessingLayer] | None:
+    """The request's ``layers`` query parameter as a selection, or None."""
+    return None if layers is None else frozenset(layers)
+
+
+def _require_facts(*, layers: ProcessingLayersPort | None, deployment_id: UUID) -> None:
+    """Refuse an entity-graph read when the deployment does not serve facts."""
+    if layers is not None and layers.states(deployment_id=deployment_id).facts == (
+        "disabled"
+    ):
+        raise LayerUnavailableError(
+            layer=ProcessingLayer.FACTS,
+            message="this deployment does not process the facts layer",
+        )
+
+
+def _mount_graph(
+    *,
+    app: FastAPI,
+    graph: GraphQueryPort,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
+) -> None:
+    """Mount the three server-owned graph operations.
+
+    The entity graph reads the facts layer; citation paths read sources
+    (D143 §7.2).
+    """
 
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
+        _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
             return graph.neighborhood(
                 entity_id=body.entity_id,
@@ -1072,6 +1161,7 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
+        _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
             return graph.path(
                 from_entity_id=body.from_entity_id,
@@ -1112,6 +1202,9 @@ def _mount_open_query(
     def query_sql(
         body: SqlQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; QueryResult/v1."""
         return _open_call(
@@ -1120,6 +1213,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1127,11 +1221,17 @@ def _mount_open_query(
     def explain_sql(
         body: SqlExplainRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """EXPLAIN one SQL statement without executing it."""
         return _open_call(
             lambda: open_query.explain_sql(
-                sql=body.sql, parameters=body.parameters, principal=principal
+                sql=body.sql,
+                parameters=body.parameters,
+                principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1231,6 +1331,9 @@ def _mount_open_query(
         name: str,
         body: RunSavedQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """Execute one active saved query through the same SQL executor."""
         return _open_call(
@@ -1241,6 +1344,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1753,19 +1857,44 @@ def _mount_effective_time(
             raise _effective_time_errors(error) from error
 
 
-def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
+def _mount_processing_layers(
+    *, app: FastAPI, layers: ProcessingLayersPort, deployment_id: UUID
+) -> None:
+    """Mount ``GET /processing-layers`` (D143 §7.4)."""
+
+    @app.get("/processing-layers", response_model=ProcessingLayerStates)
+    def processing_layers() -> ProcessingLayerStates:
+        """Each switchable layer is enabled, backfilling or disabled."""
+        return layers.states(deployment_id=deployment_id)
+
+
+def _mount_operations(
+    *,
+    app: FastAPI,
+    surface: OperationSurface,
+    layers: ProcessingLayersPort | None,
+    deployment_id: UUID,
+) -> None:
     """Add the registry-rendered assured-operation endpoints (D50/D87)."""
 
     @app.get("/operations", response_model=list[ToolDescriptor])
     def list_operations() -> list[ToolDescriptor]:
-        """The four assured operations for this deployment."""
-        return list(surface.descriptors())
+        """The assured operations this deployment serves (D143: by its layers)."""
+        unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
+        return [
+            descriptor
+            for descriptor in surface.descriptors()
+            if descriptor.name not in unserved
+        ]
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(
         name: str,
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> Envelope | ContextBundleV2:
         """Run one assured operation by name over JSON arguments.
 
@@ -1788,7 +1917,9 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
                     status_code=403, detail="credential may not perform this operation"
                 )
         try:
-            return surface.run(name=name, arguments=arguments)
+            return surface.run(
+                name=name, arguments=arguments, layers=_layer_selection(layers)
+            )
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:

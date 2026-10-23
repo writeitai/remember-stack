@@ -122,6 +122,21 @@ class EmptyObsFlushComplete(BaseModel):
     lane: ProcessingLane | None
 
 
+class ClaimsBoundary(BaseModel):
+    """D143: ``embed_chunk`` finished; the ledger decides the claims layer.
+
+    The handler still names its ordinary follow-ups (the per-chunk extract jobs
+    or the D90 empty path); an unconfigured deployment runs exactly those, and
+    a configured one records a gap and lets the lineage order decide.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    deployment_id: UUID
+    version_id: UUID
+    lane: ProcessingLane | None
+
+
 class HandlerOutcome(BaseModel):
     """What a successful handler produced: the chain follow-ups to enqueue."""
 
@@ -133,6 +148,7 @@ class HandlerOutcome(BaseModel):
     claim_normalize_barrier: ClaimNormalizeBarrier | None = None
     entity_obs_flush_barrier: EntityObsFlushBarrier | None = None
     empty_obs_flush: EmptyObsFlushComplete | None = None
+    claims_boundary: ClaimsBoundary | None = None
 
 
 @runtime_checkable
@@ -390,7 +406,14 @@ class Worker:
             return RunResult(
                 processing_id=claimed.processing_id, outcome=result_outcome
             )
-        if outcome.selection_chunk_barrier is not None:
+        if outcome.claims_boundary is not None:
+            self._ledger.complete_at_claims_boundary(
+                processing_id=claimed.processing_id,
+                boundary=outcome.claims_boundary,
+                follow_up=outcome.follow_up,
+                empty=outcome.empty_obs_flush,
+            )
+        elif outcome.selection_chunk_barrier is not None:
             self._ledger.complete_chunk_selection(
                 processing_id=claimed.processing_id,
                 barrier=outcome.selection_chunk_barrier,

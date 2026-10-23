@@ -58,6 +58,7 @@ seconds. `wait_for_readiness` raises
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
+| `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
@@ -217,6 +218,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
+| `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |

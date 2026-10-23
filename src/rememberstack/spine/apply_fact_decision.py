@@ -13,6 +13,7 @@ from rememberstack.core.fact_application import new_fact_id
 from rememberstack.core.fact_application import resolve_fact_reference
 from rememberstack.core.fact_application import validate_application_scope
 from rememberstack.core.fact_windows import fact_window_from_raw
+from rememberstack.model import ProcessingLane
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.fact_application import FactApplicationDecision
 from rememberstack.model.fact_windows import FactWindow
@@ -35,6 +36,7 @@ def apply_fact_decision(
     snapshot: dict[str, Any],
     decision: FactApplicationDecision,
     method: str = "small_model",
+    lane: ProcessingLane = ProcessingLane.STEADY,
 ) -> dict[str, Any]:
     """Apply only a revalidated prepared snapshot on the caller's locked transaction.
 
@@ -359,6 +361,7 @@ def apply_fact_decision(
         application_id=application_id,
         kind=kind,
         changed=tuple(sorted(changed)),
+        lane=lane,
     )
     return result
 
@@ -435,6 +438,7 @@ def _enqueue_projection_repair(
     application_id: UUID,
     kind: str,
     changed: tuple[UUID, ...],
+    lane: ProcessingLane,
 ) -> None:
     """Invalidate profiles and durably reuse label work for this application."""
     from rememberstack.model import ProcessingTarget
@@ -448,6 +452,7 @@ def _enqueue_projection_repair(
         target_id=application_id,
         content_hash=application_id.hex,
         payload={"application_id": str(application_id)},
+        lane=lane,
     )
 
 
@@ -462,6 +467,7 @@ def enqueue_fact_projection_repair(
     content_hash: str,
     payload: dict[str, object],
     invalidate_profiles: bool = True,
+    lane: ProcessingLane = ProcessingLane.STEADY,
 ) -> None:
     """Invalidate the changed facts' entity profiles and queue their relabeling.
 
@@ -479,7 +485,6 @@ def enqueue_fact_projection_repair(
     """
     from rememberstack.model import EnqueueWork
     from rememberstack.model import PipelineStage
-    from rememberstack.model import ProcessingLane
     from rememberstack.spine.work_ledger import enqueue_on
     from rememberstack.workers.p1 import label_relation_component_version
     from rememberstack.workers.p1 import P1Settings
@@ -521,7 +526,7 @@ def enqueue_fact_projection_repair(
                 embedding_model=P1Settings().embedding_model
             ),
             content_hash=content_hash,
-            lane=ProcessingLane.STEADY,
+            lane=lane,
             payload=payload,
         ),
     )

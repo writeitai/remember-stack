@@ -940,7 +940,9 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         seen["engine"] = server
         return 0
 
-    def http(*, bind: str, engine_url: str, read_only: bool) -> int:
+    def http(
+        *, bind: str, engine_url: str, read_only: bool, layers: object = None
+    ) -> int:
         seen["http"] = (bind, engine_url, read_only)
         return 0
 

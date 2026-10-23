@@ -36,6 +36,9 @@ from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
+from remember.models import ProcessingLayer
+from remember.models import ProcessingLayerState
+from remember.models import ProcessingLayerStates
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
 from remember.models import ReferenceGeneration
@@ -65,6 +68,9 @@ __all__ = (
     "ConnectorDescriptor",
     "ConnectorNotFoundError",
     "DeploymentBuildInfo",
+    "ProcessingLayer",
+    "ProcessingLayerState",
+    "ProcessingLayerStates",
     "DocumentDeletion",
     "DocumentPage",
     "DocumentPeopleMatch",

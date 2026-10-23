@@ -79,6 +79,32 @@ curl -s "$REMEMBER_API_URL/deployment" \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
 
+## GET /processing-layers
+
+Report which [processing layers](/docs/concepts/pipeline#processing-layers)
+the deployment processes and serves. The sources layer is always served and
+is not listed.
+
+**Scope:** `read`.
+
+### Response
+
+`200` with an object holding one state per switchable layer:
+
+```json
+{"claims": "enabled", "facts": "backfilling"}
+```
+
+| State | Meaning |
+|---|---|
+| `enabled` | Processed and served, with every live version processed. |
+| `backfilling` | Processed and served, while versions that missed the layer are still being processed. An empty answer that read it is a `boundary`, never `known_empty`. |
+| `disabled` | Neither processed nor served. Reads that need it are refused with `409 layer_unavailable`. |
+
+With the facts layer disabled, `GET /operations`, the `tools` of
+`GET /deployment` and the MCP tool list leave out `facts_context` and
+`resolve_entity`.
+
 ```python
 from remember import Client
 

@@ -4,6 +4,7 @@ import copy
 from datetime import datetime
 import hashlib
 from typing import cast
+from typing import Protocol
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -14,6 +15,8 @@ from rememberstack.model import AssuredOperation
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.query_space.canonical import canonical_json_bytes
@@ -64,8 +67,17 @@ class OperationSurface:
             operations=self._registry.active(deployment_id=self._deployment_id)
         )
 
-    def run(self, *, name: str, arguments: dict[str, object]) -> OperationResult:
-        """Validate transport arguments and run one canonical operation."""
+    def run(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, object],
+        layers: frozenset[ProcessingLayer] | None = None,
+    ) -> OperationResult:
+        """Validate transport arguments and run one canonical operation.
+
+        ``layers`` is the D143 request option narrowing the layers it reads.
+        """
         operation = self._registry.by_name(deployment_id=self._deployment_id, name=name)
         if operation is None:
             raise UnknownOperationError(name)
@@ -73,6 +85,7 @@ class OperationSurface:
             deployment_id=self._deployment_id,
             operation=operation,
             arguments=_coerce_arguments(operation=operation, arguments=arguments),
+            layers=layers,
         )
 
     def adjacent_chunks(self, *, chunk_id: UUID, window: int = 1) -> Envelope:
@@ -80,6 +93,33 @@ class OperationSurface:
         return self._executor.adjacent_chunks(
             deployment_id=self._deployment_id, chunk_id=chunk_id, window=window
         )
+
+
+FACTS_ONLY_OPERATIONS: frozenset[str] = frozenset({"facts_context", "resolve_entity"})
+"""Operations that read only the facts layer; not served without it (D143 §7.4)."""
+
+
+class ProcessingLayersPort(Protocol):
+    """The deployment's D143 layer states (``ProcessingLayerCatalog``)."""
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """Each switchable layer: enabled, backfilling or disabled."""
+        ...
+
+
+def unserved_operation_names(
+    *, layers: ProcessingLayersPort | None, deployment_id: UUID
+) -> frozenset[str]:
+    """Operation tools the deployment does not serve (D143 §7.4).
+
+    Without a composed layers port, or with the facts layer served, nothing
+    is withheld, so a deployment serving every layer lists every operation.
+    """
+    if layers is None:
+        return frozenset()
+    if layers.states(deployment_id=deployment_id).facts != "disabled":
+        return frozenset()
+    return FACTS_ONLY_OPERATIONS
 
 
 def operation_descriptors(

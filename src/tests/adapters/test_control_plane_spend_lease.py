@@ -857,6 +857,8 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         ("GET", "/deployment"),
         ("POST", "/readiness"),
         ("GET", "/operations"),
+        # D143: reading the layer states is a metadata read like /deployment.
+        ("GET", "/processing-layers"),
         ("DELETE", "/documents/{doc_id}"),
         ("DELETE", "/documents/{doc_id}/effective-periods"),
         ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),

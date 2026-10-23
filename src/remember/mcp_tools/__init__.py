@@ -33,6 +33,7 @@ from remember.mcp_tools._documents import DocumentSearchBackend
 from remember.mcp_tools._documents import handle_search_documents_tool
 from remember.mcp_tools._errors import error_result
 from remember.mcp_tools._errors import invalid_arguments
+from remember.mcp_tools._errors import layer_unavailable
 from remember.mcp_tools._errors import map_error
 from remember.mcp_tools._errors import ToolArgumentError
 from remember.mcp_tools._errors import ToolError
@@ -74,6 +75,7 @@ __all__ = (
     "handle_delete_document_tool",
     "handle_document_references_tool",
     "invalid_arguments",
+    "layer_unavailable",
     "handle_memory_write_tool",
     "handle_search_documents_tool",
     "handle_section_history_tool",

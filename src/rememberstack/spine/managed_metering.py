@@ -24,6 +24,7 @@ from rememberstack.model import ObjectKey
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ReadinessRequirements
+from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.metering import DocTextQuantity
 from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
@@ -31,8 +32,10 @@ from rememberstack.model.metering import ManagedTextMeasurementDraft
 from rememberstack.model.metering import MeterReceiptConflict
 from rememberstack.model.metering import MeterReceiptUnauthorized
 from rememberstack.model.metering import MeterReceiptUnavailable
+from rememberstack.model.processing_layers import profile_layers
 from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.ports.object_store import ObjectStorePort
+from rememberstack.spine.processing_layers import layer_configuration_on
 from rememberstack.spine.readiness import PipelineReadinessCatalog
 from rememberstack.spine.work_ledger import enqueue_on
 
@@ -355,16 +358,33 @@ class ManagedMeterCatalog:
                 profile_complete = False
                 sequence = None
             else:
+                # D143 §4.5: certify the profile the version was measured
+                # under, whatever the deployment is configured for now.
+                measured_layers = profile_layers(
+                    processing_profile_id=str(row["processing_profile_id"])
+                )
                 report = self._readiness.inspect(
                     deployment_id=deployment_id,
                     version_ids=(version_id,),
                     require=ReadinessRequirements(
                         pipeline=True, p1=False, live_graph=False, p3=False
                     ),
+                    layers=measured_layers,
                 )
                 version = report.versions[0]
                 failed = any(stage.status == "dead_letter" for stage in version.stages)
-                if failed:
+                profile_changed = not version.ready and self._profile_unreachable(
+                    deployment_id=deployment_id,
+                    version_id=version_id,
+                    measured_layers=measured_layers,
+                )
+                if profile_changed:
+                    outcome = "failed"
+                    completed_at = datetime.now(timezone.utc)
+                    reason_code = "processing_profile_changed"
+                    profile_complete = False
+                    sequence = None
+                elif failed:
                     outcome = "failed"
                     completed_at = max(
                         (
@@ -414,6 +434,35 @@ class ManagedMeterCatalog:
                 if int(result.rowcount or 0) > 0:
                     created += 1
         return created
+
+    def _profile_unreachable(
+        self,
+        *,
+        deployment_id: UUID,
+        version_id: UUID,
+        measured_layers: frozenset[ProcessingLayer],
+    ) -> bool:
+        """Whether the version can no longer complete its measured profile.
+
+        True when it has a gap in a measured layer that is now disabled, or a
+        discharged gap in a measured layer (D143 §4.5).
+        """
+        with self._engine.connect() as connection:
+            configuration = layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            )
+            for row in connection.execute(
+                _VERSION_GAPS,
+                {"deployment_id": deployment_id, "version_id": version_id},
+            ).mappings():
+                layer = ProcessingLayer(str(row["layer"]))
+                if layer not in measured_layers:
+                    continue
+                if row["discharged_at"] is not None or not configuration.enabled(
+                    layer=layer
+                ):
+                    return True
+        return False
 
     def _record_outcome_check_retry(self, *, measurement_id: UUID) -> None:
         """Back off a non-terminal readiness check to prevent head blocking."""
@@ -663,7 +712,8 @@ _QUARANTINE_MEASUREMENT = text(
 _AWAITING_OUTCOMES = text(
     """
     SELECT m.measurement_id, m.deployment_id, m.version_id,
-           m.normalized_character_count, v.status::text AS version_status
+           m.normalized_character_count, m.processing_profile_id,
+           v.status::text AS version_status
     FROM managed_ingest_measurements m
     JOIN document_versions v ON v.version_id = m.version_id
     LEFT JOIN managed_ingest_outcomes o ON o.measurement_id = m.measurement_id
@@ -675,6 +725,14 @@ _AWAITING_OUTCOMES = text(
            OR v.status::text IN ('failed', 'deleted'))
     ORDER BY m.accepted_at, m.measurement_id
     LIMIT :limit
+    """
+)
+
+_VERSION_GAPS = text(
+    """
+    SELECT layer, discharged_at
+    FROM processing_layer_gaps
+    WHERE deployment_id = :deployment_id AND version_id = :version_id
     """
 )
 
