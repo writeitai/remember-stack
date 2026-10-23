@@ -37,9 +37,6 @@ ProtocolName = NonEmpty
 SourceTimezoneBasis = Literal["assumed_utc"]
 AnswerAgentModel = NonEmpty
 JudgeModel = NonEmpty
-ProviderKey = Literal["openrouter", "vertex", "codex_subscription"]
-"""Which adapter family serves a protocol seat: OpenRouter, keyless Vertex,
-or the local keyless Codex ChatGPT-subscription bridge."""
 FailureKind = Literal[
     "readiness", "tool", "reader", "judge", "accounting", "invalid_response", "missing"
 ]

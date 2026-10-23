@@ -724,14 +724,18 @@ def test_first_step_provider_outage_is_not_retried() -> None:
     assert provider.answer_calls == 1
 
 
-def test_credit_exhaustion_stops_without_an_answer_checkpoint() -> None:
+@pytest.mark.parametrize("capacity", [False, True])
+def test_provider_rejection_stops_without_an_answer_checkpoint(capacity: bool) -> None:
     client, raw_client = _memory_client()
     state = _run_state()
     provider = _UnavailableProvider(
-        message="OpenRouter /chat/completions returned 402: synthetic credits"
+        message="Flex processing is temporarily unavailable"
+        if capacity
+        else "OpenRouter /chat/completions returned 402: synthetic credits",
+        retryable_unbilled=capacity,
     )
     try:
-        with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+        with pytest.raises(ProviderInfrastructureError, match="unavailable"):
             _answer_one(
                 question=_question(),
                 client=client,
@@ -751,9 +755,10 @@ def test_credit_exhaustion_stops_without_an_answer_checkpoint() -> None:
     assert state.evaluator_cost_usd == 0
 
 
-def test_credit_exhaustion_stops_without_a_judge_checkpoint() -> None:
+@pytest.mark.parametrize("capacity", [False, True])
+def test_provider_rejection_stops_without_a_judge_checkpoint(capacity: bool) -> None:
     state = _run_state()
-    with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+    with pytest.raises(ProviderInfrastructureError, match="unavailable"):
         _judge_one(
             question=_question(),
             answer=AnswerRecord(
@@ -771,7 +776,10 @@ def test_credit_exhaustion_stops_without_a_judge_checkpoint() -> None:
                 reader_attempts=1,
             ),
             provider=_UnavailableProvider(
-                message="OpenRouter /chat/completions returned 402: synthetic credits"
+                message="Flex processing is temporarily unavailable"
+                if capacity
+                else "OpenRouter /chat/completions returned 402: synthetic credits",
+                retryable_unbilled=capacity,
             ),
             state=state,
             max_judge_calls=1,
@@ -1974,13 +1982,15 @@ def test_single_run_summary_json_is_unchanged(
 ) -> None:
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
-    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    prepared = prepare_run(
+        dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+    )
 
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
         '{"protocol_name":"RS-LoCoMo-Full-v39","protocol_fingerprint":'
-        '"9a51664957d30c2b5d0543f1443afa42500dad860538ea7c2c88259920a44acd",'
+        f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2523,14 +2533,17 @@ class _CostProvider:
 class _UnavailableProvider:
     """Provider that fails before returning any reported usage."""
 
-    def __init__(self, *, message: str) -> None:
+    def __init__(self, *, message: str, retryable_unbilled: bool = False) -> None:
         self.message = message
+        self.retryable_unbilled = retryable_unbilled
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
     ) -> GeneratedResponse[ResponseT]:
         del request, response_type
-        raise OpenRouterProviderError(self.message)
+        raise OpenRouterProviderError(
+            self.message, retryable_unbilled=self.retryable_unbilled
+        )
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         raise AssertionError(f"unexpected embed call: {request.model}")
@@ -3613,3 +3626,101 @@ def test_historical_protocol_is_read_only_without_an_executable_definition(
     with pytest.raises(ValueError, match="historical protocol.*read-only"):
         run_protocol(run_dir=run_dir)
     assert before == {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
+
+
+@pytest.mark.parametrize("stage", ["answer", "judge"])
+def test_capacity_stop_retries_rejected_item_and_preserves_prior_work(
+    stage: str,
+) -> None:
+    """An unbilled rejection cannot become an immutable WRONG checkpoint."""
+    client, raw_client = _memory_client()
+    state = _run_state()
+    first_question = _question()
+    second_question = first_question.model_copy(update={"item_id": "conv-test/qa/0001"})
+    capacity = _UnavailableProvider(
+        message="Flex processing is temporarily unavailable", retryable_unbilled=True
+    )
+    try:
+        first_answer = _answer_one(
+            question=first_question,
+            client=client,
+            provider=_CostProvider(cost=Decimal("0.01")),
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=20,
+            max_evaluator_cost_usd=Decimal(1),
+        )
+        if stage == "answer":
+            state.answers[first_question.item_id] = first_answer
+            before = first_answer.model_dump_json()
+            spent = state.evaluator_cost_usd
+            with pytest.raises(
+                ProviderInfrastructureError, match="capacity unavailable"
+            ):
+                _answer_one(
+                    question=second_question,
+                    client=client,
+                    provider=capacity,
+                    tools=(_tool(),),
+                    doc_sessions={},
+                    state=state,
+                    max_agent_calls=20,
+                    max_evaluator_cost_usd=Decimal(1),
+                )
+            assert second_question.item_id not in state.answers
+            assert state.evaluator_cost_usd == spent
+            assert state.interrupted_answer_calls == 1
+            resumed = _answer_one(
+                question=second_question,
+                client=client,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                tools=(_tool(),),
+                doc_sessions={},
+                state=state,
+                max_agent_calls=20,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            assert resumed.generated_answer == "Prague"
+            assert state.answers[first_question.item_id].model_dump_json() == before
+        else:
+            first_judge = _judge_one(
+                question=first_question,
+                answer=first_answer,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                state=state,
+                max_judge_calls=4,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            state.judges[first_question.item_id] = first_judge
+            before = first_judge.model_dump_json()
+            spent = state.evaluator_cost_usd
+            second_answer = first_answer.model_copy(
+                update={"item_id": second_question.item_id}
+            )
+            with pytest.raises(
+                ProviderInfrastructureError, match="capacity unavailable"
+            ):
+                _judge_one(
+                    question=second_question,
+                    answer=second_answer,
+                    provider=capacity,
+                    state=state,
+                    max_judge_calls=4,
+                    max_evaluator_cost_usd=Decimal(1),
+                )
+            assert second_question.item_id not in state.judges
+            assert state.evaluator_cost_usd == spent
+            assert state.interrupted_judge_calls == 1
+            resumed = _judge_one(
+                question=second_question,
+                answer=second_answer,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                state=state,
+                max_judge_calls=4,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            assert resumed.label == "CORRECT"
+            assert state.judges[first_question.item_id].model_dump_json() == before
+    finally:
+        raw_client.close()

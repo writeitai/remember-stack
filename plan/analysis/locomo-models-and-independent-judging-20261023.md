@@ -114,3 +114,13 @@ are removed. Read-only validation uses saved run metadata instead of resolving
 an old executable protocol. Source hashes, saved generations, answers and original
 grades remain unchanged. Shared provider adapters used elsewhere are not protocol
 fallbacks and remain available to their actual callers.
+
+## Advertised Jev request model
+
+A read-only GET of TypeSafe `/v1/models` on 2026-10-23 returned `jev-latest`
+and `jev-preview`. The future profile uses the advertised `jev-latest`
+request alias. The historical ledger's `typesafe/jev-1.13.0` is a served
+revision, not evidence that `jev-1.13.0` is an accepted request model. Preserve
+both the configured alias and each call's actual revision in provenance; do
+not retroactively relabel the historical stores. This availability check made
+no inference request and incurred no model usage.
