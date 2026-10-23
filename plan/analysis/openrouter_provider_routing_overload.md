@@ -2,6 +2,12 @@
 
 **Status:** analysis (non-binding).
 **Date:** 2026-09-02.
+
+**Current status, 2026-10-23:** this records a historical GLM v21 experiment.
+The research landed through PR #380. PR #514 retired the old executable
+benchmark profiles. Current main exposes `chat_provider_only` and
+`chat_provider_order`; the experiment's `chat_provider_sort` option never landed.
+
 **Evidence:** LoCoMo `conv-48` ingestion, protocol `RS-LoCoMo-Full-v21`,
 `z-ai/glm-5.3-flash`, host `umc-locomo-bench-01`, deployment
 `a5754c13-a721-4b85-9dfb-652f3fe94a46`.
@@ -103,6 +109,6 @@ had nowhere to go.
    reference topology (extract 8 / normalize 6 / adjudicate 4 / embed 2).
    Extraction survived only because it ran before the scale-up.
 
-`chat_provider_sort` remains a reasonable setting and is retained — biasing
-toward throughput is sensible when there is genuinely more than one eligible
-host. It simply cannot help when the eligible set has one member.
+The experiment tried `chat_provider_sort` to prefer throughput, but that
+configuration option was not adopted on main. The result here shows why sorting
+cannot help when the request has only one eligible provider.
