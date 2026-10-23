@@ -1605,7 +1605,11 @@ def test_readiness_flag_cannot_hide_an_incomplete_pipeline_report(
 
 @pytest.mark.parametrize(
     ("drift_kind", "message"),
-    (("manifest", "query surface"), ("operations", "canonical four-operation surface")),
+    (
+        ("manifest", "query surface"),
+        ("operations", "canonical four-operation surface"),
+        ("layers", "processing layers are not all enabled"),
+    ),
 )
 def test_answer_refuses_non_current_query_surface_before_model_calls(
     drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1630,6 +1634,12 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
             and request.url.path == "/operations"
         ):
             return httpx.Response(200, json=[])
+        if (
+            not clean_surface
+            and drift_kind == "layers"
+            and request.url.path == "/processing-layers"
+        ):
+            return httpx.Response(200, json={"claims": "enabled", "facts": "disabled"})
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -1669,7 +1679,11 @@ def test_answer_refuses_non_current_query_surface_before_model_calls(
 
 @pytest.mark.parametrize(
     ("drift_kind", "message"),
-    (("manifest", "query surface"), ("operations", "canonical four-operation surface")),
+    (
+        ("manifest", "query surface"),
+        ("operations", "canonical four-operation surface"),
+        ("layers", "processing layers are not all enabled"),
+    ),
 )
 def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
     drift_kind: str, message: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1688,6 +1702,10 @@ def test_ingest_refuses_non_current_query_surface_before_provider_or_upload(
             return httpx.Response(200, json={"surface_manifest_hash": "0" * 64})
         if drift_kind == "operations" and request.url.path == "/operations":
             return httpx.Response(200, json=[])
+        if drift_kind == "layers" and request.url.path == "/processing-layers":
+            return httpx.Response(
+                200, json={"claims": "enabled", "facts": "backfilling"}
+            )
         return _run_transport(request)
 
     raw_client = httpx.Client(
@@ -2780,6 +2798,8 @@ def _run_transport(request: httpx.Request) -> httpx.Response:
         )
     if request.method == "POST" and request.url.path == "/readiness":
         return httpx.Response(200, json=_complete_readiness_payload())
+    if request.method == "GET" and request.url.path == "/processing-layers":
+        return httpx.Response(200, json={"claims": "enabled", "facts": "enabled"})
     if request.method == "GET" and request.url.path == "/operations":
         return httpx.Response(
             200, json=[tool.model_dump(mode="json") for tool in _stock_tools()]

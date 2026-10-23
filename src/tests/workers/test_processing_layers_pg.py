@@ -14,9 +14,11 @@ from datetime import UTC
 from pathlib import Path
 import re
 from uuid import UUID
+from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
+from pydantic import SecretStr
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
@@ -39,6 +41,11 @@ from rememberstack.model import ReadinessRequirements
 from rememberstack.model import ResolverConfig
 from rememberstack.model import RunResultOutcome
 from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
+from rememberstack.model.metering import ManagedIngestMeasurementV2
+from rememberstack.model.metering import ManagedMeterScope
+from rememberstack.model.metering import MeterAdmissionResult
+from rememberstack.ports.metering import MeterReceiptPort
 from rememberstack.spine import CascadeResolver
 from rememberstack.spine import ChunkCatalog
 from rememberstack.spine import ClaimCatalog
@@ -56,6 +63,7 @@ from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
+from rememberstack.spine.managed_metering import ManagedMeterCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
 from rememberstack.spine.projection import ProjectionCatalog
 from rememberstack.spine.readiness import PipelineReadinessCatalog
@@ -64,6 +72,8 @@ from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
+from rememberstack.workers import DeletionService
+from rememberstack.workers import DocumentDeleter
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2Settings
 from rememberstack.workers import E3Settings
@@ -235,6 +245,7 @@ class _LayerRig:
         self.engine = engine
         self.params = params
         raw_store = LocalFSObjectStore(root=root / "raw")
+        self.raw_store = raw_store
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.provider = FakeModelProvider(generate_router=_route)
         documents = DocumentCatalog(engine=engine)
@@ -248,6 +259,10 @@ class _LayerRig:
             engine=engine,
             model_provider=self.provider,
             embedding_model=P1Settings().embedding_model,
+        )
+        self.profiles = profiles
+        self.deletion = DeletionService(
+            catalog=LifecycleCatalog(engine=engine), profile_refresher=profiles
         )
         adjudicator = FactAdjudicator(
             engine=engine,
@@ -420,18 +435,33 @@ class _LayerRig:
             sync_cycle_id=None,
         )
 
-    def drain(self) -> None:
-        """Run every stage on both lanes until the chain is idle."""
+    def drain(
+        self,
+        *,
+        stages: tuple[PipelineStage, ...] = _STAGES,
+        tolerate_failures: bool = False,
+    ) -> None:
+        """Run the stages (default: every stage) on both lanes until idle.
+
+        Every claimed row must succeed unless ``tolerate_failures`` (late work
+        of a deleted version retries until it dead-letters, as today).
+        """
+        allowed = {RunResultOutcome.SUCCEEDED}
+        if tolerate_failures:
+            allowed |= {
+                RunResultOutcome.RETRY_SCHEDULED,
+                RunResultOutcome.DEAD_LETTERED,
+            }
         for _ in range(2_000):
             progressed = False
-            for stage in _STAGES:
+            for stage in stages:
                 for lane in (ProcessingLane.STEADY, ProcessingLane.BACKFILL):
                     outcome = self.worker.run_one(
                         deployment_id=_DEPLOYMENT_ID, stage=stage, lane=lane
                     ).outcome
                     if outcome is RunResultOutcome.NO_WORK:
                         continue
-                    assert outcome is RunResultOutcome.SUCCEEDED, (stage, outcome)
+                    assert outcome in allowed, (stage, outcome)
                     progressed = True
             if not progressed:
                 return
@@ -866,3 +896,544 @@ def test_layer_states_and_profile_ids(rig: _LayerRig) -> None:
         rig.layers.reconcile_settings(
             deployment_id=_DEPLOYMENT_ID, claims_enabled=False, facts_enabled=True
         )
+
+
+def _version_lanes(rig: _LayerRig, *, version_id: UUID, stage: str) -> set[str]:
+    """The lanes of a version's work rows of one stage (chunk or version grain)."""
+    with rig.engine.connect() as connection:
+        return set(
+            connection.execute(
+                text(
+                    "SELECT DISTINCT p.lane::text FROM processing_state p"
+                    " LEFT JOIN chunks c ON c.chunk_id = p.target_id"
+                    " WHERE p.stage::text = :stage"
+                    "   AND (p.target_id = :v OR c.version_id = :v)"
+                ),
+                {"stage": stage, "v": version_id},
+            ).scalars()
+        )
+
+
+def test_disabled_gaps_enter_on_backfill_and_deferred_gaps_on_steady(
+    database_engine: Engine, tmp_path: Path
+) -> None:
+    """§9.10 lanes: a gap recorded while claims were disabled enters on
+    ``backfill``; a version deferred during ingestion (claims enabled, waiting
+    for its predecessor) enters on ``steady`` — also after a worker restart."""
+    rig = _LayerRig(engine=database_engine, root=tmp_path, params=_SMALL)
+    rig.configure(claims=False, facts=False)
+    first = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=False),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    assert (
+        rig.scalar(
+            "SELECT lane::text FROM processing_layer_gaps"
+            " WHERE version_id = :v AND layer = 'claims'",
+            v=first.version_id,
+        )
+        == "backfill"
+    )
+    # switched on, not seeded: v1 keeps its unentered backfill gap
+    rig.layers.reconcile_settings(
+        deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=False
+    )
+    second = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=True),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    # a restart: a fresh worker (new process state) drains what is queued
+    restarted = _LayerRig(engine=database_engine, root=tmp_path, params=_SMALL)
+    restarted.drain()
+
+    assert _version_lanes(
+        restarted, version_id=first.version_id, stage="extract_claims"
+    ) == {"backfill"}
+    assert _version_lanes(
+        restarted, version_id=second.version_id, stage="extract_claims"
+    ) == {"steady"}
+    # v2 really was deferred: it entered only after v1's claims frontier
+    assert restarted.scalar(
+        "SELECT min(p.enqueued_at) >= (SELECT finished_at FROM processing_state"
+        "  WHERE target_id = :v1 AND stage = 'embed_claim')"
+        " FROM processing_state p JOIN chunks c ON c.chunk_id = p.target_id"
+        " WHERE c.version_id = :v2 AND p.stage = 'extract_claims'",
+        v1=first.version_id,
+        v2=second.version_id,
+    )
+    # the claims tail follows the claims work that opened it
+    for stage in ("embed_claim", "reconcile"):
+        assert _version_lanes(restarted, version_id=first.version_id, stage=stage) == {
+            "backfill"
+        }, stage
+        assert _version_lanes(restarted, version_id=second.version_id, stage=stage) == {
+            "steady"
+        }, stage
+    assert (
+        restarted.scalar(
+            "SELECT count(*) FROM processing_layer_gaps WHERE layer = 'claims'"
+        )
+        == 0
+    )
+
+
+def test_deleting_a_document_while_facts_are_off_closes_its_facts(
+    rig: _LayerRig,
+) -> None:
+    """§9.12 deletion: deleting a document while facts are off closes its
+    facts, clears its document bindings and deletes its gaps — without
+    switching facts on."""
+    rig.configure(claims=True, facts=True)
+    first = rig.ingest(
+        source_ref="docs/staff.md",
+        content=_document(edited=False, paragraphs=3),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    open_facts = rig.scalar(
+        "SELECT count(*) FROM relations WHERE invalidated_at IS NULL"
+    )
+    assert isinstance(open_facts, int) and open_facts >= 1
+    rig.configure(claims=True, facts=False)
+    rig.ingest(
+        source_ref="docs/staff.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    gaps = rig.scalar(
+        "SELECT count(*) FROM processing_layer_gaps WHERE doc_id = :d", d=first.doc_id
+    )
+    assert isinstance(gaps, int) and gaps >= 1  # v2's facts gap
+    e3_rows = rig.stage_rows(stages=_E3_STAGES)
+
+    result = DocumentDeleter(
+        engine=rig.engine, profile_refresher=rig.profiles
+    ).delete_document(deployment_id=_DEPLOYMENT_ID, doc_id=first.doc_id)
+    rig.drain()
+
+    assert result.relations_closed >= 1
+    assert (
+        rig.scalar("SELECT count(*) FROM relations WHERE invalidated_at IS NULL") == 0
+    )
+    assert rig.scalar(
+        "SELECT count(*) FROM relation_adjudications"
+        " WHERE outcome = 'retracted_source_removal'"
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM claims WHERE doc_id = :d AND is_current_testimony",
+            d=first.doc_id,
+        )
+        == 0
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM document_entity_bindings WHERE doc_id = :d",
+            d=first.doc_id,
+        )
+        == 0
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_layer_gaps WHERE doc_id = :d",
+            d=first.doc_id,
+        )
+        == 0
+    )
+    configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
+    assert configuration.claims_enabled and not configuration.facts_enabled
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).facts == "disabled"
+    assert rig.stage_rows(stages=_E3_STAGES) == e3_rows  # no fact work opened
+
+
+def test_deleting_the_current_living_version_reopens_and_processes_its_predecessor(
+    rig: _LayerRig,
+) -> None:
+    """§9.7 living deletion: after a claims backfill discharged the older
+    versions, deleting the current version reopens the restored version's
+    claims gap at the deletion and processes it — readiness stops reading
+    ``skipped`` — with no chunk or chunk-embedding work for it."""
+    rig.configure(claims=False, facts=False)
+    versions = [
+        rig.ingest(
+            source_ref="notes/living.md",
+            content=_document(edited=False, paragraphs=3) + f"\n\nRevision {index}.",
+            mode="living",
+            at=None,
+        )
+        for index in range(3)
+    ]
+    rig.drain()
+    rig.configure(claims=True, facts=False)
+    rig.drain()
+    restored, deleted = versions[1].version_id, versions[2].version_id
+    assert (
+        rig.scalar(
+            "SELECT discharged_at IS NOT NULL FROM processing_layer_gaps"
+            " WHERE version_id = :v AND layer = 'claims'",
+            v=restored,
+        )
+        is True
+    )
+    report = _readiness(engine=rig.engine).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(restored,),
+        require=ReadinessRequirements(
+            pipeline=True, p1=False, live_graph=False, p3=False
+        ),
+    )
+    assert {stage.status for stage in report.versions[0].stages[4:]} == {"skipped"}
+    sources_rows = rig.stage_rows(
+        stages=("convert", "structure", "chunk", "embed_chunk")
+    )
+    chunk_rows = rig.scalar("SELECT count(*) FROM chunks")
+    embedded_before = len(rig.provider.embedded_texts)
+
+    rig.deletion.delete_version(version_id=deleted)
+
+    # reopened (claims carries facts) and entered in the deletion's transaction
+    with rig.engine.connect() as connection:
+        gaps = {
+            row["layer"]: row
+            for row in connection.execute(
+                text(
+                    "SELECT layer, entered_at, discharged_at, lane::text AS lane"
+                    " FROM processing_layer_gaps WHERE version_id = :v"
+                ),
+                {"v": restored},
+            ).mappings()
+        }
+    assert set(gaps) == {"claims", "facts"}
+    assert all(gap["discharged_at"] is None for gap in gaps.values())
+    assert gaps["claims"]["entered_at"] is not None
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_layer_gaps WHERE version_id = :v",
+            v=deleted,
+        )
+        == 0
+    )
+    rig.drain()
+
+    extracted = rig.scalar(
+        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v",
+        v=restored,
+    )
+    assert isinstance(extracted, int) and extracted >= 1
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_layer_gaps"
+            " WHERE version_id = :v AND layer = 'claims'",
+            v=restored,
+        )
+        == 0
+    )
+    ready, _ = _pipeline_ready(engine=rig.engine, version_id=restored)
+    assert ready
+    report = _readiness(engine=rig.engine).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(restored,),
+        require=ReadinessRequirements(
+            pipeline=True, p1=False, live_graph=False, p3=False
+        ),
+    )
+    assert {stage.status for stage in report.versions[0].stages} == {"succeeded"}
+    # nothing re-chunked or re-embedded: only claim vectors were paid for
+    assert (
+        rig.stage_rows(stages=("convert", "structure", "chunk", "embed_chunk"))
+        == sources_rows
+    )
+    assert rig.scalar("SELECT count(*) FROM chunks") == chunk_rows
+    with rig.engine.connect() as connection:
+        claim_texts = set(
+            connection.execute(text("SELECT claim_text FROM claims")).scalars()
+        )
+    new_embeddings = rig.provider.embedded_texts[embedded_before:]
+    assert new_embeddings and set(new_embeddings) <= claim_texts
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "enabled"
+
+
+@pytest.mark.parametrize("claims", [True, False], ids=["claims-on", "claims-off"])
+def test_a_late_boundary_for_a_deleted_version_writes_no_gap(
+    rig: _LayerRig, claims: bool
+) -> None:
+    """§9.8: a version deleted before its claims boundary records no gap when
+    ``embed_chunk`` completes later; with claims disabled it is not entered."""
+    rig.configure(claims=claims, facts=False)
+    rig.ingest(
+        source_ref="docs/a.md",
+        content=_document(edited=False, paragraphs=3),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    late = rig.ingest(
+        source_ref="docs/a.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    rig.drain(stages=_STAGES[:3])  # converted, structured, chunked; not embedded
+    assert (
+        rig.scalar(
+            "SELECT status::text FROM processing_state"
+            " WHERE target_id = :v AND stage = 'embed_chunk'",
+            v=late.version_id,
+        )
+        == "pending"
+    )
+    selection_before = rig.calls()["selection"]
+    rig.deletion.delete_version(version_id=late.version_id)
+    # with claims on the late version is entered as today, and its extraction
+    # refuses to publish for a deleted version (D135) until it dead-letters
+    rig.drain(tolerate_failures=claims)
+
+    assert (
+        rig.scalar(
+            "SELECT status::text FROM processing_state"
+            " WHERE target_id = :v AND stage = 'embed_chunk'",
+            v=late.version_id,
+        )
+        == "succeeded"
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_layer_gaps WHERE version_id = :v",
+            v=late.version_id,
+        )
+        == 0
+    )
+    if not claims:
+        # §4.1 step 1: a disabled layer is never entered, deleted or not
+        assert (
+            _version_lanes(rig, version_id=late.version_id, stage="extract_claims")
+            == set()
+        )
+        assert rig.calls()["selection"] == selection_before
+
+
+def test_deleting_a_dead_lettered_head_advances_its_successor(rig: _LayerRig) -> None:
+    """§9.8: a dead-lettered snapshot head blocks its successor's backfill;
+    deleting the head advances the lineage so the successor enters."""
+    rig.configure(claims=False, facts=False)
+    first = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=False, paragraphs=3),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    second = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    rig.configure(claims=True, facts=False)  # seeding enters v1 only
+    assert _version_lanes(rig, version_id=first.version_id, stage="extract_claims")
+    assert not _version_lanes(rig, version_id=second.version_id, stage="extract_claims")
+    with rig.engine.begin() as connection:  # v1's extraction exhausted its retries
+        connection.execute(
+            text(
+                "UPDATE processing_state p SET status = 'dead_letter'"
+                " FROM chunks c WHERE c.chunk_id = p.target_id"
+                " AND c.version_id = :v AND p.stage = 'extract_claims'"
+            ),
+            {"v": first.version_id},
+        )
+    rig.drain()
+    assert not _version_lanes(rig, version_id=second.version_id, stage="extract_claims")
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "backfilling"
+
+    rig.deletion.delete_version(version_id=first.version_id)
+    assert (
+        rig.scalar(
+            "SELECT entered_at IS NOT NULL FROM processing_layer_gaps"
+            " WHERE version_id = :v AND layer = 'claims'",
+            v=second.version_id,
+        )
+        is True
+    )
+    rig.drain()
+
+    extracted = rig.scalar(
+        "SELECT count(*) FROM claims cl JOIN chunks c ON c.chunk_id = cl.chunk_id"
+        " WHERE c.version_id = :v",
+        v=second.version_id,
+    )
+    assert isinstance(extracted, int) and extracted >= 1
+    assert (
+        rig.scalar("SELECT count(*) FROM processing_layer_gaps WHERE layer = 'claims'")
+        == 0
+    )
+    ready, _ = _pipeline_ready(engine=rig.engine, version_id=second.version_id)
+    assert ready
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "enabled"
+
+
+class _ApprovingReceipts(MeterReceiptPort):
+    """A control plane that approves every measurement and records outcomes."""
+
+    def __init__(self) -> None:
+        """Start with no receipts."""
+        self.measurements: list[ManagedIngestMeasurementV2] = []
+        self.outcomes: list[ManagedDocumentVersionOutcomeV2] = []
+
+    def admit_measurement(
+        self, *, measurement: ManagedIngestMeasurementV2
+    ) -> MeterAdmissionResult:
+        """Approve with two holds."""
+        self.measurements.append(measurement)
+        return MeterAdmissionResult(
+            decision="approved",
+            processing_hold_id=uuid4(),
+            storage_growth_hold_id=uuid4(),
+        )
+
+    def acknowledge_outcome(self, *, outcome: ManagedDocumentVersionOutcomeV2) -> None:
+        """Capture the terminal receipt."""
+        self.outcomes.append(outcome)
+
+
+class _Metered:
+    """Managed text ingestion over the rig: measure, approve, then receipt."""
+
+    def __init__(self, *, rig: _LayerRig) -> None:
+        """Bind a metered ingestor and the meter to the rig's spine and raw store."""
+        self.rig = rig
+        self.receipts = _ApprovingReceipts()
+        self.meter = ManagedMeterCatalog(
+            engine=rig.engine,
+            receipts=self.receipts,
+            readiness=_readiness(engine=rig.engine),
+            raw_store=rig.raw_store,
+        )
+        self.ingestor = UploadIngestor(
+            catalog=DocumentCatalog(engine=rig.engine),
+            raw_store=rig.raw_store,
+            admission=ForgetCatalog(engine=rig.engine),
+            routable_mimes=frozenset({"text/markdown"}),
+            meter_scope=ManagedMeterScope(
+                org_id=UUID("a1430000-0000-0000-0000-000000000001"),
+                project_id=UUID("b1430000-0000-0000-0000-000000000001"),
+                identity_key=SecretStr(
+                    "umc_mik_abcdefghijklmnopqrstuvwxyz0123456789ABCD"
+                ),
+            ),
+        )
+
+    def ingest_approved(self, *, name: str) -> IngestedVersion:
+        """Ingest one managed text and let the control plane approve it."""
+        version = self.ingestor.ingest(
+            deployment_id=_DEPLOYMENT_ID,
+            upload=DocumentUpload(
+                filename=name,
+                mime="text/markdown",
+                content=_document(edited=False, paragraphs=3).encode("utf-8"),
+            ),
+        )
+        assert self.meter.drain_once().measurements_accepted == 1
+        return version
+
+    def outcome(self, *, version_id: UUID) -> dict[str, object]:
+        """Re-check the version's receipt now and return the stored outcome."""
+        with self.rig.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "UPDATE managed_ingest_measurements"
+                    " SET outcome_next_attempt_at = NULL WHERE version_id = :v"
+                ),
+                {"v": version_id},
+            )
+        self.meter.drain_once()
+        with self.rig.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT m.processing_profile_id, o.outcome, o.reason_code,"
+                        " o.profile_complete"
+                        " FROM managed_ingest_measurements m"
+                        " LEFT JOIN managed_ingest_outcomes o USING (measurement_id)"
+                        " WHERE m.version_id = :v"
+                    ),
+                    {"v": version_id},
+                )
+                .mappings()
+                .one()
+            )
+        return dict(row)
+
+
+def test_default_receipt_is_unchanged(rig: _LayerRig) -> None:
+    """§9.11 receipts (c): an unconfigured deployment measures the standard
+    profile and receipts it ``succeeded`` after today's twelve stages."""
+    metered = _Metered(rig=rig)
+    version = metered.ingest_approved(name="standard.md")
+    rig.drain()
+    assert metered.outcome(version_id=version.version_id) == {
+        "processing_profile_id": "doc-text-standard-v1",
+        "outcome": "succeeded",
+        "reason_code": None,
+        "profile_complete": True,
+    }
+    assert metered.receipts.outcomes[-1].outcome == "succeeded"
+    assert rig.scalar("SELECT count(*) FROM deployment_processing_layers") == 0
+    assert rig.scalar("SELECT count(*) FROM processing_layer_gaps") == 0
+
+
+def test_a_standard_receipt_fails_when_facts_are_switched_off_before_its_boundary(
+    rig: _LayerRig,
+) -> None:
+    """§9.11 receipts (a): measured under ``doc-text-standard-v1``, facts are
+    switched off before the version's facts boundary: it can never complete
+    its measured profile, so the receipt is ``failed`` /
+    ``processing_profile_changed`` — although it is ready for serving."""
+    metered = _Metered(rig=rig)
+    version = metered.ingest_approved(name="standard.md")
+    rig.configure(claims=True, facts=False)
+    rig.drain()
+    ready, stages = _pipeline_ready(engine=rig.engine, version_id=version.version_id)
+    assert ready and len(stages) == 8  # serving readiness follows the config
+    assert metered.outcome(version_id=version.version_id) == {
+        "processing_profile_id": "doc-text-standard-v1",
+        "outcome": "failed",
+        "reason_code": "processing_profile_changed",
+        "profile_complete": False,
+    }
+    assert metered.receipts.outcomes[-1].reason_code == "processing_profile_changed"
+
+
+def test_a_sources_receipt_succeeds_on_its_four_stages_despite_claims_switched_on(
+    rig: _LayerRig,
+) -> None:
+    """§9.11 receipts (b): measured under ``doc-text-sources-v1``; claims are
+    switched on meanwhile. The receipt certifies the measured profile: it
+    succeeds once the four sources stages complete, without waiting for the
+    claims work the later switch opened."""
+    rig.configure(claims=False, facts=False)
+    metered = _Metered(rig=rig)
+    version = metered.ingest_approved(name="sources.md")
+    rig.configure(claims=True, facts=False)
+    rig.drain(stages=_STAGES[:4])
+    assert rig.scalar(
+        "SELECT count(*) FROM processing_state p JOIN chunks c"
+        " ON c.chunk_id = p.target_id WHERE c.version_id = :v"
+        " AND p.stage = 'extract_claims' AND p.status = 'pending'",
+        v=version.version_id,
+    )  # the claims layer was entered and is still pending
+    assert metered.outcome(version_id=version.version_id) == {
+        "processing_profile_id": "doc-text-sources-v1",
+        "outcome": "succeeded",
+        "reason_code": None,
+        "profile_complete": True,
+    }
+    rig.drain()

@@ -91,15 +91,11 @@ def claims_boundary_on(
         connection=connection, deployment_id=deployment_id
     )
     lineage = _lock_lineage_of_version(connection=connection, version_id=version_id)
-    if lineage.deleted(version_id=version_id):
-        return _enter_claims(
-            connection=connection,
-            deployment_id=deployment_id,
-            version_id=version_id,
-            lane=lane,
-        )
+    deleted = lineage.deleted(version_id=version_id)
     if not configuration.claims_enabled:
-        for layer in (ProcessingLayer.CLAIMS, ProcessingLayer.FACTS):
+        # §4.1 step 1 comes first: a disabled layer is never entered, and a
+        # deleted version records no gap either.
+        for layer in () if deleted else (ProcessingLayer.CLAIMS, ProcessingLayer.FACTS):
             _record_gap(
                 connection=connection,
                 deployment_id=deployment_id,
@@ -109,6 +105,13 @@ def claims_boundary_on(
                 lane=ProcessingLane.BACKFILL,
             )
         return []
+    if deleted:
+        return _enter_claims(
+            connection=connection,
+            deployment_id=deployment_id,
+            version_id=version_id,
+            lane=lane,
+        )
     _record_gap(
         connection=connection,
         deployment_id=deployment_id,
@@ -937,7 +940,10 @@ def _open_owed_claims_tails(
                     deployment_id=lineage.deployment_id,
                     version_id=version.version_id,
                     doc_id=lineage.doc_id,
-                    lane=gap.lane,
+                    # §5.5: the tail is the version's claims work, so it
+                    # takes the claims gap's lane (steady for a version
+                    # ingested with claims on), else the facts gap's.
+                    lane=version.gaps.get(ProcessingLayer.CLAIMS, gap).lane,
                 )
             )
     return outcomes
