@@ -96,8 +96,9 @@ promotion is announced on the steady route after commit.
 
 Backfill (initial corpus load; version-bump reprocessing) and live ingestion run the **same
 pipeline, same workers, same idempotency keys** — but **separate lanes**, so a million-document
-backfill can never starve a fresh document's freshness SLA ("plane E processes promptly per
-document" — requirements). Rules:
+backfill does not take queue priority from fresh documents ("plane E processes promptly per
+document" — requirements). A lane orders and budgets the *work rows* claimed on it; it does not
+isolate state the two lanes share (below). Rules:
 
 - **A version-bump backfill is defined by a version filter, nothing else** (D12): "all
   documents where `converter_version < X`", "all chunks where `extractor_version < Y`". A
@@ -110,14 +111,20 @@ document" — requirements). Rules:
   time** — every version oldest first for snapshot lineages, the current version only for living
   ones — because cross-version reuse only looks at earlier versions (Rule 4). `setup` advances
   every lineage once; from then on each completion or deletion advances its own lineage through
-  the chain rule. Its work, and every follow-up it causes — including fact-application
-  projection repair and window reviews, which therefore take their originating lane rather than a
-  fixed steady lane — runs on this lane
+  the chain rule. Its rows run on this lane, and every follow-up row takes the lane of the row that
+  opened it — including fact-application projection repair and window reviews, which no longer
+  hard-code the steady lane
   ([processing layers design §5](processing_layers_design.md#5-switching-a-layer-on-later)).
+- **What lanes do not isolate.** Fact applications are applied in each entity's canonical order by
+  whichever observation-flush unit holds that entity's stream, so a steady unit can apply (and is
+  metered for) a backfill version's earlier application on a shared entity, and opens its repair on
+  the steady lane; and a fresh version of a lineage that is still being backfilled waits for its
+  predecessors (D143 lineage order). The duplicate-promotion rule above is unchanged.
 - **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
   claims from its stage's backfill route whenever its steady route has no due row.
-- **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately, never a
-  surprise on the steady-state budget. The two dominant backfill costs are metered per lane
+- **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately; apart from the
+  shared-entity applications above, it does not draw on the steady-state budget. The two dominant
+  backfill costs are metered per lane
   and known in advance: extraction-side LLM calls (volume-proportional — design-review F8) and
   database/provider I/O (§5).
 - **Priority is structural, not scheduled**: the steady lane's rate limits are never reduced

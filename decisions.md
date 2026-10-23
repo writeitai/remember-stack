@@ -7175,7 +7175,8 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
   the D135 lineage lock. Without a configuration row it enters exactly as today. In a *configured*
   deployment it records a *gap* and runs the same **advance** procedure the backfill uses, so a
   version enters a layer only after every earlier version of its lineage reached that layer's
-  reuse *frontier* (claims: extract barrier; facts: full reconcile). When facts are not entered,
+  reuse *frontier* (claims: occurrences complete and `embed_claim` succeeded; facts: full
+  reconcile). When facts are not entered,
   the facts boundary opens the **claims tail**: `embed_claim` and `reconcile` at
   `reconcile-2026.07:claims`, which runs the full reconcile logic but opens no `label_relation`
   and no window review, so existing facts stay exact while facts are off (profile refresh is the

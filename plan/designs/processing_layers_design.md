@@ -224,8 +224,9 @@ it.
 
 So for a version that does not enter facts at its facts boundary (facts disabled, or enabled but
 deferred behind an earlier unentered gap), the boundary opens the claims tail at once if the
-lineage has no fact work in flight, and otherwise leaves it to advance (§5.2), which opens it when
-the last earlier fact work reaches its frontier. Opening a claims tail is idempotent (its two work
+lineage has no fact work in flight, and otherwise leaves it to advance (§5.2 step 0), which opens it
+when the last earlier fact work reaches its frontier — including for a version whose facts gap was
+meanwhile discharged because a newer version of its living lineage became current. Opening a claims tail is idempotent (its two work
 rows have fixed idempotency keys), so advance may re-issue it safely.
 
 Consequences: an older version's fact work — including work draining after facts were switched off
@@ -319,9 +320,14 @@ lock, and is invoked by:
 
 Steps:
 
-1. If the layer is disabled: for claims, stop; for facts, only open the claims tails that §4.3 now
-   allows (versions with an open facts gap whose occurrences are complete and whose earlier versions
-   have no fact work in flight), then stop.
+0. **For facts, first release pending claims tails.** A version *owes a claims tail* when its claim
+   occurrences are complete, it has not entered facts (its facts gap is unentered — open *or
+   discharged*), and it has no claims-tail rows yet. This obligation is derived from the gap and
+   work-ledger state of every version of the lineage, never only from the current version's gap, so
+   discharging a superseded version's facts gap (step 2) cannot strand its already-entered claims
+   layer. Every owed tail whose earlier versions have no fact work in flight (§4.3) is opened now
+   (idempotently), before any target selection or early return below.
+1. If the layer is disabled, stop (for facts, after step 0).
 2. **Living lineages:** reopen any discharged gap of the lineage's current version, then discharge
    every open, *unentered* gap of the lineage's other versions (§5.3). Entered gaps are never
    discharged: their work is running and must finish.
@@ -335,9 +341,8 @@ Steps:
    This includes versions entered before a switch and still draining, and dead-lettered versions,
    which block until they are replayed or deleted.
 6. For facts: if the target's occurrences are not complete, stop: its facts boundary will run
-   advance again. For claims tails (§4.3): when facts are disabled or the target is deferred behind
-   an earlier unentered facts gap, and no earlier version has fact work in flight, open the target's
-   claims tail (idempotent) instead of entering facts.
+   advance again. (A target that cannot enter facts yet got its claims tail in step 0 if §4.3
+   allows it.)
 7. **Enter** the target: stamp its gap's `entered_at` and enqueue exactly what its boundary would
    have enqueued — the per-chunk `extract_claims` jobs (or the empty path) for claims, the
    ordinary E3 fan-out (or the empty observation flush) for facts — on the gap's recorded lane
@@ -619,7 +624,12 @@ database-level, with recorded or fake model providers:
    advances the successor; a late boundary for a deleted version writes no gap; a configuration
    change concurrent with a boundary decision serializes on the fence.
 9. **Facts later.** A snapshot lineage processed with facts off and switched to facts on gets the
-   facts an always-on run produces. Facts on → off (a living version removes a fact's only claim
+   facts an always-on run produces. In a facts-enabled living lineage, with v1 paused after its
+   `embed_claim` and before its full reconcile, v2 reaches its facts boundary and waits, and v3
+   becomes current: when v1's reconcile completes, v2's discharged facts gap still gets its claims
+   tail, both of v2's gaps settle, v3 enters and becomes ready, and v2's Selection, Claimify and
+   vectors are reused, not repeated; the same holds with facts switched off and on while v2 waits.
+   Facts on → off (a living version removes a fact's only claim
    inside a connector cycle that finalizes) → on leaves the fact closed. With facts enabled and v1
    entered but not yet normalised, a living v2 that removes claim C opens neither facts nor its
    claims tail until v1's full reconcile succeeded; v1 builds its fact from C (a fake normaliser

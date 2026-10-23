@@ -318,9 +318,10 @@ and connector-cycle closure still defers to finalization — but opens no fact l
 review. When the facts layer later reaches the version, the full reconcile runs under its own
 key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
 and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
-and only when the lineage's current version is its own version or has reached its claims frontier
-(every chunk's Selection and Claimify committed); otherwise the current version's occurrences may
-not exist yet and the step is skipped — the current version's own reconcile computes it
+and only when the lineage's current version is its own version or its claim occurrences are
+complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
+Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
+otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
 lineage-wide. Deployments without a layer configuration run step 2 exactly as before
 ([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
 
