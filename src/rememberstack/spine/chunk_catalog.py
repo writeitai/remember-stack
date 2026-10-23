@@ -214,10 +214,11 @@ class ChunkCatalog:
         version_id: UUID,
         policy_generation: str,
         embedding_version: str,
-    ) -> dict[str, CarryForwardSource]:
+    ) -> dict[tuple[str, str], CarryForwardSource]:
         """Prior chunks reusable when embedding identity matches (D80).
 
-        For each content hash: nearest strictly earlier version's chunk that
+        For each content/embedding-input hash pair: the nearest version's chunk
+        at or before this version, including another processing generation, that
         already has embedding_text_hash + policy_generation + embedding_version
         and an embedding_ref — vector copy is only valid when the new render
         produces the same embedding_text_hash under the same policy/embedder.
@@ -238,7 +239,7 @@ class ChunkCatalog:
                 .all()
             )
         return {
-            row["chunk_content_hash"]: CarryForwardSource(
+            (row["chunk_content_hash"], row["embedding_text_hash"]): CarryForwardSource(
                 chunk_id=row["chunk_id"],
                 location_header=row["location_header"],
                 embedding_text_hash=row["embedding_text_hash"],
@@ -420,20 +421,21 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
 
 _SELECT_CARRY_FORWARD = text(
     """
-    SELECT DISTINCT ON (c.chunk_content_hash)
+    SELECT DISTINCT ON (c.chunk_content_hash, c.embedding_text_hash)
            c.chunk_content_hash, c.chunk_id, c.context_prefix,
            c.location_header, c.embedding_text_hash, c.policy_generation
     FROM chunks c
     JOIN document_versions cv ON cv.version_id = c.version_id
     WHERE c.deployment_id = :deployment_id
       AND c.doc_id = :doc_id
-      AND cv.version_no < (SELECT version_no FROM document_versions
+      AND cv.version_no <= (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
       AND c.embedding_text_hash IS NOT NULL
+      AND cv.deleted_at IS NULL
       AND c.policy_generation = :policy_generation
       AND c.embedding_version = :embedding_version
       AND c.embedding_ref IS NOT NULL
-    ORDER BY c.chunk_content_hash, cv.version_no DESC, c.ordinal
+    ORDER BY c.chunk_content_hash, c.embedding_text_hash, cv.version_no DESC, c.ordinal, c.chunk_id
     """
 )
 

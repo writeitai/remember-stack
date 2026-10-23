@@ -75,10 +75,10 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "convert": "e0-convert-2026.08",
         "structure": "e0-structure-2026.07h:d79-wave2",
         "chunk": (
-            "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs:"
-            "blockizer-heading-metadata:eligibility-cuts"
+            "e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs:"
+            "blockizer-heading-metadata:eligibility-cuts:source-origins-1"
         ),
-        "embed_chunk": "e1-embed-2026.08-d80",
+        "embed_chunk": "e1-embed-2026.10-source-origins-1",
         "extract_claims": _E2_EXTRACTOR_GENERATION,
         "ground_claims": _E2_EXTRACTOR_GENERATION,
         "normalize_relations": (

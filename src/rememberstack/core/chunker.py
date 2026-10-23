@@ -23,8 +23,8 @@ from rememberstack.model import PackedChunk
 from rememberstack.model import SectionSpan
 
 CHUNKER_VERSION: Final = (
-    "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs"
-    ":blockizer-heading-metadata:eligibility-cuts"
+    "e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs"
+    ":blockizer-heading-metadata:eligibility-cuts:source-origins-1"
 )
 """Pins packing plus its blockizer-contract generation.
 

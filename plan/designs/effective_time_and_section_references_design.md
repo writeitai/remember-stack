@@ -522,7 +522,9 @@ The version's own date remains on the version for everything else.
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
 own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
-`structurer_version` and `extractor_version`. Indexed on `(deployment_id, doc_id,
+`structurer_version`, `extractor_version`, and canonical converter-origin hashes
+of the target and consumed same-section neighbors. Coordinates are relative to
+each window; absolute document offsets are excluded. Indexed on `(deployment_id, doc_id,
 reuse_identity_hash)`.
 
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:

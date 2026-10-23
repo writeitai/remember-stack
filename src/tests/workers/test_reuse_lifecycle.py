@@ -38,8 +38,11 @@ from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import ClaimedWork
+from rememberstack.model import ConversionResult
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import DerivationRange
 from rememberstack.model import DocumentUpload
+from rememberstack.model import EnqueueWork
 from rememberstack.model import IngestedVersion
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
@@ -56,6 +59,7 @@ from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
 from rememberstack.workers import E0_STRUCTURE_VERSION
+from rememberstack.workers import E1_EMBED_VERSION
 from rememberstack.workers import E1Settings
 from rememberstack.workers import E2_EXTRACTOR_VERSION
 from rememberstack.workers import E2Settings
@@ -817,8 +821,9 @@ def _edit_trace(rig: _ReuseRig, *, dated: bool) -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("dated", [False, True], ids=["living", "dated"])
+@pytest.mark.parametrize("mixed_origins", [False, True], ids=["direct", "mixed"])
 def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
-    rig: _ReuseRig, dated: bool
+    rig: _ReuseRig, dated: bool, mixed_origins: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Owner invariant (D56/D80/D140, restated for D142): incremental ingestion.
 
@@ -831,7 +836,72 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
     claim ids. Claimify's own window is a known Rule 4 gap, pinned by the
     expected-failure test below.
     """
+    if mixed_origins:
+        original_convert = MarkdownPassthroughConverter.convert
+
+        def convert_with_origins(
+            self: MarkdownPassthroughConverter, *, content: bytes, mime: str
+        ) -> ConversionResult:
+            """A synthetic converter labels quoted paragraphs without rewriting bytes."""
+            result = original_convert(self, content=content, mime=mime)
+            document = result.document_md
+            ranges: list[DerivationRange] = []
+            cursor = 0
+            for match in re.finditer(
+                r"Section [ABC] paragraph (?:2|4)[^\n]+", document
+            ):
+                if cursor < match.start():
+                    ranges.append(
+                        DerivationRange(
+                            start=cursor,
+                            end=match.start(),
+                            derivation_kind="passthrough",
+                            evidence_mode="source_expression",
+                        )
+                    )
+                ranges.append(
+                    DerivationRange(
+                        start=match.start(),
+                        end=match.end(),
+                        derivation_kind="ocr",
+                        evidence_mode="source_expression",
+                    )
+                )
+                cursor = match.end()
+            if cursor < len(document):
+                ranges.append(
+                    DerivationRange(
+                        start=cursor,
+                        end=len(document),
+                        derivation_kind="passthrough",
+                        evidence_mode="source_expression",
+                    )
+                )
+            return result.model_copy(
+                update={
+                    "manifest": result.manifest.model_copy(
+                        update={"derivation_ranges": tuple(ranges)}
+                    )
+                }
+            )
+
+        monkeypatch.setattr(
+            MarkdownPassthroughConverter, "convert", convert_with_origins
+        )
     trace = _edit_trace(rig, dated=dated)
+    if mixed_origins:
+        extraction_prompts = [
+            prompt
+            for prompt in rig.provider.generated_prompts
+            if "Selection stage of a claim extractor" in prompt
+        ]
+        assert any(
+            '"derivation_kinds":["ocr"]' in prompt for prompt in extraction_prompts
+        )
+        assert any(
+            '"derivation_kinds":["passthrough"]' in prompt
+            for prompt in extraction_prompts
+        )
     v1, v2 = trace["v1"], trace["v2"]
     assert len(v1) >= 9 and len(v2) >= 9  # a real multi-chunk, multi-section doc
     assert trace["selection_v1"] >= len(v1)  # positive baseline: v1 extracted all
@@ -891,6 +961,83 @@ def test_one_paragraph_edit_reuses_every_chunk_outside_its_neighbourhood(
             assert claims and claims == trace["v1_claims"][row["extraction"]]
             reused_claims += 1
     assert reused_claims > 0, "Claimify reuse reattaches v1 claim ids"
+
+
+def test_repacking_same_version_reuses_vectors_and_chains_fresh_embedding_work(
+    rig: _ReuseRig,
+) -> None:
+    """A new chunk-row generation cannot skip delivery or repay identical vectors."""
+    version = rig.observe(content=_sectioned(edited=False))
+    rig.drain()
+    baseline_embeds = len(rig.provider.embedded_texts)
+    assert baseline_embeds > 0
+    with rig.engine.begin() as connection:
+        representation_id = connection.execute(
+            text(
+                "SELECT representation_id FROM document_representations WHERE version_id = :v"
+            ),
+            {"v": version.version_id},
+        ).scalar_one()
+        before = connection.execute(
+            text(
+                "SELECT chunk_id, extraction_input_hash FROM chunks WHERE version_id = :v ORDER BY ordinal"
+            ),
+            {"v": version.version_id},
+        ).all()
+        # Simulate completed rows/work from a superseded binary. No historical
+        # implementation is retained or executed to build this fixture.
+        connection.execute(
+            text(
+                "UPDATE chunks SET chunker_version = 'prior-test-generation', extraction_input_hash = 'prior:' || extraction_input_hash WHERE version_id = :v"
+            ),
+            {"v": version.version_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE processing_state SET component_version = 'prior-test-generation' WHERE target_id = :v AND stage IN ('chunk', 'embed_chunk')"
+            ),
+            {"v": version.version_id},
+        )
+    outcome = WorkLedger(engine=rig.engine, settings=WorkLedgerSettings()).enqueue(
+        work=EnqueueWork(
+            deployment_id=_DEPLOYMENT_ID,
+            target_kind=ProcessingTarget.DOCUMENT_VERSION,
+            target_id=version.version_id,
+            stage=PipelineStage.CHUNK,
+            component_version=chunker_version(params=_PARAMS),
+            content_hash=version.content_hash,
+            lane=ProcessingLane.STEADY,
+            payload={
+                "version_id": str(version.version_id),
+                "representation_id": str(representation_id),
+            },
+        )
+    )
+    assert outcome.created
+    rig.drain()
+    with rig.engine.connect() as connection:
+        after = connection.execute(
+            text(
+                "SELECT c.chunk_id, c.extraction_input_hash, c.embedding_text_hash, s.embedding_text_hash AS indexed_hash FROM chunks c JOIN chunk_search s USING (deployment_id, chunk_id) WHERE c.version_id = :v AND c.chunker_version = :g ORDER BY c.ordinal"
+            ),
+            {"v": version.version_id, "g": chunker_version(params=_PARAMS)},
+        ).all()
+        embed_status = connection.execute(
+            text(
+                "SELECT status FROM processing_state WHERE target_id = :v AND stage = 'embed_chunk' AND component_version = :g"
+            ),
+            {"v": version.version_id, "g": E1_EMBED_VERSION},
+        ).scalar_one()
+    assert embed_status == "succeeded", "fresh chunk rows reached the embed worker"
+    assert len(after) == len(before)
+    assert not {row.chunk_id for row in before} & {row.chunk_id for row in after}
+    assert [row.extraction_input_hash for row in after] == [
+        row.extraction_input_hash for row in before
+    ]
+    assert all(row.embedding_text_hash == row.indexed_hash for row in after)
+    assert len(rig.provider.embedded_texts) == baseline_embeds, (
+        "generation-only repack makes zero paid embedding calls"
+    )
 
 
 @pytest.mark.xfail(

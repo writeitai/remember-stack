@@ -68,10 +68,19 @@ adjacent label ranges normalize to the same identity. Editing another section
 must not change an untouched chunk's provenance basis.
 
 The E2 extractor, D122 reference-policy and date-free reuse-identity generations
-change once to declare the new prompt/input and key layouts.
-This is a paid extraction boundary when data is processed under that generation;
-no automatic processing is launched. Packing, embedding policy/model and stored
-source bytes do not change. Embedding reuse stays independent. D122's existing
+change once to declare the new prompt/input and key layouts. E1's chunk-row
+generation also changes: replaying old rows would otherwise preserve the old
+hash layout. Packing itself is unchanged. The embed delivery generation changes
+with it so a completed old work item cannot suppress delivery for the fresh
+chunk rows. This is work identity, not a new embedding policy or model.
+
+This is a paid extraction boundary when data is explicitly processed under that
+generation; no automatic processing is launched. Embedding policy/model and
+stored source bytes do not change. Embeddings reuse the complete content/input
+hash pair under the same policy/model, including an already processed generation
+of the same document version. The catalog retains distinct location-sensitive
+inputs for identical body text; a different recent location must not hide an
+older exact match. Deleted versions remain excluded. D122's existing
 previous-eight-Selection dependency remains; its known cross-section invalidation
 gap is neither hidden nor claimed fixed here.
 
@@ -90,5 +99,8 @@ verbatim text, card provenance, unchanged grounding, and no added model call.
 Use two dated versions of one lineage to prove unchanged sections retain their
 Selection/text-origin identities, claim IDs and embeddings; a changed origin
 must invalidate the affected Selection/context only. Count provider calls and
-retain expected failures for the documented D122/packing gaps. No LoCoMo score
+retain expected failures for the documented D122/packing gaps. A same-version
+generation-upgrade fixture must prove fresh embed work completes, current rows
+get current hashes, and identical inputs cause zero additional embedding calls.
+No LoCoMo score
 is established until a separately authorized evaluation is run.

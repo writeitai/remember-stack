@@ -90,7 +90,8 @@ over are content identities and the paid products keyed on them
   length change can shift later boundaries until the next accepted content anchor (a block
   whose hash satisfies `uint64(block_hash) mod anchor_modulus == 0`, at least
   `anchor_min_gap_tokens` after the previous one) or the section's end.
-- **Embeddings (D80).** A vector carries forward from an earlier version of the same
+- **Embeddings (D80).** A vector carries forward from an earlier version or an earlier
+  processing generation of the same version of one
   lineage when `chunk_content_hash`, `embedding_text_hash` (the rendered D80 input:
   location header + body, so it depends on all D80 location facts: title, source kind and
   shape, section title, path and role, chunk count, and message metadata), the policy
@@ -98,7 +99,9 @@ over are content identities and the paid products keyed on them
 - **Selection (D56, D140).** `extraction_input_hash` = own block hashes + previous/next
   *same-section* neighbour hashes + header facts (`header_title()`, `source_kind`, the
   chunk's text-origin date, `language`, `file_name`; plus the eligibility policy for
-  ineligible chunks) + extractor and structurer versions. D140's text origin keeps the date
+  ineligible chunks) + canonical converter-origin hashes for the target and those
+  same-section neighbors + extractor and structurer versions. Origin coordinates are
+  relative to their consumed window, never absolute document offsets. D140's text origin keeps the date
   stable for unchanged chunks across dated versions; it is looked up through
   `reuse_identity_hash`, which is the same identity without the date plus
   `REUSE_IDENTITY_VERSION` and `blockizer_version`.

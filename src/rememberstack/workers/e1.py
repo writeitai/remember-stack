@@ -67,8 +67,13 @@ from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSIO
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
-"""The embed stage's component version (D80 policy path; model id on stamps)."""
+E1_EMBED_VERSION: Final = "e1-embed-2026.10-source-origins-1"
+"""Delivery generation for the current chunk rows, not a new vector identity.
+
+The origin-aware chunk generation needs a fresh embed job even for an already
+processed representation. Unchanged D80 inputs reuse their existing vectors;
+the embedding policy and model, rather than this work version, key paid reuse.
+"""
 
 E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 """Alias: policy generation replaces the retired LLM prefixer version string."""
@@ -328,11 +333,11 @@ class EmbedChunksHandler:
             if stored_hash == rendered.embedding_text_hash:
                 vectors[chunk.chunk_id] = vector
 
-        # Cross-version carry-forward when embedding identity matches.
+        # Reuse matching vectors across versions or processing generations.
         for chunk, rendered in active:
             if chunk.chunk_id in vectors:
                 continue
-            prior = carry.get(chunk.chunk_content_hash)
+            prior = carry.get((chunk.chunk_content_hash, rendered.embedding_text_hash))
             if (
                 prior is None
                 or prior.embedding_text_hash != rendered.embedding_text_hash
