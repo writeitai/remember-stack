@@ -142,6 +142,47 @@ own evidence/contract rather than being hidden inside this change.
 
 ## 6. Media provenance, lifecycle and recovery
 
+Converter origins reach Selection and Claimify before model interpretation,
+including admitted reference-card passages. Render derivation kind and evidence
+mode as metadata beside verbatim source text; missing labels remain unknown.
+Never infer a converter origin from a prose heading. Direct source wording,
+OCR, visual observation and interpretation do not establish the same authority
+or the same speaker. Quoted document content must not silently become the
+surrounding author's biography, and source/upload time must not replace a real
+date inside an attachment. A relative expression resolves only against an anchor
+that actually dates its source utterance; an upload/session timestamp alone
+cannot date dialogue inside quoted fiction or a historical attachment. Without
+a supported internal anchor, preserve the relative phrase and unknown valid
+time. Direct dialogue still uses its genuine source-date anchor. OCR remains
+eligible evidence about document content.
+
+A target mixing direct source expression with OCR or model-mediated material
+also exposes its direct source slices before the ordinary catalog, within the
+existing Selection/Claimify calls. This improves visibility without hiding OCR,
+adding another model pass or guaranteeing exhaustive extraction. The focus block
+only boosts known deterministic direct-text kinds (`passthrough`, `prose`,
+`markitdown`) in source-expression mode. OCR page headers/footers and unrecognized
+kinds remain ordinary source evidence and cannot be promoted to direct text by
+that mode alone. Renderer labels do not enter the grounding token union.
+D122 card fitting measures the same
+origin-aware rendering actually sent to Claimify, so provenance cannot silently
+exceed the reference-context bound.
+
+The identities of the target and consumed same-section neighbors include their
+canonical converter labels in relative source coordinates. Equivalent adjacent
+label ranges normalize together; unrelated sections, absolute offsets and
+pixel/source-map coordinates do not enter this model-input identity. A changed
+kind/mode can invalidate extraction even when words are unchanged. The E2,
+reference-policy and date-free identity generations declare this boundary.
+The chunk-row generation also advances so old rows cannot replay stale hashes;
+the embed delivery generation advances to process those fresh rows. Packing,
+source bytes and embedding policy/model remain unchanged. Embed delivery includes
+the chunker base generation so a future base bump cannot reuse an old completed
+delivery job. Exact full-input vector reuse includes prior processing generations
+of the same version. No processing of
+retained data is implied by the code change. See the
+[source-origin analysis](../analysis/source-origins-at-extraction-20261023.md).
+
 Resolve every source span through the representation's derivation ranges and
 source map. Preserve the union of actual locators at converter precision and
 honest evidence mediation labels. Do not invent word-level audio positions or

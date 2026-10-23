@@ -240,7 +240,7 @@ def test_reuse_key_changes_with_the_file_name() -> None:
 
 
 def test_extractor_version_carries_the_self_reference_generation() -> None:
-    assert E2_EXTRACTOR_VERSION.endswith(":d131-anaphora-1:d134-selfref-1")
+    assert {"d131-anaphora-1", "d134-selfref-1"} <= set(E2_EXTRACTOR_VERSION.split(":"))
 
 
 def test_prompt_states_the_self_reference_rule() -> None:
@@ -263,7 +263,11 @@ def test_prompt_states_the_self_reference_rule() -> None:
         " name and own_document_name null" in normalized
     )
     rendered = _CLAIMIFY_PROMPT.format(
-        passages="(none)", cards="(none)", keeps="- x", bundle="(bundle)"
+        source_focus="",
+        passages="(none)",
+        cards="(none)",
+        keeps="- x",
+        bundle="(bundle)",
     )
     assert '{text: "Audit_2025.pdf", source_kind: header}' in rendered
 

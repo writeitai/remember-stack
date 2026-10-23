@@ -335,7 +335,7 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   under `structurer_version`. LLM output must not enter identity keys (D7 replay-not-recall).
   Consequently the **extraction reuse key contains only stable components**:
   `extraction_input_hash = hash(own block hashes + neighbor block hashes + stable header
-  facts + extractor_version + structurer_version)` — where **stable header facts** are the
+  facts + consumed converter-origin hashes + extractor_version + structurer_version)` — where **stable header facts** are the
   deterministic document metadata the E2 bundle feeds the extractor: title, **file name**
   (D134 — self-referencing claims contain it, so a renamed file must not reuse claims naming
   the old one), source kind, the chunk's **text origin time**, language (from
@@ -346,7 +346,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   versions of the lineage with the same `reuse_identity_hash` whose `text_origin_at` is known
   and **not later than this version's own date** (so a back-filled older edition never inherits
   a later date) — own and neighbour
-  block hashes, non-date header facts, blockizer/structurer/extractor versions, indexed per
+  block hashes, non-date header facts, consumed converter-origin hashes,
+  blockizer/structurer/extractor versions, indexed per
   lineage — otherwise this version's `source_modified_at` or `published_at`. It is immutable
   and replayed, never recomputed; deleting the origin version later does not change it. The
   E2 header shows the same value and fresh claims take it as `asserted_at`, so relative dates
@@ -367,6 +368,15 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   unready maintenance operation without a provider call (never leave policy version and
   vector identity disagreeing on one row).
   Content-hash-only vector copy is **incorrect** when embedding text includes location.
+  Carry-forward candidates include completed rows at or before the target document
+  version, including a previous processing generation of that same version, but
+  exclude deleted versions. Keep each distinct `(chunk_content_hash,
+  embedding_text_hash)` pair under the requested policy/model so identical body
+  text at one location cannot hide the matching vector from another. Advancing
+  the chunk-row and embed-delivery generations for converter-origin input hashes
+  creates fresh work without changing packing or the embedding model/policy.
+  The embed-delivery identity includes the chunker base generation; a base
+  chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.

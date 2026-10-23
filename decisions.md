@@ -5931,6 +5931,19 @@ upgrade, benchmark gain, runtime acceptance, merge or release is claimed here.
 
 ## D119. Coherent claims with multi-span evidence and version reuse
 
+**Amended 2026-10-23 — converter origins at model interpretation.** Selection
+and Claimify receive existing converter-origin labels beside verbatim source
+passages and reference-card passages. Mixed targets also surface direct source
+text within those same calls; OCR remains eligible, and labels are not grounding
+words or proof that quoted events happened to the surrounding author. Canonical
+relative origin ranges enter consumed-window reuse identities. Extraction,
+reference, text-origin, chunk-row and embed-delivery generations declare the
+input boundary; packing and the embedding model/policy do not change. Exact
+embedding inputs reuse vectors, including from an earlier processing generation
+of the same document version. Existing stores are not automatically reprocessed.
+See [current extraction design §6](plan/designs/multi_span_claim_extraction_design.md#6-media-provenance-lifecycle-and-recovery)
+and [source-origin analysis](plan/analysis/source-origins-at-extraction-20261023.md).
+
 **Status:** accepted by the user (2026-09-14); runtime implementation proceeds
 through a reviewed PR. No benchmark gain or shipped support is claimed here.
 

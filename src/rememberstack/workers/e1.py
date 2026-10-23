@@ -32,6 +32,8 @@ from rememberstack.core.extraction_eligibility import block_eligibility
 from rememberstack.core.extraction_eligibility import (
     EXTRACTION_ELIGIBILITY_POLICY_VERSION,
 )
+from rememberstack.core.source_origins import origin_input_hash
+from rememberstack.core.source_origins import SOURCE_ORIGINS_VERSION
 from rememberstack.core.text_origin import resolve_text_origin
 from rememberstack.core.text_origin import reuse_identity_hash
 from rememberstack.model import ChunkForEmbedding
@@ -65,8 +67,15 @@ from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSIO
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
-"""The embed stage's component version (D80 policy path; model id on stamps)."""
+E1_EMBED_VERSION: Final = f"e1-embed-2026.10:{CHUNKER_VERSION}"
+"""Delivery generation for the current chunk rows, not a new vector identity.
+
+The chunker base generation is part of delivery identity so its next bump
+cannot be blocked by an old completed embed job. The origin-aware generation
+needs a fresh embed job even for an already
+processed representation. Unchanged D80 inputs reuse their existing vectors;
+the embedding policy and model, rather than this work version, key paid reuse.
+"""
 
 E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 """Alias: policy generation replaces the retired LLM prefixer version string."""
@@ -75,7 +84,7 @@ E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-4:d122-source-references-1:"
-    f"d131-anaphora-1:d134-selfref-1"
+    f"d131-anaphora-1:d134-selfref-1:{SOURCE_ORIGINS_VERSION}"
 )
 """Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
 coherent claims cite engine-labeled source passages; occurrence rows store
@@ -142,9 +151,8 @@ class ChunkHandler:
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
-        eligible = block_eligibility(
-            blocks=blocks, ranges=self._derivation_ranges(source=source)
-        )
+        derivation_ranges = self._derivation_ranges(source=source)
+        eligible = block_eligibility(blocks=blocks, ranges=derivation_ranges)
         packed = pack_blocks(
             blocks=blocks,
             sections=source.sections,
@@ -157,7 +165,12 @@ class ChunkHandler:
             ),
         )
         identities = tuple(
-            _reuse_identity_hash(source=source, packed=packed, index=index)
+            _reuse_identity_hash(
+                source=source,
+                packed=packed,
+                index=index,
+                derivation_ranges=derivation_ranges,
+            )
             for index in range(len(packed))
         )
         origins = self._text_origins(source=source, identities=identities)
@@ -170,6 +183,7 @@ class ChunkHandler:
                     chunker_version=self._chunker_version,
                     reuse_identity_hash=identities[index],
                     text_origin_at=origins[index],
+                    derivation_ranges=derivation_ranges,
                 )
                 for index in range(len(packed))
             )
@@ -321,11 +335,11 @@ class EmbedChunksHandler:
             if stored_hash == rendered.embedding_text_hash:
                 vectors[chunk.chunk_id] = vector
 
-        # Cross-version carry-forward when embedding identity matches.
+        # Reuse matching vectors across versions or processing generations.
         for chunk, rendered in active:
             if chunk.chunk_id in vectors:
                 continue
-            prior = carry.get(chunk.chunk_content_hash)
+            prior = carry.get((chunk.chunk_content_hash, rendered.embedding_text_hash))
             if (
                 prior is None
                 or prior.embedding_text_hash != rendered.embedding_text_hash
@@ -640,7 +654,11 @@ def _location_facts(
 
 
 def _reuse_identity_hash(
-    *, source: ChunkSource, packed: tuple[PackedChunk, ...], index: int
+    *,
+    source: ChunkSource,
+    packed: tuple[PackedChunk, ...],
+    index: int,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
 ) -> str:
     """The chunk's date-free identity: the D56 key inputs minus any date (D140 §5)."""
     chunk = packed[index]
@@ -651,6 +669,9 @@ def _reuse_identity_hash(
         blockizer_version=source.blockizer_version or "",
         structurer_version=source.structurer_version,
         extractor_version=E2_EXTRACTOR_VERSION,
+        provenance_hashes=_consumed_origin_hashes(
+            packed=packed, index=index, ranges=derivation_ranges
+        ),
     )
 
 
@@ -662,6 +683,7 @@ def _chunk_record(
     chunker_version: str,
     reuse_identity_hash: str,
     text_origin_at: datetime | None,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
 ) -> ChunkRecord:
     """Build one chunk row, deriving its D56 reuse key from stable inputs only.
 
@@ -694,6 +716,9 @@ def _chunk_record(
             header_facts=header_facts,
             extractor_version=E2_EXTRACTOR_VERSION,
             structurer_version=source.structurer_version,
+            provenance_hashes=_consumed_origin_hashes(
+                packed=packed, index=index, ranges=derivation_ranges
+            ),
         ),
         char_start=chunk.char_start,
         char_end=chunk.char_end,
@@ -720,6 +745,24 @@ def _neighbor_hashes(*, packed: tuple[PackedChunk, ...], index: int) -> tuple[st
         else ""
     )
     return previous_hash, next_hash
+
+
+def _consumed_origin_hashes(
+    *, packed: tuple[PackedChunk, ...], index: int, ranges: tuple[DerivationRange, ...]
+) -> tuple[str, ...]:
+    """Origins for exactly the target and same-section neighbors E2 consumes."""
+    target = packed[index]
+    return tuple(
+        origin_input_hash(
+            start=packed[position].char_start,
+            end=packed[position].char_end,
+            ranges=ranges,
+        )
+        if 0 <= position < len(packed)
+        and packed[position].section_id == target.section_id
+        else ""
+        for position in (index - 1, index, index + 1)
+    )
 
 
 def _undated_header_facts(

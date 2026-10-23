@@ -81,7 +81,9 @@ _PERSON = "Alice Novak is an engineer at Acme."
 _JOINED = "She joined Acme in 2024."
 _NOTES = f"{_PERSON}\n\n{_JOINED}"
 _CLAIM_TEXT = "Alice Novak joined Acme in 2024."
-_PASSAGE = re.compile(r"\[(S\d+)\] TARGET \(origin-eligible\):\n(.*?)(?:\n\n|\Z)", re.S)
+_PASSAGE = re.compile(
+    r"\[(S\d+)\] TARGET \(origin-eligible\):\norigin=[^\n]+\n(.*?)(?:\n\n|\Z)", re.S
+)
 _E2_STAGES = (
     PipelineStage.CONVERT,
     PipelineStage.STRUCTURE,

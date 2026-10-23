@@ -23,8 +23,8 @@ from rememberstack.model import PackedChunk
 from rememberstack.model import SectionSpan
 
 CHUNKER_VERSION: Final = (
-    "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs"
-    ":blockizer-heading-metadata:eligibility-cuts"
+    "e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs"
+    ":blockizer-heading-metadata:eligibility-cuts:source-origins-1"
 )
 """Pins packing plus its blockizer-contract generation.
 
@@ -145,6 +145,7 @@ def extraction_input_hash(
     header_facts: tuple[str, ...],
     extractor_version: str,
     structurer_version: str,
+    provenance_hashes: tuple[str, ...] = (),
 ) -> str:
     """The D56 reuse key: stable inputs of the E2 bundle, no LLM output.
 
@@ -163,6 +164,7 @@ def extraction_input_hash(
             "\n".join(header_facts),
             extractor_version,
             structurer_version,
+            "\n".join(provenance_hashes),
         )
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
