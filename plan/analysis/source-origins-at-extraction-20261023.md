@@ -41,6 +41,12 @@ a claim about the author and preserves speaker/quotation ownership and genuine
 document dates. It must not treat a session/upload timestamp as an event date
 inside fictional or quoted content merely because they share a chunk.
 
+The focus block admits only known deterministic direct-text kinds
+(`passthrough`, `prose`, `markitdown`) in source-expression mode. That mode alone
+is insufficient: OCR also preserves source words, and Mistral labels scanned
+page headers/footers separately from the OCR body. Those labels and unknown
+custom kinds remain available as ordinary evidence without a direct-text boost.
+
 These are input and faithfulness improvements, not a deterministic guarantee
 that every useful proposition will be retained. Existing Selection outcomes,
 Claimify omission accounting and source-reviewed evaluation remain necessary.
@@ -72,7 +78,9 @@ change once to declare the new prompt/input and key layouts. E1's chunk-row
 generation also changes: replaying old rows would otherwise preserve the old
 hash layout. Packing itself is unchanged. The embed delivery generation changes
 with it so a completed old work item cannot suppress delivery for the fresh
-chunk rows. This is work identity, not a new embedding policy or model.
+chunk rows. The embed-delivery identity includes the chunker base generation
+so a later base bump cannot silently reuse an old completed job. This is work
+identity, not a new embedding policy or model.
 
 This is a paid extraction boundary when data is explicitly processed under that
 generation; no automatic processing is launched. Embedding policy/model and

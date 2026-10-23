@@ -10,6 +10,12 @@ from rememberstack.model import DerivationRange
 
 SOURCE_ORIGINS_VERSION: Final = "source-origins-1"
 
+_DIRECT_TEXT_KINDS: Final = frozenset({"passthrough", "prose", "markitdown"})
+"""Known deterministic text routes; unknown and OCR-derived kinds get no focus boost."""
+
+_OCR_KINDS: Final = frozenset({"ocr", "page_header", "page_footer"})
+"""The OCR converter labels header/footer text separately from its page body."""
+
 
 @dataclass(frozen=True)
 class OriginSegment:
@@ -84,7 +90,7 @@ def render_direct_source_focus(
     """Surface direct text in a mixed target without suppressing OCR or interpretation."""
     segments = origin_segments(start=start, end=end, ranges=ranges)
     mediated = any(
-        "ocr" in s.kinds
+        bool(set(s.kinds) & _OCR_KINDS)
         or any(m in {"model_observation", "model_interpretation"} for m in s.modes)
         for s in segments
     )
@@ -95,7 +101,7 @@ def render_direct_source_focus(
         for s in segments
         if s.modes == ("source_expression",)
         and s.kinds
-        and not set(s.kinds) & {"ocr", "section_heading", "separator"}
+        and set(s.kinds) <= _DIRECT_TEXT_KINDS
     ]
     direct = [text for text in direct if text.strip()]
     if not direct:

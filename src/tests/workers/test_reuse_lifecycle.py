@@ -994,7 +994,7 @@ def test_repacking_same_version_reuses_vectors_and_chains_fresh_embedding_work(
         )
         connection.execute(
             text(
-                "UPDATE processing_state SET component_version = 'prior-test-generation' WHERE target_id = :v AND stage IN ('chunk', 'embed_chunk')"
+                "UPDATE processing_state SET component_version = CASE WHEN stage = 'embed_chunk' THEN 'e1-embed-2026.08-d80' ELSE 'prior-test-generation' END WHERE target_id = :v AND stage IN ('chunk', 'embed_chunk')"
             ),
             {"v": version.version_id},
         )

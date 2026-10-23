@@ -133,6 +133,78 @@ def test_unknown_origin_does_not_become_passthrough_or_ocr_from_heading() -> Non
     )
 
 
+def test_ocr_headers_and_footers_are_not_promoted_to_direct_source_text() -> None:
+    """A Mistral-shaped scanned page must not boost OCR boilerplate as authored prose."""
+    parts = (
+        ("ACME Corp Invoice\n\n", "page_header"),
+        ("Amount due: 120 EUR.\n", "ocr"),
+        ("\nPage 1 of 2\n", "page_footer"),
+    )
+    text = "".join(body for body, _ in parts)
+    ranges: list[DerivationRange] = []
+    cursor = 0
+    for body, kind in parts:
+        ranges.append(
+            DerivationRange(
+                start=cursor,
+                end=cursor + len(body),
+                derivation_kind=kind,
+                evidence_mode="source_expression",
+            )
+        )
+        cursor += len(body)
+    assert (
+        render_direct_source_focus(
+            start=0, end=len(text), document_md=text, ranges=tuple(ranges)
+        )
+        == ""
+    )
+    authored = "I paid this invoice on Friday.\n"
+    mixed_ranges = (
+        *ranges,
+        DerivationRange(
+            start=len(text),
+            end=len(text) + len(authored),
+            derivation_kind="prose",
+            evidence_mode="source_expression",
+        ),
+    )
+    focus = render_direct_source_focus(
+        start=0,
+        end=len(text) + len(authored),
+        document_md=text + authored,
+        ranges=mixed_ranges,
+    )
+    assert authored.strip() in focus
+    assert "ACME" not in focus and "Page 1" not in focus and "120 EUR" not in focus
+
+
+def test_unrecognized_source_expression_kind_gets_no_direct_focus_boost() -> None:
+    """Custom source-expression labels are preserved without assuming native direct text."""
+    text = "A mediated transcription.\nNative note."
+    split = text.index("Native note.")
+    ranges = (
+        DerivationRange(
+            start=0,
+            end=split,
+            derivation_kind="unrecognized",
+            evidence_mode="source_expression",
+        ),
+        DerivationRange(
+            start=split,
+            end=len(text),
+            derivation_kind="passthrough",
+            evidence_mode="source_expression",
+        ),
+    )
+    assert (
+        render_direct_source_focus(
+            start=0, end=len(text), document_md=text, ranges=ranges
+        )
+        == ""
+    )
+
+
 def test_visual_observation_and_interpretation_keep_their_distinct_labels() -> None:
     """An interpretation cannot silently turn into direct source wording."""
     ranges = (

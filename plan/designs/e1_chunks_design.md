@@ -375,6 +375,8 @@ The lifecycle design owns the *contract* (cost ∝ the edit); this section owns 
   text at one location cannot hide the matching vector from another. Advancing
   the chunk-row and embed-delivery generations for converter-origin input hashes
   creates fresh work without changing packing or the embedding model/policy.
+  The embed-delivery identity includes the chunker base generation; a base
+  chunker bump therefore cannot replay a completed old embed job.
   See `e1_embedding_input_policy.md` §4.5.
 - A chunk whose *neighbors* changed re-extracts even though its own text didn't (the bundle
   changed → the input hash changed) — correct by construction.

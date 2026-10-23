@@ -67,10 +67,12 @@ from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSIO
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.10-source-origins-1"
+E1_EMBED_VERSION: Final = f"e1-embed-2026.10:{CHUNKER_VERSION}"
 """Delivery generation for the current chunk rows, not a new vector identity.
 
-The origin-aware chunk generation needs a fresh embed job even for an already
+The chunker base generation is part of delivery identity so its next bump
+cannot be blocked by an old completed embed job. The origin-aware generation
+needs a fresh embed job even for an already
 processed representation. Unchanged D80 inputs reuse their existing vectors;
 the embedding policy and model, rather than this work version, key paid reuse.
 """

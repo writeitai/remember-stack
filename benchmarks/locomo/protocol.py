@@ -78,7 +78,10 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs:"
             "blockizer-heading-metadata:eligibility-cuts:source-origins-1"
         ),
-        "embed_chunk": "e1-embed-2026.10-source-origins-1",
+        "embed_chunk": (
+            "e1-embed-2026.10:e1-chunker-2026.10a:whitespace-tokens:anchored:owner-runs:"
+            "blockizer-heading-metadata:eligibility-cuts:source-origins-1"
+        ),
         "extract_claims": _E2_EXTRACTOR_GENERATION,
         "ground_claims": _E2_EXTRACTOR_GENERATION,
         "normalize_relations": (

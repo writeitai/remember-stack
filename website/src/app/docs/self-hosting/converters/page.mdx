@@ -49,7 +49,7 @@ binary files). Formats that differ inside a family keep their own type:
 `.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
 reports the stored type in its `mime` field.
 
-## Image-description model settings
+## Source origins during extraction
 
 Extraction receives the converter's labels for direct text, OCR, observations
 and interpretations alongside verbatim source passages. A mixed target also
@@ -64,6 +64,8 @@ vectors are reused, including from an earlier processing of the same version.
 Existing stored claims are not repaired by editing configuration;
 reprocessing must be explicitly requested. Already-flattened plain text cannot
 recover origin labels that were discarded before ingestion.
+
+## Image-description model settings
 
 For deployments routing supported images through the OCR-plus-description
 converter, `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` selects the vision model.

@@ -140,9 +140,12 @@ the owner's decision — do not describe them as solved):
   `E0_CONVERT_VERSION` and converter routes, `E0_STRUCTURE_VERSION`,
   `SKELETON_PARSER_VERSION`, `REUSE_IDENTITY_VERSION`,
   `EXTRACTION_ELIGIBILITY_POLICY_VERSION`, `E2_EXTRACTOR_VERSION` (includes
-  `SECTION_ORIENTATION_VERSION`), `REFERENCE_POLICY_VERSION`,
+  `SECTION_ORIENTATION_VERSION` and `SOURCE_ORIGINS_VERSION`), `REFERENCE_POLICY_VERSION`,
   `EMBEDDING_INPUT_POLICY_VERSION`, `E1_EMBED_VERSION`, the embedding model, and
   `E3_NORMALIZER_VERSION` (reused claims keep their IDs but are normalized again).
+  The embed-delivery version includes the chunker base generation so a base
+  chunker bump cannot replay a completed old embed job for fresh rows. Vector
+  reuse remains keyed by actual embedding input, policy and model.
 - **Keep lineage identity stable.** Successive versions must arrive under the same
   connector-native `(source_kind, source_ref)` (D55); never append a revision or hash to
   `source_ref`. A one-shot upload is identified by its bytes, so an edited file becomes a new
