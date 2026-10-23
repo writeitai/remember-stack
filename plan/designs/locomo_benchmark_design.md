@@ -1,298 +1,9 @@
 # LoCoMo full-system benchmark design
 
-> **v38 retrieval adjacent-chunks amendment (2026-09-21).** Direct retrieval
-> primitives expand from 7 to 8 with `adjacent_chunks` (symmetric window
-> `1 <= window <= 2`), bringing the complete benchmark answer catalog from 21
-> to 22 tools. Tool catalog SHA-256 and protocol fingerprints roll accordingly.
-> Pipeline stages, component generations, prompts, budgets, models, live graph,
-> dataset, and judge remain identical to Full-v38; stores ingested under v38
-> remain fully compatible and do not need re-ingestion. Existing in-flight v38
-> runs updating answers/judges must update their protocol fingerprint and catalog
-> hash pins to match the 22-tool catalog. Decision: [D130](../../decisions.md).
->
-> **v38 GLM ingest variant (2026-09-17).** `full-v38-glm`
-> (`RS-LoCoMo-Full-v38-GLM`) replays the R14 generation model
-> (`z-ai/glm-5.3-flash` via OpenRouter, reasoning effort `minimal`) under the
-> full v38 pipeline: same stages including `ground_claims`, component
-> generations, prompts, tool catalog, budgets, Qwen embeddings, and the frozen
-> Luna answer agent and judge. Ingest model bindings move from a module-global
-> constant to a per-protocol pin (`LoCoMoProtocol.ingest_model_bindings`,
-> canonical map as default); the runner checks readiness and pre-upload
-> bindings against the prepared protocol, so a wrong-model deployment fails
-> closed naming the expected protocol. Fingerprints are untouched, so existing
-> v38 run dirs keep validating. Scores are a new ingest-model family baseline,
-> comparable only to other GLM-ingest runs, never to Luna-ingest v38 runs. The
-> shard driver routes chat through the ordered shortlist
-> `deepinfra,relace,wafer` with fallbacks so D127 rotation can engage; the
-> first GLM run sets the baseline and verifies the rotation fix against the
-> exact DeepInfra 429 `engine_overloaded` failure that dead-lettered 45 R14
-> work items. Decision: [D128](../../decisions.md) (decisions log in repo root).
->
-> **v38 adjudication rejection-feedback amendment (2026-09-15).** Full-v38 is
-> the current protocol. The fact adjudicator retries one deterministic
-> translator rejection inside the delivery: on a new-fact target/declare
-> mismatch, a supplied-name collision, or incoming support filed as a move,
-> drain re-generates once against the same prepared attempt with a structural
-> note appended outside the inputs, metered under a distinct
-> `:translator-retry1` receipt. A second identical rejection raises exactly as
-> before. Relation and observation application generations append
-> `:rej-feedback-1`. The base prompt is byte-identical; schema, translator,
-> normalizer, and resolver generations stay the same. Adapter identity,
-> protocol keys, variants, and fingerprints roll together. Dataset, models,
-> budgets, and scoring are unchanged. Stores ingested under v37 are not this
-> protocol. Analysis:
-> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
->
-> **v37 adjudication target-discipline amendment (2026-09-15).** Full-v37 added
-> two sentences to the fact-adjudication prompt: when target was a supplied
-> F-name, `new_facts` had to be empty, and the incoming assertion's placement
-> was decided by target/stance alone, never by a `support_moves` entry. That
-> addressed the R8 Vertex/Gemma dead-letters (declared-but-unused N-names,
-> incoming support filed as a move). Schema and translator stayed the same.
-> Relation and observation application generations appended
-> `:target-discipline-1`. Normalizer and resolver generations stayed the same.
-> The v36 N1/F2 wording and JSON examples were unchanged underneath. Adapter
-> identity, protocol keys, variants, and fingerprints rolled together. Dataset,
-> models, budgets, and scoring were unchanged. Stores ingested under v36 are
-> not that protocol. Analysis:
-> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
->
-> **v36 fact new-fact-reference amendment (2026-09-15).** Full-v36 said to
-> choose N1 rather than continue F-numbering, declare that name in `new_facts`,
-> and use the same name as `target`. Two complete nine-field JSON examples
-> showed structure only: repeating supplied F1 with no other changes, or
-> incoming A1 as a different proposition declared as N1. A separate
-> Gemma/Vertex control on one captured R7 input had named the new fact F2;
-> three diagnostics of this template returned N1 or F1 as required. Invalid F
-> references remained rejected. Schema and translator stayed the same.
-> Relation and observation application generations appended `:new-fact-refs-1`.
-> Normalizer and resolver generations stayed the same. Meaning, temporal,
-> schema, retrieval, answer, and judge pins stayed the same. Adapter identity,
-> protocol keys, variants, and fingerprints rolled together. Dataset, models,
-> budgets, and scoring were unchanged. Stores ingested under v35 are not that
-> protocol. Analysis:
-> [new-fact references](../analysis/fact_adjudication_new_fact_references_20260915.md).
->
-> **v35 nested-normalizer-field amendment (2026-09-15).** Full-v35 named
-> existing nested normalizer fields after the root both-array sentence. Each
-> observation, relation, and entity reference lists its declared fields;
-> empty context uses `[]`; `uses_claim_window` is an explicit boolean;
-> `surface=null` when the claim spelling matches the canonical name. That
-> completed one captured Gemma/Vertex input that already had the both-array
-> sentence; the same input completed in an earlier run, so this is not a
-> deterministic failure. Three sequential diagnostics completed that one
-> unique input; the third verified raw required fields before Pydantic,
-> including three entity references: the subject and two context references.
-> Resolver and fact-adjudicator prompt generations stayed the same; the
-> normalizer generation appended `:nested-fields-1`. Meaning, temporal,
-> schema, retrieval, answer, and judge pins stayed the same. Adapter
-> identity, protocol keys, variants, and fingerprints rolled together.
-> Dataset, models, budgets, and scoring were unchanged. Stores ingested under
-> v34 are not that protocol. Analysis:
-> [normalizer_nested_fields_20260915.md](../analysis/normalizer_nested_fields_20260915.md).
-> Durable probes:
-> [nested-field probes](https://github.com/writeitai/ultimate-memory-cloud/blob/2f64281c/design/analysis/locomo-conv42-gemma-normalizer-nested-probes-20260915.json).
->
-> **v34 decision-output-format amendment (2026-09-15).** Full-v34 named
-> existing decision-output fields in two processing prompts. The T4 prompt
-> requires all four existing fields
-> (`candidate_id`, `confidence`, `decision`, `rationale`), including nulls;
-> that is a measured Gemma/Vertex completion of one captured input. The fact
-> prompt names all nine existing `PromptFactDecision` fields, uses `[]` for
-> empty arrays, and says `window=null` when no explicit date replacement is
-> intended; that corrects a
-> prompt/schema contradiction and is not a reproduced fact-adjudication
-> provider failure. Resolver, normalizer, and application generations roll.
-> Meaning, temporal, schema, retrieval, answer, and judge pins stay the same.
-> Adapter identity, protocol keys, variants, and fingerprints roll together.
-> Dataset, models, budgets, and scoring are unchanged. Stores ingested under
-> v33 are not that protocol. Analysis:
-> [t4_output_format_20260915.md](../analysis/t4_output_format_20260915.md),
-> [fact_adjudication_output_format_20260915.md](../analysis/fact_adjudication_output_format_20260915.md).
->
-> **v33 normalizer output-format amendment (2026-09-15).** Full-v33 required
-> both `observations` and `relations` arrays in one JSON object, using `[]`
-> when a kind has no output. Meaning, temporal, schema, retrieval, answer, and
-> judge pins stayed the same. Adapter identity, protocol keys, variants, and
-> fingerprints rolled together. Dataset, models, budgets, and scoring were
-> unchanged. Stores ingested under v32 are not that protocol. Analysis:
-> [normalizer_output_format_20260915.md](../analysis/normalizer_output_format_20260915.md).
-
-> **v32 structuring-compatibility amendment (2026-09-15).** Full-v32 changed
-> the fallback structuring JSON field to `subsections` while preserving the
-> internal `children` tree. Other processing, retrieval, answer, and judge
-> pins stayed the same. Adapter identity, protocol keys, variants, and
-> fingerprints rolled together. Dataset, models, budgets, and scoring were
-> unchanged. Stores ingested under v31 are not that protocol. Analysis:
-> [gemma_fallback_subsections_20260915.md](../analysis/gemma_fallback_subsections_20260915.md).
-
-> **Binding D124 retrieval-ablation amendment (2026-09-14).** An additive,
-> answer-and-judge-only development runner compares four access profiles over
-> one already-processed run: native Codex with local P3, native Codex with P3
-> plus the official OSS MCP server, a provider-neutral agent with the OSS MCP
-> read surface, and that agent with three P3-like MCP tools. Results and state
-> are separate from the canonical run and are not publication scores. The
-> Full-v31 protocol is unchanged. Binding contract:
-> [`locomo_retrieval_ablation_design.md`](locomo_retrieval_ablation_design.md).
-
-> **D119–D123 processing amendments (2026-09-14).** Full-v29 identifies
-> [D119 coherent multi-span extraction](multi_span_claim_extraction_design.md)
-> with version reuse. Full-v30 adds [clear processing instructions](processing_prompt_clarity_design.md)
-> and [concise adjudication inputs](concise_adjudication_inputs_design.md).
-> Full-v31 adds [source-backed document references](document_reference_context_design.md)
-> and [contextual fact nomination](contextual_fact_nomination_design.md), with
-> separate Selection and Claimify work stages and unchanged two-call extraction.
-> The combined extractor, normalizer and adjudicator generations are pinned
-> separately from earlier stores. The adapter and protocol fingerprints roll
-> together. Dataset, provider defaults, answer/judge behavior and scoring do
-> not change. These processing changes do not establish a benchmark-quality
-> or billed-cost improvement; the offline byte comparisons are recorded in the
-> [implementation evaluation](../implementation_evals/d120_d121_implementation_20260914.md).
-
-> **Binding v28 amendment (2026-09-12).** The protocol pins the D118 fact
-> contract ([design](mutable_fact_windows_design.md)): the mutable-window
-> normalizer and adjudicator generations, the re-pinned query-space manifest
-> hash, and consumption skill 4.0.0. Facts carry one chosen world-time window
-> with precision; assured fact results carry `temporal_match`; history mode
-> returns completed intervals. Adapter version, protocol identities, and
-> fingerprints roll to v28; v27 stores must be re-ingested. Dataset, models,
-> budgets, judge rubric, and scoring are unchanged from v27.
-
-> **Binding v27 amendment (2026-09-11).** The protocol pins extractor
-> generation `temporal-anchor-4`: E2 writes a resolved relative date into
-> claim text as an ISO value and grounds it by the claim's own valid-time
-> fields (D41/D32 amendments of 2026-09-11). The answer prompt replaces "use
-> timestamps to resolve relative dates" with a plain-word definition of the
-> two evidence times — `asserted_at` is when the source made the statement,
-> `claim_valid_from` / `claim_valid_until` are when the claim says it happened
-> or was true, `claim_valid_kind` names which — and tells the agent that a
-> relative phrase still in claim text is unresolved and reads against
-> `asserted_at`. Adapter version, protocol identities, and fingerprints roll
-> together; stores ingested under v26 must be re-ingested. Dataset, models,
-> retrieval behavior, budgets, judge rubric, and scoring are unchanged.
-
-> **Binding D114 / v26 amendment (2026-09-07).** The three assured context
-> tools adopt `claims_and_sources_context`, `facts_context`, and
-> `combined_context`; the last returns `ContextBundle/v2`. The catalog,
-> surface-manifest hash, adapter version, prompt text, protocol identities and
-> fingerprints roll together. Dataset, ingestion, models, retrieval behavior,
-> budgets, judge rubric and scoring are unchanged.
-
-> **Binding v25 evaluator amendment (2026-09-07).** All default, Gemma/Vertex,
-> and Codex-subscription variants reuse one answer-prompt constant. It permits
-> general knowledge only as interpretation, forbids seeking benchmark gold
-> artifacts, requires content retrieval before every answer, and tells capable
-> clients to resolve a material entity in parallel with an independent content
-> read before following up by entity id. The existing retrieval default of 50
-> is unchanged. The Codex variant pins `gpt-5.6-luna` at reasoning effort
-> `high`, supplies no supplemental system instruction, records every returned
-> runtime item and each out-of-band action's request metadata in a run-local
-> audit, and
-> rejects any command, file, MCP, web, or sub-agent action before scoring. It
-> remains an experimental, separately fingerprinted protocol and does not
-> produce scores comparable to canonical `RS-LoCoMo-Full-v25`. Analysis:
-> `plan/analysis/locomo_codex_subscription_bridge.md`.
-
-> **D107 WP-T.4 protocol amendment (2026-09-06).** Full-v24 retains the
-> existing query-space contract and rolls extraction to teach all four D41
-> kinds and open-ended windows with full source timestamps. Both the default
-> and Gemma/Vertex variants use this extraction generation. Protocol identity
-> and fingerprints change; earlier protocol scores are directional comparisons.
-> Binding extraction semantics: `temporal_clocks_design.md` §6.
-
-> **D118 amendment (2026-09-07; effective when merged).** Future fact-time
-> inputs use one chosen window, precision and source timestamps, with explicit
-> current/history selection and unknown-date disclosure. Full-v24 and all current
-> evaluator variants remain unchanged by this design-only amendment. Roll the
-> protocol when replacement semantics ship; see
-> [D118](mutable_fact_windows_design.md) and the [delivery plan](../plans/temporal_clocks.md).
-
-> **Historical D107 amendment, WP-T.0b (2026-09-04).** This historical pin was
-> `RS-LoCoMo-Full-v23`; the current pin is Full-v24. It retains v22's dataset, rendered documents, models,
-> tools, budgets, prompts, scoring, and ingest component versions. The query
-> space now publishes `memory_v1.canonical_bounds` and `claims_canonical`, and
-> `examples.claims_as_of` overlaps the half-open canonical window and counts
-> unknown precision by precision alone (audit 4.21). The surface manifest
-> hash, protocol identity, and fingerprint roll; ingestion provenance and the
-> library `claims_as_of` result set do not.
-
-> **Historical D107 amendment, WP-T.0a (2026-09-03).** The WP-T.0a protocol was
-> `RS-LoCoMo-Full-v22`. It retains v21's dataset, rendered documents, models,
-> tools, budgets, prompts, and scoring. Its pinned `adjudicate_observations`
-> component version now carries canonical half-open bounds (D107 §5): the
-> observation adjudicator compares a day as the whole calendar day and an
-> instant as a non-empty point, and `claims_as_of` finds a day-precision
-> claim from an intraday window. Ingestion provenance, the library's
-> `claims_as_of` result set, protocol identity, and fingerprint roll; the
-> benchmark's exposed read-tool set, retry, model-effort, and call-budget
-> behavior are unchanged.
-
-> **Historical D106 amendment (2026-09-03; superseded by D107 WP-T.0a).** The
-> D106 protocol was `RS-LoCoMo-Full-v21`. It retained v20's dataset, rendered documents, models,
-> tools, budgets, answer and judge prompts, counterfactual and complete-answer
-> instructions, content-before-`Unknown` harness guard, and no-review scoring
-> rule. Its pinned `adjudicate_observations` component version now carries the
-> D106 temporal-compatibility rung: dated events with disjoint resolved windows
-> never collapse onto or supersede each other (a same-occurrence date dispute
-> may contradict), and a dated event is never `evidence` for an undated
-> statement. Ingestion provenance, protocol identity, and fingerprint
-> roll; no retrieval, retry, model-effort, or call-budget behavior changes.
-> V20 and v21 scores are directional because the fact layer differs.
-
-> **Historical D105 amendment (2026-09-01; superseded by D106).** The D105
-> protocol was `RS-LoCoMo-Full-v20`. It retained v19's dataset, ingestion, models, tools,
-> budgets, counterfactual instruction, content-before-`Unknown` harness guard,
-> and no-review scoring rule. Its answer prompt now also requires every
-> distinct retrieved value that directly satisfies the question, rather than
-> stopping at the first or highest-ranked match. No retrieval, retry,
-> model-effort, or call-budget behavior changes.
-
-> **Historical D104 amendment (2026-09-01; superseded by D105).** The D104
-> protocol was `RS-LoCoMo-Full-v19`. It retained v18's dataset, ingestion, models, tools,
-> budgets, content-before-`Unknown` harness guard, and no-review scoring rule.
-> Its answer prompt now explicitly permits bounded counterfactual inference
-> from causal or motivational relationships in retrieved evidence and reserves
-> `Unknown` for evidence that gives no direction about the dependency. No
-> retrieval, retry, model-effort, or call-budget behavior changes.
-
-> **Historical D102 amendment (2026-08-31; superseded by D104).** The D102
-> protocol was `RS-LoCoMo-Full-v18`. It retained v17's dataset, models, tools, budgets,
-> binary match-biased T4, content-before-`Unknown` guard, and no-review scoring
-> rule. Resolver decisions may now use the D102 exact document-local T0 replay
-> after a T4 match, changing provider-call counts, resolver/normalizer
-> generations, protocol identity, and fingerprint. V17 and v18 scores are
-> directional, not a strict protocol A/B.
-
-> **Historical D100 amendment (2026-08-31; superseded by D102).** The D100 protocol was
-> `RS-LoCoMo-Full-v17`. It retained v16's dataset, answer/judge models, tools,
-> budgets, content-before-`Unknown` guard, and no-review scoring rule while
-> rolling the resolver prompt/output schema/generation to one joint binary,
-> match-biased T4 call. V16 and v17 scores are directional, not a strict
-> protocol A/B.
->
-> **Historical D99 amendment (2026-08-28; superseded by D100).** The D99 protocol was
-> `RS-LoCoMo-Full-v16`. It retained v15's dataset, models, tools, call budgets,
-> and existing two-additional-attempt malformed-reader recovery. The answer
-> loop now enforces the already-prompted rule that `resolve_entity` metadata is
-> not content evidence: terminal `Unknown` after identity-only reads is rejected
-> until one bounded testimony, fact, or combined-context read has been attempted.
-> Resolver/convergence generations roll with the release. V15 and v16 scores are
-> directional, not a strict protocol A/B.
-
-> **Binding D98 amendment (2026-08-27).** The benchmark no longer builds or
-> waits for P2 and does not expose Cypher to the answer agent. Graph questions
-> use typed live-graph operations and the bounded PostgreSQL SQL helpers;
-> server-owned shallow execution exercises SQL/PGQ. Data-independent readiness
-> proves property-graph catalog/function health; the benchmark preflight
-> separately proves immediate committed-edge visibility on its isolated sample.
-> P3 is
-> still explicitly built. D97's changed assured descriptors rolled the
-> pre-D99 protocol to `full-v15`; older
-> version-transition paragraphs remain historical evidence only.
-
-> **Status:** binding current-system protocol contract. Real provider execution
-> remains operator-invoked. Accepting this design does not itself authorize a
-> paid run of the current protocol.
+Current owner-requested contract, 2026-10-23; delivery and review are tracked in
+PR #514. Acceptance of a design does not establish a runtime result. See
+[implementation analysis](../analysis/locomo-models-and-independent-judging-20261023.md)
+and [superseded protocol history](../analysis/locomo-protocol-history-through-v38.md).
 
 ## 1. Acceptance boundary
 
@@ -318,474 +29,71 @@ and spend ceiling.
 ## 2. Fixed protocol
 
 ```text
-protocol                RS-LoCoMo-Full-v38
+protocol                 RS-LoCoMo-Full-v39 (full-v39)
 dataset commit           3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376
-dataset SHA-256          79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
+dataset SHA-256           79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4
 categories               1, 2, 3, 4
-answer-agent model       openai/gpt-5.6-luna
-answer temperature       0
+ingestion LLM            openai/gpt-6-luna, low reasoning, openai/flex
+visual-description LLM   openai/gpt-6-luna, low reasoning, openai/flex
+OCR                      configured dedicated Mistral OCR lane
+adjudication             jev-1.13.0, confidence floor 0.75, no prompt fallback
+answer-agent model       openai/gpt-6-luna, high reasoning, temperature 0
+judge model              openai/gpt-6-luna, high reasoning, temperature 0
+judge policy             existing semantic CORRECT/WRONG scorer
 max tool calls/question  8
 max agent calls/question 9
 invalid-completion retry 2 additional attempts within the 9-call cap
-answer reasoning effort  none
-answer word cap          off (`None`)
-judge model              openai/gpt-5.6-luna
-judge temperature        0
-judge reasoning effort   none
+answer word cap          off
 judge repetitions        1
+API transport budget     180 seconds
 primary metric           judge accuracy
 secondary metric         official LoCoMo F1
-diagnostic               coarse envelope-evidence session recall
 ```
 
-The current `memory_v1` `surface_manifest_hash`, prompt and schema hashes,
-adapter and repository revisions, manifests, rendered documents, model
-identities, complete answer-tool catalog hash, and component generations are
-stored. A change creates a new protocol version.
+Execution has one current protocol. Superseded keys and their provider/model
+branches are removed from preparation and execution; no runtime fallback to a
+historical implementation is supplied. Historical run files retain their exact
+models, generations, fingerprints and outcomes and may be inspected or
+summarized against their own recorded identity without becoming executable.
 
-**v38 retrieval adjacent-chunks amendment (2026-09-21 — adjacent_chunks primitive):**
-Direct retrieval primitives expand from 7 to 8 with `adjacent_chunks`
-(window bounded by `1 <= window <= 2`), bringing the complete answer catalog to
-22 descriptors. The tool catalog SHA-256 and protocol fingerprints roll together.
-Pipeline stages, prompts, models, budgets, live graph schema, and stores
-ingested under v38 are unchanged and compatible. In-flight v38 run directories
-regenerating answers update their `tool_catalog_sha256` and `protocol_fingerprint`
-pins to reflect the 22-tool catalog.
+The query-surface hash, prompt/schema hashes, repository revision, manifests,
+rendered documents, complete tool-catalog hash and expected component generations
+are stored. The execution profile also stores its non-secret ingestion bindings,
+worker environment and Flex restriction. CI compares every required component
+and effective model binding with the composed current engine; a worker generation
+change cannot leave a stale executable benchmark pin unnoticed.
 
-**v37 → v38 (2026-09-15 — adjudication rejection feedback):** Relation and
-observation application generations include `rej-feedback-1`. The fact
-adjudicator retries one deterministic translator rejection inside the delivery
-against the same prepared attempt, with a structural note outside the inputs
-metered under a distinct `:translator-retry1` receipt; a second identical
-rejection raises exactly as before. The base prompt is byte-identical; schema,
-translator, normalizer, and resolver generations are unchanged. Meaning,
-temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
-version, protocol identities, variants, and fingerprints roll. Stores ingested
-under v37 must be re-ingested.
+### 2.1 Model roles and independent judging
 
-**v36 → v37 (2026-09-15 — adjudication target discipline):** Relation and
-observation application generations include `target-discipline-1`. The fact
-prompt says that when target is a supplied F-name, `new_facts` must be empty,
-and that the incoming assertion's placement is decided by target/stance alone,
-never by a `support_moves` entry. Schema, translator, normalizer, and resolver
-generations are unchanged. Meaning, temporal, schema, retrieval, answer, and
-judge pins are unchanged. Adapter version, protocol identities, variants, and
-fingerprints roll. Stores ingested under v36 must be re-ingested.
+Ingestion LLM work and visual descriptions use low reasoning. Only answering and
+judging use high reasoning, set on each request so the ingestion effort map cannot
+silently change their setting. Jev is the adjudication engine, not a dormant LLM
+model-name label. OpenRouter generation uses the hard `openai/flex` allowlist;
+capacity failure does not authorize standard-price fallback. Transient capacity
+errors, including unbilled HTTP-200 error envelopes, use bounded retries. A
+response carrying generation identity, choices or usage is not regenerated by
+that capacity retry path.
 
-**v35 → v36 (2026-09-15 — fact new-fact reference examples):** Relation and
-observation application generations include `new-fact-refs-1`. The fact prompt
-says to choose N1 rather than continue F-numbering and shows two complete JSON
-objects (repeat F1 with no other changes, or declare N1 for a different
-proposition). Schema, translator, normalizer, and resolver generations are
-unchanged. Meaning, temporal, schema, retrieval, answer, and judge pins are
-unchanged. Adapter version, protocol identities, variants, and fingerprints
-roll. Stores ingested under v35 must be re-ingested.
+Answer and judge remain separate roles with separate prompts, schemas, budgets
+and accounting even though they use the same model. The canonical semantic
+judge policy is retained. Model changes alone do not establish a score gain.
 
-**v34 → v35 (2026-09-15 — nested normalizer fields):** Normalizer generation
-includes `nested-fields-1`. After the root both-array sentence, the prompt
-names every existing nested observation, relation, and EntityRef field,
-uses `[]` for empty context references, an explicit boolean
-`uses_claim_window`, and `surface=null` when spelling matches. Resolver and
-fact-adjudicator prompt generations are unchanged. Meaning, temporal, schema,
-retrieval, answer, and judge pins are unchanged. Adapter version, protocol
-identities, variants, and fingerprints roll. Stores ingested under v34 must
-be re-ingested.
+An optional Mem0-like sidecar reads saved answers and produces separate results.
+Its identity pins the source run/state hashes, selected items, category-three
+reference preprocessing, prompt/schema hashes, model/effort/routing and optional
+source-evidence mode. It does not change canonical answers or grades or invoke
+retrieval or ingestion. The permissive policy accepts one correct list item,
+fourteen-day date differences and fifty-percent duration differences. Evidence
+mode supplies reference-turn text/dates to the judge and can only increase
+acceptance; image pixels are not implicitly available. Alternate-policy scores
+must be reported separately with those differences disclosed.
 
-**v33 → v34 (2026-09-15 — T4 and fact output-format prompts):** Resolver
-generation is `resolver-2026.08h`. Normalizer generation includes
-`t4-format-1`. Relation and observation application generations include
-`output-fields-1`. T4 names all four existing fields, including nulls. Fact
-adjudication names all nine existing fields, uses `[]` for empty arrays, and
-uses `window=null` when no explicit date replacement is intended. Meaning,
-temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
-version, protocol identities, variants, and fingerprints roll. Stores
-ingested under v33 must be re-ingested.
-
-**v32 → v33 (2026-09-15 — both-lists normalizer prompt):** Normalizer
-generation includes `both-lists-1`. The prompt requires both `observations`
-and `relations` arrays, using `[]` when a kind has no output. Meaning,
-temporal, schema, retrieval, answer, and judge pins are unchanged. Adapter
-version, protocol identities, variants, and fingerprints roll. Stores
-ingested under v32 must be re-ingested.
-
-**v31 → v32 (2026-09-15 — Gemma fallback subsections):** Structure generation
-includes the fallback nested JSON field `subsections`. This is the measured
-Gemma/Vertex compatibility correction.
-Dataset, models, answer/judge behavior, budgets, and scoring are unchanged.
-Adapter version, protocol identities, variants, and fingerprints roll. Stores
-ingested under v31 must be re-ingested.
-
-**v24 → v25 (2026-09-07 — shared entity follow-up and audited Codex):** The
-answer prompt remains one constant shared by the default, Gemma/Vertex, and
-Codex-subscription variants. It no longer prohibits outside knowledge; general
-knowledge may interpret retrieved evidence, while RememberStack remains the
-authority for conversation-specific claims. Seeking gold answers, gold evidence
-labels, or evaluator artifacts is forbidden. Every final answer now explicitly
-requires a content-bearing read. When a named person, organization, place, or
-other entity can narrow retrieval, a capable client may resolve it in parallel
-with an independent content read and use the returned id in follow-ups; the
-one-step LoCoMo interface expresses the same work as consecutive requests. The
-retrieval default remains 50.
-
-The Codex variant moves both seats from reasoning effort `low` to `high` and
-removes the supplemental system instruction that ambiguously prohibited tools.
-Its empty read-only/no-network sandbox and deny-all approvals remain. Every
-returned Codex item type and every out-of-band action's request metadata is
-appended to `codex-runtime-<stage>.jsonl`; returned content is omitted. A
-command, file mutation, MCP call, web search, or sub-agent still makes the turn
-fail before its output is accepted. Ordinary
-RememberStack tool names, arguments, results, and latency remain in the answer
-record. Dataset, ingestion generations, tool catalog, schemas, limits, judge
-rubric, and scoring are unchanged. Prompt hashes, adapter version, protocol
-names, and fingerprints roll.
-
-**v19 → v20 (2026-09-01 — D105 complete direct values):** When retrieved
-evidence supports multiple distinct values that directly satisfy the question,
-the answer must include all of them rather than stop at the first or
-highest-ranked match. Merely related facts that do not satisfy the requested
-action or relationship remain excluded. This clarifies that the existing
-shortest-complete-answer rule does not permit an incomplete subset. It adds no
-tool, model call, retry, reasoning effort, category route, or item-specific
-hint. Dataset, rendered documents, ingestion generations, retrieval surface,
-P3 contents, judge, and scoring are unchanged. The answer-prompt hash, adapter
-version, protocol identity, and fingerprint roll.
-
-**v18 → v19 (2026-09-01 — D104 counterfactual answer instruction):** The
-answer prompt permits causal or motivational inference for hypothetical and
-counterfactual questions when that dependency is supported by retrieved
-evidence, even if the source never states the hypothetical verbatim. If a
-question asks whether an outcome would still occur without a condition and the
-evidence says the condition caused, enabled, or motivated the outcome, the
-agent answers `Likely no`; evidence of independence supports `Likely yes`;
-evidence with no direction supports `Unknown`. This is not permission to use
-outside knowledge. The change adds no tool, model call, retry, reasoning
-effort, category route, or item-specific hint. Dataset, rendered documents,
-ingestion generations, retrieval surface, P3 contents, judge, and scoring are
-unchanged. The answer-prompt hash, adapter version, protocol identity, and
-fingerprint roll.
-
-**v17 → v18 (2026-08-31 — D102 document-local exact T0):** Once one
-`document-t0-v1` T4 call matches an exact normalized canonical name inside
-one catalog document, later exact occurrences in that document may replay the
-active entity as T0 without T3/T4. Global T0 remains candidate-only; T1/T2
-remain non-deciding. The durable anchor is derived from normal resolution
-history through the bounded document-binding projection and is part of locked
-snapshot revalidation. This changes resolver
-behavior, provider-call counts, decision features, and component generations;
-the dataset, answer/judge models and budgets, read surface, and scoring rules
-are unchanged. File attribution remains outside the protocol change.
-
-V18 retains `auto_merge_enabled=false`. No human accepts or rejects merge
-proposals between ingest and scoring.
-The public readiness report must expose
-`document_binding_generation=document-t0-v1`; prepare fingerprints that value,
-and ingest/pre-answer readiness rejects null or any other generation. A
-v18-labelled run therefore cannot silently execute the v17 resolver path.
-
-**v16 → v17 (2026-08-31 — D100 binary match-biased T4):** The identity
-resolver retains T0–T2 candidate blocking, conservative T3, candidate
-completeness, snapshot/revalidation, profile convergence, and all retrieval
-behavior. The residue now makes one configured-simple-model call over every
-candidate in the bounded snapshot and returns one candidate id or `new`.
-There is no tri-state result, provisional mint, confidence-routed frontier
-seat, or pairwise T4 call loop. The joint prompt contains each candidate's
-aliases, current profile description, salient facts, and T3 score/gate, and
-explicitly prefers compatible existing identity. This changes the resolver
-prompt/output schema, provider-call count, decision features, component
-generation, protocol identity, and fingerprint. File attribution is not part
-of v17.
-
-V17 retains `auto_merge_enabled=false`. No human accepts or rejects merge
-proposals between ingest and scoring. Identity diagnostics add the binary T4
-match/new split and preserve candidate-count/completeness, active-name groups,
-proposal membership, and blast-radius reporting; historical provisional counts
-remain only on pre-v17 stores.
-
-**v15 → v16 (2026-08-28 — D99 uncertainty and content fallback):** The engine
-uses tri-state identity adjudication, truncation-honest provisional fragments,
-post-profile convergence nomination, T3 gate diagnostics, and resolver
-snapshot/revalidation. The answer loop additionally rejects terminal `Unknown`
-when every successful read so far was identity metadata; it asks the same pinned
-model to continue within the existing tool/call/spend caps and requires one
-testimony/fact/combined-context attempt. No new tool, model, retry budget, or
-gold-derived hint is added. The prompt already stated this rule, but mechanical
-enforcement changes behavior, so the protocol identity and fingerprint roll.
-
-V16 uses the stock fail-closed cluster configuration:
-`auto_merge_enabled=false`. No human accepts or rejects merge proposals between
-ingest and scoring, because doing so after seeing this conversation's gold
-identity would make the benchmark operator an unrecorded answer oracle. The run
-records proposal count, member sets, blast radii, and active-fragment counts as
-identity diagnostics before scoring. Therefore unattended v16 may still expose
-several active candidates; its score tests the resolver changes plus graceful
-content fallback, while proposal quality is evaluated separately. A later
-operator-review experiment, if run, is a distinct diagnostic artifact and does
-not replace the ordinary v16 score.
-
-**v14 → v15 (2026-08-27 — D97 default entity neighborhood):** The
-`facts_context` and `combined_context` descriptors advance to version 2 because
-anchored current/point-in-time reads add bounded neighborhood expansion,
-`hops`/`predicate`, and the 19-anchor cap. The `surface_manifest_hash`, catalog
-hash, adapter identity, and protocol fingerprint roll together. Dataset,
-models, prompts, call budgets, and the complete 21-tool catalog size are
-unchanged. V14 and v15 scores are not comparable; accepting this contract does
-not authorize a paid v15 run.
-
-**v13 → v14 (2026-08-27 — PostgreSQL 19 live graph):** D98 removes the two
-Cypher tools and every P2 build/readiness/snapshot input. The complete answer
-catalog now contains four assured operations, seven direct primitives, seven
-open-query operations, and three P3 motions: **21 descriptors**. Graph questions
-use `graph_path`, `graph_neighborhood`, typed live-graph operations, or saved SQL;
-server-owned fixed one-hop execution exercises SQL/PGQ behind those
-contracts. Readiness pins PostgreSQL 19, the exact property-graph semantic
-catalog and grants, helper versions, traversal budgets, and empty-deployment
-execution. A separate isolated benchmark preflight proves immediate visibility
-of the sample's committed edges. The manifest, prompt, adapter, catalog hash, and protocol
-fingerprint roll together. There is no v13 compatibility mode.
-
-**v12 → v13 (2026-08-11 — current-main ingest and bounded fact authority):**
-D89 keeps the v12 dataset, models, prompts, budgets, and complete 23-tool answer
-catalog. It rolls the query-space manifest and protocol identity because
-the fact views now share private current-evidence and D54 lineage authorities,
-and `facts_context` applies one operation-level PostgreSQL deadline. This fixes
-the pool-exhaustion failure observed during the v12 answer pass without adding
-an answer tool or changing the fact/testimony mental model. V13 also binds the
-current D88 claim-level normalize fan-out and distinct observation-adjudication
-stage. Because that changes the ingest contract, a v12 store is not adopted;
-v13 performs a fresh ingest at its recorded repository revision.
-
-**v11 → v12 (2026-08-10 — authority-aligned context operations):** D87
-replaces the assured-operation subset with `resolve_entity`,
-`claims_and_sources_context`, `facts_context`, and `combined_context`. The removed
-`question_context`/`current_context` names and optional mixed-grain flags are
-not compatibility tools. The complete answer catalog therefore contains four
-assured operations, seven direct primitives, nine open-query operations, and
-three P3 motions: 23 descriptors. The answer prompt routes source-testimony
-questions to `claims_and_sources_context`, current or historical truth questions to
-`facts_context`, general questions needing both layers to `combined_context`, and
-identity ambiguity to `resolve_entity`. The tool-catalog hash, surface manifest,
-prompt, adapter identity, and protocol fingerprint roll together. V11 artifacts
-remain self-describing and are not comparable to v12. Decision: D87; analysis:
-`plan/analysis/context_operation_model_analysis.md`.
-
-**v10 → v11 (2026-08-07 — complete retrieval plane):** V10 exposed only the
-three assured operations to the answer agent even though it built P2/P3 and the
-shipping system also exposed seven direct read primitives and nine open-query
-operations. V11 replaces that subset with the complete read plane: the three
-assured operations, seven direct primitives, nine open-query operations, and
-bounded list/grep/read over the ordinary published P3 filesystem. P1 is
-reachable through assured, primitive, and SQL search paths; P2 through full
-Cypher; live PostgreSQL testimony/facts through primitives and SQL; and P3
-through its mount. Writes, controls, raw originals, artifacts, internal-only
-primitives, and absent Plane K are not answer tools. The exact 22 descriptors
-and P3 limits are fingerprinted. Analysis:
-`plan/analysis/locomo_full_retrieval_agent.md`; decision: D85.
-
-**v9 → v10 (2026-08-07 — current-system clean cut):** D83 removed the retired
-17 adapters and left exactly `resolve_entity`, `question_context`, and
-`current_context` as the shipping intent surface. V10 replaces both executable
-v9 variants; it does not preserve an old-catalog mode. Luna occupies both the
-answer and judge seats. The ingest and answer stages check the deployment's
-public `surface_manifest_hash` and exact canonical recipe descriptors. Ingest
-does so before provider preflight or upload; answer does so before any question
-call. Historical v9 artifacts remain self-describing, but v9 and v10
-scores are not comparable. Analysis:
-`plan/analysis/locomo_current_surface_cutover.md`.
-
-**v2 → v3 (2026-07-26, before any scored run):** `AnswerAgentStep.arguments`
-became `arguments_json`, a JSON-object-encoded string, because compliant strict
-providers reject a free-form object schema outright (§2.4). The answer prompt
-changed accordingly. No v2 score ever existed.
-
-**v3 → v4 (2026-07-27, before any scored run):** recipe descriptors gained
-when-to-use guidance; `claims_hybrid_rrf` hydrates ranked claim text (not
-scores alone); the answer-agent prompt adds loop guards (no identical
-tool+arguments retries; switch tools after a useless result; try a claims
-search before "Unknown"). Prompt, tool-catalog hash, and descriptors all
-changed, so the protocol version bumps. No v3 score is comparable.
-
-**v4 → v5 (2026-07-27, issue #156):** the `identity_as_of` recipe descriptor
-became honest about its recent-first transcript bound (default 40 rows,
-truncation signalled in the envelope) and gained an optional `limit`
-parameter so a truncated history is recoverable through the public surface.
-The tool-catalog hash changed, so the protocol version bumps — the v4 smoke
-scores (glm-4.7-flash arm) were taken against the pre-truncation catalog and
-are not directly comparable.
-
-**v5-strong variant (2026-07-29):** `RS-LoCoMo-Full-v5-strong` initially
-changed only the answer agent to `openai/gpt-5.6-luna`. It existed because three smoke
-passes on a healthy store (coarse evidence-session recall 0.5, with the gold
-evidence at rank 1) scored only 1–2/8 with `openai/gpt-4o-mini`, which looped
-past the tool-call limit or returned invalid responses. V9 retained that seat
-distinction. V10 supersedes both executable variants and uses Luna.
-
-**Reader retry and answer-effort pin (2026-07-29):** strong-agent smoke runs
-showed a separate harness failure. After tool use, `openai/gpt-5.6-luna`
-sometimes returned reasoning prose instead of the required JSON answer object.
-That happened on 3 of 8 questions in one pass and 1 of 8 in another. With no
-retry, each malformed completion permanently scored that question as zero.
-
-The answer reader now retries that same model call up to two times, for three
-attempts total. A retry uses the ordinary agent-call ledger: it consumes both
-the nine-call per-question allowance and the run's `max_agent_calls` ceiling.
-If either allowance is exhausted, the item keeps the same terminal failure it
-would have recorded before. In v5–v7, tool-selection calls before any recipe
-result and judge calls did not receive this retry. Each answer record stores
-`reader_attempts`; the run summary adds `total_reader_retries` without changing
-the existing failure categories.
-
-The same smoke work found that setting Luna's reasoning effort to `none` in the
-benchmark process environment reduced malformed answers from 3/8 to 1/8 and
-raised the score from 1/8 to 3/8. Environment-only configuration was not
-reproducible because two runs with identical `run.json` files could behave
-differently. The strong variants therefore pinned `answer_agent_reasoning_effort`
-to `none` and sent it explicitly on every answer-agent call, including tool
-selection and final reading. V10 keeps the Luna `none` pin.
-Engine worker seats still use the existing environment map; this override is
-only on benchmark answer requests.
-
-Both stable protocol names and CLI keys remain unchanged, but both fingerprints
-rolled on 2026-07-29 because the retry budget and effort choice are now part of
-protocol identity. All earlier runs were smoke-tier diagnostics, so no
-published result is invalidated.
-
-**v5 → v6 (2026-07-30 — temporal ingestion contract):** the source dataset
-provides session wall times without any timezone. Earlier adapters kept the
-literal timestamp in document text but omitted structured `source_modified_at`.
-After E2 began requiring an absolute document-header timestamp for relative-date
-arithmetic, that combination produced `date unknown` bundles.
-
-V6 parses the pinned timestamp grammar during local preparation, assigns UTC as
-an explicit adapter convention, persists `source_timezone_basis=assumed_utc`,
-discloses the assumption in rendered text, and passes the aware timestamp through
-`MemoryClient.ingest()`. Invalid timestamps fail before remote work. This changes
-rendered documents, ingestion metadata, and derived claim time, so both weak and
-strong protocols receive v6 identities and new fingerprints. V5 results are not
-comparable.
-
-**v6 → v7 (2026-07-30 — independent retrieval channels):** the ordinary OSS
-query path gains independent semantic and BM25 nomination over claims, plus
-semantic and BM25 search over source chunks. Every chunk is confirmed against
-the current ready Postgres version and representation before its P1 text enters
-an evidence envelope. `question_context` fuses projection-only nominations
-first, confirms each fused list exactly once, and returns claims and chunks as
-separately typed evidence.
-
-The answer prompt now selects `question_context` first for ordinary recall and
-requires it before `Unknown`. Durable tool records retain complete raw
-envelopes, while the repeated reader prompt omits rank-score bookkeeping and
-empty containers; it does not cap or discard retrieved evidence or
-freshness. The tool catalog, prompt, reader rendering, adapter version, and protocol
-fingerprints changed, so v6 and v7 results are not comparable.
-
-**v7 → v8 (2026-07-31 — answer-stage correctness):** a fresh conv-47 re-score
-under v7 scored 91/150 and exposed two protocol constraints that turned usable
-model work into forced zeroes. First, the six-word final-answer cap caused 7
-terminal `answer_invalid_response` failures. Another 19 judged misses had gold
-answers longer than six words, including multi-entity enumerations that could
-not be named completely within the cap. The estimated cost was 13–26 questions
-out of 150. V8 instead requires the shortest phrase that fully names the
-requested entities or values, permits at most twenty words, and forbids
-explanations or reasoning. The runner enforces the same twenty-word boundary.
-
-Second, 23/150 questions (about 15%) failed with `answer_reader` before any tool
-call: `reader_attempts: 0`, an empty tool trace, and “completion content is not
-JSON.” The larger v7 answer prompts averaged about 22,800 input tokens per
-question, making this first-step failure common enough to bias the score. V8
-applies the existing two-retry malformed-completion allowance before the first
-tool call as well as at the reader position. The allowance is shared across the
-whole answer loop; every attempt consumes the normal per-question call count,
-run-wide call ceiling, and evaluator-cost ceiling. Plain provider outages are
-still terminal and are not retried. `reader_attempts` remains limited to calls
-after tool results, while `first_step_retries` counts additional pre-tool calls;
-the run summary totals both signals separately. The prompt, adapter identity,
-runner behavior, and protocol fingerprints changed, while the public tool
-catalog did not, so v7 and v8 results are not comparable.
-
-**v8 → v9 (2026-08-03 — Batch B retrieval and flag-gated answer cap):** the
-ordinary public catalog adds `documents_about`, `claims_about`,
-`claims_as_of`, and `chunk_neighbors`. That descriptor delta rolls the catalog
-hash and both protocol identities. `answer_word_cap: int | None` is now an
-explicit persisted and fingerprinted protocol field, rendered into the prompt
-and enforced only when set. The operator-selected default is `None` for both
-v9 registry entries, so the frozen prompt has no word-count sentence and the
-runner has no word-count guard. The shortest-complete-phrase/no-explanation
-instruction remains unconditional. V9 scores are not comparable to v8 or
-earlier.
-
-### 2.1 Model seats
-
-`RS-LoCoMo-Full-v1` used `openai/gpt-4o-mini` for both the answer agent and the judge. The
-judge is replaced with `openai/gpt-5.6-luna` in v2 and the protocol version is bumped
-accordingly; nothing else changes, and v1 numbers are not comparable to v2 numbers.
-
-Rationale. The judge is the cheapest component to strengthen: one call per question against
-nine agent calls, so raising its tier changes total run cost by a small fraction. Grading
-fidelity is worth that cost because the judge's verdict *is* the primary metric, and a judge at
-the same tier as the agent it grades gives no headroom for catching a plausible-but-wrong answer.
-
-This is a judgement about protocol design, not a measured claim: no leniency measurement for
-either judge model has been run here. If the judge's strictness is ever asserted as a result
-rather than a design choice, it needs its own experiment — for example, scoring a set of
-deliberately incorrect answers with both models and reporting the acceptance rates.
-
-V2 through the weak v9 variant deliberately kept the answer agent on
-`openai/gpt-4o-mini` while Luna judged it. V10 and later instead measure the
-owner-selected Luna agent against their pinned surfaces; v20 retains that model
-choice for the D97 surface. Answer and judge
-remain distinct typed roles because their prompts, schemas, budgets, and
-accounting differ even though they use the same model.
-
-#### 2.1.1 Codex ChatGPT-subscription variant
-
-`full-v38-codex-subscription` is an additive evaluator-provider variant for
-answer and judge experiments on an operator machine already logged into Codex
-with ChatGPT. It uses the official `openai-codex` Python SDK and its pinned
-app-server runtime. The benchmark never reads Codex's auth file, never receives
-an OAuth token, and never accepts an OpenAI API key for these seats. Before each
-call, the adapter reads the current account and requires type `chatgpt`;
-app-server owns refresh of its cached login when necessary.
-
-Every generation gets a fresh ephemeral thread in an empty temporary working
-directory with read-only sandboxing, network unavailable, and approvals denied.
-There is no supplemental system instruction: the shared benchmark prompt and
-turn-scoped JSON Schema are the complete task contract. After completion, the
-adapter appends every returned item type and the request identity,
-arguments/query, and status of every command, file change, MCP call, web search,
-sub-agent, or other runtime action to `codex-runtime-<stage>.jsonl`. Returned
-tool content is omitted. It then rejects any turn containing such an action.
-The existing LoCoMo runner owns every RememberStack tool call and
-records its name, arguments, response, and latency in the answer record. The
-separate traces make both planes auditable without allowing the second plane to
-affect a score.
-
-Codex app-server supports a turn-scoped JSON Schema, so the adapter passes the
-existing answer or judge Pydantic schema and validates the returned JSON again.
-It records the turn-total reported input/output tokens and local wall-clock
-latency. ChatGPT does not report a per-turn USD charge: `cost_usd=0` means no
-provider-reported marginal charge, not a free subscription. The run's call
-ceilings and Codex's service quota are the applicable guards; the evaluator
-USD ceiling cannot cap subscription usage.
-
-If the SDK raises a failed turn before returning its usage event, the adapter
-preserves the real provider error and records no fabricated usage. Publication
-use would require the lower-level event stream if partial failed-turn token
-accounting becomes a material requirement.
-
-The provider controls force a distinct protocol. Codex does not expose
-temperature, so both seats pin `temperature=null`; its Luna seat is pinned at
-reasoning effort `high`, rather than v28's OpenRouter-specific `none`. The v28
-prompt is the same object used by the OpenRouter and Gemma variants; schemas,
-budgets, catalog, and judge rubric remain aligned.
-These runs are useful for smoke/development comparison but are not canonical
-v28 publication results. The SDK's synchronous turn currently has no
-benchmark-enforced deadline, so this variant is not the default unattended
-publication path.
-
-Provider composition is stage-local. Ingest still composes OpenRouter for the
-deployment embedding preflight and routes its chat probe to Codex. Once the
-store is ingested, `answer` and `judge` require only the local ChatGPT login;
-they do not instantiate or read OpenRouter/Vertex credentials.
+Sidecar execution requires an explicit execution flag and call/reported-cost
+ceilings. Each attempted call has a durable in-flight marker followed by its
+terminal result and usage. An uncertain or unaccounted paid attempt requires
+reconciliation and must not be automatically repeated. Changed input snapshots
+or policies require a new output identity. Missing source answers, failed source
+attempts, failed judgments and successful labels remain distinguishable.
 
 ### 2.2 Provenance: the serving image, not the checkout
 
@@ -1186,14 +494,13 @@ Local preparation:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v38 \
+  --protocol full-v39 \
   --output .benchmark-runs/locomo-smoke
 ```
 
-`--protocol` exists only on `prepare`. Canonical runs use `full-v38`; the
-explicit `full-v38-gemma-vertex` and `full-v38-codex-subscription` choices are
-separately fingerprinted provider variants. Ingest, answer, judge, and summarize
-read the frozen choice from the prepared run and expose no protocol override.
+`--protocol` exists only on `prepare`. Execution uses `full-v39`; later stages
+read the immutable current choice from the saved run. Historical protocols are
+read-only and cannot be selected as an execution fallback.
 
 Per isolated sample:
 

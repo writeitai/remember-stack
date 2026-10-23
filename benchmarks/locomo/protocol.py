@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from dataclasses import replace
 import hashlib
 import json
 import string
@@ -18,7 +17,6 @@ import regex
 from benchmarks.locomo.model import AnswerAgentModel
 from benchmarks.locomo.model import AnswerAgentStep
 from benchmarks.locomo.model import AnswerStepSchema
-from benchmarks.locomo.model import DiscriminatedAnswerAgentStep
 from benchmarks.locomo.model import ExecutionProfile
 from benchmarks.locomo.model import JudgeModel
 from benchmarks.locomo.model import JudgeOutput
@@ -26,7 +24,6 @@ from benchmarks.locomo.model import LoCoMoSample
 from benchmarks.locomo.model import LoCoMoSession
 from benchmarks.locomo.model import ProtocolKey
 from benchmarks.locomo.model import ProtocolName
-from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.model import RetainedCategory
 from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.retrieval import tool_catalog_sha256
@@ -37,14 +34,14 @@ from rememberstack.model import Envelope
 from rememberstack.model import ReasoningEffort
 from rememberstack.model import ToolDescriptor
 
-PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38"
-DEFAULT_PROTOCOL_KEY: Final = "full-v38"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.09-document-context-v38"
+PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v39"
+DEFAULT_PROTOCOL_KEY: Final = "full-v39"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-current-v39"
 """Adapter identity for Full-v38: clean-temporal fact labels, entity-first retrieval hierarchy, and concise adjudication."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-API_TIMEOUT_SECONDS: Final = 60.0
+API_TIMEOUT_SECONDS: Final = 180.0
 """Transport budget for compound retrieval, larger than the server DB budget."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
@@ -78,8 +75,8 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         "convert": "e0-convert-2026.08",
         "structure": "e0-structure-2026.07h:d79-wave2",
         "chunk": (
-            "e1-chunker-2026.07c:whitespace-tokens:anchored:owner-runs:"
-            "blockizer-heading-metadata"
+            "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs:"
+            "blockizer-heading-metadata:eligibility-cuts"
         ),
         "embed_chunk": "e1-embed-2026.08-d80",
         "extract_claims": _E2_EXTRACTOR_GENERATION,
@@ -94,11 +91,8 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
             "e3-obs-flush:entity-fanout-1:e3-normalize-2026.09f:temp0-1:"
             "claim-fanout-1:bare-noun-1:no-types-1:binary-t4-1:document-t0-1:"
             "mutable-window-1:assertion-clarity-3:d123-context-refs-2:"
-            "both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09d:"
-            "concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:"
-            "target-discipline-1:rej-feedback-1:obs-adjudicator-2026.09d:"
-            "concise-handles-5:d123-context-nom-2:output-fields-1:new-fact-refs-1:"
-            "target-discipline-1:rej-feedback-1"
+            "both-lists-1:t4-format-1:nested-fields-1:relation-adjudicator-2026.09a:"
+            "jev-choice-match-3:obs-adjudicator-2026.09a:jev-choice-match-3"
         ),
         "adjudicate_supersession": "fact-followup-2026.09:mutable-window-1",
         "embed_claim": "p1-embed-claims-2026.07",
@@ -108,83 +102,13 @@ EXPECTED_INGEST_COMPONENT_VERSIONS: Final[Mapping[str, str]] = MappingProxyType(
         ),
     }
 )
+ANSWER_AGENT_MODEL: Final = "openai/gpt-6-luna"
+ANSWER_AGENT_REASONING_EFFORT: Final = "high"
+JUDGE_MODEL: Final = "openai/gpt-6-luna"
+JUDGE_REASONING_EFFORT: Final = "high"
+TEMPERATURE: Final = 0.0
 EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
     {
-        "claim_extraction": "openai/gpt-5.6-luna",
-        "entity_resolution": "openai/gpt-5.6-luna",
-        "fact_adjudication": "openai/gpt-5.6-luna",
-        "openrouter_embedding_provider": "nebius",
-        "openrouter_embedding_provider_order": "unset",
-        "openrouter_max_completion_tokens": "32000",
-        "openrouter_reasoning_effort": "auto",
-        "openrouter_reasoning_effort_map": '{"openai/gpt-5.6-luna": "high"}',
-        "p1_embedding": "qwen/qwen3-embedding-8b",
-        "relation_normalization": "openai/gpt-5.6-luna",
-        "section_role": "openai/gpt-5.6-luna",
-        "section_summary": "openai/gpt-5.6-luna",
-        "skeleton_check": "openai/gpt-5.6-luna",
-        "structure_fallback": "openai/gpt-5.6-luna",
-    }
-)
-ANSWER_AGENT_MODEL: Final = "openai/gpt-5.6-luna"
-ANSWER_AGENT_REASONING_EFFORT: Final = "none"
-JUDGE_MODEL: Final = "openai/gpt-5.6-luna"
-JUDGE_REASONING_EFFORT: Final = "none"
-TEMPERATURE: Final = 0.0
-GEMMA_VERTEX_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-GemmaVertex"
-GEMMA_VERTEX_PROTOCOL_KEY: Final = "full-v38-gemma-vertex"
-GEMMA_VERTEX_ANSWER_AGENT_MODEL: Final = "google/gemma-4-26b-a4b-it-maas"
-"""Gemma 4 26B-A4B IT served by Google as a managed open model (MaaS).
-
-The variant is reader-only. It keeps every canonical v38 ingest pin --
-pipeline stages including ground_claims, component generations, model
-bindings, prompts, tool catalog, budgets, and judge -- and swaps only the
-answer agent to this model on Vertex, with thinking deliberately pinned off
-and the answer step pinned as `DiscriminatedAnswerAgentStep`, the same
-decision in a two-branch JSON shape that Vertex's order-enforcing decoder
-completes. It does not configure processing. Scores are therefore an
-answer-agent comparison over the same stores, not a new benchmark identity.
-"""
-CODEX_SUBSCRIPTION_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-CodexSubscription"
-CODEX_SUBSCRIPTION_PROTOCOL_KEY: Final = "full-v38-codex-subscription"
-CODEX_SUBSCRIPTION_MODEL: Final = "gpt-5.6-luna"
-CODEX_SUBSCRIPTION_REASONING_EFFORT: Final = "high"
-GLM_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-GLM"
-GLM_PROTOCOL_KEY: Final = "full-v38-glm"
-GLM_GENERATION_MODEL: Final = "z-ai/glm-5.3-flash"
-"""GLM 5.3 Flash served through OpenRouter, the exact R14 generation model.
-
-The variant keeps every canonical v38 pipeline pin -- stages including
-ground_claims, component generations, prompts, tool catalog, budgets,
-embeddings, and the frozen Luna answer agent and judge -- and swaps only the
-ingest generation seats to this model with reasoning effort minimal. Because
-the ingest models determine what is in the store, its scores are a new
-ingest-model family baseline, comparable only to other GLM-ingest runs, never
-to Luna-ingest v38 runs. The first GLM run sets that baseline; its purpose is
-to verify the D127 provider-rotation fix against the exact DeepInfra 429
-engine_overloaded failure that dead-lettered 45 R14 work items.
-"""
-GLM_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        **EXPECTED_INGEST_MODEL_BINDINGS,
-        "claim_extraction": GLM_GENERATION_MODEL,
-        "entity_resolution": GLM_GENERATION_MODEL,
-        "fact_adjudication": GLM_GENERATION_MODEL,
-        "openrouter_reasoning_effort_map": '{"z-ai/glm-5.3-flash": "minimal"}',
-        "relation_normalization": GLM_GENERATION_MODEL,
-        "section_role": GLM_GENERATION_MODEL,
-        "section_summary": GLM_GENERATION_MODEL,
-        "skeleton_check": GLM_GENERATION_MODEL,
-        "structure_fallback": GLM_GENERATION_MODEL,
-    }
-)
-
-LUNA6_PROTOCOL_KEY: Final = "full-v38-luna6-jev-flex"
-LUNA6_PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v38-Luna6JevFlex"
-LUNA6_MODEL: Final = "openai/gpt-6-luna"
-LUNA6_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
-    {
-        **EXPECTED_INGEST_MODEL_BINDINGS,
         **dict.fromkeys(
             (
                 "claim_extraction",
@@ -195,14 +119,18 @@ LUNA6_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
                 "skeleton_check",
                 "structure_fallback",
             ),
-            LUNA6_MODEL,
+            ANSWER_AGENT_MODEL,
         ),
         "fact_adjudication": "jev-1.13.0",
+        "openrouter_embedding_provider": "nebius",
+        "openrouter_embedding_provider_order": "unset",
+        "openrouter_max_completion_tokens": "32000",
         "openrouter_reasoning_effort": "low",
         "openrouter_reasoning_effort_map": '{"openai/gpt-6-luna": "low"}',
+        "p1_embedding": "qwen/qwen3-embedding-8b",
     }
 )
-LUNA6_INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
+INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
     {
         **dict.fromkeys(
             (
@@ -215,7 +143,7 @@ LUNA6_INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
                 "REMEMBERSTACK_OBS_SMALL_MODEL",
                 "REMEMBERSTACK_FACT_MODEL",
             ),
-            LUNA6_MODEL,
+            ANSWER_AGENT_MODEL,
         ),
         "REMEMBERSTACK_FACT_ADJUDICATION_ENGINE": "jev",
         "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR": "0.75",
@@ -229,7 +157,7 @@ LUNA6_INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
         "REMEMBERSTACK_OPENROUTER_EMBEDDING_PROVIDER_ORDER": "",
         "REMEMBERSTACK_OPENROUTER_MAX_COMPLETION_TOKENS": "32000",
         "REMEMBERSTACK_P1_EMBEDDING_MODEL": "qwen/qwen3-embedding-8b",
-        "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL": LUNA6_MODEL,
+        "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL": ANSWER_AGENT_MODEL,
         "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT": "low",
         "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY": '["openai/flex"]',
     }
@@ -378,6 +306,20 @@ TOOL TRACE SO FAR:
 {trace}
 {guard_feedback}
 
+Before answering, identify the distinct evidence needed by the question.
+A duration needs its start and end; a list or count needs the distinct items
+or events across the relevant time range; a shared attribute needs support
+for each participant. Search for missing parts rather than repeatedly
+retrieving the same evidence. Check event identity and chronology before
+combining or counting mentions.
+When a preference or reference depends on dialogue, inspect the question and
+its direct answer together. Read adjacent source chunks when a boundary
+separates them. Match attachment descriptions to their own source turn and
+speaker before using them to resolve a reference. Use source text to check
+a derived claim when their attributions conflict. Before finalizing, check
+that the answer covers every requested part and includes the requested type
+of value. Stay within the existing tool and model-call budgets.
+
 QUESTION:
 {question}"""
 
@@ -417,20 +359,17 @@ class LoCoMoProtocol:
     answer_reader_retry_budget: int
     answer_agent_reasoning_effort: ReasoningEffort | None
     judge_reasoning_effort: ReasoningEffort | None
+    execution_profile: ExecutionProfile
     answer_word_cap: int | None = None
-    answer_agent_provider: ProviderKey = "openrouter"
-    """Which adapter serves the answer agent; the CLI composes it from this."""
-    judge_provider: ProviderKey = "openrouter"
-    """Which adapter serves the judge; kept on OpenRouter for comparability."""
-    ingest_model_bindings: Mapping[str, str] = EXPECTED_INGEST_MODEL_BINDINGS
-    """Exact readiness model bindings this protocol ingests with. Variants that
-    swap ingest models override it; the runner checks readiness against the
-    selected protocol, never the module-global canonical map."""
-    execution_profile: ExecutionProfile | None = None
+
+    @property
+    def ingest_model_bindings(self) -> Mapping[str, str]:
+        """Read the single authoritative current execution profile."""
+        return self.execution_profile.ingest_model_bindings
 
 
-_FULL_V25 = LoCoMoProtocol(
-    key="full-v38",
+_CURRENT_PROTOCOL = LoCoMoProtocol(
+    key=DEFAULT_PROTOCOL_KEY,
     name=PROTOCOL_NAME,
     answer_agent_model=ANSWER_AGENT_MODEL,
     judge_model=JUDGE_MODEL,
@@ -449,148 +388,36 @@ _FULL_V25 = LoCoMoProtocol(
     answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
     judge_reasoning_effort=JUDGE_REASONING_EFFORT,
     answer_word_cap=None,
-)
-
-_FULL_V25_GEMMA_VERTEX = LoCoMoProtocol(
-    key=GEMMA_VERTEX_PROTOCOL_KEY,
-    name=GEMMA_VERTEX_PROTOCOL_NAME,
-    answer_agent_model=GEMMA_VERTEX_ANSWER_AGENT_MODEL,
-    judge_model=JUDGE_MODEL,
-    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
-    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
-    answer_schema=DiscriminatedAnswerAgentStep,
-    judge_schema=JudgeOutput,
-    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
-    tool_catalog_sha256=tool_catalog_sha256(),
-    max_tool_calls_per_question=MAX_TOOL_CALLS,
-    max_agent_calls_per_question=MAX_AGENT_CALLS,
-    answer_agent_temperature=TEMPERATURE,
-    judge_temperature=TEMPERATURE,
-    judge_repetitions=1,
-    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
-    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
-    answer_word_cap=None,
-    answer_agent_provider="vertex",
-    judge_provider="openrouter",
-)
-
-_FULL_V25_CODEX_SUBSCRIPTION = LoCoMoProtocol(
-    key=CODEX_SUBSCRIPTION_PROTOCOL_KEY,
-    name=CODEX_SUBSCRIPTION_PROTOCOL_NAME,
-    answer_agent_model=CODEX_SUBSCRIPTION_MODEL,
-    judge_model=CODEX_SUBSCRIPTION_MODEL,
-    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
-    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
-    answer_schema=AnswerAgentStep,
-    judge_schema=JudgeOutput,
-    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
-    tool_catalog_sha256=tool_catalog_sha256(),
-    max_tool_calls_per_question=MAX_TOOL_CALLS,
-    max_agent_calls_per_question=MAX_AGENT_CALLS,
-    answer_agent_temperature=None,
-    judge_temperature=None,
-    judge_repetitions=1,
-    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=CODEX_SUBSCRIPTION_REASONING_EFFORT,
-    judge_reasoning_effort=CODEX_SUBSCRIPTION_REASONING_EFFORT,
-    answer_word_cap=None,
-    answer_agent_provider="codex_subscription",
-    judge_provider="codex_subscription",
-)
-
-_FULL_V25_GLM = LoCoMoProtocol(
-    key=GLM_PROTOCOL_KEY,
-    name=GLM_PROTOCOL_NAME,
-    answer_agent_model=ANSWER_AGENT_MODEL,
-    judge_model=JUDGE_MODEL,
-    answer_prompt_template=ANSWER_AGENT_PROMPT_TEMPLATE,
-    judge_prompt_template=JUDGE_PROMPT_TEMPLATE,
-    answer_schema=AnswerAgentStep,
-    judge_schema=JudgeOutput,
-    surface_manifest_hash=EXPECTED_SURFACE_MANIFEST_HASH,
-    tool_catalog_sha256=tool_catalog_sha256(),
-    max_tool_calls_per_question=MAX_TOOL_CALLS,
-    max_agent_calls_per_question=MAX_AGENT_CALLS,
-    answer_agent_temperature=TEMPERATURE,
-    judge_temperature=TEMPERATURE,
-    judge_repetitions=1,
-    answer_reader_retry_budget=ANSWER_READER_RETRY_BUDGET,
-    answer_agent_reasoning_effort=ANSWER_AGENT_REASONING_EFFORT,
-    judge_reasoning_effort=JUDGE_REASONING_EFFORT,
-    answer_word_cap=None,
-    ingest_model_bindings=GLM_INGEST_MODEL_BINDINGS,
-)
-
-_LUNA6_COMPONENTS = {
-    **EXPECTED_INGEST_COMPONENT_VERSIONS,
-    "chunk": (
-        "e1-chunker-2026.09a:whitespace-tokens:anchored:owner-runs:"
-        "blockizer-heading-metadata:eligibility-cuts"
-    ),
-    "adjudicate_observations": (
-        EXPECTED_INGEST_COMPONENT_VERSIONS["adjudicate_observations"].split(
-            ":relation-adjudicator-", maxsplit=1
-        )[0]
-        + ":relation-adjudicator-2026.09a:jev-choice-match-3:"
-        "obs-adjudicator-2026.09a:jev-choice-match-3"
-    ),
-}
-_LUNA6_JEV_FLEX = replace(
-    _FULL_V25,
-    key=LUNA6_PROTOCOL_KEY,
-    name=LUNA6_PROTOCOL_NAME,
-    answer_agent_model=LUNA6_MODEL,
-    judge_model=LUNA6_MODEL,
-    answer_agent_reasoning_effort="high",
-    judge_reasoning_effort="high",
-    answer_prompt_template=(
-        ANSWER_AGENT_PROMPT_TEMPLATE + "\n\n"
-        "Before answering, identify the distinct evidence needed by the question. "
-        "A duration needs its start and end; a list or count needs the distinct "
-        "items or events across the relevant time range; a shared attribute "
-        "needs support for each participant. Search for missing parts rather "
-        "than repeatedly retrieving the same evidence. Check event identity "
-        "and chronology before combining or counting mentions.\n"
-        "When a preference or reference depends on dialogue, inspect the question "
-        "and its direct answer together. Read adjacent source chunks when a "
-        "boundary separates them. Match attachment descriptions to their own "
-        "source turn and speaker before using them to resolve a reference. "
-        "Use source text to check a derived claim when their attributions conflict. "
-        "Before finalizing, check that the answer covers every requested part "
-        "and includes the requested type of value. Stay within the existing "
-        "tool and model-call budgets."
-    ),
-    ingest_model_bindings=LUNA6_INGEST_MODEL_BINDINGS,
     execution_profile=ExecutionProfile(
-        ingest_model_bindings=dict(LUNA6_INGEST_MODEL_BINDINGS),
-        ingest_component_versions=_LUNA6_COMPONENTS,
-        ingest_environment=dict(LUNA6_INGEST_ENVIRONMENT),
+        ingest_model_bindings=dict(EXPECTED_INGEST_MODEL_BINDINGS),
+        ingest_component_versions=dict(EXPECTED_INGEST_COMPONENT_VERSIONS),
+        ingest_environment=dict(INGEST_ENVIRONMENT),
         chat_provider_only=("openai/flex",),
-        api_timeout_seconds=180.0,
+        api_timeout_seconds=API_TIMEOUT_SECONDS,
     ),
 )
-
 PROTOCOL_REGISTRY: Final[Mapping[ProtocolKey, LoCoMoProtocol]] = MappingProxyType(
-    {
-        _FULL_V25.key: _FULL_V25,
-        _LUNA6_JEV_FLEX.key: _LUNA6_JEV_FLEX,
-        _FULL_V25_GEMMA_VERTEX.key: _FULL_V25_GEMMA_VERTEX,
-        _FULL_V25_CODEX_SUBSCRIPTION.key: _FULL_V25_CODEX_SUBSCRIPTION,
-        _FULL_V25_GLM.key: _FULL_V25_GLM,
-    }
+    {_CURRENT_PROTOCOL.key: _CURRENT_PROTOCOL}
 )
 
 
 def protocol_for_key(key: ProtocolKey) -> LoCoMoProtocol:
     """Resolve the one protocol explicitly selected during preparation."""
-    return PROTOCOL_REGISTRY[key]
+    try:
+        return PROTOCOL_REGISTRY[key]
+    except KeyError as error:
+        raise ValueError(
+            f"retired or unknown protocol {key!r}; use {DEFAULT_PROTOCOL_KEY!r}"
+        ) from error
 
 
 def protocol_for_name(name: ProtocolName) -> LoCoMoProtocol:
     """Resolve a persisted protocol name for immutable-pin validation."""
-    return next(
-        protocol for protocol in PROTOCOL_REGISTRY.values() if protocol.name == name
+    for protocol in PROTOCOL_REGISTRY.values():
+        if protocol.name == name:
+            return protocol
+    raise ValueError(
+        f"historical protocol {name!r} is read-only; prepare {DEFAULT_PROTOCOL_KEY!r} for execution"
     )
 
 

@@ -29,6 +29,7 @@ from benchmarks.locomo.dataset import validate_manifest
 from benchmarks.locomo.model import LoCoMoQuestion
 from benchmarks.locomo.model import QuestionManifest
 from rememberstack.adapters import OpenRouterModelProvider
+from rememberstack.adapters import OpenRouterProviderError
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.model import ModelRequest
 from rememberstack.model import ProviderAccountingError
@@ -106,8 +107,11 @@ class SidecarRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_id: str
     input_sha256: str
-    status: Literal["in_flight", "graded", "source_failure", "judge_failure"]
+    status: Literal[
+        "in_flight", "graded", "source_failure", "judge_failure", "capacity_rejected"
+    ]
     model_called: bool
+    attempt_count: int = Field(ge=0)
     label: Literal["CORRECT", "WRONG"] | None = None
     reasoning: str | None = None
     usage: ProviderCallUsage | None = None
@@ -321,7 +325,11 @@ def grade_saved_answers(
                 raise ValueError(
                     f"unsettled model attempt needs reconciliation: {record.item_id}"
                 )
-            if record.model_called and record.usage is None:
+            if (
+                record.model_called
+                and record.usage is None
+                and record.status != "capacity_rejected"
+            ):
                 raise ValueError(
                     f"unaccounted attempt needs reconciliation: {record.item_id}"
                 )
@@ -331,13 +339,14 @@ def grade_saved_answers(
             ):
                 raise ValueError("sidecar record does not match its unique input")
             records[record.item_id] = record
-        calls = sum(record.model_called for record in records.values())
+        calls = sum(record.attempt_count for record in records.values())
         spent = sum(
             (r.usage.cost_usd for r in records.values() if r.usage is not None),
             start=Decimal(0),
         )
         for question, answer, prompt in prepared:
-            if question.item_id in records:
+            prior = records.get(question.item_id)
+            if prior is not None and prior.status != "capacity_rejected":
                 continue
             path = output / "records" / f"{question.item_id}.json"
             record = SidecarRecord(
@@ -345,11 +354,21 @@ def grade_saved_answers(
                 input_sha256=_sha256(data=prompt.encode()),
                 status="source_failure" if answer.failure is not None else "in_flight",
                 model_called=answer.failure is None,
+                attempt_count=(prior.attempt_count if prior is not None else 0)
+                + int(answer.failure is None),
             )
             if answer.failure is None:
                 if calls >= max_calls or spent >= max_cost_usd:
                     raise ValueError(
                         "sidecar call or reported-cost stop threshold reached"
+                    )
+                if prior is not None:
+                    _write_json(
+                        path=output
+                        / "attempts"
+                        / question.item_id
+                        / f"{prior.attempt_count}.json",
+                        value=prior.model_dump(mode="json"),
                     )
                 _write_json(path=path, value=record.model_dump(mode="json"))
                 calls += 1
@@ -364,9 +383,15 @@ def grade_saved_answers(
                         response_type=SidecarJudgment,
                     )
                 except ProviderCallError as error:
+                    capacity_rejected = (
+                        isinstance(error, OpenRouterProviderError)
+                        and error.retryable_unbilled
+                    )
                     record = record.model_copy(
                         update={
-                            "status": "judge_failure",
+                            "status": "capacity_rejected"
+                            if capacity_rejected
+                            else "judge_failure",
                             "usage": error.usage,
                             "error": str(error),
                         }

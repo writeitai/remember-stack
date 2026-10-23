@@ -17,7 +17,7 @@ def test_luna_profile_matches_composed_models_and_versions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The profile must describe executable bindings, including Jev, rather than labels."""
-    protocol = PROTOCOL_REGISTRY["full-v38-luna6-jev-flex"]
+    protocol = PROTOCOL_REGISTRY["full-v39"]
     profile = protocol.execution_profile
     assert profile is not None
     for name, value in profile.ingest_environment.items():
@@ -52,7 +52,7 @@ def test_luna_profile_matches_composed_models_and_versions(
     assert protocol.judge_reasoning_effort == "high"
     assert (
         protocol.judge_prompt_template
-        == PROTOCOL_REGISTRY["full-v38"].judge_prompt_template
+        == PROTOCOL_REGISTRY["full-v39"].judge_prompt_template
     )
 
 
@@ -62,7 +62,7 @@ def test_backup_preserves_jev_engine_and_flex_instead_of_dormant_prompt_slot(
     """A new-profile runtime replay must retain adjudication engine and routing."""
     import json
 
-    profile = PROTOCOL_REGISTRY["full-v38-luna6-jev-flex"].execution_profile
+    profile = PROTOCOL_REGISTRY["full-v39"].execution_profile
     assert profile is not None
     (tmp_path / "run.json").write_text(
         json.dumps({"execution_profile": profile.model_dump(mode="json")})

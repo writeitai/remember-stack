@@ -10,7 +10,7 @@ explicitly rather than silently relabel those stores as Luna 6 ingestion.
 
 ## Requested behavior
 
-Prepare a separately named Luna 6/Flex protocol: ingestion uses lower reasoning,
+Prepare the current Luna 6/Flex protocol: ingestion uses lower reasoning,
 answering and grading use high, and fact adjudication uses Jev. Keep the
 existing scorer's semantic policy. Prepare an independently fingerprinted
 Mem0-like scorer over saved answers; its output must not replace canonical
@@ -28,8 +28,9 @@ own source-provenance and paid-reuse analysis.
 [PR #447](https://github.com/writeitai/remember-stack/pull/447), inspected at
 `88f7bb34be6d3e904fd9d57d54aa099d65d3d5fe`, supplies useful explicit Flex routing,
 answer/judge effort pins, configurable client timeouts and stable readiness
-identity comparison. Its blanket rewrite of canonical v38 models would change
-the identity of historical protocols, so a new named protocol is preferable.
+identity comparison. The replacement uses a new current full-v39 identity and removes superseded
+execution branches. Historical artifacts keep their original identities and
+remain available for read-only inspection; they are not runnable defaults.
 Its judge-policy change is not part of this replacement: the user asked to
 retain the existing scorer. Domain-specific allergy wording is also excluded.
 The replacement must cover provider configuration, serialized run identity,
@@ -95,5 +96,21 @@ is bumped by these configuration changes, and no retained store is reprocessed
 by editing configuration. Offline checkpoint tests count both lane calls.
 
 The new named protocol also pins the current main chunker generation with
-eligibility cuts. Historical v38 retains its recorded old chunker pin. These
+eligibility cuts. Historical run artifacts retain their recorded generations. Their execution
+branches are retired; current execution uses one full-v39 profile. These
 identities must not be silently exchanged while restoring old stores.
+
+## Retiring executable historical protocols
+
+The owner's 2026-10-23 question exposed a stale chunker pin: D138 changed the
+shipping chunker at commit `449c58cc3` on 2026-09-27 while the benchmark still
+expected the older generation. The engine had one implementation, but a
+manually copied benchmark table drifted. An all-component comparison with
+`profiles/selfhost.py:_expected_components` now catches that mismatch in CI.
+
+The replacement has one executable identity, `full-v39`. Superseded model/provider
+protocol branches, shard environment branches and their tests/documented commands
+are removed. Read-only validation uses saved run metadata instead of resolving
+an old executable protocol. Source hashes, saved generations, answers and original
+grades remain unchanged. Shared provider adapters used elsewhere are not protocol
+fallbacks and remain available to their actual callers.

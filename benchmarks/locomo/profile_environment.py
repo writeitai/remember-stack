@@ -12,8 +12,6 @@ def main() -> None:
     parser.add_argument("protocol", choices=tuple(PROTOCOL_REGISTRY))
     args = parser.parse_args()
     profile = protocol_for_key(args.protocol).execution_profile
-    if profile is None:
-        parser.error("this protocol has no explicit execution profile")
     for name, value in sorted(profile.ingest_environment.items()):
         if not name.startswith("REMEMBERSTACK_") or any(c in value for c in "\r\n\x00"):
             raise ValueError("unsafe non-secret profile environment")

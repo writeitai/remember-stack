@@ -293,10 +293,12 @@ class OpenRouterProviderError(ProviderCallError):
         *,
         usage: ProviderCallUsage | None = None,
         provider_host: str | None = None,
+        retryable_unbilled: bool = False,
     ) -> None:
         """Keep usage for the meter and the serving host for diagnosis."""
         super().__init__(message, usage=usage)
         self.provider_host = provider_host
+        self.retryable_unbilled = retryable_unbilled
 
 
 class OpenRouterInvalidResponseError(
@@ -680,7 +682,13 @@ class OpenRouterModelProvider:
                     f"transient capacity error: {response.text[:500]}"
                 )
                 if throttle_used >= settings.chat_throttle_retries:
-                    raise OpenRouterProviderError(last_error, provider_host=slug)
+                    raise OpenRouterProviderError(
+                        last_error,
+                        provider_host=slug,
+                        retryable_unbilled=_unbilled_capacity_rejection(
+                            response=response
+                        ),
+                    )
                 self._record_generation(
                     request=request,
                     response_type_name=response_type.__name__,
@@ -922,7 +930,8 @@ class OpenRouterModelProvider:
             if overload_wait is not None:
                 raise OpenRouterProviderError(
                     f"OpenRouter {path} returned {response.status_code}: "
-                    "transient capacity retries exhausted"
+                    "transient capacity retries exhausted",
+                    retryable_unbilled=_unbilled_capacity_rejection(response=response),
                 )
             if response.status_code >= 400:
                 raise OpenRouterProviderError(
@@ -994,6 +1003,26 @@ def _response_retry_after_s(*, response: httpx.Response) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed
+
+
+def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
+    """Identify a received pre-generation rejection, never infer it from a timeout."""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict) or any(
+        key in body for key in ("usage", "choices", "id")
+    ):
+        return False
+    error = body.get("error")
+    if not isinstance(error, dict):
+        return False
+    return response.status_code in (429, 503) or (
+        response.status_code == 200
+        and "flex processing is temporarily unavailable"
+        in str(error.get("message", "")).lower()
+    )
 
 
 def _retryable_upstream_error(*, response: httpx.Response) -> bool:

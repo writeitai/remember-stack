@@ -61,8 +61,10 @@ without marketplace fallback. OCR keeps its independent provider settings.
 
 These settings join the description checkpoint identity. Changing effort or
 routing redoes that lane once and reuses a successful unchanged OCR lane.
-Leaving both options unset preserves existing converter fingerprints. No
-blanket re-ingestion is performed when configuration changes.
+Leaving both options unset preserves the fingerprint for the same explicitly
+configured model. Deployments using the former Gemini default now select Luna
+6, so their description identity changes once; an unchanged OCR lane remains
+reusable. No re-ingestion is performed by editing configuration.
 
 ## What each family becomes
 

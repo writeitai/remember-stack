@@ -233,3 +233,82 @@ def test_optional_evidence_has_separate_identity_and_acceptance_only_policy(
     )
     assert "never to reject an answer more strictly" in provider.requests[0].prompt
     assert "I enjoy tea." in provider.requests[0].prompt
+
+
+def test_received_capacity_rejection_resumes_without_repaying_prior_grades(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rejected second item retries while the successful first grade stays intact."""
+    from rememberstack.adapters import OpenRouterProviderError
+
+    dataset = sidecar.load_dataset(Path("unused"))
+    sample = dataset.samples[0]
+    second = sample.questions[0].model_copy(update={"item_id": "fixture/qa/0001"})
+    dataset = dataset.model_copy(
+        update={
+            "samples": (
+                sample.model_copy(update={"questions": (*sample.questions, second)}),
+            )
+        }
+    )
+    monkeypatch.setattr(sidecar, "load_dataset", lambda path: dataset)
+    manifest_path = source / "manifest.json"
+    manifest = QuestionManifest.model_validate_json(
+        manifest_path.read_text()
+    ).model_copy(
+        update={
+            "item_ids": ("fixture/qa/0000", second.item_id),
+            "item_ids_sha256": item_ids_hash(
+                item_ids=("fixture/qa/0000", second.item_id)
+            ),
+        }
+    )
+    manifest_path.write_text(manifest.model_dump_json())
+    run_path = source / "run.json"
+    run = json.loads(run_path.read_text())
+    run["manifest_sha256"] = manifest_bytes_hash(manifest=manifest)
+    run_path.write_text(json.dumps(run))
+    state_path = source / "state.json"
+    state = json.loads(state_path.read_text())
+    state["answers"][second.item_id] = {
+        **state["answers"]["fixture/qa/0000"],
+        "item_id": second.item_id,
+    }
+    state_path.write_text(json.dumps(state))
+    source_bytes = state_path.read_bytes()
+
+    class RejectSecond(FakeProvider):
+        """Emit one explicit unbilled capacity rejection between two completions."""
+
+        def generate(
+            self, *, request: ModelRequest, response_type: type[ResponseT]
+        ) -> GeneratedResponse[ResponseT]:
+            """Reject the second attempt once, without fabricating token usage."""
+            if len(self.requests) == 1:
+                self.requests.append(request)
+                raise OpenRouterProviderError(
+                    "Flex capacity rejected", retryable_unbilled=True
+                )
+            return super().generate(request=request, response_type=response_type)
+
+    provider = RejectSecond()
+    output = tmp_path / "sidecar"
+    kwargs = dict(
+        run_dir=source,
+        output=output,
+        max_calls=3,
+        max_cost_usd=Decimal(1),
+        execute=True,
+        provider=provider,
+    )
+    with pytest.raises(OpenRouterProviderError):
+        sidecar.grade_saved_answers(**kwargs)
+    first_grade = (output / "records/fixture/qa/0000.json").read_bytes()
+    summary = sidecar.grade_saved_answers(**kwargs)
+    assert summary["correct"] == 2
+    assert summary["model_calls"] == 3
+    assert summary["reported_cost_usd"] == "0.02"
+    assert len(provider.requests) == 3
+    assert (output / "records/fixture/qa/0000.json").read_bytes() == first_grade
+    assert (output / "attempts/fixture/qa/0001/1.json").is_file()
+    assert state_path.read_bytes() == source_bytes

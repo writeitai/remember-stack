@@ -18,20 +18,15 @@ from benchmarks.locomo.model import ToolCallRecord
 from benchmarks.locomo.protocol import ANSWER_AGENT_PROMPT_TEMPLATE
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import EXPECTED_INGEST_COMPONENT_VERSIONS
-from benchmarks.locomo.protocol import EXPECTED_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import EXPECTED_PIPELINE_STAGES
 from benchmarks.locomo.protocol import EXPECTED_PROMPT_RENDERER_VERSION
 from benchmarks.locomo.protocol import EXPECTED_SURFACE_MANIFEST_HASH
-from benchmarks.locomo.protocol import GLM_GENERATION_MODEL
-from benchmarks.locomo.protocol import GLM_INGEST_MODEL_BINDINGS
 from benchmarks.locomo.protocol import official_f1
-from benchmarks.locomo.protocol import prompt_sha256
 from benchmarks.locomo.protocol import PROTOCOL_NAME
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
 from benchmarks.locomo.protocol import render_answer_agent_prompt
 from benchmarks.locomo.protocol import render_judge_prompt
 from benchmarks.locomo.protocol import render_session
-from benchmarks.locomo.protocol import schema_sha256
 from benchmarks.locomo.protocol import session_diagnostic
 from benchmarks.locomo.retrieval import answer_tool_catalog
 from benchmarks.locomo.retrieval import assured_tool_catalog
@@ -39,10 +34,7 @@ from benchmarks.locomo.retrieval import tool_catalog_sha256
 from pydantic import ValidationError
 import pytest
 
-from rememberstack.adapters import CodexSubscriptionModelProvider
-from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
-from rememberstack.adapters import VertexSettings
 from rememberstack.core.concise_adjudication import PROMPT_RENDERER_VERSION
 from rememberstack.model import ChunkEvidenceResult
 from rememberstack.model import current_temporal_scope
@@ -51,10 +43,10 @@ from rememberstack.model import Freshness
 from rememberstack.model import Grain
 from rememberstack.model import RankedItem
 from rememberstack.model import ToolDescriptor
+from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.query_space.manifest import load_manifest
 from rememberstack.workers import E0_STRUCTURE_VERSION
 from rememberstack.workers import E3_NORMALIZER_VERSION
-from rememberstack.workers import OBS_FLUSH_VERSION
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
 
 
@@ -287,10 +279,9 @@ def test_protocol_pins_the_shipping_concise_renderer_generation() -> None:
 
 def test_protocol_pins_the_shipping_observation_flush_generation() -> None:
     """The score guard cannot reject the entity-fanout generation it ingested."""
-    assert (
-        EXPECTED_INGEST_COMPONENT_VERSIONS["adjudicate_observations"]
-        == OBS_FLUSH_VERSION
-    )
+    assert EXPECTED_INGEST_COMPONENT_VERSIONS[
+        "adjudicate_observations"
+    ] == active_flush_version("jev")
 
 
 def test_protocol_pins_the_shipping_normalizer_generation() -> None:
@@ -350,8 +341,8 @@ def test_current_protocol_pins_manifest_and_complete_read_plane() -> None:
 
 def test_protocol_is_v38_and_answer_prompt_has_reasoning_and_loop_guards() -> None:
     """The current identity, bounded inference, and loop discipline are locked."""
-    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v38"
-    assert DEFAULT_PROTOCOL_KEY == "full-v38"
+    assert PROTOCOL_NAME == "RS-LoCoMo-Full-v39"
+    assert DEFAULT_PROTOCOL_KEY == "full-v39"
     prompt = ANSWER_AGENT_PROMPT_TEMPLATE
     normalized_prompt = " ".join(prompt.split())
     assert (
@@ -468,19 +459,13 @@ def test_answer_agent_prompt_temporal_and_attribute_discipline_rules() -> None:
 
 
 def test_typed_protocol_registry_pins_answer_agent_identity_and_effort() -> None:
-    assert tuple(PROTOCOL_REGISTRY) == (
-        "full-v38",
-        "full-v38-luna6-jev-flex",
-        "full-v38-gemma-vertex",
-        "full-v38-codex-subscription",
-        "full-v38-glm",
-    )
-    protocol = PROTOCOL_REGISTRY["full-v38"]
+    assert tuple(PROTOCOL_REGISTRY) == ("full-v39",)
+    protocol = PROTOCOL_REGISTRY["full-v39"]
 
-    assert protocol.name == "RS-LoCoMo-Full-v38"
-    assert protocol.answer_agent_model == "openai/gpt-5.6-luna"
-    assert protocol.answer_agent_reasoning_effort == "none"
-    assert protocol.judge_reasoning_effort == "none"
+    assert protocol.name == "RS-LoCoMo-Full-v39"
+    assert protocol.answer_agent_model == "openai/gpt-6-luna"
+    assert protocol.answer_agent_reasoning_effort == "high"
+    assert protocol.judge_reasoning_effort == "high"
     assert protocol.answer_reader_retry_budget == 2
     assert protocol.answer_word_cap is None
     assert protocol.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
@@ -515,7 +500,7 @@ def test_prepare_cli_selects_protocol_only_at_prepare(
     )
 
     assert exit_code == 0
-    assert selected == ["full-v38"]
+    assert selected == ["full-v39"]
 
 
 def test_summarize_cli_accepts_multiple_run_flags(
@@ -652,121 +637,6 @@ def test_parsed_arguments_rejects_non_objects_and_fragments(raw: str) -> None:
         AnswerAgentStep(action="tool", tool_name="claims_verbatim", arguments_json=raw)
 
 
-def test_gemma_vertex_variant_swaps_only_the_answer_agent() -> None:
-    """The variant is a reader-only provider swap over identical v38 pins, so its
-    scores are an answer-agent comparison rather than a new benchmark identity."""
-    base = PROTOCOL_REGISTRY["full-v38"]
-    variant = PROTOCOL_REGISTRY["full-v38-gemma-vertex"]
-
-    assert variant.name == "RS-LoCoMo-Full-v38-GemmaVertex"
-    assert variant.answer_agent_model == "google/gemma-4-26b-a4b-it-maas"
-    assert variant.answer_agent_provider == "vertex"
-    assert variant.answer_agent_reasoning_effort == "none"
-    assert base.answer_agent_provider == "openrouter"
-    assert variant.judge_model == base.judge_model
-    assert variant.judge_provider == "openrouter"
-    assert variant.judge_reasoning_effort == base.judge_reasoning_effort
-    assert prompt_sha256(template=variant.answer_prompt_template) == prompt_sha256(
-        template=base.answer_prompt_template
-    )
-    assert prompt_sha256(template=variant.judge_prompt_template) == prompt_sha256(
-        template=base.judge_prompt_template
-    )
-    assert base.answer_schema is AnswerAgentStep
-    assert variant.answer_schema is DiscriminatedAnswerAgentStep
-    assert schema_sha256(model=variant.answer_schema) != schema_sha256(
-        model=base.answer_schema
-    )
-    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
-    assert variant.surface_manifest_hash == base.surface_manifest_hash
-    assert (
-        variant.max_tool_calls_per_question,
-        variant.max_agent_calls_per_question,
-        variant.answer_reader_retry_budget,
-        variant.answer_agent_temperature,
-        variant.judge_temperature,
-        variant.judge_repetitions,
-        variant.answer_word_cap,
-    ) == (
-        base.max_tool_calls_per_question,
-        base.max_agent_calls_per_question,
-        base.answer_reader_retry_budget,
-        base.answer_agent_temperature,
-        base.judge_temperature,
-        base.judge_repetitions,
-        base.answer_word_cap,
-    )
-    assert DEFAULT_PROTOCOL_KEY == "full-v38"
-
-
-def test_glm_variant_swaps_only_the_ingest_generation_seats() -> None:
-    """The variant replays the R14 generation model under v38 pipeline pins, so
-    its scores are a new ingest-model family baseline, never Luna-v38 scores."""
-    base = PROTOCOL_REGISTRY["full-v38"]
-    variant = PROTOCOL_REGISTRY["full-v38-glm"]
-
-    assert variant.name == "RS-LoCoMo-Full-v38-GLM"
-    assert GLM_GENERATION_MODEL == "z-ai/glm-5.3-flash"
-    assert dict(variant.ingest_model_bindings) == dict(GLM_INGEST_MODEL_BINDINGS)
-    assert dict(base.ingest_model_bindings) == dict(EXPECTED_INGEST_MODEL_BINDINGS)
-    changed = {
-        name
-        for name in set(variant.ingest_model_bindings) | set(base.ingest_model_bindings)
-        if variant.ingest_model_bindings.get(name)
-        != base.ingest_model_bindings.get(name)
-    }
-    assert changed == {
-        "claim_extraction",
-        "entity_resolution",
-        "fact_adjudication",
-        "openrouter_reasoning_effort_map",
-        "relation_normalization",
-        "section_role",
-        "section_summary",
-        "skeleton_check",
-        "structure_fallback",
-    }
-    for name in changed - {"openrouter_reasoning_effort_map"}:
-        assert variant.ingest_model_bindings[name] == GLM_GENERATION_MODEL
-    assert (
-        variant.ingest_model_bindings["openrouter_reasoning_effort_map"]
-        == '{"z-ai/glm-5.3-flash": "minimal"}'
-    )
-    assert variant.answer_agent_model == base.answer_agent_model
-    assert variant.judge_model == base.judge_model
-    assert variant.answer_agent_provider == base.answer_agent_provider == "openrouter"
-    assert variant.judge_provider == base.judge_provider == "openrouter"
-    assert variant.answer_agent_reasoning_effort == base.answer_agent_reasoning_effort
-    assert variant.judge_reasoning_effort == base.judge_reasoning_effort
-    assert prompt_sha256(template=variant.answer_prompt_template) == prompt_sha256(
-        template=base.answer_prompt_template
-    )
-    assert prompt_sha256(template=variant.judge_prompt_template) == prompt_sha256(
-        template=base.judge_prompt_template
-    )
-    assert variant.answer_schema is base.answer_schema
-    assert variant.judge_schema is base.judge_schema
-    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
-    assert variant.surface_manifest_hash == base.surface_manifest_hash
-    assert (
-        variant.max_tool_calls_per_question,
-        variant.max_agent_calls_per_question,
-        variant.answer_reader_retry_budget,
-        variant.answer_agent_temperature,
-        variant.judge_temperature,
-        variant.judge_repetitions,
-        variant.answer_word_cap,
-    ) == (
-        base.max_tool_calls_per_question,
-        base.max_agent_calls_per_question,
-        base.answer_reader_retry_budget,
-        base.answer_agent_temperature,
-        base.judge_temperature,
-        base.judge_repetitions,
-        base.answer_word_cap,
-    )
-
-
 def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
     """Persist the minimum run identity the CLI reads to compose providers."""
     protocol = PROTOCOL_REGISTRY[protocol_key]  # type: ignore[index]
@@ -801,117 +671,19 @@ def _write_run_json(*, run_dir: Path, protocol_key: str) -> None:
     (run_dir / "run.json").write_text(configuration.model_dump_json(), encoding="utf-8")
 
 
-def test_cli_composes_only_the_vertex_answer_seat(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Gemma answers on Vertex; judge and ingest compose OpenRouter separately."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-gemma-vertex")
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("REMEMBERSTACK_VERTEX_PROJECT_ID", "umc-locomo-vertex-lab")
-    built: list[VertexSettings] = []
-
-    class _FakeVertex:
-        def __init__(
-            self, *, settings: VertexSettings, recorder: object = None
-        ) -> None:
-            built.append(settings)
-            assert recorder is None
-
-    monkeypatch.setattr(cli, "VertexModelProvider", _FakeVertex)
-
-    provider = cli._provider(run_dir=tmp_path, stage="answer")
-
-    assert isinstance(provider, _FakeVertex)
-    assert isinstance(
-        cli._provider(run_dir=tmp_path, stage="judge"), OpenRouterModelProvider
-    )
-    ingest_provider = cli._provider(run_dir=tmp_path, stage="ingest")
-    assert isinstance(ingest_provider, ModelRoutedProvider)
-    assert isinstance(
-        ingest_provider.provider_for(model="google/gemma-4-26b-a4b-it-maas"),
-        _FakeVertex,
-    )
-    assert isinstance(
-        ingest_provider.provider_for(model="qwen/qwen3-embedding-8b"),
-        OpenRouterModelProvider,
-    )
-    assert [settings.project_id for settings in built] == [
-        "umc-locomo-vertex-lab",
-        "umc-locomo-vertex-lab",
-    ]
-
-
 def test_cli_keeps_plain_openrouter_for_the_default_protocol(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """No Vertex settings are required, or even read, for an OpenRouter-only run."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v38")
+    _write_run_json(run_dir=tmp_path, protocol_key="full-v39")
     monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
     monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
-
-    def refuse(**_values: object) -> object:  # pragma: no cover
-        raise AssertionError("Vertex must not be composed for full-v38")
-
-    monkeypatch.setattr(cli, "VertexModelProvider", refuse)
 
     for stage in ("ingest", "answer", "judge"):
         assert isinstance(
             cli._provider(run_dir=tmp_path, stage=stage),  # type: ignore[arg-type]
             OpenRouterModelProvider,
         )
-
-
-def test_cli_fails_fast_when_a_vertex_protocol_lacks_a_project(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A missing project id is caught before any stage work or paid call."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-gemma-vertex")
-    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "test-key")
-    monkeypatch.delenv("REMEMBERSTACK_VERTEX_PROJECT_ID", raising=False)
-
-    with pytest.raises(ValidationError, match="project_id"):
-        cli._provider(run_dir=tmp_path, stage="answer")
-
-
-def test_codex_subscription_variant_pins_both_generation_seats() -> None:
-    """The experimental variant changes provider controls, not LoCoMo logic."""
-    base = PROTOCOL_REGISTRY["full-v38"]
-    variant = PROTOCOL_REGISTRY["full-v38-codex-subscription"]
-
-    assert variant.name == "RS-LoCoMo-Full-v38-CodexSubscription"
-    assert variant.answer_agent_model == "gpt-5.6-luna"
-    assert variant.judge_model == "gpt-5.6-luna"
-    assert variant.answer_agent_provider == "codex_subscription"
-    assert variant.judge_provider == "codex_subscription"
-    assert variant.answer_agent_reasoning_effort == "high"
-    assert variant.judge_reasoning_effort == "high"
-    assert variant.answer_agent_temperature is None
-    assert variant.judge_temperature is None
-    assert variant.answer_schema is base.answer_schema
-    assert variant.judge_schema is base.judge_schema
-    assert variant.answer_prompt_template == base.answer_prompt_template
-    assert variant.judge_prompt_template == base.judge_prompt_template
-    assert variant.tool_catalog_sha256 == base.tool_catalog_sha256
-    assert variant.surface_manifest_hash == base.surface_manifest_hash
-
-
-def test_cli_codex_answer_and_judge_need_no_openrouter_key(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """An already-ingested run can evaluate solely through local Codex auth."""
-    _write_run_json(run_dir=tmp_path, protocol_key="full-v38-codex-subscription")
-    monkeypatch.delenv("REMEMBERSTACK_OPENROUTER_API_KEY", raising=False)
-
-    answer_provider = cli._provider(run_dir=tmp_path, stage="answer")
-    judge_provider = cli._provider(run_dir=tmp_path, stage="judge")
-    assert isinstance(answer_provider, CodexSubscriptionModelProvider)
-    assert isinstance(judge_provider, CodexSubscriptionModelProvider)
-    assert answer_provider._audit_path == tmp_path / "codex-runtime-answer.jsonl"
-    assert answer_provider._audit_stage == "answer"
-    assert judge_provider._audit_path == tmp_path / "codex-runtime-judge.jsonl"
-    assert judge_provider._audit_stage == "judge"
-    with pytest.raises(ValidationError, match="api_key"):
-        cli._provider(run_dir=tmp_path, stage="ingest")
 
 
 def test_discriminated_step_reads_exactly_like_the_flat_step() -> None:

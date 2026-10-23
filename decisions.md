@@ -6144,6 +6144,11 @@ R14 autopsy (`/root/r14/r14-autopsy.md` on the experiment host).
 
 ## D128. GLM ingest variant of the v38 LoCoMo protocol
 
+**Execution selection superseded, 2026-10-23:** current LoCoMo execution uses
+one `full-v39` profile. The historical GLM benchmark branch is removed; its saved
+artifacts remain read-only. The general D127 provider-rotation contract survives.
+See [current benchmark design](plan/designs/locomo_benchmark_design.md).
+
 **Status:** accepted 2026-09-17, binding when merged. Verifying the D127
 rotation fix requires rerunning the exact R14 failure mode -- GLM ingest over
 the shared OpenRouter pool -- as a scoreable protocol run, but v38 ingest pins
