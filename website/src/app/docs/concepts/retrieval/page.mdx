@@ -166,6 +166,38 @@ See [Search](/docs/reference/http-api/search),
 [Graph](/docs/reference/http-api/graph) and
 [Resolve, lookup, hydrate, transcript](/docs/reference/http-api/entities-and-facts).
 
+## Narrowing a read to layers
+
+Every read uses the [processing layers](/docs/concepts/pipeline#processing-layers)
+its answer comes from: chunk search and the document reads use `sources`,
+claim search uses `claims`, and entity, fact and graph reads use `facts`.
+`claims_and_sources_context` reads `sources` and `claims`; `combined_context`
+reads all three.
+
+By default a read uses every layer the deployment serves. To narrow it, pass
+`layers` (a subset of `sources`, `claims`, `facts`) to `POST /operations/{name}`
+and the SQL routes, as `layers=` to the client methods that run them, or as
+`--layers` to `remember query text`, `remember operations run` and
+`remember mcp`:
+
+```python
+answer = memory.claims_and_sources_context("harbour tariff", layers=["sources"])
+```
+
+- A read none of whose layers is served or selected is refused:
+  `409 layer_unavailable` for a layer the deployment does not process,
+  `422 invalid_parameter` for one your selection leaves out. So is a read
+  whose argument needs a missing layer, such as `entity_ids` without `facts`:
+  an entity filter is never silently dropped.
+- A read that still has a layer answers from it. When it finds nothing and a
+  layer it would also have read was skipped or is still being backfilled, the
+  `negative` is `boundary` and names that layer, never `known_empty`.
+- In `combined_context`, a side with no layer left is an empty envelope with a
+  `boundary` negative.
+- A SQL statement that uses a view or function of a missing layer is refused
+  with `relation_not_allowed` or `function_not_allowed`; one that reads a layer
+  still being backfilled gets the warning `layer_backfilling:<layer>`.
+
 ## SQL queries over the query space
 
 For questions the operations and primitives do not cover ("which documents

@@ -798,7 +798,6 @@ class QueryEngine:
             )
         return _freshness(scope_pending=pending)
 
-    @_with_surface(SurfaceCostKind.LOOKUP)
     def layer_admission(
         self,
         *,
@@ -817,6 +816,7 @@ class QueryEngine:
                 mandatory=mandatory,
             )
 
+    @_with_surface(SurfaceCostKind.LOOKUP)
     @_requires_layer(ProcessingLayer.FACTS)
     def resolve(
         self,

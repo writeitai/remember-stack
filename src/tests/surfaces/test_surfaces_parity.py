@@ -524,8 +524,10 @@ def test_operation_provider_failure_is_a_generic_503(
 ) -> None:
     """Provider details stay private while callers receive a retryable status."""
 
-    def fail_operation(*, name: str, arguments: dict[str, object]) -> None:
-        del name, arguments
+    def fail_operation(
+        *, name: str, arguments: dict[str, object], layers: object = None
+    ) -> None:
+        del name, arguments, layers
         raise ProviderCallError("private synthetic provider response")
 
     monkeypatch.setattr(deployment.surface, "run", fail_operation)

@@ -633,7 +633,10 @@ def test_remember_mcp_strict_argument_validation() -> None:
     class _StubClient:
         """Minimal client that only exercises open-query argument validation."""
 
-        def call_open_query(self, *, name: str, arguments: dict[str, object]) -> object:
+        def call_open_query(
+            self, *, name: str, arguments: dict[str, object], layers: object = None
+        ) -> object:
+            del layers
             return validate_arguments(name, arguments)
 
         def run_operation(self, **_: object) -> object:

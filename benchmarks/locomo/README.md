@@ -119,8 +119,11 @@ docker compose --profile operations run --rm projections
 The `answer` command then calls the public readiness endpoint. It refuses to run unless every
 requested version completed the exact composed stages, live-graph readiness passes, and the P3
 publication began after that work completed. It also requires the deployment's exact prepared
-`surface_manifest_hash`, the canonical four public operation descriptors, and the
-fingerprinted complete answer catalog. Before each
+`surface_manifest_hash`, the canonical four public operation descriptors, the
+fingerprinted complete answer catalog, and (D143) `GET /processing-layers`
+reporting both the claims and the facts layer `enabled`: the protocol measures
+every layer, so a deployment that switched one off or is still backfilling it
+is refused, at ingest and at answer time. Before each
 upload, the exact public `documents_live` to `document_versions_visible` join
 must equal the run's durable lineage/version checkpoints (empty on a new
 deployment), and every ingest must create a new version. The version relation

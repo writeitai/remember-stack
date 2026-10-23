@@ -1579,6 +1579,14 @@ def _require_current_query_surface(
         raise ExecutionGuardError(
             "deployment query surface differs from the prepared protocol"
         )
+    layers = client.processing_layers()
+    if (layers.claims, layers.facts) != ("enabled", "enabled"):
+        # D143: the protocol measures every layer; a deployment that skips or
+        # is still backfilling one would certify a different pipeline.
+        raise ExecutionGuardError(
+            "deployment processing layers are not all enabled"
+            f" (claims={layers.claims}, facts={layers.facts})"
+        )
     operations = client.list_operations()
     if operations != assured_tool_catalog():
         raise ExecutionGuardError(

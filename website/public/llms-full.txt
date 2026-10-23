@@ -2364,6 +2364,37 @@ When a new version of a document arrives, unchanged passages reuse their
 earlier work: their conversion, their claims and their vectors. Only what
 changed is processed again.
 
+## Processing layers
+
+The stages fall into three layers, each built from the one before:
+
+| Layer | Stages | What it serves |
+|---|---|---|
+| `sources` | `convert`, `structure`, `chunk`, `embed_chunk` | Documents, sections and chunks. Always on. |
+| `claims` | `extract_claims`, `ground_claims`, `embed_claim`, `reconcile` | Claims and claim search. |
+| `facts` | `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `label_relation`, and the full `reconcile` | Entities, facts, the entity graph and knowledge pages. |
+
+Every layer is on by default. A self-hosted operator can switch the facts
+layer off, or both the claims and the facts layer, with
+`REMEMBERSTACK_SELFHOST_FACTS_LAYER` and `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER`
+([Configuration variables](https://remember.dev/docs/reference/configuration#processing-layers)),
+for example to load a large corpus as searchable sources first and decide
+later whether it needs facts. `setup` applies the change:
+
+- **Off.** New versions stop at the layer's boundary. Work already started
+  finishes. Retrieval stops reading the layer at once; its data is kept, not
+  deleted.
+- **On again.** Versions that missed the layer are processed in the
+  background, on the backfill lane, oldest first within each document. Work
+  that was done before is reused, so nothing is chunked or embedded twice.
+  A document that is replaced in place (a living source) is processed at its
+  current version only.
+
+`GET /processing-layers` reports each of `claims` and `facts` as `enabled`,
+`backfilling` (on, with versions still to process) or `disabled`. Readiness
+expects only the stages of the enabled layers; the stages of a layer a version
+will never enter read `skipped`.
+
 ## How long it takes
 
 Expect minutes per document, and longer for large ones. Every model-backed
@@ -2719,6 +2750,38 @@ it was first extracted from, which can be another version of the same document. 
 See [Search](https://remember.dev/docs/reference/http-api/search),
 [Graph](https://remember.dev/docs/reference/http-api/graph) and
 [Resolve, lookup, hydrate, transcript](https://remember.dev/docs/reference/http-api/entities-and-facts).
+
+## Narrowing a read to layers
+
+Every read uses the [processing layers](https://remember.dev/docs/concepts/pipeline#processing-layers)
+its answer comes from: chunk search and the document reads use `sources`,
+claim search uses `claims`, and entity, fact and graph reads use `facts`.
+`claims_and_sources_context` reads `sources` and `claims`; `combined_context`
+reads all three.
+
+By default a read uses every layer the deployment serves. To narrow it, pass
+`layers` (a subset of `sources`, `claims`, `facts`) to `POST /operations/{name}`
+and the SQL routes, as `layers=` to the client methods that run them, or as
+`--layers` to `remember query text`, `remember operations run` and
+`remember mcp`:
+
+```python
+answer = memory.claims_and_sources_context("harbour tariff", layers=["sources"])
+```
+
+- A read none of whose layers is served or selected is refused:
+  `409 layer_unavailable` for a layer the deployment does not process,
+  `422 invalid_parameter` for one your selection leaves out. So is a read
+  whose argument needs a missing layer, such as `entity_ids` without `facts`:
+  an entity filter is never silently dropped.
+- A read that still has a layer answers from it. When it finds nothing and a
+  layer it would also have read was skipped or is still being backfilled, the
+  `negative` is `boundary` and names that layer, never `known_empty`.
+- In `combined_context`, a side with no layer left is an empty envelope with a
+  `boundary` negative.
+- A SQL statement that uses a view or function of a missing layer is refused
+  with `relation_not_allowed` or `function_not_allowed`; one that reads a layer
+  still being backfilled gets the warning `layer_backfilling:<layer>`.
 
 ## SQL queries over the query space
 
@@ -11200,6 +11263,7 @@ four declare themselves read-only (`mutates: false`). See
 | Name | In | Type | Required | Constraints |
 |---|---|---|---|---|
 | `name` | path | string | yes | One of `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`. |
+| `layers` | query | `sources`, `claims` or `facts`, repeatable | no | The [processing layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers) the call may read. Default: every layer the deployment serves. |
 
 ### Request body
 
@@ -11246,6 +11310,8 @@ See [Reading a result](https://remember.dev/docs/concepts/reading-results).
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
 | `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | `claims_and_sources_context` only. |
 | `422` | validation list | The body is not a JSON object. |
+| `409` | `{"code": "layer_unavailable", "layer": "facts", "status": "disabled", "message": "…"}` | The operation, an argument or `layers` needs a layer the deployment does not process. |
+| `422` | `{"code": "invalid_parameter", "message": "…"}` | `layers` leaves none of the operation's layers, or excludes one an argument needs (such as `facts` for `entity_ids`). |
 | `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
 
 ### Example
@@ -12674,6 +12740,32 @@ The first three fields also appear on every
 curl -s "$REMEMBER_API_URL/deployment" \
   -H "Authorization: Bearer $REMEMBER_API_KEY"
 ```
+
+## GET /processing-layers
+
+Report which [processing layers](https://remember.dev/docs/concepts/pipeline#processing-layers)
+the deployment processes and serves. The sources layer is always served and
+is not listed.
+
+**Scope:** `read`.
+
+### Response
+
+`200` with an object holding one state per switchable layer:
+
+```json
+{"claims": "enabled", "facts": "backfilling"}
+```
+
+| State | Meaning |
+|---|---|
+| `enabled` | Processed and served, with every live version processed. |
+| `backfilling` | Processed and served, while versions that missed the layer are still being processed. An empty answer that read it is a `boundary`, never `known_empty`. |
+| `disabled` | Neither processed nor served. Reads that need it are refused with `409 layer_unavailable`. |
+
+With the facts layer disabled, `GET /operations`, the `tools` of
+`GET /deployment` and the MCP tool list leave out `facts_context` and
+`resolve_entity`.
 
 ```python
 from remember import Client
@@ -15819,6 +15911,7 @@ The client is synchronous. There is no async client yet
 | `RateLimited` | exception | [Errors](#errors) |
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
+| `LayerUnavailable` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimOccurrence` | model | [Models](#models) |
@@ -15851,6 +15944,8 @@ The client is synchronous. There is no async client yet
 | `NamedReferenceTarget` | model | [Models](#models) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
+| `ProcessingLayer` | enum | [Models](#models) |
+| `ProcessingLayerStates` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
 | `ReadinessRequirements` | model | [Models](#models) |
 | `ReadTime` | type alias | [Models](#models) |
@@ -16031,6 +16126,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`pipeline_readiness`](#pipeline_readiness) | `POST /readiness` | `PipelineReadinessReport` |
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
+| [`processing_layers`](#processing_layers) | `GET /processing-layers` | `ProcessingLayerStates` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
@@ -16235,6 +16331,22 @@ memory tool name to tool version). The class is
 ```python
 info = memory.deployment_build_info()
 print(info.build_revision, info.model_bindings.get("claim_extraction"))
+```
+
+#### `processing_layers`
+
+```python
+MemoryClient.processing_layers() -> ProcessingLayerStates
+```
+
+Returns the state of each switchable
+[processing layer](https://remember.dev/docs/concepts/pipeline#processing-layers): `claims` and
+`facts`, each `"enabled"`, `"backfilling"` or `"disabled"`.
+
+```python
+layers = memory.processing_layers()
+if layers.facts == "disabled":
+    answer = memory.claims_and_sources_context("harbour tariff")
 ```
 
 #### `list_documents`
@@ -16492,9 +16604,16 @@ for op in memory.list_operations():
 
 ```python
 MemoryClient.run_operation(
-    *, name: str, arguments: Mapping[str, object] | None = None
+    *,
+    name: str,
+    arguments: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> Envelope | ContextBundleV2
 ```
+
+`layers` narrows the processing layers the operation may read (any of
+`"sources"`, `"claims"`, `"facts"`; default every layer the deployment
+serves). See [Narrowing a read to layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers).
 
 Runs one operation by name with its JSON arguments. Returns a
 `ContextBundleV2` when the response is a combined bundle, otherwise an
@@ -16549,7 +16668,10 @@ for fact in facts.facts:
 
 ```python
 MemoryClient.claims_and_sources_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str,
+    *,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> Envelope
 ```
 
@@ -16569,7 +16691,10 @@ for claim in said.evidence:
 
 ```python
 MemoryClient.combined_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str,
+    *,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> ContextBundleV2
 ```
 
@@ -16830,6 +16955,7 @@ MemoryClient.query_sql(
     sql: str,
     parameters: list[object] | tuple[object, ...] = (),
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -16860,7 +16986,10 @@ for row in res.rows:
 
 ```python
 MemoryClient.explain_sql(
-    *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+    *,
+    sql: str,
+    parameters: list[object] | tuple[object, ...] = (),
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -16933,6 +17062,7 @@ MemoryClient.run_saved_query(
     parameters: list[object] | tuple[object, ...] = (),
     version: int | None = None,
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -17019,6 +17149,14 @@ the address came from `base_url` or `REMEMBER_API_URL` and is not an address
 that key may be sent to ([Connecting](#connecting)). Pass the key as
 `api_key` or in `REMEMBER_API_KEY` to use it there.
 
+### LayerUnavailable
+
+A `MemoryApiError` (`status_code` 409, `code` `layer_unavailable`) raised when
+a read needs a [processing layer](https://remember.dev/docs/concepts/pipeline#processing-layers)
+the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
+[`processing_layers`](#processing_layers) and use a read the deployment
+serves.
+
 ### PipelineDeadLettered
 
 Raised by `wait_for_readiness` when a stage of a version it waits on is
@@ -17063,6 +17201,8 @@ models below are Pydantic models (frozen) unless noted.
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
 | `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
+| `ProcessingLayer` | String enum: `sources`, `claims`, `facts`. |
+| `ProcessingLayerStates` | The result of `processing_layers`: `claims` and `facts`, each `enabled`, `backfilling` or `disabled`. |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
 | `ToolDescriptor` | One operation's descriptor: `name`, `description`, `input_schema`, `result_schema`, `result_contract`, `output_grain`, `answer_intent`, `mutates`, `version`, `implementation_plan_hash`. |
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |
@@ -17222,6 +17362,7 @@ objects and arrays, with validated defaults.
 | `graphPath` | `Envelope` |
 | `graphCitationPath` | `Envelope` |
 | `deploymentBuildInfo` | `DeploymentBuildInfo` |
+| `processingLayers` | `ProcessingLayerStates` |
 | `pipelineReadiness` | `PipelineReadinessReport` |
 | `waitForReadiness` | `PipelineReadinessReport` |
 | `ingest` | `IngestedVersion` |
@@ -17246,7 +17387,7 @@ transport is never closed by the SDK.
 
 The complete schema-derived model and support-type vocabulary is:
 
-`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
+`AdjacentChunksRequest`, `AggregateBucket`, `AggregateReport`, `AsOfTemporalScope`, `AtTemporalScope`, `CapabilityReadiness`, `ChangeRecord`, `ChunkEvidenceResult`, `ClaimValidPrecision`, `CoMember`, `ConnectorCreate`, `ConnectorDescriptor`, `ContextBundleV2`, `Contradiction`, `CurrentTemporalScope`, `DeploymentBuildInfo`, `DeviceAuthorization`, `DiscoveryHit`, `DocumentDeletion`, `DocumentPage`, `DocumentPeopleMatch`, `DocumentSearchFilters`, `DocumentSearchPage`, `DocumentSearchPerson`, `DocumentSearchRequest`, `DocumentSearchResult`, `DocumentStatusFilter`, `DocumentSummary`, `DocumentVersionSummary`, `EntityCandidate`, `Envelope`, `EvidenceResult`, `EvidenceSpan`, `EvidenceTotal`, `FactEvidence`, `FactResult`, `FactSupport`, `Freshness`, `Grain`, `GraphEdge`, `GraphInvocation`, `GraphNode`, `GraphPath`, `HistoryTemporalScope`, `IdentityRegime`, `IngestedVersion`, `IssuedKey`, `IssuerMetadata`, `JsonValue`, `KFreshness`, `KeyClaims`, `Negative`, `NegativeKind`, `OverlapTemporalScope`, `PageRef`, `PendingRevocation`, `PendingRevocations`, `PipelineReadinessReport`, `PipelineStageReadiness`, `ProcessingLayer`, `ProcessingLayerStates`, `QueryErrorCode`, `QueryResult`, `RankedItem`, `ReadinessRequirements`, `ResolvedProject`, `ResultColumn`, `ResultLimits`, `SavedQuerySummary`, `ScanRow`, `SearchRequest`, `SemanticInvocation`, `SourceRecord`, `StoredCredentials`, `TemporalMatch`, `TokenResponse`, `ToolDescriptor`, `TranscriptEntry`, `Truncation`, `Validity`, `VersionPipelineReadiness`.
 Schema-owned public models have `Input` variants for inputs; connection and issuer
 types expose the SDK support contracts. CLI credential-response types are data
 contracts only and do not add login or key-writing operations to this package.
@@ -17367,7 +17508,8 @@ optional retryable/requestId diagnostics. RateLimited also has retryAfter in
 seconds. Hints are carried for callers; the client does not interpret them as
 permission to retry writes. ProjectResolutionError, StoredKeyRefused,
 AccountApiUnavailable, IssuerError, NumericPrecisionError and RequestTimeoutError
-extend MemoryApiError. InputValidationError and CredentialError are TypeErrors.
+extend MemoryApiError, as does LayerUnavailable (status 409, code
+`layer_unavailable`, with the missing `layer`). InputValidationError and CredentialError are TypeErrors.
 PipelineDeadLettered, TimeoutError, ConnectorNotFoundError and AbortError are
 outside MemoryApiError.
 
@@ -17656,18 +17798,24 @@ remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 
 ```text
 remember query "QUESTION" [--combined]
-remember query text "QUESTION" [--combined]
-remember query sql STATEMENT [--parameters JSON] [--max-rows N]
-remember query explain-sql STATEMENT [--parameters JSON]
+remember query text "QUESTION" [--combined] [--layers LIST]
+remember query sql STATEMENT [--parameters JSON] [--max-rows N] [--layers LIST]
+remember query explain-sql STATEMENT [--parameters JSON] [--layers LIST]
 remember query space [--pattern GLOB] [--include-examples]
 remember query search-space QUERY [--k N]
 remember query list-saved [--namespace NS] [--status STATUS]
 remember query describe-saved NAMESPACE NAME [--version N]
-remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max-rows N]
+remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max-rows N] [--layers LIST]
 remember query adjacent-chunks CHUNK_ID [--window {1,2}]
 ```
 
 Every subcommand also takes `--api-url`, `--api-key` and `--project`.
+
+`--layers` narrows a read to some of the deployment's
+[processing layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers): a
+comma-separated subset of `sources`, `claims` and `facts`, for example
+`--layers sources,claims`. Without it a read uses every layer the deployment
+serves.
 
 #### Asking a question
 
@@ -17730,7 +17878,7 @@ remember query adjacent-chunks 6f1c2d0e-… --window 2
 
 ```text
 remember operations list [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember operations run NAME [--arg KEY=VALUE]... [--layers LIST] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one JSON descriptor per line for the four assured operations,
@@ -17738,7 +17886,7 @@ with each one's input schema.
 
 `run` runs one operation. Each `--arg` is `KEY=VALUE`; the value is parsed as
 JSON when it can be, otherwise kept as a string. The result prints as one
-line of JSON.
+line of JSON. `--layers` narrows the layers it reads, as for `remember query`.
 
 ```bash
 remember operations run facts_context \
@@ -17755,8 +17903,8 @@ in [Assured operations](https://remember.dev/docs/reference/assured-operations).
 ### `remember mcp`
 
 ```text
-remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
+remember mcp [--read-only] [--layers LIST] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--layers LIST] [--api-url URL]
 ```
 
 Runs an MCP server for a coding agent. By default it speaks on standard input
@@ -17765,7 +17913,9 @@ command.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
 `--read-only` removes the tools that change memory, `ingest` and
-`delete_document`.
+`delete_document`. `--layers` narrows every read of the session to those
+[processing layers](https://remember.dev/docs/concepts/retrieval#narrowing-a-read-to-layers) and
+leaves out the tools that read only other layers.
 
 You rarely start it yourself; `remember setup` writes the agent
 configuration that starts it. The two transports, the tools, their parameters
@@ -18047,6 +18197,13 @@ out: upgrade `remember` or the engine so their versions match. If
 `GET /deployment` fails (unreachable, `401`, `403`), `tools/list` fails with
 `-32603`, so a wrong key never looks like an empty tool list. A full server
 lists 18 tools: 6 + 4 + 1 + 7.
+
+A deployment that does not process the facts
+[layer](https://remember.dev/docs/concepts/pipeline#processing-layers) does not report
+`resolve_entity` or `facts_context`, so they are left out. With `--layers`,
+the server also leaves out every tool that reads only layers outside the
+selection, and each remaining read uses only the selected layers. A call that
+needs a missing layer fails with `layer_unavailable`.
 
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
@@ -18782,6 +18939,18 @@ Read by `compose.yaml` from `.env`, not by the engine.
 
 See [Authentication and scopes](https://remember.dev/docs/self-hosting/authentication).
 
+## Processing layers
+
+Which parts of the pipeline the deployment runs and serves. Both are on by
+default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#processing-layers).
+`setup` applies a change.
+
+| Variable | Default | Type | Purpose |
+|---|---|---|---|
+| `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` | `true` | bool | Extract, embed and serve claims. Turning it off also requires `REMEMBERSTACK_SELFHOST_FACTS_LAYER=false`. |
+| `REMEMBERSTACK_SELFHOST_FACTS_LAYER` | `true` | bool | Build and serve entities, facts, the entity graph and knowledge pages. Requires the claims layer. |
+| `REMEMBERSTACK_SELFHOST_LAYER_SEED_BATCH_SIZE` | `500` | int ≥ 1 | Documents `setup` queues per batch when it starts processing a layer that was switched on. |
+
 ## Pools and workers
 
 | Variable | Default | Type | Purpose |
@@ -18973,6 +19142,7 @@ seconds. `wait_for_readiness` raises
 | `404` | the operation name | `POST /operations/{name}` with a name that is not one of the four. | Use `GET /operations` for the names. |
 | `404` | `{"code": "saved_query_not_found", …}` | No saved query or version by that name. | Check `GET /query/saved`. |
 | `405` | `Method Not Allowed` | Right path, wrong method. | Check the method. |
+| `409` | `{"code": "layer_unavailable", …}` | A read needs a [processing layer](https://remember.dev/docs/concepts/pipeline#processing-layers) (`layer`) the deployment does not process. | Use a read of a served layer, or ask the operator to switch the layer on. |
 | `409` | `source_forgotten` | `POST /ingest` of bytes or a source identity (`source_kind` + `source_ref`) that a hard forget removed. A forget is permanent. | Do not retry; the deployment will not take this content back. |
 | `409` | `{"code": "version_key_conflict", …}` | `POST /ingest` with a `version_key` that already names another version of the document (`version_id`), or the latest version with other bytes. Nothing was stored. | Use a new key, or none. To put an older edition back in force, declare a period on it. |
 | `409` | `{"code": "effective_period_conflict", …}` | `POST /ingest` or `PUT …/effective-periods` with a start another version of the document already declares (`version_id`). Nothing was changed. | Correct the other version's periods first, or choose another start. |
@@ -19090,6 +19260,7 @@ deployment sent its own code — a SQL query code from the tables above, or
 | `path_too_large` | `null` | no | Split the file, raise the local resource guard only if intentional, or use a deployment that publishes a higher capability limit. / Split the file or raise the configured read cap. |
 | `document_not_found` | 404 | no | Do not retry. Check the doc_id; if the user meant this document, it is already gone from memory. |
 | `chunk_not_found` | 404 | no | Do not retry. Check the id. (`document_references` with a `chunk_id`.) |
+| `layer_unavailable` | 409 | no | This deployment does not process the `<layer>` layer. Use the tools tools/list offers, such as claims_and_sources_context. |
 | `forget_in_progress` | 503 | yes | Retry the same delete later with back-off; the deployment accepts no changes until the forget finishes. |
 | `body_too_large` | 413 | no | Split or shorten the document; do not retry the same payload. |
 | `unauthorized` | 401 | no | The key is missing, expired or revoked: run `remember login` or replace REMEMBER_API_KEY. |
