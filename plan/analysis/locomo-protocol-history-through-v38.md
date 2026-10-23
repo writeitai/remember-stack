@@ -298,4 +298,3 @@ Git and saved run files retain their exact original implementations and data.
 > **Status:** binding current-system protocol contract. Real provider execution
 > remains operator-invoked. Accepting this design does not itself authorize a
 > paid run of the current protocol.
-

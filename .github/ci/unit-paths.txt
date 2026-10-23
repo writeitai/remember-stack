@@ -24,6 +24,8 @@ src/tests/benchmarks/test_beam_answer_agent.py
 src/tests/benchmarks/test_beam_official_score.py
 src/tests/benchmarks/test_locomo_ablation.py
 src/tests/benchmarks/test_locomo_dataset.py
+src/tests/benchmarks/test_locomo_judge_sidecar.py
+src/tests/benchmarks/test_locomo_luna6_profile.py
 src/tests/benchmarks/test_locomo_protocol.py
 src/tests/benchmarks/test_locomo_retrieval.py
 src/tests/benchmarks/test_locomo_runner.py
