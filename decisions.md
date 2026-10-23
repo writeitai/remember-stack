@@ -1737,9 +1737,10 @@ config choice.
 ## D54. Testimony currency + the counting rule — evidence_count ≡ distinct current-testimony lineages
 
 > **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
-> When a deployment's facts layer is off (or deferred for a version), reconciliation runs in a
-> claims-only mode that applies testimony currency and nothing else; the full reconcile later
-> counts those transitions as its own. The currency and counting contract is unchanged.
+> When a deployment's facts layer is off (or deferred for a version), reconciliation runs at a
+> claims-mode component version that applies the same currency and counting logic but opens no
+> fact follow-ups; a reconcile skips `living` supersession while the lineage's current version
+> still has an open claims gap. The currency and counting contract is unchanged.
 
 **Refined by D133; that refinement withdrawn by D138.** D133 made a container and its members one
 counting lineage (`counting_lineage_id`). D138 removed container expansion, so no members exist and
@@ -6515,6 +6516,10 @@ in the engine.
 
 ## D136. One signed key, one shared MCP tool catalogue, and a bridging `remember mcp`
 
+> **Refined by [D143](#d143-processing-layers-can-be-switched-off-per-deployment-and-per-request).**
+> The served tool list also follows the deployment's processing layers: with the facts layer off,
+> `facts_context` and `resolve_entity` are not listed. Tool schemas and versions are unchanged.
+
 > **Amended by D141 (2026-10-02):** SDKs never replay writes after host movement,
 > including 421/connect errors; re-resolution can update the next independent
 > call. Read retry eligibility comes from the source-owned route classification,
@@ -7144,54 +7149,57 @@ evaluated separately as a retrieval aid. Measured LoCoMo cost shares (2026-09-14
 - **Three layers in a line:** *sources* (conversion, structure with section summaries,
   cross-references, chunks, chunk embeddings), *claims* (Selection, Claimify, claim embeddings,
   testimony currency), *facts* (normalisation, entity resolution, fact adjudication and
-  follow-ups, fact reconciliation, labels, window reviews, profiles, graph, plane K).
-  Sources ← claims ← facts; sources is always on.
+  follow-ups, labels, window reviews, profiles, graph, plane K). Sources ← claims ← facts;
+  sources is always on.
 - **Deployment scope only.** `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER` and
-  `REMEMBERSTACK_SELFHOST_FACTS_LAYER`, both default `true`; `setup` reconciles them into
-  `deployment_processing_layers` (no row = all on) and refuses facts without claims. No
-  per-document, per-source-kind or per-ingest setting, and no runtime API.
-- **One boundary per layer:** the claims boundary at `embed_chunk` completion, the facts
-  boundary at the extract barrier and the D90 empty path, decided in the completing
-  transaction. A layer not entered records a gap. When facts are not entered, the facts
-  boundary opens the **claims tail**: `embed_claim` and `reconcile` at
-  `reconcile-2026.07:claims` (testimony currency only). The full reconcile counts the
-  transitions of a claims-only run of the same version as its own.
-- **Off** stops entering the layer, holds its queued work unclaimed, stops serving it and stops
-  readiness expecting it; data is kept. Deletion and hard forget are never gated.
-- **On later** marks the layer `backfilling` and advances each lineage oldest first, one
-  version at a time, on the backfill lane: a completion advances its lineage; a boundary defers
-  a version whose lineage has an earlier gap. This preserves Rule 4 exactly — no re-chunking,
-  no chunk re-embedding, unchanged reuse identities, and each later version pays only for its
-  edit. Coverage becomes `complete` when the last gap is removed. Living-lineage fact history
-  starts when facts cover the lineage.
-- **Readiness** expects the enabled layers' stages; with all on it is unchanged.
-  `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
-  `doc-text-sources-v1` by enabled layers.
-- **Retrieval** reads the served (enabled) layers by default. A `layers` selection on
+  `REMEMBERSTACK_SELFHOST_FACTS_LAYER`, both default `true`; `setup` writes them to
+  `deployment_processing_layers` (no row = both on) under an exclusive *layer fence* and refuses
+  facts without claims. No per-document, per-source-kind or per-ingest setting, no runtime API.
+- **One boundary per layer** — claims at `embed_chunk` completion, facts at the extract barrier
+  and the D90 empty path — decided in the completing transaction under the shared layer fence and
+  the D135 lineage lock. A version that does not enter a layer gets a *gap* row. When facts are
+  not entered, the facts boundary opens the **claims tail**: `embed_claim` and `reconcile` at
+  `reconcile-2026.07:claims`, which runs the full reconcile logic but opens no `label_relation`
+  and no window review, so existing facts stay exact while facts are off.
+- **Off drains:** boundaries stop entering; versions that entered finish the layer; retrieval
+  and readiness stop using it; data is kept. Only lineage-level window reviews are held. Deletion
+  and hard forget are never gated.
+- **On later backfills in lineage order** on the backfill lane: a completion or deletion advances
+  its lineage, a boundary defers a version whose lineage has an earlier open gap, `setup` seeds
+  every lineage. Snapshot lineages are backfilled every version oldest first (equal to always-on
+  processing); living lineages at their current version only, older gaps discharged. A reconcile
+  skips living supersession while the current version has an open claims gap. Coverage is derived
+  from open gaps. Rule 4 holds: no re-chunking, no chunk re-embedding, unchanged reuse identities,
+  each later snapshot version pays only for its edit.
+- **Readiness** expects the enabled layers' stages (all on: unchanged; facts off: `reconcile` at
+  either version). `processing_profile_id` is `doc-text-standard-v1`, `doc-text-claims-v1` or
+  `doc-text-sources-v1`; `profile_complete` certifies the measured profile, otherwise
+  `failed` / `processing_profile_changed`.
+- **Retrieval** reads the served (enabled) layers. A `layers` selection on
   `POST /operations/{name}`, the sandbox execution routes, both SDKs, the CLI and
-  `remember mcp --layers` narrows it without changing any agent tool schema. Single-layer
-  reads of an unserved layer, explicit requests for one, and sandbox statements referencing one
-  are refused with 409 `layer_unavailable`; mixed operations answer from what is served and
-  carry `Envelope.layers` notices (`off`, `excluded`, `backfilling`), omitted when empty. The
-  MCP catalogue lists only tools whose layers are served; `GET /deployment` reports layer
-  states when not all on.
+  `remember mcp --layers` narrows it without changing any agent tool schema. Reads have channels
+  and mandatory dependencies (`entity_ids`, a claim search's `entity_id` filter need facts).
+  Disabled layers are refused (409 `layer_unavailable`; existing sandbox codes); an empty answer
+  with an unconsulted channel is a `boundary`, never `known_empty`; backfilling sandbox reads warn;
+  `GET /processing-layers` reports states; catalogues list only served tools. **No response model
+  changes**, so default responses, descriptors and the manifest hash are byte-identical.
 
-**Alternatives rejected.** Finer-grained scopes (coverage becomes per-document and cannot be
-disclosed honestly per result); keeping an off layer served (incomplete and unreconciled);
-deleting an off layer's data (destroys paid work); unordered backfill (re-pays unchanged
-chunks); a `layers` argument on agent tools (changes the pinned agent surface); separate
-summary or entity layers (analysis §3).
+**Alternatives rejected.** Finer-grained scopes; serving or deleting an off layer; holding queued
+work; a currency-only claims reconcile; unordered backfill; backfilling old living versions; a
+stored coverage flag; a `layers` tool argument or `Envelope` field (changes the pinned agent
+surface); separate summary or entity layers (analysis §8).
 
-**Consequences.** Two tables and one migration. A facts-off deployment is ready after the
-claims reconcile; a claims-off deployment after `embed_chunk`. Self-host workers serve the
-backfill lane when their steady route is idle. The managed cloud must register the two new
-profile ids before a managed deployment switches a layer off. LoCoMo, existing deployments
-and existing clients are unaffected while every layer is on.
+**Consequences.** Two tables, one migration, one new read route. Self-host workers serve the
+backfill lane when their steady route is idle. A living lineage's history in a backfilled layer
+starts at its current version. The managed cloud must register the two new profile ids before a
+managed deployment switches a layer off. LoCoMo, existing deployments and existing clients are
+unaffected while every layer is on.
 
-**Refines.** D90 (the empty path opens the claims tail when facts are not entered); D54 and
-the evidence lifecycle's reconciliation (a claims-only mode); D84/D88 (the extract barrier
-opens normalisation only when facts are entered); orchestration §3 (self-host serves the
-backfill lane).
+**Refines.** D90 (the empty path opens the claims tail when facts are not entered); D54 and the
+evidence lifecycle's reconciliation (a claims-mode component version; the living supersession
+guard); D84/D88 (the extract barrier opens normalisation only when facts are entered);
+orchestration §3 (layer backfill; self-host serves the backfill lane); D136 §3.4 (the tool list
+follows served layers).
 
 **Authority:** [design](plan/designs/processing_layers_design.md),
 [analysis](plan/analysis/processing_layer_toggles.md),

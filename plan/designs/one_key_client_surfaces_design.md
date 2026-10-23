@@ -204,8 +204,9 @@ separately, so a host's catalogue and a deployment can differ.
   The seven query tools appear only when the open query facade is composed,
   `adjacent_chunks` whenever operations are composed, and `delete_document`
   only when deletion is composed. `facts_context` and `resolve_entity` appear
-  only while the deployment serves its facts layer (D143); when a processing
-  layer is not fully served, the response also carries `processing_layers`
+  only while the deployment serves its facts layer (D143); the layer states
+  themselves are read from `GET /processing-layers`, and this response's
+  shape is unchanged
   ([processing layers design §7.4](processing_layers_design.md#74-discovery)).
 - A host renders a catalogue tool for a deployment only when the deployment
   lists it with the **same** `tool_version`. Otherwise the tool is omitted and

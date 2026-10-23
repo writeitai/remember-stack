@@ -35,8 +35,8 @@ composition of three things that already exist:
 3. **the chain rule** — a completing worker enqueues the next stage for its target. Where a
    deployment's claims or facts layer begins, the next stage is decided at one **layer
    boundary** inside the completing transaction (D143,
-   [processing layers design §4](processing_layers_design.md#4-ingestion)); a worker never
-   claims work of a layer the deployment has switched off.
+   [processing layers design §4](processing_layers_design.md#4-ingestion)). Switching a layer
+   off stops new entries; work already queued for versions that entered it drains.
 
 A workflow engine would duplicate all three, add a second stateful system to operate, and put
 pipeline state somewhere other than the spine — against the grain of "state has one home"
@@ -107,9 +107,10 @@ document" — requirements). Rules:
   crashed or paused backfill continues by re-running the seeder.
 - **A layer backfill is defined by gap rows** (D143): when a deployment switches its claims or
   facts layer on, the versions that skipped the layer are entered **one version per lineage at a
-  time, oldest first**, because cross-version reuse only looks at earlier versions (Rule 4).
-  `setup` advances every lineage once; from then on each completion advances its own lineage
-  through the chain rule. Its work runs on this lane
+  time** — every version oldest first for snapshot lineages, the current version only for living
+  ones — because cross-version reuse only looks at earlier versions (Rule 4). `setup` advances
+  every lineage once; from then on each completion or deletion advances its own lineage through
+  the chain rule. Its work runs on this lane
   ([processing layers design §5](processing_layers_design.md#5-switching-a-layer-on-later)).
 - **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
   claims from its stage's backfill route whenever its steady route has no due row.

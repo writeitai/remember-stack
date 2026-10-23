@@ -1056,7 +1056,9 @@ application would ever reach the adjudicator again. A **window review** closes t
   version whose processing never completes (no route, dead letter) is reviewed when it is
   reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
   is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
-  duplicate it.
+  duplicate it. While a deployment's facts layer is switched off (D143), these jobs are queued but
+  not claimed; they run when facts are switched back on
+  ([processing layers design §4.3](processing_layers_design.md#43-switching-off-drains-it-never-holds)).
 - **Fan-out.** The lineage job walks the live facts with evidence in any version of the
   lineage (deleted versions included, since deleting one changes the intervals) in pages of a
   bounded size (500, a starting value to tune), each page one bounded transaction; a full page

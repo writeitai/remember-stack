@@ -96,6 +96,24 @@ two versions of one lineage are extracted at the same time, or the newer one fir
 unchanged chunks of the newer version are paid for again. Normal ingestion avoids this
 because callers ingest a lineage oldest first, one version at a time.
 
+**Facts that matter for a later backfill** (found in review round 1):
+
+- *Living supersession reads the current version's occurrences.* Reconcile retires a
+  living lineage's claims that are not attached (`chunk_claims`) to the lineage's current
+  version (`lifecycle.py` `_SELECT_STALE_SUPERSEDED`). Reuse attaches claim ids to a newer
+  version but does not restore currency. If an older version is reconciled while the
+  current version's claims are not yet attached, unchanged claims are retired for good.
+- *E3 does not filter on currency.* The normalise fan-out selects every claim occurrence of
+  the version, and adjudication can create a new fact from a non-current claim. Processing
+  an old living version later would turn retired testimony into facts.
+- *Connector cycles close facts once.* For cycle-stamped versions, closure of zero-support
+  facts is deferred to `CycleFinalizer`, which runs once per cycle and reads the stored
+  counts. A recount that happens after the cycle finalized never closes anything.
+- *The result schemas are hashed.* The assured operations' result schemas are generated from
+  `Envelope` and `ContextBundleV2` and are members of the query-surface manifest hash that
+  LoCoMo pins, so even an optional, omitted-when-empty response field changes the default
+  descriptors and the hash.
+
 **Scope units.** The deployment is the only partition (D16, D68): one database or schema,
 one entity space, one trust domain. Nothing below it partitions documents for processing;
 `source_kind` is a lineage-identity key, plane-K scopes are compile lenses, and the managed
@@ -191,200 +209,201 @@ one.
 A layer is entered at exactly one point in the chain — its **boundary**:
 
 - the **claims boundary** is `embed_chunk` completion (today's `_extract_follow_up`);
-- the **facts boundary** is the extract barrier (today's `_enqueue_claim_normalize_fanout`,
-  and the D90 empty path).
+- the **facts boundary** is the extract barrier (today's `_enqueue_claim_normalize_fanout`)
+  and the D90 empty path.
 
-When the layer is off at its boundary, nothing of it is enqueued. Making the decision at a
-single point per layer, inside the completing transaction, avoids scattering `if layer_on`
-checks through every handler, and later stages need no check because their work is never
-created.
+When the layer is off at its boundary, nothing of it is enqueued. Deciding at a single point
+per layer, inside the completing transaction, avoids scattering checks through every handler:
+later stages need no check because their work is never created.
 
 The two couplings in §2 need one change each. When facts are not entered, the facts boundary
-opens the **claims tail** instead: `embed_claim` and a claims-only `reconcile`. The
-claims-only reconcile runs testimony currency and nothing else. It is a different
-component version of the same stage (`reconcile-2026.07` vs `reconcile-2026.07:claims`),
-the same pattern the engine already uses when a setting changes a stage's work
-(`active_flush_version`, `label_relation_component_version`). With all layers on, the chain,
-the component versions and the readiness list are exactly today's.
+opens the **claims tail**: `embed_claim` and a reconcile at a second component version,
+`reconcile-2026.07:claims` (the engine already varies a stage's component version with its
+configuration: `active_flush_version`, `label_relation_component_version`).
+
+What should the claims-mode reconcile do? The first draft limited it to testimony currency.
+Review round 1 showed why that is wrong: facts that already exist (from a period when facts
+were on) would keep support from retired claims, a connector cycle could finalize against those
+stale counts and never close them, and late work after a deletion would leave its fact
+contribution behind. All of reconcile's fact steps are deterministic database work (plus an
+entity-profile refresh, a cheap embedding call that happens only when facts exist). So the
+claims-mode reconcile runs **the same logic** and differs only by not opening the two facts
+follow-ups (`label_relation`, the window review). Existing facts stay truthful while facts are
+off, deletion settles fully in either mode, and nothing has to be replayed when facts return.
 
 ### 5.2 Readiness
 
-Readiness waits for the stages of the layers that are on *now*. A version ingested while a
-layer was off becomes not-ready again if the layer is switched on, until the backfill has
-processed it; that is the honest answer. The P1 and live-graph capabilities are unchanged
-because they check configuration, not data. With every layer on, the expected stage list is
-byte-identical to today's, so the LoCoMo readiness gate is unaffected.
+Readiness waits for the stages of the layers that are on *now*; with facts off, `reconcile` is
+satisfied at either component version, so versions that finished the old full pipeline stay
+ready. A version ingested while a layer was off becomes not-ready again if the layer is switched
+on, until the backfill has processed it; that is the honest answer. With every layer on, the
+expected list is byte-identical to today's, so the LoCoMo readiness gate is unaffected.
 
 ### 5.3 Switching a layer off
 
 | Option | Assessment |
 | --- | --- |
-| Stop new work, keep serving existing data | Serves an incomplete layer as if complete: versions ingested after the switch have no facts, while older facts stay "current" with nobody reconciling them. Wrong for law. |
-| **Stop new work, keep data, stop serving** | Safe and cheap. Re-enabling reuses everything already paid for. |
-| Delete or tombstone the layer's data | Destroys paid work, makes re-enabling a full re-run, and needs a deletion design of its own. |
+| Stop new work, keep serving existing data | Serves an incomplete layer as if complete. |
+| **Stop new work, keep data, stop serving** | Safe and cheap; re-enabling reuses everything already paid for. |
+| Delete or tombstone the layer's data | Destroys paid work and needs its own deletion design. |
 
-**Chosen: the middle row.** Concretely: the boundaries stop entering the layer; work rows of
-the layer that are already queued are held (not claimed, no attempt spent) and resume if
-the layer is switched back on; retrieval and readiness stop using the layer immediately; the
-data stays. Deletion (D135) and hard forget are never held: they always remove a
-document's contribution from every layer, so data kept while a layer is off never outlives
-its source.
+**Chosen: the middle row.** What about work already queued for versions that entered the layer?
+The first draft *held* it (unclaimed until the layer returned). Review round 1 found that holding
+strands versions half-processed: a version past the extract barrier with fact work queued would
+never get its claims tail, and late deletion cleanup could sit behind held fact stages. The
+replacement is simpler: **switching off drains**. A version that entered a layer finishes it;
+only new entries stop. Every version is then either complete in a layer or has a gap, which is
+the property the backfill relies on. Spend that must stop at once is what lane budgets are for.
+The one exception is lineage-level fact-window review queued outside the version chain (by
+period declarations and reconciles): it is held while facts are off and runs when they return.
+
+Deletion (D135) and hard forget are never gated.
 
 ### 5.4 Switching a layer on later
 
-The new work is exactly the layer's work for the versions that do not have it. The hard part
-is Rule 4: Selection reuse only looks at earlier versions (§2), so a backfill that processed
-all versions at once would re-extract every unchanged chunk of every later version.
-
-Options:
+The new work is the layer's work for the versions that do not have it. Rule 4 makes this hard:
+Selection reuse only looks at earlier versions (§2), so a backfill that processed all versions at
+once would re-extract every unchanged chunk of every later version.
 
 | Option | Assessment |
 | --- | --- |
-| Seed every missing version at once | Fast, but pays for every unchanged chunk again (Rule 4 violation proportional to versions per lineage). |
-| Re-key reuse so order does not matter | Changes the D56/D140 reuse identity and every reuse lookup; out of proportion. |
-| **Lineage-ordered backfill** | Each lineage advances one version at a time, oldest first, through the ordinary chain, so every version finds its predecessor's results exactly as in normal ingestion. Different lineages run in parallel. |
+| Seed every missing version at once | Pays for every unchanged chunk again. |
+| Re-key reuse so order does not matter | Changes the D56/D140 reuse identity; out of proportion. |
+| **Lineage-ordered backfill** | One version per lineage at a time, oldest first, through the ordinary chain; lineages run in parallel. |
 
-**Chosen: lineage-ordered backfill.** It needs to know which versions lack a layer. Deriving
-that from `processing_state` is possible but awkward: the facts layer has no per-version
-row at its start, and claim rows are per chunk. A small **gap table** records it directly:
-when a boundary does not enter a layer for a version, it writes a gap row; when the backfill
-enters the version it stamps the row; when the layer completes for the version the row is
-deleted. All-on deployments never write a gap row, so nothing changes for them, and no
-migration of existing versions is needed.
+**Chosen: lineage-ordered backfill**, driven by a **gap table**: a boundary that does not enter a
+layer records a gap; the backfill stamps it entered; completion deletes it. Unconfigured
+deployments never write a gap. A completion (or a deletion) advances its own lineage; a boundary
+defers a version whose lineage has an earlier open gap; `setup` advances every lineage once when
+a layer is switched on. Coverage is *derived* from the gap table rather than stored: the first
+draft stored a coverage flag, and review round 1 showed two concurrent last-gap completions could
+each miss the other's delete and leave it stale forever.
 
-The ordering rule has two halves:
+**Which versions.** The §2 facts settle a policy per versioning mode:
 
-- **Advance on completion.** When a layer completes for a version (claims: the extract
-  barrier; facts: the full reconcile) and the layer is backfilling, the lineage's oldest
-  unentered gap is entered if every earlier version of the lineage has the layer complete.
-- **Defer at the boundary.** While a layer is backfilling, a newly arriving version whose
-  lineage has an earlier gap is not entered either; it gets a gap row and waits its turn.
-  Otherwise a fresh amendment would be extracted before its predecessors and pay for every
-  unchanged chunk.
+- *Snapshot lineages* (D140's editions): currency never changes, so every version is
+  backfilled oldest first and the result equals always-on processing.
+- *Living lineages*: backfilling old versions would either retire claims the current version
+  reuses (reconcile against an unattached current version) or turn retired testimony into facts
+  (E3 does not filter on currency). The document *is* its current version, so the backfill
+  processes **the current version only** and discharges the older gaps; their stages read
+  `skipped`. A living lineage's history in a backfilled layer starts at its current version.
 
-`setup` starts the backfill by advancing every lineage once. Everything else is the chain
-rule (orchestration §1): no polling seeder, no new stage. Both halves and the seeding take a
-lineage advisory lock inside their transactions, so a boundary and a completion that race
-cannot both conclude that the other will advance the lineage.
+One more guard covers versions arriving during a backfill: a reconcile skips the living
+supersession step while the lineage's current version still has an open claims gap, because its
+occurrences do not exist yet; the current version's own reconcile settles the lineage. Without
+gaps this never applies.
+
+**Locking.** One deployment-scoped advisory lock (the *layer fence*), shared by boundaries,
+advances and seeding and exclusive for `setup`'s configuration change, serializes configuration
+against chain decisions even before a configuration row exists. Lineage decisions also take the
+existing D135 lineage lock (the `documents` row), so a deletion and a boundary of the same lineage
+cannot interleave.
 
 Backfill work runs on the **backfill lane** (orchestration §3), so it never delays fresh
-ingestion and has its own budget. Today no self-host process claims the backfill lane; the
-worker loop must serve it whenever its steady route has no due row.
+ingestion and has its own budget. Today no self-host process claims the backfill lane; the worker
+loop must serve it whenever its steady route has no due row.
 
-**What a facts backfill produces.** E3 reads only current testimony. For snapshot lineages
-(D140's model for editions: version succession changes no claim's currency) this is the same
-input always-on processing would have seen, so the result is the same. For living lineages,
-content that was removed before facts were switched on never becomes a fact, so the fact
-history of such a lineage starts when facts were enabled. That is a declared boundary, not
-an error: the alternative is replaying testimony currency backwards, which no other part of
-the engine does.
+### 5.5 Cost metering and receipts
 
-**Reconcile after a claims-only run.** A version that ran the claims-only reconcile has already
-had its currency transitions applied. When the facts backfill reaches it, the full reconcile
-must also count those transitions, otherwise a fact supported only by a claim that the
-earlier run retired would stay open. The full reconcile therefore treats the transitions
-recorded by the version's claims-only run as its own, using the same union the retry path
-already uses (`recorded_transitions`).
-
-### 5.5 Cost metering
-
-Every model call is already metered per stage in `cost_ledger`, so layer costs are visible
-without change. The managed text meter stamps a `processing_profile_id` on each ingest
-measurement (`doc-text-standard-v1` today), which the managed cloud prices. The profile must
-reflect the layers: all on keeps `doc-text-standard-v1`; sources and claims is
-`doc-text-claims-v1`; sources only is `doc-text-sources-v1`. The cloud's rate registry must
-know the new ids before a managed deployment switches a layer off; that is a cross-repository
-follow-up. Pricing a later backfill is the cloud's decision (D60).
+Every model call is already metered per stage in `cost_ledger`. The managed text meter stamps a
+`processing_profile_id` on each measurement (`doc-text-standard-v1` today), which the managed
+cloud prices. It must follow the layers: `doc-text-standard-v1` (all on, unchanged),
+`doc-text-claims-v1`, `doc-text-sources-v1`. Review round 1 pointed out that the outcome receipt's
+`profile_complete` must certify the *measured* profile, not whatever is configured when the
+outcome is computed; otherwise a standard-profile measurement could be certified complete without
+its fact work. Outcomes are therefore evaluated against the measured profile's layers, and a
+version that can no longer complete them gets `failed` / `processing_profile_changed`.
 
 ## 6. Retrieval semantics
 
 ### 6.1 Defaults and per-request selection
 
 By default a request consults every layer the deployment serves; a deployment that serves
-everything answers exactly as today.
-
-**Per-request selection** is what makes claim evaluation possible: the same agent, the same
-corpus, with and without claims. Three placements were considered:
+everything answers exactly as today. Per-request selection is what makes claim evaluation
+possible: the same agent, the same corpus, with and without claims.
 
 | Option | Assessment |
 | --- | --- |
-| A `layers` argument on the assured-operation tools | Changes the tool schemas agents see, the query-surface manifest and the LoCoMo catalogue hash; an agent could start passing it and change benchmark behaviour. |
-| A request header on every route | Uniform, but invisible in OpenAPI unless declared on every route; MCP clients cannot set headers per tool call. |
-| **A `layers` query parameter on `POST /operations/{name}` and the sandbox execution routes, a per-call SDK argument, and a connection-level `--layers` for `remember mcp`** | Visible in OpenAPI and both SDKs, leaves agent-facing tool schemas untouched, and lets an evaluation run an unchanged agent with a narrower layer set. |
+| A `layers` argument on the assured-operation tools | Changes the tool schemas agents see, the query-surface manifest and the LoCoMo catalogue hash. |
+| A request header on every route | Invisible in OpenAPI unless declared everywhere; MCP clients cannot set headers per call. |
+| **A `layers` query parameter on `POST /operations/{name}` and the sandbox execution routes, a per-call SDK argument, and `remember mcp --layers`** | Visible in OpenAPI and both SDKs; agent tool schemas untouched; an evaluation runs an unchanged agent with a narrower selection. |
 
-**Chosen: the third row.** The selection goes where an agent's reads go: the assured
-operations (of which `claims_and_sources_context` and `combined_context` mix layers) and the
-sandbox, whose views span all three layers. Single-layer reads (claim search, fact lookups,
-resolve, graph) have nothing to select; an MCP session with a narrower selection simply does
-not list them.
+**Chosen: the third row.** Reads have *channels* (layers any subset of which can answer) and
+*mandatory dependencies* (layers an argument requires): an `entity_ids` scope reads mentions,
+which are facts, even in the chunk channel, and the sandbox's claim search reads mentions for its
+`entity_id` filter. Both are validated after arguments are decoded; a mandatory dependency is
+never silently dropped.
 
 ### 6.2 Saying what is missing
 
-The owner's requirement is explicit, not silent: an answer must not look like "no answer"
-when the layer that would have answered is absent. Three situations:
+The requirement: an answer must not look like "no answer" when the layer that would have answered
+is absent. The first draft added an optional `Envelope.layers` notice, omitted when empty. Review
+round 1 showed that even an omitted field changes the generated result schema, the default
+operation descriptors and the pinned manifest hash. The design therefore discloses through the
+existing contract:
 
-| Situation | Response |
+| Situation | Disclosure |
 | --- | --- |
-| A single-layer read (or the sandbox, or an explicit `layers` request) needs a layer the deployment does not serve | Refusal: HTTP 409 `layer_unavailable` naming the layer; SDK `LayerUnavailable`; MCP tool error with the same code. |
-| A mixed operation runs by default and one of its layers is not served | The served part is answered; the envelope carries a `layers` notice (`off`); a wholly unserved part (the facts side of `combined_context`) is an empty envelope with a `boundary` negative. |
-| A layer is on but its backfill has not finished | Served, with a `backfilling` notice: older versions may not have it yet. |
+| A single-layer read, an explicit selection or a mandatory dependency names a disabled layer | Refusal: 409 `layer_unavailable` (REST), `LayerUnavailable` (SDKs), tool error (MCP), existing sandbox codes with the layer named. |
+| A read returns nothing and one of its channels was disabled, excluded or backfilling | `boundary` negative naming the layer, never `known_empty`. |
+| A whole side of `combined_context` is unconsulted | Empty envelope with a `boundary` negative. |
+| A sandbox statement reads a backfilling layer | A `layer_backfilling:<layer>` entry in `QueryResult.warnings`. |
+| Any time | `GET /processing-layers` states each layer; catalogues list only served tools. |
 
-The notice is a new optional envelope field that is **omitted from the JSON when empty**, so a
-deployment serving everything returns byte-identical responses and existing clients never see
-it. The negative-kind taxonomy is frozen (envelope §`NegativeKind`), so no new kind is added;
-`boundary` already means "the system cannot answer past this point".
-
-The MCP catalogue lists only tools whose layer is served (`facts_context` and
-`resolve_entity` disappear when facts are off), so an agent is not offered a tool that would
-only refuse. `GET /deployment` reports the layer states when any layer is not fully served.
+The negative-kind taxonomy stays frozen; `boundary` already means "the system cannot answer past
+this point". A non-empty answer from a backfilling layer carries no marker, as with any other
+processing lag.
 
 ### 6.3 The query sandbox and plane K
 
-Every sandbox view and function reads one layer's data; a statement that references a view or
-function of an unserved layer is refused with `layer_unavailable` before execution. Without
-this, a deployment that never had facts would return empty fact views ("no facts"), and one
-that switched facts off would return stale ones. The layer of each view is a code-side
-mapping, outside the hashed query-surface manifest, so the LoCoMo pin is unaffected. Plane K
-compiles pages about entities, so it is a facts consumer: with facts unserved, nothing
-compiles and the page views are refused. P3 omits its `entities/` tree.
+Every sandbox view and function reads one layer's data; a statement referencing an unserved or
+excluded layer is refused before planning. Without this, a deployment that never had facts would
+answer fact views with empty results ("no facts"). The sandbox's public error-code set is part of
+its contract, so the existing `relation_not_allowed`, `function_not_allowed` and
+`invalid_parameter` codes are used, with the layer named in the message. Plane K compiles pages
+about entities, so it is a facts consumer. P3 omits its `entities/` tree without facts.
 
 ## 7. Contract surfaces
 
 | Surface | Change |
 | --- | --- |
 | Settings / compose | `REMEMBERSTACK_SELFHOST_CLAIMS_LAYER`, `REMEMBERSTACK_SELFHOST_FACTS_LAYER` (default `true`). |
-| Schema | `deployment_processing_layers` (one row per deployment, only when not default) and `processing_layer_gaps`; one Alembic migration and its five pinned surfaces. |
-| REST / OpenAPI | `layers` query parameter on `POST /operations/{name}` and the sandbox execution routes; 409 `layer_unavailable`; optional `Envelope.layers`; optional `DeploymentBuildInfo.processing_layers`. |
-| Python SDK | `layers=` on the context operations and sandbox execution; `LayerUnavailable` error. |
-| TypeScript client | The same, under D141 parity (inventory, generated contracts, fixtures). |
-| MCP | Tool list filtered by served layers; `remember mcp --layers`. Tool schemas unchanged. |
-| CLI | `--layers` on `remember query text` and `remember operations run`; layer state in `remember ops inspect`. |
+| Schema | `deployment_processing_layers`, `processing_layer_gaps`; one migration and its five pinned surfaces. |
+| REST / OpenAPI | `layers` query parameter on `POST /operations/{name}` and the sandbox execution routes; 409 `layer_unavailable`; new `GET /processing-layers`. No response model changes. |
+| Python SDK | `layers=` on the context operations and sandbox execution; `processing_layers()`; `LayerUnavailable`. |
+| TypeScript client | The same, under D141 parity. |
+| MCP | Catalogue lists only served tools; `remember mcp --layers`. Tool schemas unchanged. |
+| CLI | `--layers` on `remember query text` and `remember operations run`; layer section in `remember ops inspect`. |
 | Readiness | Expected stages follow the enabled layers; models unchanged. |
-| Managed metering | `processing_profile_id` follows the enabled layers (§5.5). |
-| LoCoMo | Unaffected: all layers on, no tool schema, manifest or stage-list change. |
+| Managed metering | `processing_profile_id` and `profile_complete` follow the measured layers. |
+| LoCoMo | Unaffected: all layers on; no response, descriptor, manifest, catalogue or stage-list change. |
 
 ## 8. Rejected and unchosen alternatives
 
 - **Per-document, per-source-kind or per-ingest layer selection** — coverage becomes
   per-document and retrieval cannot disclose it honestly per result (§4).
-- **Tombstoning a disabled layer's data** — destroys paid work for no correctness gain (§5.3).
-- **Unordered backfill** — violates Rule 4 (§5.4).
-- **A separate deployment-level retrieval default** distinct from the ingested layers — the
-  per-request and per-connection selection covers the evaluation need without a second
-  configuration that can disagree with ingestion.
-- **A `layers` argument on the agent tools** — changes agent-visible schemas and the pinned
-  benchmark surface (§6.1).
+- **Tombstoning a disabled layer's data** — destroys paid work (§5.3).
+- **Holding queued work when switching off** — strands half-processed versions (§5.3).
+- **A claims-mode reconcile limited to testimony currency** — leaves existing facts untruthful and
+  connector cycles unsettled (§5.1).
+- **Unordered backfill** — re-pays unchanged chunks (§5.4).
+- **Backfilling every version of a living lineage** — retires reused claims or creates facts from
+  retired testimony (§5.4).
+- **A stored coverage flag** — racy; derived instead (§5.4).
+- **A `layers` argument on agent tools** or **an `Envelope.layers` field** — changes the pinned
+  agent surface (§6).
+- **A separate deployment-level retrieval default** — per-request and per-connection selection
+  covers the evaluation need without a second configuration that can disagree with ingestion.
 - **A summaries layer or an entities layer** — see §3.
 
 ## 9. Risks
 
-- **Held work after switching off.** Queued rows of a disabled layer stay `pending`. They are
-  visible in `remember ops inspect` and resume on re-enable; they are not dead letters.
 - **A blocked lineage during backfill.** A dead-lettered version stops its lineage's backfill
-  at that version until it is replayed. This is visible (gap count, dead-letter list) and
-  matches how a dead letter blocks normal ingestion readiness.
+  until it is replayed or deleted. Visible in `remember ops inspect`.
 - **Freshness during backfill.** New versions of a lineage that is still backfilling wait for
-  their predecessors. The alternative pays again for unchanged text; the owner's Rule 4 takes
-  precedence.
-- **Managed pricing ids.** New `processing_profile_id` values need the cloud's rate registry
-  (§5.5).
+  their predecessors. The alternative pays again for unchanged text; Rule 4 takes precedence.
+- **Draining costs.** Switching a layer off lets in-flight versions finish their layer; budgets
+  are the immediate brake.
+- **Managed pricing ids.** The two new `processing_profile_id` values need the cloud's rate
+  registry before a managed deployment switches a layer off.

@@ -1,11 +1,9 @@
 # Design: chunk-level extract (E2 work grain)
 
-> **D143 amendment (processing layers).** Extract work exists only when the deployment's
-> claims layer is entered for the version at `embed_chunk` completion. When the barrier below
-> fires, it opens E3 normalisation only if the facts layer is entered for the version;
-> otherwise it opens the claims tail (`embed_claim` and `reconcile` at
-> `reconcile-2026.07:claims`) and records a facts gap.
-> [Processing layers design §4](processing_layers_design.md#4-ingestion).
+> **Layer boundaries (D143).** The fan-out (§5.1) is the claims boundary and the barrier
+> (§5.3) is the facts boundary of the
+> [processing layers design §4.1](processing_layers_design.md#41-boundaries); both sections
+> below state what each does when a layer is not entered.
 
 **Status:** accepted for implementation (binding once merged to `main`)  
 **Date:** 2026-08-07  
@@ -34,9 +32,11 @@ grain.
    - `target_id = chunk_id`
    - same `stage` and `component_version` (`E2_EXTRACTOR_VERSION`) as today
 2. **Fan-out** from E1 after chunk embedding completes: one extract job per
-   chunk of the representation (idempotent enqueue).
-3. **Barrier:** enqueue `normalize_relations` for the version only when every
-   chunk of that representation has terminal extract at the extractor version.
+   chunk of the representation (idempotent enqueue), when the version enters
+   the claims layer (D143).
+3. **Barrier:** when every chunk of that representation has terminal extract at
+   the extractor version, open E3 normalisation for the version if it enters the
+   facts layer, otherwise the claims tail (D143).
 4. **Legacy** non-chunk extract rows act as **coordinators**: fan out chunk jobs
    and/or fire the barrier; they do not re-run serial whole-document Claimify.
 5. **Claimify semantics unchanged** (prompts, grounding, D33, D56).
@@ -66,9 +66,14 @@ Full argument: analysis §2–3.
 Inputs: `ClaimedWork` from embed (or equivalent), `ChunkSource`, chunk list for
 `representation_id` + current chunker version.
 
+This is the **claims boundary** (D143). When the version does not enter the
+claims layer — the layer is disabled, or the lineage has an earlier open claims
+gap — nothing below is enqueued and claims and facts gaps are recorded instead.
+When it enters:
+
 | Case | Follow-up |
 | --- | --- |
-| 0 chunks | One `normalize_relations` on the **version** target (unchanged identity used today for normalize) |
+| 0 chunks | The D90 empty path, which is also the facts boundary (§5.3 step 6) |
 | N ≥ 1 chunks | N × `extract_claims` with `target_kind=chunk`, `target_id=chunk_id` |
 
 Payload for each chunk job (JSON object):
@@ -130,9 +135,12 @@ transaction:
    replay still converges.
 5. If any expected chunk has a row in `pending` / `running` / `failed` /
    `dead_letter`, or is missing, **do not** enqueue normalize.
-6. If all succeeded: enqueue `normalize_relations` targeting
-   **`document_version` / `version_id`** (not chunk), payload
-   `{version_id, representation_id}`, with `ON CONFLICT DO NOTHING`.
+6. If all succeeded, this is the **facts boundary** (D143). If the version
+   enters the facts layer, open the E3 normalisation fan-out (D88: one
+   `normalize_relations` row per claim; the D90 empty observation flush when
+   there are no claims), idempotently. Otherwise record a facts gap and open the
+   claims tail: `embed_claim` and `reconcile` at `reconcile-2026.07:claims`
+   ([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
 
 Handler returns no normalize follow-up itself; the worker calls
 `complete_chunk_extract` when `target_kind=chunk`.
