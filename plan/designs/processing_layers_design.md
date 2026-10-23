@@ -346,9 +346,12 @@ Steps, in this order:
      work.
 5. **For facts, release owed claims tails** — after the discharges of step 2 and the admission
    decision of step 4, before anything returns. A version *owes a claims tail* when its claim
-   occurrences are complete, it has no claims-tail rows yet, and it will not enter facts now: facts
-   are disabled, its facts gap is discharged (including by step 2 of this invocation), or (snapshot
-   lineages) it waits behind an earlier unentered facts gap. The version admitted in step 4 never
+   occurrences are complete, it has no claims-tail rows yet, it **has never entered facts** — it
+   has a facts gap whose `entered_at` is unset, open or discharged; a version admitted to facts
+   earlier (an entered gap) or before the deployment was configured (no gap) keeps only its
+   ordinary draining chain and never gets a claims-mode tail — and it will not enter facts now:
+   facts are disabled, its facts gap is discharged (including by step 2 of this invocation), or
+   (snapshot lineages) it waits behind an earlier unentered facts gap. The version admitted in step 4 never
    owes a tail — its ordinary facts chain embeds its claims and runs its full reconcile. The
    obligation is derived from the gap and work-ledger state of every version of the lineage, never
    only from the current version's gap, so discharging a superseded version's facts gap cannot
@@ -648,7 +651,11 @@ database-level, with recorded or fake model providers:
    off and on while v2 waits.
    A version admitted to facts gets no claims tail; a version whose claims-mode reconcile is still
    pending when facts are switched on enters facts only after it succeeds — in both schedules a
-   newer current version that drops claim C never lets C's fact stay open with zero support.
+   newer current version that drops claim C never lets C's fact stay open with zero support. With
+   facts switched off while v1's admitted E3 work drains, a deletion that advances the lineage opens
+   no claims-mode tail for v1: v1 keeps its ordinary chain, v2 cannot pass v1's claims frontier
+   before v1's ordinary embedding hand-off, and C's fact closes after v2 removes it, with no
+   extraction or embedding repeated.
    Facts on → off (a living version removes a fact's only claim
    inside a connector cycle that finalizes) → on leaves the fact closed. With facts enabled and v1
    entered but not yet normalised, a living v2 that removes claim C opens neither facts nor its
