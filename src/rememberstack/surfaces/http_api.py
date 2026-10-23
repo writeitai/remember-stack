@@ -1098,6 +1098,19 @@ def _graph_errors() -> Iterator[None]:
 _TRANSACTION_TIMEOUT: Final = "25P04"
 
 
+_LAYERS_HELP: Final = (
+    "D143: the processing layers this request may read (sources, claims,"
+    " facts); default every layer the deployment serves."
+)
+
+
+def _layer_selection(
+    layers: list[ProcessingLayer] | None,
+) -> frozenset[ProcessingLayer] | None:
+    """The request's ``layers`` query parameter as a selection, or None."""
+    return None if layers is None else frozenset(layers)
+
+
 _FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
 """The entity graph's layer (D143 §7.2)."""
 
@@ -1171,6 +1184,9 @@ def _mount_open_query(
     def query_sql(
         body: SqlQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """One sandboxed SQL statement; QueryResult/v1."""
         return _open_call(
@@ -1179,6 +1195,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1186,11 +1203,17 @@ def _mount_open_query(
     def explain_sql(
         body: SqlExplainRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """EXPLAIN one SQL statement without executing it."""
         return _open_call(
             lambda: open_query.explain_sql(
-                sql=body.sql, parameters=body.parameters, principal=principal
+                sql=body.sql,
+                parameters=body.parameters,
+                principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1290,6 +1313,9 @@ def _mount_open_query(
         name: str,
         body: RunSavedQueryRequest,
         principal: Annotated[str | None, Depends(principal_dep)] = None,
+        layers: Annotated[
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
+        ] = None,
     ) -> QueryResult:
         """Execute one active saved query through the same SQL executor."""
         return _open_call(
@@ -1300,6 +1326,7 @@ def _mount_open_query(
                 parameters=body.parameters,
                 max_rows=body.max_rows,
                 principal=principal,
+                layers=_layer_selection(layers),
             )
         )
 
@@ -1826,14 +1853,7 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
         layers: Annotated[
-            list[ProcessingLayer] | None,
-            Query(
-                description=(
-                    "D143: the processing layers this request may read"
-                    " (sources, claims, facts); default every layer the"
-                    " deployment serves."
-                )
-            ),
+            list[ProcessingLayer] | None, Query(description=_LAYERS_HELP)
         ] = None,
     ) -> Envelope | ContextBundleV2:
         """Run one assured operation by name over JSON arguments.
@@ -1858,9 +1878,7 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
                 )
         try:
             return surface.run(
-                name=name,
-                arguments=arguments,
-                layers=None if layers is None else frozenset(layers),
+                name=name, arguments=arguments, layers=_layer_selection(layers)
             )
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error

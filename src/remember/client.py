@@ -33,6 +33,7 @@ from remember.connection import Connection
 from remember.connection import EngineRoute
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
+from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import RateLimited
@@ -67,6 +68,7 @@ from remember.models import Envelope
 from remember.models import HistoryReadTime
 from remember.models import IngestedVersion
 from remember.models import PipelineReadinessReport
+from remember.models import ProcessingLayerStates
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
@@ -212,12 +214,23 @@ class MemoryClient:
         )
 
     def run_operation(
-        self, *, name: str, arguments: Mapping[str, object] | None = None
+        self,
+        *,
+        name: str,
+        arguments: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
     ) -> Envelope | ContextBundleV2:
-        """Run one assured operation and validate its exact wire contract."""
+        """Run one assured operation and validate its exact wire contract.
+
+        ``layers`` (D143) narrows the processing layers the operation may read:
+        any of ``sources``, ``claims``, ``facts``; default every layer the
+        deployment serves.
+        """
         path = f"/operations/{quote(name, safe='')}"
         endpoint = f"POST {path}"
-        payload = self._json("POST", path, json_body=dict(arguments or {}))
+        payload = self._json(
+            "POST", path, params=_layer_params(layers), json_body=dict(arguments or {})
+        )
         if isinstance(payload, dict) and payload.get("contract") == "ContextBundle/v2":
             return _validated(ContextBundleV2, payload, endpoint=endpoint)
         return _validated(Envelope, payload, endpoint=endpoint)
@@ -228,14 +241,20 @@ class MemoryClient:
         sql: str,
         parameters: list[object] | tuple[object, ...] = (),
         max_rows: int | None = None,
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
-        """Run one sandboxed SQL statement; returns QueryResult/v1 as a dict."""
+        """Run one sandboxed SQL statement; returns QueryResult/v1 as a dict.
+
+        ``layers`` (D143) limits which processing layers' views it may read.
+        """
         body: dict[str, object] = {"sql": sql, "parameters": list(parameters)}
         if max_rows is not None:
             body["max_rows"] = max_rows
         return _validated_dict(
             QueryResult,
-            self._json("POST", "/query/sql", json_body=body),
+            self._json(
+                "POST", "/query/sql", params=_layer_params(layers), json_body=body
+            ),
             endpoint="POST /query/sql",
         )
 
@@ -293,8 +312,13 @@ class MemoryClient:
         k: int | None = None,
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
     ) -> ContextBundleV2:
-        """Run the assured combined_context operation."""
+        """Run the assured combined_context operation.
+
+        ``layers`` (D143) narrows the layers it reads; a side with none of its
+        layers admitted comes back empty with a ``boundary`` negative.
+        """
         args: dict[str, object] = {"query": query}
         if k is not None:
             args["k"] = k
@@ -302,7 +326,7 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
-        res = self.run_operation(name="combined_context", arguments=args)
+        res = self.run_operation(name="combined_context", arguments=args, layers=layers)
         assert isinstance(res, ContextBundleV2)
         return res
 
@@ -313,11 +337,14 @@ class MemoryClient:
         k: int | None = None,
         candidate_k: int | None = None,
         time: Mapping[str, object] | None = None,
+        layers: Sequence[str] | None = None,
     ) -> Envelope:
         """Run the assured claims_and_sources_context operation.
 
         ``time`` (D140) reads the text in force for the scope (default
         current), e.g. ``{"mode": "at", "at": "2026-02-01T00:00:00Z"}``.
+        ``layers`` (D143) narrows the channels: ``["sources"]`` answers from
+        source passages only.
         """
         args: dict[str, object] = {"query": query}
         if k is not None:
@@ -326,7 +353,9 @@ class MemoryClient:
             args["candidate_k"] = candidate_k
         if time is not None:
             args["time"] = dict(time)
-        res = self.run_operation(name="claims_and_sources_context", arguments=args)
+        res = self.run_operation(
+            name="claims_and_sources_context", arguments=args, layers=layers
+        )
         assert isinstance(res, Envelope)
         return res
 
@@ -337,7 +366,11 @@ class MemoryClient:
         return res
 
     def explain_sql(
-        self, *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+        self,
+        *,
+        sql: str,
+        parameters: list[object] | tuple[object, ...] = (),
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
         """EXPLAIN one SQL statement without executing it."""
         return _validated_dict(
@@ -345,6 +378,7 @@ class MemoryClient:
             self._json(
                 "POST",
                 "/query/sql/explain",
+                params=_layer_params(layers),
                 json_body={"sql": sql, "parameters": list(parameters)},
             ),
             endpoint="POST /query/sql/explain",
@@ -418,6 +452,7 @@ class MemoryClient:
         parameters: list[object] | tuple[object, ...] = (),
         version: int | None = None,
         max_rows: int | None = None,
+        layers: Sequence[str] | None = None,
     ) -> dict[str, object]:
         """Execute one active saved query; returns QueryResult/v1 as a dict."""
         namespace_path = _saved_query_path_segment(value=namespace, field="namespace")
@@ -430,15 +465,24 @@ class MemoryClient:
         path = f"/query/saved/{namespace_path}/{name_path}/run"
         endpoint = f"POST {path}"
         return _validated_dict(
-            QueryResult, self._json("POST", path, json_body=body), endpoint=endpoint
+            QueryResult,
+            self._json("POST", path, params=_layer_params(layers), json_body=body),
+            endpoint=endpoint,
         )
 
-    def call_open_query(self, *, name: str, arguments: Mapping[str, object]) -> object:
+    def call_open_query(
+        self,
+        *,
+        name: str,
+        arguments: Mapping[str, object],
+        layers: Sequence[str] | None = None,
+    ) -> object:
         """Dispatch one open-query infrastructure tool name through the HTTP API.
 
         Used by remote MCP so local and remote tools/list/call stay aligned
         without duplicating route knowledge in the transport loop. Arguments
         are validated strictly (same rules as local MCP) before the HTTP call.
+        ``layers`` (D143) narrows the layers an executing tool may read.
         """
         if name not in OPEN_QUERY_TOOL_NAMES:
             raise ValueError(f"unknown open-query tool {name!r}")
@@ -448,11 +492,13 @@ class MemoryClient:
                 sql=str(args["sql"]),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
                 max_rows=_optional_sdk_int(args.get("max_rows")),
+                layers=layers,
             )
         if name == "explain_sql":
             return self.explain_sql(
                 sql=str(args["sql"]),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
+                layers=layers,
             )
         if name == "describe_query_space":
             return self.describe_query_space(
@@ -490,6 +536,7 @@ class MemoryClient:
                 version=_optional_sdk_int(args.get("version")),
                 parameters=list(_sdk_param_list(args.get("parameters"))),
                 max_rows=_optional_sdk_int(args.get("max_rows")),
+                layers=layers,
             )
         raise ValueError(f"unknown open-query tool {name!r}")
 
@@ -750,6 +797,15 @@ class MemoryClient:
             DeploymentBuildInfo,
             self._json("GET", "/deployment"),
             endpoint="GET /deployment",
+        )
+
+    def processing_layers(self) -> ProcessingLayerStates:
+        """Which processing layers the deployment serves (D143): each of claims
+        and facts is ``enabled``, ``backfilling`` or ``disabled``."""
+        return _validated(
+            ProcessingLayerStates,
+            self._json("GET", "/processing-layers"),
+            endpoint="GET /processing-layers",
         )
 
     def pipeline_readiness(
@@ -1373,6 +1429,11 @@ class MemoryClient:
                         code, detail, retryable, request_id = structured
                     elif path.startswith("/query/"):
                         detail = "deployment API returned a malformed structured error"
+                    elif public_detail.get("code") == "layer_unavailable":
+                        raise LayerUnavailable(
+                            detail=str(public_detail.get("message") or ""),
+                            layer=str(public_detail.get("layer") or ""),
+                        )
                     else:
                         detail = str(public_detail)
                 else:
@@ -1393,6 +1454,13 @@ class MemoryClient:
                 status_code=response.status_code,
                 detail=f"{method} {path} returned invalid JSON",
             ) from error
+
+
+def _layer_params(layers: Sequence[str] | None) -> tuple[tuple[str, str], ...] | None:
+    """The D143 ``layers`` selection as repeated query parameters, or none."""
+    if layers is None:
+        return None
+    return tuple(("layers", str(layer)) for layer in layers)
 
 
 def _optional_sdk_int(value: object) -> int | None:

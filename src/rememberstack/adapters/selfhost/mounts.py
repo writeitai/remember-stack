@@ -120,14 +120,23 @@ class LocalMountPublisher:
             # reads; AuditedRawReader audits programmatic local access.
             raw=str(self._view(base=base, name="raw", real=self._raw_root)),
             # Plane K is served only from a real checkout; an empty
-            # placeholder would advertise a view that has no content.
+            # placeholder would advertise a view that has no content. Its
+            # pages are built from facts, so it is not served without them
+            # (D143 §7.6).
             knowledge=(
                 None
                 if self._knowledge_root is None
+                or not self._facts_served(deployment_id=deployment_id)
                 else str(self._knowledge_root.resolve())
             ),
             read_only=True,
         )
+
+    def _facts_served(self, *, deployment_id: UUID) -> bool:
+        """Whether the deployment serves facts; without a catalog, assume so."""
+        if self._catalog is None:
+            return True
+        return self._catalog.facts_served(deployment_id=deployment_id)
 
     def _view(self, *, base: Path, name: str, real: Path | None) -> Path:
         """One view locator: the real store root when known, else an empty dir."""
@@ -156,6 +165,12 @@ class LocalMountPublisher:
         latest = self._catalog.latest_snapshot(
             deployment_id=deployment_id, plane="P3_corpusfs"
         )
+        if latest is not None and _built_with_facts(
+            snapshot=latest
+        ) != self._catalog.facts_served(deployment_id=deployment_id):
+            # D143 §7.6: never activate a snapshot built for another served
+            # set; the placeholder stands until a matching one is published.
+            latest = None
         if latest is None:
             empty = link.parent / "p3-empty"
             empty.mkdir(parents=True, exist_ok=True)
@@ -188,6 +203,14 @@ class LocalMountPublisher:
             except OSError:  # another publisher won the race — theirs is fine
                 shutil.rmtree(staging, ignore_errors=True)
         _point(link=link, target=served)
+
+
+def _built_with_facts(*, snapshot: dict[str, object]) -> bool:
+    """Whether a published P3 snapshot was rendered with the facts layer."""
+    validation = snapshot.get("validation")
+    if isinstance(validation, dict):
+        return validation.get("facts", True) is not False
+    return True
 
 
 class AuditedRawReader:

@@ -1130,6 +1130,10 @@ class SelfHostProfile:
             fact_read_pool=retrieval_reads,
             surface_cost=surface_cost,
         )
+        from rememberstack.spine.processing_layers import (  # noqa: PLC0415
+            ProcessingLayerCatalog,
+        )
+
         sql_executor = QuerySandboxExecutor(
             deployment_id=self._settings.deployment_id,
             connect=query_role_connect,
@@ -1137,6 +1141,7 @@ class SelfHostProfile:
             embed=embed_query,
             kill_switches=kill_switches,
             audit=audit_trail,
+            layers=ProcessingLayerCatalog(engine=self._engine),
         )
         manifest_hash = surface_manifest_hash(build_hash_members())
         open_query = OpenQueryFacade(

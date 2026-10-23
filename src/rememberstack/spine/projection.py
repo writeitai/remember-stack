@@ -218,6 +218,15 @@ class ProjectionCatalog:
                 ).mappings()
             )
 
+    def facts_served(self, *, deployment_id: UUID) -> bool:
+        """Whether the deployment serves its facts layer (D143 §7.6)."""
+        from rememberstack.spine.processing_layers import layer_configuration_on
+
+        with self._engine.connect() as connection:
+            return layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).facts_enabled
+
     def latest_snapshot(
         self, *, deployment_id: UUID, plane: str
     ) -> dict[str, object] | None:
@@ -366,7 +375,8 @@ _SELECT_ENTITY_DOCUMENTS = text(
 
 _SELECT_LATEST = text(
     """
-    SELECT snapshot_id, version, gcs_uri, row_counts, built_at, published_at
+    SELECT snapshot_id, version, gcs_uri, row_counts, validation, built_at,
+           published_at
     FROM projection_snapshots
     WHERE deployment_id = :deployment_id
       AND plane = CAST(:plane AS projection_plane)

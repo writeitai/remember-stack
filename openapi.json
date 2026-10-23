@@ -3996,6 +3996,46 @@
         "title": "PipelineStageReadiness",
         "type": "object"
       },
+      "ProcessingLayer": {
+        "description": "The three processing layers a request may read (D143).\n\n``sources`` (documents, sections, chunks) is always processed; ``claims``\nand ``facts`` can be switched off per deployment.",
+        "enum": [
+          "sources",
+          "claims",
+          "facts"
+        ],
+        "title": "ProcessingLayer",
+        "type": "string"
+      },
+      "ProcessingLayerStates": {
+        "additionalProperties": false,
+        "description": "What ``GET /processing-layers`` reports for the two switchable layers.\n\n``backfilling`` means the layer is enabled but some versions processed\nwhile it was off have not been processed by it yet.",
+        "properties": {
+          "claims": {
+            "enum": [
+              "enabled",
+              "backfilling",
+              "disabled"
+            ],
+            "title": "Claims",
+            "type": "string"
+          },
+          "facts": {
+            "enum": [
+              "enabled",
+              "backfilling",
+              "disabled"
+            ],
+            "title": "Facts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claims",
+          "facts"
+        ],
+        "title": "ProcessingLayerStates",
+        "type": "object"
+      },
       "QueryErrorCode": {
         "description": "Every public failure code, exactly as bound in design \u00a74.1.",
         "enum": [
@@ -5858,7 +5898,7 @@
     },
     "/deployment": {
       "get": {
-        "description": "Report which code, model bindings and tools are serving, before any work.",
+        "description": "Report which code, model bindings and tools are serving, before any work.\n\nD143 \u00a77.4: tools that read only an unserved layer are not listed.",
         "operationId": "deployment_build_info_deployment_get",
         "responses": {
           "200": {
@@ -7147,7 +7187,7 @@
     },
     "/operations": {
       "get": {
-        "description": "The four assured operations for this deployment.",
+        "description": "The assured operations this deployment serves (D143: by its layers).",
         "operationId": "list_operations_operations_get",
         "responses": {
           "200": {
@@ -7185,6 +7225,27 @@
             "schema": {
               "title": "Name",
               "type": "string"
+            }
+          },
+          {
+            "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+            "in": "query",
+            "name": "layers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/ProcessingLayer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+              "title": "Layers"
             }
           }
         ],
@@ -7235,6 +7296,30 @@
           }
         ],
         "summary": "Run Operation"
+      }
+    },
+    "/processing-layers": {
+      "get": {
+        "description": "D143 \u00a77.4: each switchable layer is enabled, backfilling or disabled.",
+        "operationId": "processing_layers_processing_layers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessingLayerStates"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Processing Layers"
       }
     },
     "/query/saved": {
@@ -7412,6 +7497,27 @@
               "title": "Name",
               "type": "string"
             }
+          },
+          {
+            "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+            "in": "query",
+            "name": "layers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/ProcessingLayer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+              "title": "Layers"
+            }
           }
         ],
         "requestBody": {
@@ -7585,6 +7691,29 @@
       "post": {
         "description": "One sandboxed SQL statement; QueryResult/v1.",
         "operationId": "query_sql_query_sql_post",
+        "parameters": [
+          {
+            "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+            "in": "query",
+            "name": "layers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/ProcessingLayer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+              "title": "Layers"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -7629,6 +7758,29 @@
       "post": {
         "description": "EXPLAIN one SQL statement without executing it.",
         "operationId": "explain_sql_query_sql_explain_post",
+        "parameters": [
+          {
+            "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+            "in": "query",
+            "name": "layers",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "$ref": "#/components/schemas/ProcessingLayer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "D143: the processing layers this request may read (sources, claims, facts); default every layer the deployment serves.",
+              "title": "Layers"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
