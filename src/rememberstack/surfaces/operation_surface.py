@@ -14,6 +14,7 @@ from rememberstack.model import AssuredOperation
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import Envelope
 from rememberstack.model.assured_operations import FactTime
+from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.client import ToolDescriptor
 from rememberstack.spine.assured_operations import AssuredOperationRegistry
 from rememberstack.spine.query_space.canonical import canonical_json_bytes
@@ -64,8 +65,28 @@ class OperationSurface:
             operations=self._registry.active(deployment_id=self._deployment_id)
         )
 
-    def run(self, *, name: str, arguments: dict[str, object]) -> OperationResult:
-        """Validate transport arguments and run one canonical operation."""
+    def served_descriptors(self) -> tuple[ToolDescriptor, ...]:
+        """The catalog this deployment serves: without the operations whose layer
+        it does not process (D143 §7.4). With every layer on, ``descriptors()``."""
+        served = self._executor.served_layers(deployment_id=self._deployment_id)
+        return tuple(
+            descriptor
+            for descriptor in self.descriptors()
+            if ProcessingLayer.FACTS in served
+            or descriptor.name not in FACTS_ONLY_OPERATIONS
+        )
+
+    def run(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, object],
+        layers: frozenset[ProcessingLayer] | None = None,
+    ) -> OperationResult:
+        """Validate transport arguments and run one canonical operation.
+
+        ``layers`` is the D143 request option narrowing the layers it reads.
+        """
         operation = self._registry.by_name(deployment_id=self._deployment_id, name=name)
         if operation is None:
             raise UnknownOperationError(name)
@@ -73,6 +94,7 @@ class OperationSurface:
             deployment_id=self._deployment_id,
             operation=operation,
             arguments=_coerce_arguments(operation=operation, arguments=arguments),
+            layers=layers,
         )
 
     def adjacent_chunks(self, *, chunk_id: UUID, window: int = 1) -> Envelope:
@@ -80,6 +102,10 @@ class OperationSurface:
         return self._executor.adjacent_chunks(
             deployment_id=self._deployment_id, chunk_id=chunk_id, window=window
         )
+
+
+FACTS_ONLY_OPERATIONS: frozenset[str] = frozenset({"facts_context", "resolve_entity"})
+"""Operations that read only the facts layer; not served without it (D143 §7.4)."""
 
 
 def operation_descriptors(

@@ -10,7 +10,6 @@ from rememberstack.model.metering import ManagedTextClassificationError
 
 DOC_TEXT_CLASSIFIER_VERSION = "doc-text-classifier-v1"
 DOC_TEXT_MEASUREMENT_ALGORITHM_VERSION = "unicode-whitespace-scalars-v1"
-DOC_TEXT_PROCESSING_PROFILE_ID = "doc-text-standard-v1"
 DOC_TEXT_MAX_SOURCE_BYTES = 10_000_000
 
 _BINARY_MAGICS: tuple[bytes, ...] = (

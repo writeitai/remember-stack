@@ -1476,6 +1476,12 @@ _POSTGRES_SCRUB = (
     ),
     text(
         """
+        DELETE FROM processing_layer_gaps
+        WHERE deployment_id = :deployment_id AND doc_id = :doc_id
+        """
+    ),
+    text(
+        """
         DELETE FROM relations
         WHERE deployment_id = :deployment_id AND relation_id = ANY(:fact_ids)
         """

@@ -476,7 +476,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_39_0060'
+            'SELECT version_num FROM alembic_version')" = 'p9_40_0061'
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

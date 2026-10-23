@@ -120,10 +120,14 @@ from rememberstack.model import VersionKeyConflictError
 from rememberstack.model.auth import PerimeterScope
 from rememberstack.model.client import DocumentSearchPage
 from rememberstack.model.client import DocumentSearchRequest
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
 from rememberstack.model.client import SECTION_HISTORY_MAX_K
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.auth import AuthPerimeterPort
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionRefused
@@ -131,6 +135,7 @@ from rememberstack.surfaces.direct_admission import DirectPathAdmission
 from rememberstack.surfaces.direct_admission import RequestHold
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
+from rememberstack.surfaces.operation_surface import FACTS_ONLY_OPERATIONS
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
@@ -596,6 +601,30 @@ def build_api(
             status_code=503, content={"detail": "model provider unavailable"}
         )
 
+    @app.exception_handler(LayerUnavailableError)
+    def layer_unavailable(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: a read needs a processing layer this deployment does not serve."""
+        assert isinstance(error, LayerUnavailableError)
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "layer_unavailable",
+                    "layer": error.layer.value,
+                    "status": "disabled",
+                    "message": str(error),
+                }
+            },
+        )
+
+    @app.exception_handler(LayerSelectionError)
+    def layer_selection_invalid(_request: Request, error: Exception) -> JSONResponse:
+        """D143 §7.2: the ``layers`` selection cannot be honoured by this read."""
+        return JSONResponse(
+            status_code=422,
+            content={"detail": {"code": "invalid_parameter", "message": str(error)}},
+        )
+
     @app.get("/resolve", response_model=Envelope)
     def resolve(
         name: str,
@@ -785,12 +814,13 @@ def build_api(
             app=app, effective_time=effective_time, deployment_id=deployment_id
         )
     if graph is not None:
-        _mount_graph(app=app, graph=graph)
+        _mount_graph(app=app, graph=graph, engine=engine, deployment_id=deployment_id)
     if build_info is not None:
         _mount_build_info(
             app=app,
             build_info=build_info,
             deployment_id=deployment_id,
+            engine=engine,
             tools=_served_tools(
                 operations=surface is not None,
                 open_query=open_query is not None,
@@ -999,6 +1029,7 @@ def _mount_build_info(
     build_info: BuildInfoPort,
     deployment_id: UUID,
     tools: dict[str, int],
+    engine: QueryEngine,
 ) -> None:
     """Mount `GET /deployment`, the provenance a caller checks before working.
 
@@ -1019,10 +1050,26 @@ def _mount_build_info(
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
-        """Report which code, model bindings and tools are serving, before any work."""
+        """Report which code, model bindings and tools are serving, before any work.
+
+        D143 §7.4: tools that read only an unserved layer are not listed.
+        """
+        served = engine.served_layers(deployment_id=deployment_id)
         return build_info.build_info(deployment_id=deployment_id).model_copy(
-            update={"tools": dict(tools)}
+            update={
+                "tools": {
+                    name: version
+                    for name, version in tools.items()
+                    if ProcessingLayer.FACTS in served
+                    or name not in FACTS_ONLY_OPERATIONS
+                }
+            }
         )
+
+    @app.get("/processing-layers", response_model=ProcessingLayerStates)
+    def processing_layers() -> ProcessingLayerStates:
+        """D143 §7.4: each switchable layer is enabled, backfilling or disabled."""
+        return engine.layer_states(deployment_id=deployment_id)
 
 
 @contextmanager
@@ -1051,12 +1098,23 @@ def _graph_errors() -> Iterator[None]:
 _TRANSACTION_TIMEOUT: Final = "25P04"
 
 
-def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
-    """Mount the three server-owned graph operations."""
+_FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
+"""The entity graph's layer (D143 §7.2)."""
+
+
+def _mount_graph(
+    *, app: FastAPI, graph: GraphQueryPort, engine: QueryEngine, deployment_id: UUID
+) -> None:
+    """Mount the three server-owned graph operations.
+
+    The entity graph reads the facts layer; citation paths read sources
+    (D143 §7.2).
+    """
 
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
+        engine.layer_admission(deployment_id=deployment_id, channels=_FACTS_LAYER)
         with _graph_errors():
             return graph.neighborhood(
                 entity_id=body.entity_id,
@@ -1072,6 +1130,7 @@ def _mount_graph(*, app: FastAPI, graph: GraphQueryPort) -> None:
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
+        engine.layer_admission(deployment_id=deployment_id, channels=_FACTS_LAYER)
         with _graph_errors():
             return graph.path(
                 from_entity_id=body.from_entity_id,
@@ -1758,14 +1817,24 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
 
     @app.get("/operations", response_model=list[ToolDescriptor])
     def list_operations() -> list[ToolDescriptor]:
-        """The four assured operations for this deployment."""
-        return list(surface.descriptors())
+        """The assured operations this deployment serves (D143: by its layers)."""
+        return list(surface.served_descriptors())
 
     @app.post("/operations/{name}", response_model=Envelope | ContextBundleV2)
     def run_operation(
         name: str,
         arguments: Annotated[dict[str, object], Body(default_factory=dict)],
         request: Request,
+        layers: Annotated[
+            list[ProcessingLayer] | None,
+            Query(
+                description=(
+                    "D143: the processing layers this request may read"
+                    " (sources, claims, facts); default every layer the"
+                    " deployment serves."
+                )
+            ),
+        ] = None,
     ) -> Envelope | ContextBundleV2:
         """Run one assured operation by name over JSON arguments.
 
@@ -1788,7 +1857,11 @@ def _mount_operations(*, app: FastAPI, surface: OperationSurface) -> None:
                     status_code=403, detail="credential may not perform this operation"
                 )
         try:
-            return surface.run(name=name, arguments=arguments)
+            return surface.run(
+                name=name,
+                arguments=arguments,
+                layers=None if layers is None else frozenset(layers),
+            )
         except UnknownOperationError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
         except (MissingArgumentError, InvalidArgumentError) as error:

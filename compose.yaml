@@ -38,6 +38,11 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME}
     REMEMBERSTACK_SELFHOST_API_PORT: "8000"
+    # Processing layers (D143). Both default to true; facts requires claims.
+    # Switching one off stops new work for that layer and hides it from
+    # retrieval; switching it back on backfills it oldest version first.
+    REMEMBERSTACK_SELFHOST_CLAIMS_LAYER: "${REMEMBERSTACK_SELFHOST_CLAIMS_LAYER:-true}"
+    REMEMBERSTACK_SELFHOST_FACTS_LAYER: "${REMEMBERSTACK_SELFHOST_FACTS_LAYER:-true}"
     # Believe X-Ingest-Principal-* on POST /ingest (D101). Leave false unless
     # this deployment is reachable ONLY by a control plane that already
     # authenticated the actor it names; on a public perimeter attribution

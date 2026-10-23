@@ -164,6 +164,7 @@ class FactWindowReviewHandler:
                         NAMESPACE_URL, f"fact-window-review-next:{work.processing_id}"
                     ),
                     after=next_after,
+                    lane=work.lane,
                 ),
             )
         )
