@@ -1,5 +1,7 @@
 """Origin metadata reaches extraction without changing source evidence or locality."""
 
+from typing import TypedDict
+
 from rememberstack.core.chunker import extraction_input_hash
 from rememberstack.core.source_origins import origin_input_hash
 from rememberstack.core.source_origins import origin_segments
@@ -9,6 +11,16 @@ from rememberstack.core.source_passages import render_passage_catalog
 from rememberstack.core.source_passages import SourcePassage
 from rememberstack.core.text_origin import reuse_identity_hash
 from rememberstack.model import DerivationRange
+
+
+class _HashInputs(TypedDict):
+    """Shared stable inputs for comparing two converter-origin interpretations."""
+
+    own_block_hashes: tuple[str, ...]
+    neighbor_block_hashes: tuple[str, ...]
+    header_facts: tuple[str, ...]
+    extractor_version: str
+    structurer_version: str
 
 
 def test_mixed_target_preserves_direct_statement_and_scanned_contents() -> None:
@@ -182,7 +194,7 @@ def test_origin_semantics_change_selection_and_date_free_identity() -> None:
     )
     old = origin_input_hash(start=0, end=10, ranges=direct)
     new = origin_input_hash(start=0, end=10, ranges=observed)
-    common = dict(
+    common = _HashInputs(
         own_block_hashes=("same-content",),
         neighbor_block_hashes=("", ""),
         header_facts=("stable-title",),

@@ -24,7 +24,9 @@ from rememberstack.model import DerivationRange
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.model.claims import SourceReferenceCard
 
-REFERENCE_POLICY_VERSION: Final = "d122-ref-policy-2:cards4-claimify8-chars4096-prev8:source-origins-1"
+REFERENCE_POLICY_VERSION: Final = (
+    "d122-ref-policy-2:cards4-claimify8-chars4096-prev8:source-origins-1"
+)
 MAX_CARDS_PER_SELECTION: Final = 4
 MAX_CARDS_PER_CLAIMIFY: Final = 8
 MAX_CARD_CHARS: Final = 4096
