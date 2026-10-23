@@ -2054,7 +2054,9 @@ def test_unbilled_http_200_flex_capacity_error_is_retried(
     assert len(calls) == 2
     assert response.usage.cost_usd == Decimal("0.01")
     if routed:
-        assert calls[-1]["provider"]["only"] == ["openai/flex"]
+        routing = calls[-1]["provider"]
+        assert isinstance(routing, dict)
+        assert routing["only"] == ["openai/flex"]
 
 
 def test_capacity_retry_never_regenerates_a_billed_response() -> None:
