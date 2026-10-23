@@ -324,6 +324,18 @@ does not add a retrieval path; it returns the complete claims-and-sources and fa
 members of `ContextBundle/v2`. The exact contracts and bounds live in
 `open_query_space_design.md` §3.1.
 
+**Processing layers (D143).** Every read belongs to one or more layers — *sources* (chunks,
+documents, sections, references), *claims* and *facts* (entities, relations, observations, the
+entity graph, plane-K pages). A request reads the layers the deployment serves (its enabled
+layers); a caller may narrow that with a `layers` selection on `POST /operations/{name}` and
+the sandbox execution routes, outside the operations' argument schemas. A single-layer read
+of an unserved layer is refused with 409 `layer_unavailable`; `claims_and_sources_context`
+and `combined_context` answer from the served layers, and an empty answer whose channels were
+not all consulted is a `boundary` negative, never `known_empty`. No response field is added, so
+the result schemas in the manifest are unchanged. With facts unserved, `facts_context` and
+`resolve_entity` are not listed. The per-read table and the rules are in the
+[processing layers design §7](processing_layers_design.md#7-retrieval).
+
 ## 5. The response envelope — the contract is the answer's self-account (D49)
 
 Most systems return rows. This one returns rows **plus machine-readable claims about the
