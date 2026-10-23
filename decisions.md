@@ -7147,7 +7147,8 @@ reviews [r1](design/reviews/REVIEW_gpt-6.1-sol_d142_design_r1_2026-10-21.md),
 
 ## D143. Processing layers can be switched off per deployment and per request
 
-**Status:** accepted on merge of the design pull request; implementation is not implied.
+**Status:** accepted (design approved by GPT-6.1 Sol review round 9, 2026-10-23); binding on
+merge of PR #515; implementation is not implied.
 **Date:** 2026-10-23.
 
 **Context.** Every version ran the whole pipeline and every read consulted every kind of
@@ -7236,4 +7237,5 @@ fact child).
 
 **Authority:** [design](plan/designs/processing_layers_design.md),
 [analysis](plan/analysis/processing_layer_toggles.md),
-[delivery](plan/plans/processing_layers.md).
+[delivery](plan/plans/processing_layers.md); reviews r1–r9 and responses in `design/reviews/`
+(`REVIEW_gpt-6.1-sol_d143_design_r*`, `RESPONSE_d143_design_r*`).
