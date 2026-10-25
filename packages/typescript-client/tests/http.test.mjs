@@ -244,6 +244,12 @@ test('citation path edges keep each reference binding and source label',async()=
   try{
     const envelope=await client.graphCitationPath({fromDocId:a,toDocId:c});
     assert.deepEqual(envelope.paths[0].edges.map(item=>[item.bindings,item.source_labels]),[[['pinned'],[]],[['floating'],['wording-unresolved']]]);
+    // A merged edge keeps every value; an older payload without the fields reads as empty.
+    const merged={...edges[0],bindings:['floating','pinned'],source_labels:['cz:static','wording-unresolved']};
+    const {bindings:_b,source_labels:_l,...legacy}=edges[1];
+    answer={...answer,paths:[{length:2,nodes,edges:[merged,legacy]}],edges:[merged,legacy]};
+    const mixed=await client.graphCitationPath({fromDocId:a,toDocId:c});
+    for(const list of [mixed.edges,mixed.paths[0].edges])assert.deepEqual(list.map(item=>[item.bindings,item.source_labels]),[[['floating','pinned'],['cz:static','wording-unresolved']],[[],[]]]);
     answer={...answer,edges:[{...edges[0],bindings:['dynamic']}]};
     await assert.rejects(client.graphCitationPath({fromDocId:a,toDocId:c}),MemoryApiError);
   }finally{client.close();}
