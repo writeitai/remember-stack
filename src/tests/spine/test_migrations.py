@@ -143,6 +143,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_37_0058",
         "p9_38_0059",
         "p9_39_0060",
+        "p9_40_0061",
     )
     assert len(script.get_heads()) == 1
 
@@ -684,7 +685,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_39_0060"
+    assert head_before_noop == head_after_noop == "p9_40_0061"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1265,6 +1266,85 @@ def test_coordinate_binding_downgrade_restores_prior_view_metadata() -> None:
         command.upgrade(config=config, revision="head")
 
 
+def test_citation_projection_migration_round_trips_graph_metadata() -> None:
+    """p9_40 swaps the citation source in place and its downgrade restores p9_39.
+
+    At head the projection carries the merged qualifiers, the helper expands
+    it, and the D98 catalog check passes; the downgrade leaves the view, the
+    helper, the property graph and their grants exactly as p9_39 had them.
+    """
+    from rememberstack.spine.graph_catalog import graph_catalog_problems
+
+    database_url = _database_url()
+    config = _alembic_config(database_url=database_url)
+
+    def metadata() -> dict[str, object]:
+        """Read the objects the migration replaces, with owners and grants."""
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                return dict(
+                    connection.execute(
+                        text(
+                            "SELECT"
+                            " pg_get_viewdef('rememberstack_graph_internal."
+                            "crossrefs_live'::regclass, true) AS view,"
+                            " (SELECT relacl::text FROM pg_class WHERE oid ="
+                            " 'rememberstack_graph_internal.crossrefs_live'"
+                            "::regclass) AS view_acl,"
+                            " pg_get_propgraphdef('memory_v1.memory_current'"
+                            "::regclass) AS graph,"
+                            " (SELECT relacl::text FROM pg_class WHERE oid ="
+                            " 'memory_v1.memory_current'::regclass) AS graph_acl,"
+                            " p.prosrc AS helper, p.proconfig::text AS config,"
+                            " p.proacl::text AS helper_acl,"
+                            " obj_description(p.oid, 'pg_proc') AS comment,"
+                            " pg_get_userbyid(p.proowner) AS owner"
+                            " FROM pg_proc AS p"
+                            " WHERE p.oid = 'memory_v1.graph_citation_path(uuid,"
+                            " uuid, uuid, integer, integer, integer, integer,"
+                            " integer)'::regprocedure"
+                        )
+                    )
+                    .mappings()
+                    .one()
+                )
+        finally:
+            engine.dispose()
+
+    def problems() -> tuple[str, ...]:
+        """Run the semantic D98 catalog check."""
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                return graph_catalog_problems(connection=connection)
+        finally:
+            engine.dispose()
+
+    reset_database(config=config)
+    command.upgrade(config=config, revision="p9_39_0060")
+    prior = metadata()
+    assert "memory_v1.document_crossrefs_live" in str(prior["helper"])
+    try:
+        command.upgrade(config=config, revision="p9_40_0061")
+        head = metadata()
+        assert "bindings" in str(head["view"]) and "source_labels" in str(head["view"])
+        assert "rememberstack_graph_internal.crossrefs_live" in str(head["helper"])
+        assert "document_crossrefs_live" not in str(head["helper"])
+        assert {key: head[key] for key in ("graph", "graph_acl", "view_acl")} == {
+            key: prior[key] for key in ("graph", "graph_acl", "view_acl")
+        }
+        assert {
+            key: head[key] for key in ("config", "helper_acl", "comment", "owner")
+        } == {key: prior[key] for key in ("config", "helper_acl", "comment", "owner")}
+        assert problems() == ()
+        command.downgrade(config=config, revision="p9_39_0060")
+        assert metadata() == prior
+        assert problems() == ()
+    finally:
+        command.upgrade(config=config, revision="head")
+
+
 def test_d118_refuses_lossy_downgrade() -> None:
     """A downgrade cannot erase application receipts or restore false date semantics."""
     database_url = _database_url()
@@ -1272,7 +1352,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_39_0060"
+    assert _head_revision(database_url=database_url) == "p9_40_0061"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1316,7 +1396,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_39_0060"
+    assert _head_revision(database_url=database_url) == "p9_40_0061"
 
 
 _BACKFILL_MIMES = (
@@ -1525,7 +1605,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_39_0060"
+    assert _head_revision(database_url=database_url) == "p9_40_0061"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1584,7 +1664,7 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_39_0060"
+    assert _head_revision(database_url=database_url) == "p9_40_0061"
 
 
 def test_d138_downgrade_guard_protects_search_only_readings() -> None:
@@ -1719,4 +1799,4 @@ def test_d138_downgrade_guard_protects_search_only_readings() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_39_0060"
+    assert _head_revision(database_url=database_url) == "p9_40_0061"

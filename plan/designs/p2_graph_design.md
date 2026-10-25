@@ -403,21 +403,28 @@ private `crossrefs_live` source view therefore projects one lineage-to-lineage
 edge per `(from_doc_id, to_doc_id, kind)` among resolved, live references made
 by the versions `memory_v1.versions_in_scope` selects under `current` (in force
 now for lineages with declared effective periods; the current version
-otherwise); `crossref_id` is the smallest contributing row id. Traversal keeps
-this current, structural meaning. Time-scoped and section-level reference
+otherwise); `crossref_id` is the smallest contributing row id, and the edge's
+`context` and `created_at` are that row's. Traversal keeps this current,
+structural meaning: `graph_citation_path` expands this projection, never the
+public `memory_v1.document_crossrefs_live`. That view has one row per
+reference made by any non-tombstoned version, which is version history.
+Expanding it would follow a citation that only a superseded or repealed
+wording makes, and would return the same document route once per parallel
+reference, spending the path budget on copies. Time-scoped and section-level reference
 questions are answered by the `document_references` operation
 ([D140 design §6.2](effective_time_and_section_references_design.md#62-reading-references)),
 not by graph traversal; sections are not graph vertices.
 
 A citation edge still says how the citing document refers to the cited one.
-Hydration returns, on every citation `GraphEdge`, the qualifiers of the
-references the edge stands for:
+The projection carries, and hydration returns on every citation `GraphEdge`,
+the qualifiers of all the references the edge merges:
 
 - `bindings`: the distinct `binding` values, sorted. `floating` means the
   reference reads whichever target versions are in force when it is read (the
   dynamic reading); `pinned` means it names one target version, such as a
   statute citation "in the wording of Act No. X".
-- `source_labels`: the distinct non-null `source_label` values, sorted. A label
+- `source_labels`: the distinct non-null `source_label` values, sorted by their
+  bytes (so the order does not depend on the database collation). A label
   is the caller's own opaque type code, returned verbatim. LegalIt, for
   example, marks a citation whose named wording it could not determine with a
   label containing `wording-unresolved`.

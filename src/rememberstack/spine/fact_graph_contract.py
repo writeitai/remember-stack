@@ -130,10 +130,9 @@ def _rebuild(
     if d140:
         # D140 replaced the crossref graph source (version grain, active
         # generations, versions in force now) and added grants; a repair must
-        # restore that shape, not the p9_17 one.
-        from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
-            GRAPH_CROSSREFS_SOURCE_DDL,
-        )
+        # restore that shape, not the p9_17 one. p9_40_0061 adds the merged
+        # reference qualifiers to it and makes the citation helper traverse
+        # it, so the repair restores those too.
         from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
             GRAPH_GATE_DDL,
         )
@@ -143,14 +142,24 @@ def _rebuild(
         from rememberstack.spine.migrations.versions.p9_38_0059_d140_effective_time import (
             QUERY_ROLE_GRANTS,
         )
+        from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+            citation_path_helper,
+        )
+        from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+            GRAPH_CROSSREFS_PROJECTION_DDL,
+        )
 
         # the schema drop above removed the gate function: it must exist
         # before the gated helpers that call it
+        statements = tuple(
+            citation_path_helper() if ddl == graph._CITATION_PATH_HELPER else ddl
+            for ddl in statements
+        )
         position = statements.index(sources) + 1
         statements = (
             *statements[:position],
             "DROP VIEW rememberstack_graph_internal.crossrefs_live",
-            GRAPH_CROSSREFS_SOURCE_DDL,
+            GRAPH_CROSSREFS_PROJECTION_DDL,
             GRAPH_GATE_DDL,
             *statements[position:],
             QUERY_ROLE_GRANTS,

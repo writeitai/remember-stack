@@ -846,7 +846,8 @@ source kind may disable extraction for it by configuration.
 - **Graph edge.** The `document_crossref` edge stays lineage to lineage. Its source view
   deduplicates to one edge per `(from_doc_id, to_doc_id, kind)` among resolved references made
   by the versions `versions_in_scope` selects under `current`; `crossref_id` is the smallest
-  contributing row id. `graph_citation_path` keeps its current, structural semantics;
+  contributing row id. `graph_citation_path` traverses this projection, so it keeps its
+  current, structural semantics;
   time-scoped and section-level questions go through `document_references`. Each
   returned citation edge carries `bindings` and `source_labels`: the distinct `binding`
   values and non-null `source_label` values of the references it merges, so a pinned or

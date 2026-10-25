@@ -610,12 +610,29 @@ _DOCUMENT_ROWS = text(
     """
 ).bindparams(bindparam("document_ids", expanding=True))
 
+# A citation edge is a projection row, keyed by its representative reference.
+# The public row of that reference names the group (source, target, kind); the
+# projection is filtered on those grouping columns, never on the aggregated
+# id, so the read stays one indexed probe per edge. An edge whose
+# representative changed since the traversal statement is absent.
 _CROSSREF_ROWS = text(
     """
-    SELECT crossref_id, from_doc_id, to_doc_id, kind, context, binding,
-           source_label
-    FROM memory_v1.document_crossrefs_live
-    WHERE deployment_id = :deployment_id AND crossref_id IN :crossref_ids
+    SELECT edge.crossref_id, edge.from_doc_id, edge.to_doc_id, edge.kind,
+           edge.context, edge.bindings, edge.source_labels
+    FROM memory_v1.document_crossrefs_live AS reference
+    CROSS JOIN LATERAL (
+      SELECT projected.crossref_id, projected.from_doc_id, projected.to_doc_id,
+             projected.kind, projected.context, projected.bindings,
+             projected.source_labels
+      FROM rememberstack_graph_internal.crossrefs_live AS projected
+      WHERE projected.deployment_id = reference.deployment_id
+        AND projected.from_doc_id = reference.from_doc_id
+        AND projected.to_doc_id = reference.to_doc_id
+        AND projected.kind = reference.kind
+    ) AS edge
+    WHERE reference.deployment_id = :deployment_id
+      AND reference.crossref_id IN :crossref_ids
+      AND edge.crossref_id = reference.crossref_id
     """
 ).bindparams(bindparam("crossref_ids", expanding=True))
 
@@ -933,12 +950,11 @@ def _hydrate_citation_paths(
 
 
 def _citation_edge(*, row: RowMapping) -> GraphEdge:
-    """Convert one live reference row into a document-to-document edge.
+    """Convert one projection row into a document-to-document edge.
 
-    The citation helper expands each live reference row as its own edge, so
-    the edge's qualifiers are that one reference's binding and label.
+    The edge merges every current reference between its two documents of one
+    kind; its qualifiers are the distinct bindings and labels of all of them.
     """
-    label = cast("str | None", row["source_label"])
     return GraphEdge(
         relation_id=UUID(str(row["crossref_id"])),
         subject_id=UUID(str(row["from_doc_id"])),
@@ -950,8 +966,8 @@ def _citation_edge(*, row: RowMapping) -> GraphEdge:
         valid_until=None,
         ingested_at=None,
         invalidated_at=None,
-        bindings=(cast(ReferenceBinding, row["binding"]),),
-        source_labels=() if label is None else (label,),
+        bindings=tuple(cast(list[ReferenceBinding], row["bindings"])),
+        source_labels=tuple(cast(list[str], row["source_labels"])),
     )
 
 

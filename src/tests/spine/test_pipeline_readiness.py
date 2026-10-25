@@ -185,6 +185,29 @@ def test_graph_catalog_ensure_repairs_missing_replayable_metadata(
     assert result.problems_before
     assert result.problems_after == ()
     assert set(result.definitions) == {"memory_current", "memory_history"}
+    # The replay restores head's citation source: the merged projection with
+    # its qualifiers, and the helper that traverses it (p9_40_0061).
+    with engine.connect() as connection:
+        helper = str(
+            connection.execute(
+                text(
+                    "SELECT prosrc FROM pg_proc WHERE oid ="
+                    " 'memory_v1.graph_citation_path(uuid, uuid, uuid, integer,"
+                    " integer, integer, integer, integer)'::regprocedure"
+                )
+            ).scalar_one()
+        )
+        columns = set(
+            connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'rememberstack_graph_internal'"
+                    " AND table_name = 'crossrefs_live'"
+                )
+            ).scalars()
+        )
+    assert "FROM rememberstack_graph_internal.crossrefs_live AS x" in helper
+    assert {"bindings", "source_labels"} <= columns
 
 
 def test_graph_catalog_ensure_repairs_graph_role_limits_and_helper_acl(
