@@ -12098,10 +12098,10 @@ cites B, B cites C, and so on.
 | `max_hops` | integer | no | `6` | 1 to 6. |
 
 Unknown fields are rejected. At most 10 paths are returned. This route takes
-no clocks; it reads the current document graph. An edge here is one per pair
-of documents and reference kind, among the resolved references made by the
-versions in force now. To follow references at section level, or at another
-time, use [`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+no clocks. Each edge is one resolved reference, made by a live version of the
+citing document, to a live document, so two references between the same pair
+of documents are two edges and can give two paths. To follow references at
+section level, or at a chosen time, use [`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
 
 ### Response
 
@@ -12113,7 +12113,14 @@ documents:
 - each `GraphEdge` is a citation: `relation_id` holds the cross-reference id,
   `subject_id` and `object_id` the citing and cited documents, `predicate` the
   kind of reference and `fact` its context text. `evidence_count` is `0` and
-  the validity fields are `null`.
+  the validity fields are `null`;
+- `bindings` says how the reference picks the cited document's wording:
+  `["floating"]` means whichever versions are in force when you read it,
+  `["pinned"]` means one named version (`document_references` returns which);
+- `source_labels` holds the reference's `source_label`, the type code the
+  caller supplied with it, verbatim; it is empty when there was none. A label
+  such as `wording-unresolved` tells you the citation is uncertain, so read
+  it before you rely on the path.
 
 `temporal_scope.mode` is `current` when chains are found.
 
@@ -13595,6 +13602,8 @@ One recorded decision.
 | `ingested_at` | UTC date-time, nullable | |
 | `invalidated_at` | UTC date-time, nullable | |
 | `support` | [`FactSupport`](#factsupport) | Default `current`. |
+| `bindings` | array of string | On citation paths, the reference's binding: `floating` (the cited document's versions in force when read) or `pinned` (one named version). Empty on entity edges. |
+| `source_labels` | array of string | On citation paths, the reference's caller-supplied `source_label`, verbatim; empty when it has none, and on entity edges. |
 
 ### GraphPath
 

@@ -233,6 +233,22 @@ test('general API timestamps require offsets before HTTP while UTC-only fields r
   }finally{client.close();}
 });
 
+test('citation path edges keep each reference binding and source label',async()=>{
+  const [a,b,c]=['20000000-0000-0000-0000-00000000000a','20000000-0000-0000-0000-00000000000b','20000000-0000-0000-0000-00000000000c'];
+  /** One citation edge as the engine hydrates it. */
+  const edge=({relation,subject,object,bindings,labels})=>({relation_id:relation,subject_id:subject,object_id:object,predicate:'cites',fact:null,evidence_count:0,valid_from:null,valid_until:null,ingested_at:null,invalidated_at:null,bindings,source_labels:labels});
+  const edges=[edge({relation:'30000000-0000-0000-0000-000000000001',subject:a,object:b,bindings:['pinned'],labels:[]}),edge({relation:'30000000-0000-0000-0000-000000000002',subject:b,object:c,bindings:['floating'],labels:['wording-unresolved']})];
+  const nodes=[a,b,c].map((doc,hops)=>({entity_id:doc,name:doc,hops}));
+  let answer={...fixtures.envelope,grain:'fact',nodes,paths:[{length:2,nodes,edges}],edges};
+  const client=new Client({client:{request:async()=>Response.json(answer)}});
+  try{
+    const envelope=await client.graphCitationPath({fromDocId:a,toDocId:c});
+    assert.deepEqual(envelope.paths[0].edges.map(item=>[item.bindings,item.source_labels]),[[['pinned'],[]],[['floating'],['wording-unresolved']]]);
+    answer={...answer,edges:[{...edges[0],bindings:['dynamic']}]};
+    await assert.rejects(client.graphCitationPath({fromDocId:a,toDocId:c}),MemoryApiError);
+  }finally{client.close();}
+});
+
 test('unsafe integer query parameters refuse before HTTP',async()=>{
   let calls=0;const client=new Client({client:{request:async()=>{calls++;return Response.json(fixtures.envelope);}}});
   try{await assert.rejects(client.lookupRelations({k:2**53}),error=>error instanceof InputValidationError&&error.code==='numeric.precision');assert.equal(calls,0);}finally{client.close();}
