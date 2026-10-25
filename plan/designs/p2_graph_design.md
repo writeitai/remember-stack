@@ -409,6 +409,29 @@ questions are answered by the `document_references` operation
 ([D140 design §6.2](effective_time_and_section_references_design.md#62-reading-references)),
 not by graph traversal; sections are not graph vertices.
 
+A citation edge still says how the citing document refers to the cited one.
+Hydration returns, on every citation `GraphEdge`, the qualifiers of the
+references the edge stands for:
+
+- `bindings`: the distinct `binding` values, sorted. `floating` means the
+  reference reads whichever target versions are in force when it is read (the
+  dynamic reading); `pinned` means it names one target version, such as a
+  statute citation "in the wording of Act No. X".
+- `source_labels`: the distinct non-null `source_label` values, sorted. A label
+  is the caller's own opaque type code, returned verbatim. LegalIt, for
+  example, marks a citation whose named wording it could not determine with a
+  label containing `wording-unresolved`.
+
+Both are sets, not single values, because the projection merges every
+reference between the same two documents of the same kind into one edge. If
+act A cites act B ten times and one of those citations is pinned or flagged,
+the edge must show that, not only the values of its smallest row. Without
+them a path reads as a plain "A cites B", and an agent would assume the
+dynamic reading of every citation. Entity edges carry neither field (both are
+empty). Which section a reference comes from and which target version a
+pinned reference names stay with `document_references`; the graph returns
+only what an agent needs to know that it must look.
+
 ### 4.3 Temporal semantics
 
 With neither instant supplied, traversal reads `graph_edges_current`. With both

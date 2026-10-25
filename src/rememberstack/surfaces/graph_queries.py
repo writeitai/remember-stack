@@ -31,6 +31,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.models import ReferenceBinding
 from rememberstack.model import AsOfTemporalScope
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
@@ -611,7 +612,8 @@ _DOCUMENT_ROWS = text(
 
 _CROSSREF_ROWS = text(
     """
-    SELECT crossref_id, from_doc_id, to_doc_id, kind, context
+    SELECT crossref_id, from_doc_id, to_doc_id, kind, context, binding,
+           source_label
     FROM memory_v1.document_crossrefs_live
     WHERE deployment_id = :deployment_id AND crossref_id IN :crossref_ids
     """
@@ -924,22 +926,33 @@ def _hydrate_citation_paths(
             for index, identifier in enumerate(raw_nodes)
         )
         edges = tuple(
-            GraphEdge(
-                relation_id=identifier,
-                subject_id=UUID(str(crossrefs[identifier]["from_doc_id"])),
-                object_id=UUID(str(crossrefs[identifier]["to_doc_id"])),
-                predicate=str(crossrefs[identifier]["kind"]),
-                fact=cast("str | None", crossrefs[identifier]["context"]),
-                evidence_count=0,
-                valid_from=None,
-                valid_until=None,
-                ingested_at=None,
-                invalidated_at=None,
-            )
-            for identifier in raw_edges
+            _citation_edge(row=crossrefs[identifier]) for identifier in raw_edges
         )
         paths.append(GraphPath(length=len(edges), nodes=nodes, edges=edges))
     return tuple(paths)
+
+
+def _citation_edge(*, row: RowMapping) -> GraphEdge:
+    """Convert one live reference row into a document-to-document edge.
+
+    The citation helper expands each live reference row as its own edge, so
+    the edge's qualifiers are that one reference's binding and label.
+    """
+    label = cast("str | None", row["source_label"])
+    return GraphEdge(
+        relation_id=UUID(str(row["crossref_id"])),
+        subject_id=UUID(str(row["from_doc_id"])),
+        object_id=UUID(str(row["to_doc_id"])),
+        predicate=str(row["kind"]),
+        fact=cast("str | None", row["context"]),
+        evidence_count=0,
+        valid_from=None,
+        valid_until=None,
+        ingested_at=None,
+        invalidated_at=None,
+        bindings=(cast(ReferenceBinding, row["binding"]),),
+        source_labels=() if label is None else (label,),
+    )
 
 
 def _graph_edge(*, row: RowMapping) -> GraphEdge:

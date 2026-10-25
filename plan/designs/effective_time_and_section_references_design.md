@@ -845,7 +845,11 @@ source kind may disable extraction for it by configuration.
   deduplicates to one edge per `(from_doc_id, to_doc_id, kind)` among resolved references made
   by the versions `versions_in_scope` selects under `current`; `crossref_id` is the smallest
   contributing row id. `graph_citation_path` keeps its current, structural semantics;
-  time-scoped and section-level questions go through `document_references`.
+  time-scoped and section-level questions go through `document_references`. Each
+  returned citation edge carries `bindings` and `source_labels`: the distinct `binding`
+  values and non-null `source_label` values of the references it merges, so a pinned or
+  caller-flagged citation stays visible on a path
+  ([p2 graph design §4.2](p2_graph_design.md#42-work-bounded-frontier-traversal)).
 - **Why sections are not graph vertices.** Section references are read one source or target at
   a time with keyset paging (§6.2); nothing needs multi-hop traversal at section grain, and the
   graph's purpose is entity relations. Adding millions of section vertices would cost memory and
