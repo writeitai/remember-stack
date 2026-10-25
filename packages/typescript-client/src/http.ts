@@ -200,6 +200,9 @@ export async function checkedResponse({ response, path }: { response: Response; 
         } else detail = 'deployment API returned a malformed structured error';
       } else if (detailObject.code === 'layer_unavailable') {
         throw new LayerUnavailable({ detail: detailObject.message ? String(detailObject.message) : '', layer: detailObject.layer ? String(detailObject.layer) : '' });
+      } else if (detailObject.code === 'invalid_parameter' && typeof detailObject.message === 'string') {
+        // The structured 422 of operation arguments and of a D143 layers selection keeps its code.
+        code = 'invalid_parameter'; detail = detailObject.message;
       } else detail = JSON.stringify(detailObject);
     } else detail = typeof envelope.detail==='object' ? JSON.stringify(envelope.detail) : String(envelope.detail);
   }

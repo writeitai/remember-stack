@@ -162,15 +162,12 @@ class LocalMountPublisher:
         if self._catalog is None or self._corpusfs_store is None:
             link.mkdir(parents=True, exist_ok=True)
             return
-        latest = self._catalog.latest_snapshot(
-            deployment_id=deployment_id, plane="P3_corpusfs"
+        # D143 §7.6: the latest published snapshot built for the served set,
+        # never one built for another; the placeholder stands until one exists.
+        latest = self._catalog.latest_servable_snapshot(
+            deployment_id=deployment_id,
+            facts=self._catalog.facts_served(deployment_id=deployment_id),
         )
-        if latest is not None and _built_with_facts(
-            snapshot=latest
-        ) != self._catalog.facts_served(deployment_id=deployment_id):
-            # D143 §7.6: never activate a snapshot built for another served
-            # set; the placeholder stands until a matching one is published.
-            latest = None
         if latest is None:
             empty = link.parent / "p3-empty"
             empty.mkdir(parents=True, exist_ok=True)
@@ -203,14 +200,6 @@ class LocalMountPublisher:
             except OSError:  # another publisher won the race — theirs is fine
                 shutil.rmtree(staging, ignore_errors=True)
         _point(link=link, target=served)
-
-
-def _built_with_facts(*, snapshot: dict[str, object]) -> bool:
-    """Whether a published P3 snapshot was rendered with the facts layer."""
-    validation = snapshot.get("validation")
-    if isinstance(validation, dict):
-        return validation.get("facts", True) is not False
-    return True
 
 
 class AuditedRawReader:

@@ -76,6 +76,22 @@ def take_layer_fence_on(
     )
 
 
+def facts_entered_on(
+    *, connection: Connection, deployment_id: UUID, version_id: UUID
+) -> bool:
+    """Whether the version may run fact work: it has no unentered facts gap.
+
+    A version admitted to facts carries ``entered_at`` until its frontier
+    deletes the gap; one that never had a gap entered before the deployment
+    was configured, or has finished. An unentered or discharged gap waits for
+    advance (§4.3, §5.2), whatever other version's work would release it.
+    """
+    return not connection.execute(
+        _UNENTERED_FACTS_GAP_EXISTS,
+        {"deployment_id": deployment_id, "version_id": version_id},
+    ).scalar_one()
+
+
 def claims_boundary_on(
     *,
     connection: Connection,
@@ -207,6 +223,19 @@ def frontier_reached_on(
     )
 
 
+def lock_lineage_for_layers_on(
+    *, connection: Connection, deployment_id: UUID, doc_id: UUID
+) -> None:
+    """Take the layer fence, then the lineage lock, before changing a lineage.
+
+    Deletion takes both before its tombstone so its gap wake-up
+    (:func:`lineage_changed_on`) commits with the repoint, in the lock order
+    every boundary uses.
+    """
+    take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+    _lock_lineage(connection=connection, doc_id=doc_id)
+
+
 def lineage_changed_on(
     *, connection: Connection, deployment_id: UUID, doc_id: UUID
 ) -> list[EnqueueOutcome]:
@@ -251,7 +280,7 @@ def advance_on(
     The caller holds the layer fence and the lineage lock. Steps:
 
     1. a disabled layer enters nothing (facts still opens the claims tails it
-       now allows);
+       now allows, whether or not claims are still enabled);
     2. a living lineage reopens its current version's discharged gap and
        discharges every other unentered gap;
     3. the target is the current version (living) or the oldest unentered gap
@@ -273,7 +302,9 @@ def advance_on(
             connection=connection, deployment_id=deployment_id, doc_id=doc_id
         )
     if not configuration.enabled(layer=layer):
-        if layer is ProcessingLayer.FACTS and configuration.claims_enabled:
+        if layer is ProcessingLayer.FACTS:
+            # §4.4: claims work that already entered drains through its tail
+            # even when claims were switched off meanwhile.
             return _open_owed_claims_tails(
                 connection=connection,
                 lineage=lineage,
@@ -1351,6 +1382,16 @@ _OPEN_GAP_EXISTS = text(
       WHERE g.deployment_id = :deployment_id AND g.layer = :layer
         AND g.discharged_at IS NULL
         AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+    )
+    """
+)
+
+_UNENTERED_FACTS_GAP_EXISTS = text(
+    """
+    SELECT EXISTS (
+      SELECT 1 FROM processing_layer_gaps
+      WHERE deployment_id = :deployment_id AND version_id = :version_id
+        AND layer = 'facts' AND entered_at IS NULL
     )
     """
 )

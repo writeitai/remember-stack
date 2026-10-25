@@ -768,3 +768,26 @@ def test_a_facts_off_snapshot_omits_entities_and_mounts_serve_only_matching_ones
     assert not (served / "entities").exists()
     assert "entities/" not in (served / "llms.txt").read_text()
     assert mounts.knowledge is None
+
+    # Facts back on before a matching build exists: the earlier all-on
+    # publication is the latest snapshot built for this set, so it serves
+    # again; the stale build that never published does not.
+    layers.reconcile_settings(
+        deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=True
+    )
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert (Path(mounts.p3) / ".snapshot-version").read_text() == "a-all-on"
+    assert (Path(mounts.p3) / "entities" / "_index.md").exists()
+    # A deletion after that publication retires it: an older tree never
+    # brings deleted content back, so the placeholder stands until a rebuild.
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE documents SET deleted_at = now()"
+                " WHERE doc_id = (SELECT doc_id FROM documents"
+                " WHERE deployment_id = :d LIMIT 1)"
+            ),
+            {"d": _DEPLOYMENT_ID},
+        )
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert (Path(mounts.p3) / "llms.txt").read_text() == EMPTY_CORPUS_NOTE

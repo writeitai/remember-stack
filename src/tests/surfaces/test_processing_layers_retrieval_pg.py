@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
+from datetime import timedelta
 from datetime import UTC
 import re
 from types import SimpleNamespace
@@ -29,6 +30,7 @@ from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.models import EffectivePeriodInput
 from rememberstack.adapters import BoundedPostgresReadPool
 from rememberstack.adapters import PostgresP1Index
 from rememberstack.core.embedding_input_policy import EMBEDDING_INPUT_POLICY_VERSION
@@ -36,6 +38,7 @@ from rememberstack.core.embedding_input_policy import embedding_text_hash
 from rememberstack.model import AssuredOperationName
 from rememberstack.model import ContextBundleV2
 from rememberstack.model import DeploymentBootstrapInput
+from rememberstack.model import Envelope
 from rememberstack.model import Grain
 from rememberstack.model import NegativeKind
 from rememberstack.model import P1ChunkRow
@@ -45,6 +48,7 @@ from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import DeploymentBootstrapper
+from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.processing_layers import ProcessingLayerCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import QueryEngine
@@ -90,6 +94,7 @@ def database_engine() -> Iterator[Engine]:
 @dataclass(frozen=True, slots=True)
 class _Rig:
     engine: Engine
+    index: PostgresP1Index
     query: QueryEngine
     operations: OperationExecutor
     chunk_id: UUID
@@ -249,6 +254,7 @@ def rig(database_engine: Engine) -> _Rig:
     )
     return _Rig(
         engine=database_engine,
+        index=index,
         query=query,
         operations=OperationExecutor(query_engine=query),
         chunk_id=chunk_id,
@@ -436,3 +442,198 @@ def test_backfilling_claims_turn_an_empty_answer_into_a_boundary(rig: _Rig) -> N
     assert empty.negative is not None
     assert empty.negative.kind is NegativeKind.BOUNDARY
     assert "backfilled" in empty.negative.explanation
+
+
+_IN_FORCE_UNTIL = datetime(2025, 6, 1, tzinfo=UTC)
+
+
+def _seed_pending_periodised_lineage(rig: _Rig) -> UUID:
+    """A D140 lineage whose in-force edition is still converting (§3.7).
+
+    Edition 1 was in force until mid-2025 and stays the served version, with a
+    current claim; edition 2 is in force from then on but not ready. Both
+    editions' chunks are published, so the scoped read excludes edition 1 (not
+    in force) and edition 2 (not ready) and only the pending probe reaches the
+    lineage.
+    """
+    doc_id = uuid4()
+    editions = []
+    bodies = ("quartz allowance clause", "quartz allowance clause revised")
+    with rig.engine.begin() as connection:
+        for number, body in enumerate(bodies, start=1):
+            edition = seed_live_document_lineage(
+                connection=connection,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=doc_id,
+                chunk_ids=(uuid4(),),
+                label=f"quartz-{number}",
+                title="quartz policy",
+                source_ref="quartz",
+                create_document=number == 1,
+            )
+            connection.execute(  # the seeder numbers every version 1
+                text(
+                    "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
+                ),
+                {"n": 1000 + number, "v": edition.version_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO document_metadata (deployment_id, version_id, doc_id,"
+                    " family, metadata_mapping_version) VALUES (:d, :v, :doc,"
+                    " 'markdown', 'test')"
+                ),
+                {"d": _DEPLOYMENT_ID, "v": edition.version_id, "doc": doc_id},
+            )
+            editions.append((edition, body))
+        for number, (edition, _) in enumerate(editions, start=1):
+            connection.execute(
+                text(
+                    "UPDATE document_versions SET version_no = :n WHERE version_id = :v"
+                ),
+                {"n": number, "v": edition.version_id},
+            )
+    periods = EffectiveTimeCatalog(engine=rig.engine)
+    for (edition, _), (start, end) in zip(
+        editions,
+        ((_AT - timedelta(days=365), _IN_FORCE_UNTIL), (_IN_FORCE_UNTIL, None)),
+        strict=True,
+    ):
+        periods.set_effective_periods(
+            deployment_id=_DEPLOYMENT_ID,
+            doc_id=doc_id,
+            version_id=edition.version_id,
+            periods=(EffectivePeriodInput(effective_from=start, effective_until=end),),
+        )
+    served, pending = editions[0][0], editions[1][0]
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text("UPDATE documents SET current_version_id = :v WHERE doc_id = :doc"),
+            {"v": served.version_id, "doc": doc_id},
+        )
+        connection.execute(
+            text(
+                "UPDATE document_versions SET status = 'converting'"
+                " WHERE version_id = :v"
+            ),
+            {"v": pending.version_id},
+        )
+        claim_id = uuid4()
+        body = bodies[0]
+        connection.execute(
+            text(
+                "INSERT INTO claims (claim_id, deployment_id, doc_id, chunk_id,"
+                " claim_text, source_span, char_start, char_end, anchor_ok,"
+                " window_membership_ok, is_current_testimony, extractor_version,"
+                " ingested_at, asserted_at) VALUES (:claim, :d, :doc, :chunk, :body,"
+                " :body, 0, :end, true, true, true, 'd143-test', :at, :at)"
+            ),
+            {
+                "claim": claim_id,
+                "d": _DEPLOYMENT_ID,
+                "doc": doc_id,
+                "chunk": served.chunk_id,
+                "body": body,
+                "end": len(body),
+                "at": _AT,
+            },
+        )
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id,"
+                " evidence_spans, source_locators, created_at) VALUES (:d, :chunk,"
+                " :claim, CAST(:spans AS jsonb), CAST('{}' AS jsonb), :at)"
+            ),
+            {
+                "d": _DEPLOYMENT_ID,
+                "chunk": served.chunk_id,
+                "claim": claim_id,
+                "spans": f'[{{"char_start": 0, "char_end": {len(body)}}}]',
+                "at": _AT,
+            },
+        )
+    index = rig.index
+    index.upsert_chunks(
+        rows=tuple(
+            P1ChunkRow(
+                chunk_id=edition.chunk_id,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=doc_id,
+                version_id=edition.version_id,
+                section_role="body",
+                text=text_body,
+                vector=_vector(axis=1),
+                policy_generation=EMBEDDING_INPUT_POLICY_VERSION,
+                embedder_generation=_MODEL,
+                embedding_text_hash=embedding_text_hash(text_body),
+                source_kind="upload",
+                source_shape="document",
+            )
+            for edition, text_body in editions
+        )
+    )
+    index.upsert_claims(
+        rows=(
+            P1ClaimRow(
+                claim_id=claim_id,
+                deployment_id=_DEPLOYMENT_ID,
+                doc_id=doc_id,
+                chunk_id=served.chunk_id,
+                text=body,
+                is_current_testimony=True,
+                is_attributed=False,
+                vector=_vector(axis=1),
+            ),
+        )
+    )
+    return doc_id
+
+
+def _pending_doc_ids(answer: Envelope) -> tuple[UUID, ...]:
+    pending = answer.freshness.scope_pending
+    return () if pending is None else tuple(pending.doc_ids)
+
+
+@pytest.mark.parametrize("gate", ["claims-disabled", "layers-sources"])
+def test_the_d140_pending_probe_sends_no_sql_to_claim_relations(
+    rig: _Rig, gate: str
+) -> None:
+    """§9.5 (review r1 finding 6): with a pending periodised lineage, the D140
+    pending probe of ``claims_and_sources_context`` and ``combined_context``
+    follows the admitted channels. With claims disabled, and with
+    ``layers=sources`` on a default deployment, neither read sends a statement
+    to a claim relation, and ``scope_pending`` still names the lineage the
+    sources channel reaches. A positive control proves the capture sees the
+    claim probe when claims are admitted."""
+    pending_doc = _seed_pending_periodised_lineage(rig)
+    query = "quartz allowance"
+
+    with _Statements(rig.engine) as control:
+        admitted = rig.query.claims_and_sources_context(
+            deployment_id=_DEPLOYMENT_ID, query=query
+        )
+    assert control.touches_claims(), "the capture sees claim-relation SQL"
+    assert pending_doc in _pending_doc_ids(admitted)
+
+    layers: frozenset[ProcessingLayer] | None = None
+    if gate == "claims-disabled":
+        rig.configure(claims=False, facts=False)
+    else:
+        layers = frozenset({ProcessingLayer.SOURCES})
+    with _Statements(rig.engine) as statements:
+        answer = rig.query.claims_and_sources_context(
+            deployment_id=_DEPLOYMENT_ID, query=query, layers=layers
+        )
+        bundle = rig.run(
+            name=AssuredOperationName.COMBINED_CONTEXT,
+            arguments={"query": query},
+            layers=layers,
+        )
+    assert statements.sql
+    assert statements.touches_claims() == []
+    assert answer.evidence == ()
+    assert pending_doc in _pending_doc_ids(answer)
+    assert pending_doc not in {item.doc_id for item in answer.chunks}
+    assert isinstance(bundle, ContextBundleV2)
+    assert bundle.claims_and_sources.evidence == ()
+    assert pending_doc in _pending_doc_ids(bundle.claims_and_sources)

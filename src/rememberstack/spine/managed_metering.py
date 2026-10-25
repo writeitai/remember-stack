@@ -373,7 +373,9 @@ class ManagedMeterCatalog:
                 )
                 version = report.versions[0]
                 failed = any(stage.status == "dead_letter" for stage in version.stages)
-                profile_changed = not version.ready and self._profile_unreachable(
+                # Serving readiness reads a discharged layer as skipped; a
+                # receipt needs the measured stages to have actually run.
+                profile_changed = self._profile_unreachable(
                     deployment_id=deployment_id,
                     version_id=version_id,
                     measured_layers=measured_layers,
@@ -444,8 +446,9 @@ class ManagedMeterCatalog:
     ) -> bool:
         """Whether the version can no longer complete its measured profile.
 
-        True when it has a gap in a measured layer that is now disabled, or a
-        discharged gap in a measured layer (D143 §4.5).
+        True when it has a discharged gap in a measured layer, or a gap it never
+        entered in a measured layer that is now disabled (D143 §4.5). An entered
+        gap drains to completion, so it does not count.
         """
         with self._engine.connect() as connection:
             configuration = layer_configuration_on(
@@ -458,9 +461,9 @@ class ManagedMeterCatalog:
                 layer = ProcessingLayer(str(row["layer"]))
                 if layer not in measured_layers:
                     continue
-                if row["discharged_at"] is not None or not configuration.enabled(
-                    layer=layer
-                ):
+                if row["discharged_at"] is not None:
+                    return True
+                if row["entered_at"] is None and not configuration.enabled(layer=layer):
                     return True
         return False
 
@@ -730,7 +733,7 @@ _AWAITING_OUTCOMES = text(
 
 _VERSION_GAPS = text(
     """
-    SELECT layer, discharged_at
+    SELECT layer, entered_at, discharged_at
     FROM processing_layer_gaps
     WHERE deployment_id = :deployment_id AND version_id = :version_id
     """

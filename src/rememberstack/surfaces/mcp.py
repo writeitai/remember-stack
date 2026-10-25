@@ -22,6 +22,7 @@ from typing import cast
 from typing import Literal
 from uuid import UUID
 
+from remember.errors import MemoryApiError
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
@@ -465,7 +466,14 @@ class OperationMcpServer:
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
         except LayerSelectionError as error:
-            return error_result(invalid_arguments(detail=str(error)))
+            # D143 §7.2: the 422 the HTTP route answers, as engine-mode maps it.
+            return error_result(
+                map_error(
+                    MemoryApiError(
+                        status_code=422, detail=str(error), code="invalid_parameter"
+                    )
+                )
+            )
         except LayerUnavailableError as error:
             return error_result(
                 layer_unavailable(layer=error.layer.value, detail=str(error))

@@ -159,6 +159,11 @@ def map_error(error: BaseException) -> ToolError:
     detail = getattr(error, "detail", None)
     if isinstance(status_code, int) and detail is not None:
         explicit = getattr(error, "code", None)
+        if explicit == "layer_unavailable":
+            # D143: the same envelope the in-process server returns.
+            return layer_unavailable(
+                layer=str(getattr(error, "layer", "") or ""), detail=str(detail)
+            )
         retry_after = getattr(error, "retry_after", None)
         mapped = _map_http_error(
             status_code=status_code,

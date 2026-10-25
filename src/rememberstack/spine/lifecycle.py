@@ -127,15 +127,6 @@ class LifecycleCatalog:
             )
         return dict(row)
 
-    def advance_layers(self, *, deployment_id: UUID, doc_id: UUID) -> None:
-        """D143: after a deletion, drop deleted versions' gaps and advance the lineage."""
-        from rememberstack.spine.processing_layers import lineage_changed_on
-
-        with self._engine.begin() as connection:
-            lineage_changed_on(
-                connection=connection, deployment_id=deployment_id, doc_id=doc_id
-            )
-
     def layers_configured(self, *, deployment_id: UUID) -> bool:
         """Whether the deployment has a D143 processing-layer configuration."""
         from rememberstack.spine.processing_layers import layer_configuration_on
@@ -654,7 +645,22 @@ class LifecycleCatalog:
         pointer, the latest remaining live version takes it (NULL when none
         remain). Returns the lineage context for the caller's cascade.
         """
+        from rememberstack.spine.processing_layers import lineage_changed_on
+        from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
+
         with self._engine.begin() as connection:
+            lineage = (
+                connection.execute(_SELECT_VERSION_LINEAGE, {"version_id": version_id})
+                .mappings()
+                .one()
+            )
+            # D143 §6.3: the layer fence and lineage lock precede the tombstone,
+            # so the repoint and the gap wake-up commit together.
+            lock_lineage_for_layers_on(
+                connection=connection,
+                deployment_id=lineage["deployment_id"],
+                doc_id=lineage["doc_id"],
+            )
             row = (
                 connection.execute(_TOMBSTONE_VERSION, {"version_id": version_id})
                 .mappings()
@@ -676,6 +682,13 @@ class LifecycleCatalog:
                 doc_id=row["doc_id"],
                 reason="version_deleted",
             )
+            # D143: a deleted head never blocks its successors; a repointed
+            # living lineage processes its new current version.
+            lineage_changed_on(
+                connection=connection,
+                deployment_id=row["deployment_id"],
+                doc_id=row["doc_id"],
+            )
         return dict(row)
 
     def delete_lineage(self, *, doc_id: UUID) -> datetime:
@@ -689,14 +702,21 @@ class LifecycleCatalog:
         returning bytes are processed as a new version (D135). Returns the
         lineage's deletion instant (the first one, on a repeated call).
         """
+        from rememberstack.spine.processing_layers import lineage_changed_on
+        from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
+
         with self._engine.begin() as connection:
-            connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
-            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
-            connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
             deployment_id = connection.execute(
                 text("SELECT deployment_id FROM documents WHERE doc_id = :doc_id"),
                 {"doc_id": doc_id},
             ).scalar_one()
+            # D143 §6.3: fence and lineage lock first; gaps go with the tombstone.
+            lock_lineage_for_layers_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
+            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
+            connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
             # D140 §8.2: facts that also rest on other sources lose this
             # lineage's periods; queued in the tombstone's transaction
             _request_review_on(
@@ -704,6 +724,9 @@ class LifecycleCatalog:
                 deployment_id=deployment_id,
                 doc_id=doc_id,
                 reason="lineage_deleted",
+            )
+            lineage_changed_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
             )
             return connection.execute(
                 _SELECT_LINEAGE_DELETED_AT, {"doc_id": doc_id}
@@ -1332,6 +1355,12 @@ _INSERT_EVIDENCE_CHANGED = text(
     RETURNING refresh_id
     """
 ).bindparams(bindparam("payload", type_=JSON))
+
+_SELECT_VERSION_LINEAGE = text(
+    """
+    SELECT deployment_id, doc_id FROM document_versions WHERE version_id = :version_id
+    """
+)
 
 _TOMBSTONE_VERSION = text(
     """

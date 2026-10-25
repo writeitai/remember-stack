@@ -451,6 +451,9 @@ class WorkLedger:
         D84). When every expected claim has succeeded at the fan-out normalizer
         version, enqueues the ordered observation flush stage for the version.
         """
+        from rememberstack.spine.processing_layers import facts_entered_on
+        from rememberstack.spine.processing_layers import layer_configuration_on
+        from rememberstack.spine.processing_layers import take_layer_fence_on
         from rememberstack.workers.base import ClaimNormalizeBarrier
 
         if not isinstance(barrier, ClaimNormalizeBarrier):
@@ -458,6 +461,13 @@ class WorkLedger:
         for work in follow_up:
             _require_valid_lane(stage=work.stage, lane=work.lane)
         with self._engine.begin() as connection:
+            # D143 §3.3: the layer fence comes before the barrier locks.
+            take_layer_fence_on(
+                connection=connection, deployment_id=barrier.deployment_id
+            )
+            configured = layer_configuration_on(
+                connection=connection, deployment_id=barrier.deployment_id
+            ).configured
             claim_id = connection.execute(
                 _SELECT_TARGET_ID, {"processing_id": processing_id}
             ).scalar_one()
@@ -529,6 +539,15 @@ class WorkLedger:
                         chunker_version=chunker_version,
                         extractor_version=barrier.extractor_version,
                         normalize_version=barrier.normalize_component_version,
+                    ):
+                        continue
+                    # D143 §4.3: a sibling sharing the claim runs fact work only
+                    # once advance admitted it; entering facts later opens its
+                    # flush itself when every claim is already normalised.
+                    if configured and not facts_entered_on(
+                        connection=connection,
+                        deployment_id=deployment_id,
+                        version_id=version_id,
                     ):
                         continue
                     outcomes.extend(

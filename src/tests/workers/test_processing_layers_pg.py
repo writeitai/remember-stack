@@ -7,12 +7,15 @@ the same versions pays — nothing is re-chunked or re-embedded, and every later
 version pays only for its edit.
 """
 
+from collections import Counter
+from collections.abc import Callable
 from collections.abc import Iterator
 from datetime import datetime
 from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
 import re
+from typing import Any
 from uuid import UUID
 from uuid import uuid4
 
@@ -34,12 +37,17 @@ from rememberstack.core import ConversionRouter
 from rememberstack.core import MarkdownPassthroughConverter
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import DocumentUpload
+from rememberstack.model import EmbeddingRequest
+from rememberstack.model import EmbeddingResponse
+from rememberstack.model import GeneratedResponse
 from rememberstack.model import IngestedVersion
+from rememberstack.model import ModelRequest
 from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingLane
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import ResolverConfig
 from rememberstack.model import RunResultOutcome
+from rememberstack.model import StructuredResponseModel
 from rememberstack.model.client import ProcessingLayer
 from rememberstack.model.metering import ManagedDocumentVersionOutcomeV2
 from rememberstack.model.metering import ManagedIngestMeasurementV2
@@ -88,6 +96,7 @@ from rememberstack.workers import ReconcileHandler
 from rememberstack.workers import StructureHandler
 from rememberstack.workers import UploadIngestor
 from rememberstack.workers import Worker
+from rememberstack.workers.p1 import P1_EMBED_CLAIMS_VERSION
 from rememberstack.workers.reconcile import RECONCILE_CLAIMS_VERSION
 from rememberstack.workers.reconcile import RECONCILE_VERSION
 from tests.database_reset import reset_database
@@ -237,6 +246,30 @@ def _bootstrap(*, engine: Engine) -> None:
     )
 
 
+class _StageProvider:
+    """The shared fake provider, recording what one stage embedded (§9.6).
+
+    Chunk and claim embeddings go through separate instances, so a proof can
+    count each stage's embedding calls instead of one pooled total.
+    """
+
+    def __init__(self, *, provider: FakeModelProvider) -> None:
+        """Delegate to ``provider``; start with nothing embedded."""
+        self._provider = provider
+        self.embedded_texts: list[str] = []
+
+    def generate[ResponseT: StructuredResponseModel](
+        self, *, request: ModelRequest, response_type: type[ResponseT]
+    ) -> GeneratedResponse[ResponseT]:
+        """Generate through the shared provider."""
+        return self._provider.generate(request=request, response_type=response_type)
+
+    def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
+        """Record the texts, then embed through the shared provider."""
+        self.embedded_texts.extend(request.texts)
+        return self._provider.embed(request=request)
+
+
 class _LayerRig:
     """The whole chain with call counting, both lanes drained."""
 
@@ -247,7 +280,20 @@ class _LayerRig:
         raw_store = LocalFSObjectStore(root=root / "raw")
         self.raw_store = raw_store
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
-        self.provider = FakeModelProvider(generate_router=_route)
+        self.extraction_calls: list[tuple[str, str]] = []
+        """Every Selection/Claimify call as (response type, target span)."""
+
+        def route(prompt: str, type_name: str) -> dict[str, object]:
+            if type_name in {"SelectionResponse", "ClaimifyResponse"}:
+                match = _TARGET.search(prompt)
+                self.extraction_calls.append(
+                    (type_name, match.group(1).strip() if match is not None else "")
+                )
+            return _route(prompt, type_name)
+
+        self.provider = FakeModelProvider(generate_router=route)
+        self.chunk_embedder = _StageProvider(provider=self.provider)
+        self.claim_embedder = _StageProvider(provider=self.provider)
         documents = DocumentCatalog(engine=engine)
         chunks = ChunkCatalog(engine=engine)
         claims = ClaimCatalog(engine=engine)
@@ -261,8 +307,9 @@ class _LayerRig:
             embedding_model=P1Settings().embedding_model,
         )
         self.profiles = profiles
+        self.lifecycle = LifecycleCatalog(engine=engine)
         self.deletion = DeletionService(
-            catalog=LifecycleCatalog(engine=engine), profile_refresher=profiles
+            catalog=self.lifecycle, profile_refresher=profiles
         )
         adjudicator = FactAdjudicator(
             engine=engine,
@@ -306,7 +353,7 @@ class _LayerRig:
             handler=EmbedChunksHandler(
                 catalog=chunks,
                 artifact_store=artifact_store,
-                model_provider=self.provider,
+                model_provider=self.chunk_embedder,
                 chunk_index=p1,
                 settings=E1Settings(),
                 embedding_model=P1Settings().embedding_model,
@@ -373,7 +420,7 @@ class _LayerRig:
             handler=EmbedClaimsHandler(
                 claim_catalog=claims,
                 chunk_catalog=chunks,
-                model_provider=self.provider,
+                model_provider=self.claim_embedder,
                 claim_index=p1,
                 settings=P1Settings(),
                 chunker_version=generation,
@@ -416,6 +463,17 @@ class _LayerRig:
         )
         self.layers.seed(deployment_id=_DEPLOYMENT_ID, batch_size=10)
 
+    def configure_all_on(self) -> None:
+        """A configured all-on deployment (a row written by an earlier switch).
+
+        ``setup`` writes no row while the settings equal the unconfigured
+        defaults, so a fresh deployment gets one through a claims-only step
+        taken before anything was ingested.
+        """
+        self.configure(claims=True, facts=False)
+        self.configure(claims=True, facts=True)
+        assert self.layers.configuration(deployment_id=_DEPLOYMENT_ID).configured
+
     def ingest(
         self, *, source_ref: str, content: str, mode: str, at: datetime | None
     ) -> IngestedVersion:
@@ -440,11 +498,14 @@ class _LayerRig:
         *,
         stages: tuple[PipelineStage, ...] = _STAGES,
         tolerate_failures: bool = False,
+        observe: Callable[[], None] | None = None,
     ) -> None:
         """Run the stages (default: every stage) on both lanes until idle.
 
         Every claimed row must succeed unless ``tolerate_failures`` (late work
         of a deleted version retries until it dead-letters, as today).
+        ``observe`` runs after every completed row, so a proof can check an
+        invariant at each step of the schedule.
         """
         allowed = {RunResultOutcome.SUCCEEDED}
         if tolerate_failures:
@@ -463,6 +524,8 @@ class _LayerRig:
                         continue
                     assert outcome in allowed, (stage, outcome)
                     progressed = True
+                    if observe is not None:
+                        observe()
             if not progressed:
                 return
         raise AssertionError("the chain did not settle")
@@ -476,6 +539,8 @@ class _LayerRig:
             ),
             "claimify": sum("TARGET (origin-eligible)" in p for p in prompts),
             "embed": len(self.provider.embedded_texts),
+            "chunk_embed": len(self.chunk_embedder.embedded_texts),
+            "claim_embed": len(self.claim_embedder.embedded_texts),
         }
 
     def stage_rows(self, *, stages: tuple[str, ...]) -> int:
@@ -495,6 +560,131 @@ class _LayerRig:
         """One value from the spine."""
         with self.engine.connect() as connection:
             return connection.execute(text(sql), params).scalar_one()
+
+    def run_until(
+        self, *, done: Callable[[], bool], stages: tuple[PipelineStage, ...] = _STAGES
+    ) -> None:
+        """Run single rows of ``stages`` until ``done()`` holds (a paused schedule)."""
+        for _ in range(2_000):
+            if done():
+                return
+            progressed = False
+            for stage in stages:
+                for lane in (ProcessingLane.STEADY, ProcessingLane.BACKFILL):
+                    outcome = self.worker.run_one(
+                        deployment_id=_DEPLOYMENT_ID, stage=stage, lane=lane
+                    ).outcome
+                    if outcome is RunResultOutcome.NO_WORK:
+                        continue
+                    assert outcome is RunResultOutcome.SUCCEEDED, (stage, outcome)
+                    progressed = True
+                    if done():
+                        return
+            if not progressed:
+                raise AssertionError("the chain went idle before the pause point")
+        raise AssertionError("the pause point was never reached")
+
+    def gap(self, *, version_id: UUID, layer: str) -> dict[str, Any] | None:
+        """The version's gap of one layer, or ``None`` when it has none."""
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT entered_at, discharged_at, lane::text AS lane"
+                        " FROM processing_layer_gaps"
+                        " WHERE version_id = :v AND layer = :layer"
+                    ),
+                    {"v": version_id, "layer": layer},
+                )
+                .mappings()
+                .first()
+            )
+        return None if row is None else dict(row)
+
+    def status(self, *, version_id: UUID, stage: str, version: str) -> str | None:
+        """Status of the version's row of one stage at one component version."""
+        with self.engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT status::text FROM processing_state WHERE target_id = :v"
+                    " AND stage::text = :stage AND component_version = :cv"
+                ),
+                {"v": version_id, "stage": stage, "cv": version},
+            ).scalar_one_or_none()
+
+    def claim_ids(self, *, version_id: UUID) -> set[UUID]:
+        """Every claim attached to one of the version's chunks."""
+        with self.engine.connect() as connection:
+            return set(
+                connection.execute(
+                    text(
+                        "SELECT cc.claim_id FROM chunk_claims cc"
+                        " JOIN chunks c ON c.chunk_id = cc.chunk_id"
+                        " WHERE c.version_id = :v"
+                    ),
+                    {"v": version_id},
+                ).scalars()
+            )
+
+    def minted(self, *, version_id: UUID) -> int:
+        """Claims first minted on one of the version's chunks."""
+        return int(
+            str(
+                self.scalar(
+                    "SELECT count(*) FROM claims cl JOIN chunks c"
+                    " ON c.chunk_id = cl.chunk_id WHERE c.version_id = :v",
+                    v=version_id,
+                )
+            )
+        )
+
+    def fact_work(self, *, version_id: UUID) -> dict[str, int]:
+        """Observation-flush and adjudication state opened for one version.
+
+        Its D90/D118 flush fan-out (version state, which the application
+        registration writes with it, and entity units, which carry the fact
+        applications), and its supersession and full-reconcile rows; only the
+        kinds that exist are returned, so ``{}`` means none. Membership rows
+        that normalising a shared claim stages for every version carrying it
+        (D88) are that claim's own work and are not counted.
+        """
+        with self.engine.connect() as connection:
+            row = (
+                connection.execute(
+                    text(
+                        "SELECT"
+                        " (SELECT count(*) FROM obs_flush_version_state"
+                        "  WHERE version_id = :v) AS flush_state,"
+                        " (SELECT count(*) FROM obs_flush_entity_units"
+                        "  WHERE version_id = :v) AS flush_units,"
+                        " (SELECT count(*) FROM processing_state WHERE target_id = :v"
+                        "  AND stage = 'adjudicate_supersession') AS supersession,"
+                        " (SELECT count(*) FROM processing_state WHERE target_id = :v"
+                        "  AND stage = 'reconcile' AND component_version = :full)"
+                        "  AS full_reconcile"
+                    ),
+                    {"v": version_id, "full": RECONCILE_VERSION},
+                )
+                .mappings()
+                .one()
+            )
+        return {key: int(value) for key, value in row.items() if value}
+
+    def extraction_rows(self, *, version_id: UUID) -> list[tuple[str, int]]:
+        """(stage, attempts) of every extraction row of the version's chunks."""
+        with self.engine.connect() as connection:
+            return [
+                (str(row[0]), int(row[1]))
+                for row in connection.execute(
+                    text(
+                        "SELECT p.stage::text, p.attempts FROM processing_state p"
+                        " JOIN chunks c ON c.chunk_id = p.target_id"
+                        " WHERE c.version_id = :v"
+                        "   AND p.stage IN ('extract_claims', 'ground_claims')"
+                    ),
+                    {"v": version_id},
+                )
+            ]
 
 
 def _readiness(*, engine: Engine) -> PipelineReadinessCatalog:
@@ -1437,3 +1627,905 @@ def test_a_sources_receipt_succeeds_on_its_four_stages_despite_claims_switched_o
         "profile_complete": True,
     }
     rig.drain()
+
+
+# --- implementation review round 1 -----------------------------------------
+
+
+def _sections(
+    *names: str, edited: str | None = None, rewrite: str | None = None
+) -> str:
+    """Named sections of eight paragraphs; ``edited`` rewrites paragraph 4 of one
+    (with ``rewrite``, or a same-length different finding)."""
+    blocks: list[str] = []
+    for name in names:
+        blocks.append(f"# Section {name}")
+        for index in range(8):
+            line = f"Section {name} paragraph {index} states fact {index} about {name}."
+            if name == edited and index == 4:
+                line = rewrite or (
+                    f"Section {name} paragraph 4 now reports a different finding."
+                )
+            blocks.append(line)
+    return "\n\n".join(blocks)
+
+
+def _retained_subset_lineage(rig: _LayerRig) -> tuple[IngestedVersion, IngestedVersion]:
+    """Snapshot v1 and v2 with facts off; v2 drops v1's final section, so every
+    claim v2 carries is one of v1's claims (reused by id, none minted)."""
+    rig.configure(claims=True, facts=False)
+    first = rig.ingest(
+        source_ref="docs/sections.md",
+        content=_sections("A", "B", "C"),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    second = rig.ingest(
+        source_ref="docs/sections.md",
+        content=_sections("A", "B"),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    rig.drain()
+    v1_claims = rig.claim_ids(version_id=first.version_id)
+    v2_claims = rig.claim_ids(version_id=second.version_id)
+    assert v2_claims and v2_claims < v1_claims, "v2 carries a retained subset"
+    assert rig.minted(version_id=second.version_id) == 0
+    assert rig.stage_rows(stages=_E3_STAGES) == 0
+    for version in (first, second):
+        gap = rig.gap(version_id=version.version_id, layer="facts")
+        assert gap is not None and gap["entered_at"] is None
+    return first, second
+
+
+@pytest.mark.parametrize("switch_off", [False, True], ids=["on", "on-off-on"])
+def test_a_retained_claim_subset_runs_no_fact_work_before_its_facts_admission(
+    small_rig: _LayerRig, switch_off: bool
+) -> None:
+    """§9.9 / §4.3 / §5.2 (review r1 F2): v1 and a v2 that only reuses v1's
+    claims were ingested with facts off. Switching facts on admits v1 alone;
+    completing the shared claims' normalisation also satisfies v2's normalize
+    barrier, but no observation flush, application registration or
+    supersession exists for v2 while its facts gap is unentered, and v2 is
+    entered only after v1 reached its facts frontier. In the ``on-off-on``
+    schedule facts are switched off while v1's fact work drains (v2 stays
+    unentered with no fact work) and back on (v2 then enters)."""
+    rig = small_rig
+    first, second = _retained_subset_lineage(rig)
+    selection_before = rig.calls()["selection"]
+    entered: list[bool] = []
+
+    def observe() -> None:
+        gap = rig.gap(version_id=second.version_id, layer="facts")
+        v1_frontier = (
+            rig.status(
+                version_id=first.version_id,
+                stage="reconcile",
+                version=RECONCILE_VERSION,
+            )
+            == "succeeded"
+        )
+        if gap is not None and gap["entered_at"] is None:
+            assert rig.fact_work(version_id=second.version_id) == {}, (
+                "fact work opened for v2 before its facts admission"
+            )
+        else:
+            assert v1_frontier, "v2 entered facts before v1's facts frontier"
+            entered.append(True)
+
+    rig.configure(claims=True, facts=True)
+    v1_gap = rig.gap(version_id=first.version_id, layer="facts")
+    assert v1_gap is not None and v1_gap["entered_at"] is not None
+    observe()
+    if switch_off:
+        # v1's shared claims are being normalised: switch facts off mid-drain
+        rig.run_until(
+            done=lambda: (
+                rig.scalar(
+                    "SELECT count(*) FROM processing_state"
+                    " WHERE stage = 'normalize_relations' AND status = 'succeeded'"
+                )
+                == 1
+            )
+        )
+        observe()
+        rig.configure(claims=True, facts=False)
+        rig.drain(observe=observe)
+        assert not entered
+        assert (
+            rig.status(
+                version_id=first.version_id,
+                stage="reconcile",
+                version=RECONCILE_VERSION,
+            )
+            == "succeeded"
+        ), "v1's entered fact work drained"
+        gap = rig.gap(version_id=second.version_id, layer="facts")
+        assert gap is not None and gap["entered_at"] is None
+        assert rig.fact_work(version_id=second.version_id) == {}
+        rig.configure(claims=True, facts=True)
+    rig.drain(observe=observe)
+
+    assert entered, "v2 entered facts after v1's frontier"
+    for version in (first, second):
+        assert (
+            rig.status(
+                version_id=version.version_id,
+                stage="reconcile",
+                version=RECONCILE_VERSION,
+            )
+            == "succeeded"
+        )
+        assert rig.gap(version_id=version.version_id, layer="facts") is None
+    # (readiness pins production chunk parameters; this rig's are small)
+    assert (
+        rig.scalar("SELECT count(*) FROM processing_state WHERE status <> 'succeeded'")
+        == 0
+    )
+    assert rig.stage_rows(stages=("label_relation",)) > 0
+    assert rig.calls()["selection"] == selection_before  # nothing re-extracted
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).facts == "enabled"
+
+
+def _v2_extraction_started(rig: _LayerRig, *, version_id: UUID) -> bool:
+    """At least one of the version's chunks extracted and at least one pending."""
+    rows = rig.extraction_rows(version_id=version_id)
+    with rig.engine.connect() as connection:
+        statuses = list(
+            connection.execute(
+                text(
+                    "SELECT p.status::text FROM processing_state p"
+                    " JOIN chunks c ON c.chunk_id = p.target_id"
+                    " WHERE c.version_id = :v AND p.stage = 'extract_claims'"
+                ),
+                {"v": version_id},
+            ).scalars()
+        )
+    return bool(rows) and "succeeded" in statuses and "pending" in statuses
+
+
+def _assert_drained_claims_tail(
+    rig: _LayerRig, *, version: IngestedVersion, selection_calls: int
+) -> None:
+    """The version finished its claims layer through the claims tail, once."""
+    version_id = version.version_id
+    assert (
+        rig.status(
+            version_id=version_id, stage="embed_claim", version=P1_EMBED_CLAIMS_VERSION
+        )
+        == "succeeded"
+    )
+    assert (
+        rig.status(
+            version_id=version_id, stage="reconcile", version=RECONCILE_CLAIMS_VERSION
+        )
+        == "succeeded"
+    )
+    # the claims frontier deleted the claims gap; facts stays a backfill gap
+    assert rig.gap(version_id=version_id, layer="claims") is None
+    facts_gap = rig.gap(version_id=version_id, layer="facts")
+    assert facts_gap is not None and facts_gap["entered_at"] is None
+    assert facts_gap["lane"] == "backfill"
+    # no extraction repeated, no claim embedded twice
+    rows = rig.extraction_rows(version_id=version_id)
+    assert rows and all(attempts == 1 for _, attempts in rows)
+    chunks = rig.scalar(
+        "SELECT count(*) FROM chunks WHERE version_id = :v", v=version_id
+    )
+    assert Counter(stage for stage, _ in rows)["extract_claims"] == chunks
+    assert rig.calls()["selection"] == selection_calls
+    # one claim-embedding input per embedded claim: none was embedded twice
+    assert rig.claim_embedder.embedded_texts
+    assert len(rig.claim_embedder.embedded_texts) == rig.scalar(
+        "SELECT count(*) FROM claims WHERE embedding IS NOT NULL"
+    )
+    with rig.engine.connect() as connection:
+        unembedded = connection.execute(
+            text(
+                "SELECT count(*) FROM chunk_claims cc"
+                " JOIN chunks c ON c.chunk_id = cc.chunk_id"
+                " JOIN claims cl ON cl.claim_id = cc.claim_id"
+                " WHERE c.version_id = :v AND cl.embedding IS NULL"
+            ),
+            {"v": version_id},
+        ).scalar_one()
+    assert unembedded == 0
+    configuration = rig.layers.configuration(deployment_id=_DEPLOYMENT_ID)
+    assert not configuration.claims_enabled and not configuration.facts_enabled
+
+
+@pytest.mark.parametrize("configured", [True, False], ids=["configured", "default"])
+def test_claims_switched_off_during_extraction_drain_through_the_claims_tail(
+    small_rig: _LayerRig, configured: bool
+) -> None:
+    """§4.4 / §9.4 (review r1 F3): a version entered claims and is part-way
+    through extraction when both layers are switched off. Its facts boundary
+    opens the claims tail anyway: ``embed_claim`` and the claims-mode
+    reconcile run, it reaches its claims frontier, and nothing is extracted or
+    embedded twice — without another ``setup`` or re-enabling claims. The
+    version entered claims in a configured all-on deployment, or in a default
+    one whose first ``setup`` is the switch-off."""
+    rig = small_rig
+    if configured:
+        rig.configure_all_on()
+    version = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=False),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.run_until(
+        done=lambda: _v2_extraction_started(rig, version_id=version.version_id)
+    )
+    rig.configure(claims=False, facts=False)
+    rig.drain()
+    chunks = rig.scalar(
+        "SELECT count(*) FROM chunks WHERE version_id = :v", v=version.version_id
+    )
+    assert isinstance(chunks, int)
+    _assert_drained_claims_tail(rig, version=version, selection_calls=chunks)
+    assert rig.stage_rows(stages=_E3_STAGES) == 0
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "disabled"
+
+
+def test_a_tail_waiting_for_earlier_fact_work_drains_after_claims_are_switched_off(
+    small_rig: _LayerRig,
+) -> None:
+    """§4.3 / §4.4 (review r1 F3): v1's facts chain is still running (its full
+    reconcile is held back) when v2, mid-extraction, sees both layers switched
+    off. v2's tail waits for v1's fact work; when v1's full reconcile reaches
+    the facts frontier, the advance it runs opens v2's claims tail although
+    claims are now disabled, and v2 drains to its claims frontier."""
+    rig = small_rig
+    rig.configure_all_on()
+    first = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=False),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    second = rig.ingest(
+        source_ref="docs/policy.md",
+        content=_document(edited=True),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    held = tuple(stage for stage in _STAGES if stage is not PipelineStage.RECONCILE)
+    rig.run_until(
+        done=lambda: _v2_extraction_started(rig, version_id=second.version_id),
+        stages=held,
+    )
+    # v1 is past its claims frontier (v2 entered claims) but not its facts one
+    assert (
+        rig.status(
+            version_id=first.version_id, stage="reconcile", version=RECONCILE_VERSION
+        )
+        != "succeeded"
+    )
+    rig.configure(claims=False, facts=False)
+    rig.drain(stages=held)
+    # v2's occurrences are complete, but v1 has fact work in flight: v2 waits
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_state WHERE target_id = :v"
+            " AND stage IN ('embed_claim', 'reconcile')",
+            v=second.version_id,
+        )
+        == 0
+    )
+    facts_gap = rig.gap(version_id=second.version_id, layer="facts")
+    assert facts_gap is not None and facts_gap["entered_at"] is None
+    assert (
+        rig.status(
+            version_id=first.version_id, stage="reconcile", version=RECONCILE_VERSION
+        )
+        == "pending"
+    )
+    selection = rig.calls()["selection"]
+
+    rig.drain()
+
+    assert (
+        rig.status(
+            version_id=first.version_id, stage="reconcile", version=RECONCILE_VERSION
+        )
+        == "succeeded"
+    )
+    _assert_drained_claims_tail(rig, version=second, selection_calls=selection)
+    assert rig.fact_work(version_id=second.version_id) == {}
+
+
+def test_a_living_deletion_while_layers_are_off_reopens_the_restored_version_atomically(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§9.7 / §6.3 (review r1 F4): older versions were discharged and the
+    current one finished; both layers are switched off and the current
+    version is deleted. The deletion's own commit reopens the restored
+    version's claims and facts gaps — unentered, so ``setup``'s seeding finds
+    them — even when the process dies right after it (the cascade never runs).
+    Switching the layers on then processes the restored version with no
+    source-stage work and no chunk-embedding call; it stops reading
+    ``skipped``."""
+    rig.configure(claims=False, facts=False)
+    versions = [
+        rig.ingest(
+            source_ref="notes/living.md",
+            content=_document(edited=False, paragraphs=3) + f"\n\nRevision {index}.",
+            mode="living",
+            at=None,
+        )
+        for index in range(3)
+    ]
+    rig.drain()
+    rig.configure(claims=True, facts=True)
+    rig.drain()
+    restored, deleted = versions[1].version_id, versions[2].version_id
+    for layer in ("claims", "facts"):
+        gap = rig.gap(version_id=restored, layer=layer)
+        assert gap is not None and gap["discharged_at"] is not None, layer
+    rig.configure(claims=False, facts=False)
+    sources_rows = rig.stage_rows(
+        stages=("convert", "structure", "chunk", "embed_chunk")
+    )
+    chunk_rows = rig.scalar("SELECT count(*) FROM chunks")
+    chunk_embeds = rig.calls()["chunk_embed"]
+
+    def died(**_: object) -> object:
+        raise RuntimeError("the worker died right after the repoint committed")
+
+    monkeypatch.setattr(rig.lifecycle, "reconciliation_context", died)
+    with pytest.raises(RuntimeError, match="died right after the repoint"):
+        rig.deletion.delete_version(version_id=deleted)
+    monkeypatch.undo()
+
+    # the tombstone, the repoint and the gap wake-up committed together
+    assert (
+        rig.scalar(
+            "SELECT current_version_id FROM documents WHERE doc_id = :d",
+            d=versions[0].doc_id,
+        )
+        == restored
+    )
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_layer_gaps WHERE version_id = :v",
+            v=deleted,
+        )
+        == 0
+    )
+    for layer in ("claims", "facts"):
+        gap = rig.gap(version_id=restored, layer=layer)
+        assert gap is not None, layer
+        assert gap["discharged_at"] is None and gap["entered_at"] is None, layer
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "disabled"
+    # the operator re-runs the interrupted deletion; it finishes the cascade
+    rig.deletion.delete_version(version_id=deleted)
+    rig.drain(tolerate_failures=True)
+    assert rig.stage_rows(stages=("extract_claims",)) == rig.scalar(
+        "SELECT count(*) FROM chunks c WHERE c.version_id = :v",
+        v=versions[2].version_id,
+    ), "nothing entered while the layers are off"
+
+    rig.configure(claims=True, facts=True)  # setup: write, then seed
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "backfilling"
+    rig.drain()
+
+    assert rig.minted(version_id=restored) >= 1
+    assert rig.gap(version_id=restored, layer="claims") is None
+    assert rig.gap(version_id=restored, layer="facts") is None
+    report = _readiness(engine=rig.engine).inspect(
+        deployment_id=_DEPLOYMENT_ID,
+        version_ids=(restored,),
+        require=ReadinessRequirements(
+            pipeline=True, p1=False, live_graph=False, p3=False
+        ),
+    )
+    assert report.versions[0].ready
+    assert {stage.status for stage in report.versions[0].stages} == {"succeeded"}
+    assert (
+        rig.stage_rows(stages=("convert", "structure", "chunk", "embed_chunk"))
+        == sources_rows
+    )
+    assert rig.scalar("SELECT count(*) FROM chunks") == chunk_rows
+    assert rig.calls()["chunk_embed"] == chunk_embeds
+    states = rig.layers.states(deployment_id=_DEPLOYMENT_ID)
+    assert (states.claims, states.facts) == ("enabled", "enabled")
+
+
+def test_deleting_a_lineage_removes_its_gaps_in_the_tombstone_commit(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§6.3 (review r1 F4): a lineage deletion deletes every gap of the lineage
+    in the tombstone's transaction, so a crash before the cascade leaves no
+    gap for ``setup`` to seed or coverage to count."""
+    rig.configure(claims=False, facts=False)
+    for index in range(2):
+        rig.ingest(
+            source_ref="docs/policy.md",
+            content=_document(edited=False, paragraphs=3 + index),
+            mode="snapshot",
+            at=datetime(2026, 1, 1 + index, tzinfo=UTC),
+        )
+    rig.drain()
+    doc_id = rig.scalar("SELECT doc_id FROM documents")
+    assert isinstance(doc_id, UUID)
+    assert rig.scalar("SELECT count(*) FROM processing_layer_gaps") == 4
+
+    def died(**_: object) -> object:
+        raise RuntimeError("the worker died right after the tombstone committed")
+
+    monkeypatch.setattr("rememberstack.workers.reconcile.cascade_lineage_removal", died)
+    with pytest.raises(RuntimeError, match="died right after the tombstone"):
+        rig.deletion.delete_lineage(deployment_id=_DEPLOYMENT_ID, doc_id=doc_id)
+    monkeypatch.undo()
+
+    assert rig.scalar("SELECT deleted_at IS NOT NULL FROM documents") is True
+    assert rig.scalar("SELECT count(*) FROM processing_layer_gaps") == 0
+    rig.configure(claims=True, facts=False)
+    assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "enabled"
+    rig.drain()
+    assert rig.stage_rows(stages=("extract_claims",)) == 0
+
+
+def _observed_metered(
+    metered: _Metered, *, source_ref: str, content: str
+) -> IngestedVersion:
+    """One managed observation of a living lineage, approved by the meter."""
+    version = metered.ingestor.ingest_observed(
+        deployment_id=_DEPLOYMENT_ID,
+        source_kind="watched_directory",
+        source_ref=source_ref,
+        upload=DocumentUpload(
+            filename=source_ref.rsplit("/", 1)[-1],
+            mime="text/markdown",
+            content=content.encode("utf-8"),
+        ),
+        versioning_mode="living",
+        source_modified_at=None,
+        source_version_ref=None,
+        sync_cycle_id=None,
+    )
+    assert metered.meter.drain_once().measurements_accepted == 1
+    return version
+
+
+def _failed_profile_changed(profile: str) -> dict[str, object]:
+    return {
+        "processing_profile_id": profile,
+        "outcome": "failed",
+        "reason_code": "processing_profile_changed",
+        "profile_complete": False,
+    }
+
+
+def _succeeded(profile: str) -> dict[str, object]:
+    return {
+        "processing_profile_id": profile,
+        "outcome": "succeeded",
+        "reason_code": None,
+        "profile_complete": True,
+    }
+
+
+def _assert_no_success_receipt(metered: _Metered, *, version_id: UUID) -> None:
+    """No receipt of the version certified success or carries a commit sequence."""
+    measurement = metered.rig.scalar(
+        "SELECT measurement_id FROM managed_ingest_measurements WHERE version_id = :v",
+        v=version_id,
+    )
+    receipts = [
+        item for item in metered.receipts.outcomes if item.measurement_id == measurement
+    ]
+    assert receipts
+    assert all(item.outcome == "failed" for item in receipts)
+    assert all(item.version_commit_sequence is None for item in receipts)
+
+
+def test_a_standard_receipt_fails_when_its_facts_gap_is_discharged(
+    rig: _LayerRig,
+) -> None:
+    """§4.5 / §9.11 (review r1 F5, standard): measured under
+    ``doc-text-standard-v1``; v1 finishes sources and claims, but v2 becomes
+    current before v1's facts boundary, which discharges v1's facts gap. Serving
+    readiness reads v1's fact stages ``skipped`` and v1 ready; its receipt is
+    nevertheless ``failed`` / ``processing_profile_changed``, never a success."""
+    rig.configure_all_on()
+    metered = _Metered(rig=rig)
+    first = _observed_metered(
+        metered,
+        source_ref="notes/standard.md",
+        content=_document(edited=False, paragraphs=3),
+    )
+    rig.drain(stages=_STAGES[:4])  # v1 entered claims; not yet extracted
+    assert rig.gap(version_id=first.version_id, layer="claims") is not None
+    rig.ingest(
+        source_ref="notes/standard.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="living",
+        at=None,
+    )
+    rig.drain()
+    facts_gap = rig.gap(version_id=first.version_id, layer="facts")
+    assert facts_gap is not None and facts_gap["discharged_at"] is not None
+    assert rig.gap(version_id=first.version_id, layer="claims") is None
+    assert (
+        rig.status(
+            version_id=first.version_id,
+            stage="reconcile",
+            version=RECONCILE_CLAIMS_VERSION,
+        )
+        == "succeeded"
+    )
+    ready, stages = _pipeline_ready(engine=rig.engine, version_id=first.version_id)
+    assert ready and len(stages) == 12  # discharged stages read skipped
+    assert metered.outcome(version_id=first.version_id) == _failed_profile_changed(
+        "doc-text-standard-v1"
+    )
+    _assert_no_success_receipt(metered, version_id=first.version_id)
+
+
+def test_a_claims_receipt_fails_when_its_claims_gap_is_discharged(
+    rig: _LayerRig,
+) -> None:
+    """§4.5 / §9.11 (review r1 F5, claims profile): measured under
+    ``doc-text-claims-v1``; v2 becomes current before v1's claims boundary, so
+    v1's claims gap is discharged and it never extracts. It is ready for
+    serving (claims stages ``skipped``), but its receipt is ``failed`` /
+    ``processing_profile_changed``."""
+    rig.configure(claims=True, facts=False)
+    metered = _Metered(rig=rig)
+    first = _observed_metered(
+        metered,
+        source_ref="notes/claims.md",
+        content=_document(edited=False, paragraphs=3),
+    )
+    rig.drain(stages=_STAGES[:2])  # v1 structured (current), not yet chunked
+    rig.ingest(
+        source_ref="notes/claims.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="living",
+        at=None,
+    )
+    rig.drain(stages=_STAGES[:2])  # v2 structured: now the current version
+    rig.drain()
+    claims_gap = rig.gap(version_id=first.version_id, layer="claims")
+    assert claims_gap is not None and claims_gap["discharged_at"] is not None
+    assert rig.minted(version_id=first.version_id) == 0
+    ready, stages = _pipeline_ready(engine=rig.engine, version_id=first.version_id)
+    assert ready and len(stages) == 8
+    assert metered.outcome(version_id=first.version_id) == _failed_profile_changed(
+        "doc-text-claims-v1"
+    )
+    _assert_no_success_receipt(metered, version_id=first.version_id)
+
+
+def test_a_receipt_of_a_version_completed_before_facts_were_switched_off_succeeds(
+    rig: _LayerRig,
+) -> None:
+    """§4.5 / §9.2 (review r1 F5): a version that completed today's twelve
+    stages keeps its successful standard receipt when facts are switched off
+    before the receipt is materialised."""
+    metered = _Metered(rig=rig)
+    version = metered.ingest_approved(name="complete.md")
+    rig.drain()
+    rig.configure(claims=True, facts=False)
+    assert metered.outcome(version_id=version.version_id) == _succeeded(
+        "doc-text-standard-v1"
+    )
+    assert metered.receipts.outcomes[-1].version_commit_sequence is not None
+
+
+def test_a_receipt_whose_entered_facts_work_drains_after_the_switch_succeeds(
+    rig: _LayerRig,
+) -> None:
+    """§4.4 / §4.5 (review r1 F5): facts are switched off while the version's
+    entered fact work drains. The entered gap is not "unreachable": the
+    receipt waits while it drains and then succeeds on the standard profile."""
+    rig.configure_all_on()
+    metered = _Metered(rig=rig)
+    version = metered.ingest_approved(name="draining.md")
+    rig.run_until(
+        done=lambda: (
+            rig.scalar(
+                "SELECT count(*) FROM processing_state"
+                " WHERE stage = 'normalize_relations' AND status = 'succeeded'"
+            )
+            != 0
+        )
+    )
+    gap = rig.gap(version_id=version.version_id, layer="facts")
+    assert gap is not None and gap["entered_at"] is not None
+    rig.configure(claims=True, facts=False)
+    assert metered.outcome(version_id=version.version_id)["outcome"] is None
+    rig.drain()
+    assert rig.gap(version_id=version.version_id, layer="facts") is None
+    assert metered.outcome(version_id=version.version_id) == _succeeded(
+        "doc-text-standard-v1"
+    )
+
+
+# --- §9.6 Rule 4: a claims backfill pays per chunk what always-on pays -------
+
+_V1_AT = datetime(2026, 1, 1, tzinfo=UTC)
+_V2_AT = datetime(2026, 3, 1, tzinfo=UTC)
+_SOURCE_STAGES = ("convert", "structure", "chunk", "embed_chunk")
+
+
+def _chunk_rows(rig: _LayerRig, *, version_id: UUID) -> list[dict[str, Any]]:
+    """Every chunk of a version with its reuse identities, in document order."""
+    with rig.engine.connect() as connection:
+        rows = [
+            dict(row)
+            for row in connection.execute(
+                text(
+                    "SELECT c.chunk_id, c.ordinal, c.section_id,"
+                    " c.chunk_content_hash AS content, c.extraction_input_hash"
+                    " AS extraction, c.claimify_input_hash AS claimify,"
+                    " c.reuse_identity_hash AS reuse_identity,"
+                    " c.text_origin_at AS text_origin, s.embedding_text_hash"
+                    " AS embedding_input, s.search_text"
+                    " FROM chunks c JOIN chunk_search s"
+                    "   ON s.deployment_id = c.deployment_id"
+                    "  AND s.chunk_id = c.chunk_id"
+                    " WHERE c.version_id = :v ORDER BY c.ordinal"
+                ),
+                {"v": version_id},
+            ).mappings()
+        ]
+        for row in rows:
+            row["claims"] = frozenset(
+                connection.execute(
+                    text("SELECT claim_id FROM chunk_claims WHERE chunk_id = :c"),
+                    {"c": row["chunk_id"]},
+                ).scalars()
+            )
+            row["minted"] = bool(
+                connection.execute(
+                    text("SELECT count(*) FROM claims WHERE chunk_id = :c"),
+                    {"c": row["chunk_id"]},
+                ).scalar_one()
+            )
+    return rows
+
+
+def _called_ordinals(
+    calls: list[tuple[str, str]], *, kind: str, chunks: list[dict[str, Any]]
+) -> Counter[int]:
+    """How many calls of one stage targeted each chunk (by ordinal).
+
+    Every call must name exactly one chunk of the version it ran for.
+    """
+    counted: Counter[int] = Counter()
+    for call_kind, span in calls:
+        if call_kind != kind:
+            continue
+        targets = [row["ordinal"] for row in chunks if span[:60] in row["search_text"]]
+        assert len(targets) == 1, (kind, span, targets)
+        counted[targets[0]] += 1
+    return counted
+
+
+def _rule4_trace(
+    rig: _LayerRig, *, backfill: bool, rewrite: str | None = None
+) -> dict[str, Any]:
+    """Ingest two dated versions of a three-section document (v2 edits one
+    paragraph of section B) with claims on, or with claims off and then a
+    claims backfill; return per-chunk identities and per-chunk calls."""
+    rig.configure(claims=not backfill, facts=False)
+    first = rig.ingest(
+        source_ref="docs/sectioned.md",
+        content=_sections("A", "B", "C"),
+        mode="snapshot",
+        at=_V1_AT,
+    )
+    rig.drain()
+    v1_calls = len(rig.extraction_calls)
+    second = rig.ingest(
+        source_ref="docs/sectioned.md",
+        content=_sections("A", "B", "C", edited="B", rewrite=rewrite),
+        mode="snapshot",
+        at=_V2_AT,
+    )
+    rig.drain()
+    trace: dict[str, Any] = {}
+    if backfill:
+        assert rig.extraction_calls == []
+        chunk_ids = rig.scalar(
+            "SELECT array_agg(chunk_id ORDER BY chunk_id) FROM chunks"
+        )
+        source_rows = rig.stage_rows(stages=_SOURCE_STAGES)
+        chunk_embeds = rig.calls()["chunk_embed"]
+        split: list[int] = []
+
+        def observe() -> None:
+            # v2 enters claims only at v1's frontier, so every extraction call
+            # before its first extract row is v1's and every later one v2's
+            if not split and rig.extraction_rows(version_id=second.version_id):
+                split.append(len(rig.extraction_calls))
+
+        rig.configure(claims=True, facts=False)
+        assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "backfilling"
+        rig.drain(observe=observe)
+        v1_calls = split[0]
+        trace["backfill"] = {
+            "source_rows": rig.stage_rows(stages=_SOURCE_STAGES) - source_rows,
+            "chunk_embeds": rig.calls()["chunk_embed"] - chunk_embeds,
+            "chunks_unchanged": rig.scalar(
+                "SELECT array_agg(chunk_id ORDER BY chunk_id) FROM chunks"
+            )
+            == chunk_ids,
+        }
+        assert rig.layers.states(deployment_id=_DEPLOYMENT_ID).claims == "enabled"
+    v1 = _chunk_rows(rig, version_id=first.version_id)
+    v2 = _chunk_rows(rig, version_id=second.version_id)
+    calls_v1 = rig.extraction_calls[:v1_calls]
+    calls_v2 = rig.extraction_calls[v1_calls:]
+    v1_contents = {row["content"] for row in v1}
+    v1_extractions = {row["extraction"] for row in v1}
+    v1_claimify = {row["claimify"] for row in v1}
+    changed = [row for row in v2 if row["content"] not in v1_contents]
+    allowed: set[int] = set()
+    for row in changed:
+        for ordinal in (row["ordinal"] - 1, row["ordinal"], row["ordinal"] + 1):
+            if (
+                0 <= ordinal < len(v2)
+                and v2[ordinal]["section_id"] == row["section_id"]
+            ):
+                allowed.add(ordinal)
+    trace.update(
+        {
+            "v1": v1,
+            "v2": v2,
+            "changed": changed,
+            "allowed": allowed,
+            "extracted": {
+                row["ordinal"] for row in v2 if row["extraction"] not in v1_extractions
+            },
+            "claimify_changed": {
+                row["ordinal"] for row in v2 if row["claimify"] not in v1_claimify
+            },
+            "selection_v1": _called_ordinals(
+                calls_v1, kind="SelectionResponse", chunks=v1
+            ),
+            "claimify_v1": _called_ordinals(
+                calls_v1, kind="ClaimifyResponse", chunks=v1
+            ),
+            "selection_v2": _called_ordinals(
+                calls_v2, kind="SelectionResponse", chunks=v2
+            ),
+            "claimify_v2": _called_ordinals(
+                calls_v2, kind="ClaimifyResponse", chunks=v2
+            ),
+            "calls": rig.calls(),
+            "claims": rig.scalar("SELECT count(*) FROM claims"),
+            "links": rig.scalar("SELECT count(*) FROM chunk_claims"),
+        }
+    )
+    return trace
+
+
+def _identities(rows: list[dict[str, Any]]) -> list[tuple[object, ...]]:
+    """Per-chunk content, Selection, Claimify, reuse and text-origin identity."""
+    return [
+        (
+            row["ordinal"],
+            row["content"],
+            row["extraction"],
+            row["claimify"],
+            row["reuse_identity"],
+            row["text_origin"],
+            row["embedding_input"],
+        )
+        for row in rows
+    ]
+
+
+@pytest.fixture()
+def rule4_traces(
+    database_engine: Engine, tmp_path: Path
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The always-on reference and the claims-backfill run, each on a fresh
+    deployment, of the same two dated versions."""
+    always_on = _rule4_trace(
+        _LayerRig(engine=database_engine, root=tmp_path / "on", params=_SMALL),
+        backfill=False,
+    )
+    _bootstrap(engine=database_engine)
+    backfilled = _rule4_trace(
+        _LayerRig(engine=database_engine, root=tmp_path / "later", params=_SMALL),
+        backfill=True,
+    )
+    return always_on, backfilled
+
+
+def test_a_claims_backfill_pays_per_chunk_exactly_what_always_on_pays(
+    rule4_traces: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    """§9.6 / §5.6, CLAUDE Rule 4 (review r1 finding 6): two dated versions of
+    one lineage, v2 editing one paragraph inside multi-chunk section B with
+    untouched sections A and C, ingested with claims off and then backfilled.
+
+    The backfill does no ``chunk`` or ``embed_chunk`` work and embeds no chunk
+    text. v1's Selection and Claimify run once for every v1 chunk; v2's
+    Selection runs once for each new extraction identity, all of which are the
+    edited chunk and its same-section neighbours (counted per chunk). Every
+    other v2 chunk keeps v1's content, Selection, reuse and D140 text-origin
+    identities and its embedding input; every v2 chunk with an unchanged
+    Claimify identity reattaches exactly v1's claim ids. Per chunk and per
+    stage — Selection, Claimify, chunk embeddings, claim embeddings — the calls
+    equal those of an always-on run of the same versions."""
+    always_on, backfilled = rule4_traces
+    side = backfilled["backfill"]
+    assert side["source_rows"] == 0, "no chunk or embed_chunk work in the backfill"
+    assert side["chunk_embeds"] == 0, "no chunk text embedded again"
+    assert side["chunks_unchanged"]
+
+    v1, v2 = backfilled["v1"], backfilled["v2"]
+    assert len(v1) >= 9 and len(v2) >= 9  # a real multi-chunk, multi-section doc
+    assert backfilled["selection_v1"] == Counter(row["ordinal"] for row in v1)
+    assert backfilled["claimify_v1"] == Counter(row["ordinal"] for row in v1)
+    changed = backfilled["changed"]
+    assert 1 <= len(changed) <= 2, "one paragraph changes at most two chunks"
+    assert len({row["section_id"] for row in changed}) == 1
+    edited_section = changed[0]["section_id"]
+    section_b = [row["ordinal"] for row in v2 if row["section_id"] == edited_section]
+    assert len(section_b) >= 3, "the edit sits inside a multi-chunk section"
+    outside = [row for row in v2 if row["section_id"] != edited_section]
+    assert any(row["ordinal"] < min(section_b) for row in outside)
+    assert any(row["ordinal"] > max(section_b) for row in outside)
+    allowed = backfilled["allowed"]
+    extracted = backfilled["extracted"]
+    assert extracted and extracted <= allowed
+    assert backfilled["selection_v2"] == Counter(extracted)
+    assert backfilled["claimify_v2"] == Counter(backfilled["claimify_changed"])
+
+    v1_by_extraction = {row["extraction"]: row for row in v1}
+    untouched = [row for row in v2 if row["ordinal"] not in allowed]
+    assert len(untouched) >= len(v2) - 4
+    reused = 0
+    for row in untouched:
+        before = v1_by_extraction[row["extraction"]]
+        assert row["content"] == before["content"]
+        assert row["reuse_identity"] == before["reuse_identity"]
+        assert row["text_origin"] == before["text_origin"] == _V1_AT
+        assert row["embedding_input"] == before["embedding_input"]
+    for row in v2:
+        if row["ordinal"] in backfilled["claimify_changed"]:
+            continue
+        before = v1_by_extraction[row["extraction"]]
+        assert not row["minted"], row["ordinal"]
+        assert row["claims"] and row["claims"] == before["claims"], row["ordinal"]
+        reused += 1
+    assert reused > 0, "unchanged Claimify identities reattach v1's claim ids"
+    for row in v2:
+        if row["ordinal"] in extracted:
+            assert row["text_origin"] == _V2_AT
+
+    # the same identities and the same paid calls as always-on ingestion
+    for version in ("v1", "v2"):
+        assert _identities(backfilled[version]) == _identities(always_on[version])
+    for key in ("selection_v1", "claimify_v1", "selection_v2", "claimify_v2"):
+        assert backfilled[key] == always_on[key], key
+    for stage in ("selection", "claimify", "chunk_embed", "claim_embed"):
+        assert backfilled["calls"][stage] == always_on["calls"][stage], stage
+    assert backfilled["claims"] == always_on["claims"]
+    assert backfilled["links"] == always_on["links"]
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Rule 4 known gap (D122 window), neither caused nor fixed by D143:"
+        " Claimify's input hashes the previous eight Selection producers, so"
+        " chunks after the edit re-run Claimify beyond the same-section"
+        " neighbourhood in a backfill exactly as in always-on ingestion."
+    ),
+)
+def test_backfilled_claimify_reruns_stay_inside_the_edited_neighbourhood(
+    rule4_traces: tuple[dict[str, Any], dict[str, Any]],
+) -> None:
+    """§9.6: the requirement against the known D122 window only; every other
+    expectation lives in the passing test above."""
+    _always_on, backfilled = rule4_traces
+    assert backfilled["claimify_changed"] <= backfilled["allowed"]

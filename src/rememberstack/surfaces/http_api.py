@@ -1063,10 +1063,8 @@ def _mount_build_info(
 
     @app.get("/deployment", response_model=DeploymentBuildInfo)
     def deployment_build_info() -> DeploymentBuildInfo:
-        """Report which code, model bindings and tools are serving, before any work.
-
-        D143 §7.4: tools that read only an unserved layer are not listed.
-        """
+        """Report which code, model bindings and tools are serving, before any work."""
+        # D143 §7.4: tools that read only an unserved layer are not listed.
         unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
         return build_info.build_info(deployment_id=deployment_id).model_copy(
             update={
@@ -1879,7 +1877,8 @@ def _mount_operations(
 
     @app.get("/operations", response_model=list[ToolDescriptor])
     def list_operations() -> list[ToolDescriptor]:
-        """The assured operations this deployment serves (D143: by its layers)."""
+        """The four assured operations for this deployment."""
+        # D143 §7.4: operations that read only an unserved layer are not listed.
         unserved = unserved_operation_names(layers=layers, deployment_id=deployment_id)
         return [
             descriptor

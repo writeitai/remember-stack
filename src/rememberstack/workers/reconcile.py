@@ -622,9 +622,6 @@ class DeletionService:
             boundary=self._catalog.closure_boundary(doc_id=doc_id),
         )
         self._refresh_profiles(deployment_id=deployment_id, delta=delta, meter=meter)
-        # D143: a deleted head never blocks its successors; a repointed living
-        # lineage processes its new current version.
-        self._catalog.advance_layers(deployment_id=deployment_id, doc_id=doc_id)
         return delta
 
     def delete_lineage(
@@ -647,7 +644,6 @@ class DeletionService:
             self._refresh_profiles(
                 deployment_id=deployment_id, delta=delta, meter=meter
             )
-        self._catalog.advance_layers(deployment_id=deployment_id, doc_id=doc_id)
         return delta
 
     def _refresh_profiles(

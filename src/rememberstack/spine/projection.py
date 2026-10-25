@@ -242,6 +242,30 @@ class ProjectionCatalog:
             )
         return dict(row) if row is not None else None
 
+    def latest_servable_snapshot(
+        self, *, deployment_id: UUID, facts: bool
+    ) -> dict[str, object] | None:
+        """The newest published P3 snapshot built for this facts setting (§7.6).
+
+        The current latest snapshot qualifies whenever its flag matches, exactly
+        as before D143. An older one, superseded by a build for the other
+        setting, is served when the setting returns to its own, unless a
+        document or version was deleted after it was built: an older tree must
+        never bring deleted content back. Hard forget purges rows, so forgotten content
+        never qualifies either. A legacy snapshot without the flag was built
+        with facts.
+        """
+        with self._engine.connect() as connection:
+            row = (
+                connection.execute(
+                    _SELECT_LATEST_SERVABLE,
+                    {"deployment_id": deployment_id, "facts": facts},
+                )
+                .mappings()
+                .first()
+            )
+        return dict(row) if row is not None else None
+
 
 def _require_p3_plane(plane: str) -> None:
     """Reject obsolete live-state planes at the P3-only snapshot catalog."""
@@ -381,6 +405,32 @@ _SELECT_LATEST = text(
     WHERE deployment_id = :deployment_id
       AND plane = CAST(:plane AS projection_plane)
       AND is_latest
+    """
+)
+
+_SELECT_LATEST_SERVABLE = text(
+    """
+    SELECT snapshot_id, version, gcs_uri, row_counts, validation, built_at,
+           published_at
+    FROM projection_snapshots s
+    WHERE s.deployment_id = :deployment_id
+      AND s.plane = 'P3_corpusfs'
+      AND s.published_at IS NOT NULL
+      AND s.status IN ('published', 'superseded')
+      AND ((CAST(s.validation AS jsonb) ->> 'facts') IS DISTINCT FROM 'false')
+          = :facts
+      AND (s.is_latest OR (
+        s.built_at >= coalesce(
+          (SELECT max(deleted_at) FROM documents
+           WHERE deployment_id = :deployment_id),
+          '-infinity')
+        AND s.built_at >= coalesce(
+          (SELECT max(v.deleted_at) FROM document_versions v
+           JOIN documents d ON d.doc_id = v.doc_id
+           WHERE d.deployment_id = :deployment_id),
+          '-infinity')))
+    ORDER BY s.is_latest DESC, s.built_at DESC, s.published_at DESC
+    LIMIT 1
     """
 )
 

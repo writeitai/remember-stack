@@ -14412,7 +14412,7 @@
     },
     "/deployment": {
       "get": {
-        "description": "Report which code, model bindings and tools are serving, before any work.\n\nD143 \u00a77.4: tools that read only an unserved layer are not listed.",
+        "description": "Report which code, model bindings and tools are serving, before any work.",
         "operationId": "deployment_build_info_deployment_get",
         "responses": {
           "200": {
@@ -15701,7 +15701,7 @@
     },
     "/operations": {
       "get": {
-        "description": "The assured operations this deployment serves (D143: by its layers).",
+        "description": "The four assured operations for this deployment.",
         "operationId": "list_operations_operations_get",
         "responses": {
           "200": {

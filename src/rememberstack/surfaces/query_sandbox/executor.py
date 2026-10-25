@@ -25,9 +25,7 @@ from psycopg import sql as pgsql
 from pydantic import ValidationError
 
 from rememberstack.model.client import ProcessingLayer
-from rememberstack.model.processing_layers import LayerAdmission
-from rememberstack.model.processing_layers import LayerSelectionError
-from rememberstack.model.processing_layers import LayerUnavailableError
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
@@ -67,6 +65,8 @@ _EVALUATED_AT_RELATIONS: Final = frozenset(
 # As-of functions answer at an instant the caller names, which is equally a
 # single applied instant; every other public function is not instant-scoped.
 _AS_OF_FUNCTIONS: Final = frozenset({"facts_as_of"})
+_ALL_ENABLED: Final = ProcessingLayerStates(claims="enabled", facts="enabled")
+"""What a sandbox composed without a layers port serves (D143 §8)."""
 _GRAPH_FUNCTIONS: Final = frozenset(
     {"graph_neighborhood", "graph_path", "graph_citation_path"}
 )
@@ -360,18 +360,11 @@ def _sql_type_family(value: object) -> str:
     return type(value).__name__.lower()
 
 
-class LayerAdmissionPort(Protocol):
-    """The D143 layer admission the sandbox consults (``ProcessingLayerCatalog``)."""
+class LayerStatesPort(Protocol):
+    """The D143 layer states the sandbox consults (``ProcessingLayerCatalog``)."""
 
-    def admission(
-        self,
-        *,
-        deployment_id: UUID,
-        channels: frozenset[ProcessingLayer],
-        requested: frozenset[ProcessingLayer] | None,
-        mandatory: frozenset[ProcessingLayer] = frozenset(),
-    ) -> LayerAdmission:
-        """Which of the read's channels it may consult."""
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """Each switchable layer's state: enabled, backfilling or disabled."""
         ...
 
 
@@ -401,7 +394,7 @@ class QuerySandboxExecutor:
         analytical_entitlement: bool = False,
         search: object | None = None,
         embed: Callable[..., tuple[float, ...]] | None = None,
-        layers: LayerAdmissionPort | None = None,
+        layers: LayerStatesPort | None = None,
     ) -> None:
         # The public functions need a projection to nominate from and a way to
         # embed a query; without them the statement still parses, and a call
@@ -632,43 +625,36 @@ class QuerySandboxExecutor:
         """
         if self._layers is None and requested is None:
             return None, ()
+        states = (
+            self._layers.states(deployment_id=self._deployment_id)
+            if self._layers is not None
+            else _ALL_ENABLED
+        )
+        served = {ProcessingLayer.SOURCES} | {
+            layer
+            for layer, state in (
+                (ProcessingLayer.CLAIMS, states.claims),
+                (ProcessingLayer.FACTS, states.facts),
+            )
+            if state != "disabled"
+        }
+        backfilling = {
+            layer
+            for layer, state in (
+                (ProcessingLayer.CLAIMS, states.claims),
+                (ProcessingLayer.FACTS, states.facts),
+            )
+            if state == "backfilling"
+        }
+        admitted = served if requested is None else served & requested
         needed = statement_layers(
             views=validated.referenced_views, functions=validated.referenced_functions
         )
-        entity_search = entity_filtered_claim_search(
-            bindings=validated.srf_bindings, parameters=parameters
-        )
-        try:
-            admission = (
-                self._layers.admission(
-                    deployment_id=self._deployment_id,
-                    channels=frozenset(needed) | {ProcessingLayer.SOURCES},
-                    requested=requested,
-                    mandatory=(
-                        frozenset({ProcessingLayer.FACTS})
-                        if entity_search is not None
-                        else frozenset()
-                    ),
-                )
-                if self._layers is not None
-                else LayerAdmission(
-                    consulted=frozenset(ProcessingLayer)
-                    if requested is None
-                    else requested
-                )
-            )
-        except (LayerUnavailableError, LayerSelectionError) as error:
-            return (QueryErrorCode.INVALID_PARAMETER, str(error)), ()
-        if entity_search is not None and not admission.admits(
-            layer=ProcessingLayer.FACTS
-        ):
-            return (
-                QueryErrorCode.INVALID_PARAMETER,
-                f"{entity_search} with an entity_id filter needs the facts layer,"
-                " which this request does not admit",
-            ), ()
+        # A view or function of a missing layer keeps its own public code,
+        # whether the deployment does not process the layer or the request
+        # excludes it (§7.5).
         for layer, names in sorted(needed.items(), key=lambda item: item[0].value):
-            if admission.admits(layer=layer):
+            if layer in admitted:
                 continue
             views = [name for name in names if name in validated.referenced_views]
             if views:
@@ -682,10 +668,30 @@ class QuerySandboxExecutor:
                 f"{names[0]} belongs to the {layer.value} layer, which this"
                 " deployment does not process or this request excludes",
             ), ()
+        # An entity filter reads facts-owned mentions: a mandatory dependency.
+        entity_search = entity_filtered_claim_search(
+            bindings=validated.srf_bindings, parameters=parameters
+        )
+        if entity_search is not None and ProcessingLayer.FACTS not in admitted:
+            return (
+                QueryErrorCode.INVALID_PARAMETER,
+                f"{entity_search} with an entity_id filter needs the facts layer,"
+                " which this deployment does not process or this request excludes",
+            ), ()
+        unserved = sorted(
+            (layer.value for layer in (requested or ()) if layer not in served)
+        )
+        if unserved:
+            return (
+                QueryErrorCode.INVALID_PARAMETER,
+                f"this deployment does not process the {unserved[0]} layer",
+            ), ()
+        read = set(needed) | (
+            {ProcessingLayer.FACTS} if entity_search is not None else set()
+        )
         warnings = tuple(
             f"layer_backfilling:{layer.value}"
-            for layer in sorted(admission.backfilling, key=lambda item: item.value)
-            if layer in needed
+            for layer in sorted(backfilling & read, key=lambda item: item.value)
         )
         return None, warnings
 

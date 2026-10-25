@@ -77,7 +77,10 @@ def test_mount_publisher_creates_the_three_views(tmp_path: Path) -> None:
 
 
 class _NoSnapshotCatalog:
-    def latest_snapshot(self, *, deployment_id: UUID, plane: str) -> None:
+    def facts_served(self, *, deployment_id: UUID) -> bool:
+        return True
+
+    def latest_servable_snapshot(self, *, deployment_id: UUID, facts: bool) -> None:
         return None
 
 

@@ -123,6 +123,19 @@ test('processing layers travel as repeated query parameters and layer_unavailabl
   }finally{client.close();await engine.close();}
 });
 
+test('a layers selection the read cannot honour keeps its invalid_parameter code',async()=>{
+  const engine=await server({handler:({response})=>json({response,status:422,value:{detail:{code:'invalid_parameter',message:'this request needs the facts layer, which the layers selection excludes'}}})});
+  const client=new Client({apiKey:'fixture',baseUrl:engine.url});
+  try {
+    await assert.rejects(client.runOperation({name:'facts_context',arguments:{query:'fixture'},layers:['sources']}),error=>{
+      assert(error instanceof MemoryApiError&&!(error instanceof LayerUnavailable));
+      assert.equal(error.statusCode,422);assert.equal(error.code,'invalid_parameter');
+      assert.equal(error.detail,'this request needs the facts layer, which the layers selection excludes');
+      return true;
+    });
+  }finally{client.close();await engine.close();}
+});
+
 test('account paths and redirects stay within the issuer origin',async()=>{
   clearMetadataCache();const trap=await server({handler:({response})=>json({response,value:{}})});let issuer;
   issuer=await server({handler:({recorded,response})=>{

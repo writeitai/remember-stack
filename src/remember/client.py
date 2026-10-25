@@ -1434,6 +1434,13 @@ class MemoryClient:
                             detail=str(public_detail.get("message") or ""),
                             layer=str(public_detail.get("layer") or ""),
                         )
+                    elif public_detail.get("code") == "invalid_parameter" and (
+                        isinstance(public_detail.get("message"), str)
+                    ):
+                        # The structured 422 of operation arguments and of a
+                        # D143 layers selection keeps its code.
+                        code = "invalid_parameter"
+                        detail = str(public_detail["message"])
                     else:
                         detail = str(public_detail)
                 else:
