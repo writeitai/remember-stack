@@ -787,6 +787,7 @@ with it.
 1. **The top level is configured, not emergent.** Placement hints reconcile *within* a
    deployment-declared facet skeleton (registry-style config): e.g. `by-type/` (emails,
    papers, contracts, notes…), `by-source/`, `by-topic/` (placement-hint/registry-derived), `entities/`.
+   `entities/` exists only while the deployment serves its facts processing layer (D143).
    Emergent top levels reshuffle as the corpus grows — exactly what path-holding consumers
    cannot tolerate. Facets are stable; their interiors reorganize.
 2. **One document, many views — by stub duplication.** An email about Project Atlas belongs

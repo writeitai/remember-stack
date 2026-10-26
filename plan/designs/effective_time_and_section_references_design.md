@@ -522,7 +522,9 @@ The version's own date remains on the version for everything else.
 **Reuse identity.** Each chunk also stores `reuse_identity_hash` — the date-free identity:
 own block hashes, neighbour block hashes, the header facts other than dates (title, file name,
 source kind, language, the extraction-eligibility policy marker), `blockizer_version`,
-`structurer_version` and `extractor_version`. Indexed on `(deployment_id, doc_id,
+`structurer_version`, `extractor_version`, and canonical converter-origin hashes
+of the target and consumed same-section neighbors. Coordinates are relative to
+each window; absolute document offsets are excluded. Indexed on `(deployment_id, doc_id,
 reuse_identity_hash)`.
 
 **Rule, at chunk creation.** When E1 creates the chunks of a new version of lineage `L`:
@@ -845,7 +847,11 @@ source kind may disable extraction for it by configuration.
   deduplicates to one edge per `(from_doc_id, to_doc_id, kind)` among resolved references made
   by the versions `versions_in_scope` selects under `current`; `crossref_id` is the smallest
   contributing row id. `graph_citation_path` keeps its current, structural semantics;
-  time-scoped and section-level questions go through `document_references`.
+  time-scoped and section-level questions go through `document_references`. Each
+  returned citation edge carries `bindings` and `source_labels`: the distinct `binding`
+  values and non-null `source_label` values of the references it merges, so a pinned or
+  caller-flagged citation stays visible on a path
+  ([p2 graph design §4.2](p2_graph_design.md#42-work-bounded-frontier-traversal)).
 - **Why sections are not graph vertices.** Section references are read one source or target at
   a time with keyset paging (§6.2); nothing needs multi-hop traversal at section grain, and the
   graph's purpose is entity relations. Adding millions of section vertices would cost memory and
@@ -1056,7 +1062,9 @@ application would ever reach the adjudicator again. A **window review** closes t
   version whose processing never completes (no route, dead letter) is reviewed when it is
   reprocessed or deleted. A request is a `review_fact_windows` job targeting a request id that
   is fresh per change, or derived from the reconcile run or deletion episode so a retry does not
-  duplicate it.
+  duplicate it. While a deployment's facts layer is switched off (D143), these jobs are queued but
+  not claimed; they run when facts are switched back on
+  ([processing layers design §4.4](processing_layers_design.md#44-switching-off-drains-it-never-holds)).
 - **Fan-out.** The lineage job walks the live facts with evidence in any version of the
   lineage (deleted versions included, since deleting one changes the intervals) in pages of a
   bounded size (500, a starting value to tune), each page one bounded transaction; a full page

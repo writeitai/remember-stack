@@ -1,115 +1,9 @@
-# RS-LoCoMo-Full-v38 setup
+# RS-LoCoMo-Full-v39 setup
 
-v38 (2026-09-15) retries one deterministic translator rejection inside the
-fact-adjudication delivery: on a new-fact target/declare mismatch, a supplied-name
-collision, or incoming support filed as a move, drain re-generates once against
-the same prepared attempt with a structural note appended outside the inputs,
-metered under a distinct `:translator-retry1` receipt. Relation and observation
-application generations append `:rej-feedback-1`. The base prompt is byte-identical;
-schema, translator, normalizer, and resolver stay the same. Re-ingest v37 stores
-for a v38 run; historical results remain available for directional comparisons.
-A second identical rejection raises exactly as before; it does not establish a
-benchmark score or cost improvement.
-
-v37 (2026-09-15) adds two target-discipline sentences to the fact adjudicator:
-when target is a supplied F-name, new_facts must be empty, and the incoming
-assertion's placement is decided by target/stance alone, never by a
-support_moves entry. Relation and observation application generations append
-`:target-discipline-1`. Schema, translator, normalizer, and resolver stay the
-same. Re-ingest v36 stores for a v37 run; historical results remain available
-for directional comparisons. The wording addresses the R8 Vertex/Gemma
-dead-letters (declared-but-unused N-names and incoming support filed as a
-move); it does not establish a benchmark score or cost improvement.
-
-v36 (2026-09-15) tells the fact adjudicator to choose N1 rather than continue
-F-numbering, and adds two complete JSON examples that show structure only:
-repeating supplied F1 with no other changes, or declaring N1 when incoming
-A1 is a different proposition. Relation and observation application
-generations append `:new-fact-refs-1`. Schema, translator, normalizer, and
-resolver stay the same. Meaning, temporal, schema, retrieval, answer, and
-judge settings stay the same. Re-ingest v35 stores for a v36 run; historical
-results remain available for directional comparisons. The wording does not
-establish a benchmark score or cost improvement. A separate control on one
-captured R7 input had named a new fact `F2`; three diagnostics of this
-template returned N1 or F1 as required.
-
-v35 (2026-09-15) names existing nested normalizer fields after the root
-both-array sentence. Each observation, relation, and entity reference lists
-its declared fields; empty context uses `[]`; `uses_claim_window` is an
-explicit boolean; `surface=null` when the claim spelling matches the
-canonical name. That wording completed one captured Gemma/Vertex input that
-had already received the both-array sentence. The same input completed in
-an earlier run, so this is not a deterministic failure. Resolver and
-fact-adjudicator prompt generations stay the same; the normalizer generation
-appends `:nested-fields-1`. Meaning, temporal, schema, retrieval, answer, and
-judge settings stay the same. Re-ingest v34 stores for a v35 run; historical
-results remain available for directional comparisons. The wording does not
-establish a benchmark score or cost improvement.
-
-v34 (2026-09-15) names existing decision-output fields in two processing
-prompts. T4 requires `candidate_id`, `confidence`, `decision`, and
-`rationale` together, including nulls; that wording completed one captured
-Gemma/Vertex T4 input. Fact adjudication names all nine `PromptFactDecision`
-fields, uses `[]` for empty arrays, and says `window=null` when no explicit
-date replacement is intended;
-that corrects a prompt/schema contradiction and is not a reproduced
-fact-adjudication provider failure. Resolver, normalizer, and application
-generations roll together. Meaning, temporal, schema, retrieval, answer, and
-judge settings stay the same. Re-ingest v33 stores for a v34 run; historical
-results remain available for directional comparisons. The wording does not
-establish a benchmark score or cost improvement.
-
-v33 (2026-09-15) adds an explicit normalizer output-format sentence: both
-`observations` and `relations` arrays must be present, using `[]` when a kind
-has no output. The normalizer generation and protocol identity advance
-together. Meaning, temporal, schema, retrieval, answer, and judge settings
-stay the same. Re-ingest v32 stores for a v33 run; historical results remain
-available for directional comparisons. The wording does not establish a
-benchmark score or cost improvement.
-
-v32 (2026-09-15) changes the fallback structuring JSON field to `subsections`
-while preserving the internal `children` tree. The structure generation and
-protocol identity advance together. Other processing, retrieval, answer, and
-judge settings stay the same. Re-ingest v31 stores for a v32 run; historical
-results remain available for directional comparisons.
-
-v31 (2026-09-14) pins D122 source-backed document references and D123
-contextual fact nomination on the combined D119–D121 processing contract, and
-requires the supported ingest stage `ground_claims` (Claimify after Selection).
-Extractor generation includes `assertion-clarity-4:d122-source-references-1`;
-normalizer `assertion-clarity-3:d123-context-refs-2`; relation and observation
-adjudicators `concise-handles-5:d123-context-nom-2`; concise renderer
-`concise-handles-2`. Stores ingested under v30 are not comparable and must be
-re-ingested for this protocol. Dataset, provider defaults, answer/judge
-behavior and scoring are unchanged. The changed pins do not establish improved
-quality or lower cost.
-
-v30 (2026-09-14) combines D119 multi-span extraction with D120/D121 clear
-processing instructions and compact adjudication input. Extractor generation
-includes `assertion-clarity-4`, normalizer `assertion-clarity-3`, and adjudicators
-use `concise-handles-5`.
-The surface manifest includes D119 occurrence evidence. Stores ingested under
-v28 or v29 are not comparable and must be re-ingested for this protocol.
-Dataset, provider defaults, answer/judge behavior and scoring are unchanged.
-The changed pins do not establish improved quality or lower cost.
-
-v28 (2026-09-12) pins the D118 fact contract: normalizer generation
-`e3-normalize-2026.09f:…:mutable-window-1`, the relation and observation
-adjudicator generations `…-2026.09c:mutable-window-1`, the chosen-window
-retrieval surface (manifest hash re-pinned) and the consumption skill 4.0.0
-time-scope guidance. Facts carry one mutable world-time window with precision;
-undated facts are `possible` matches, and history mode returns completed
-intervals. Stores ingested under v27 are not comparable and must be
-re-ingested. Dataset, models, budgets, judge rubric, and scoring are unchanged.
-
-v27 (2026-09-11) pins extractor generation `temporal-anchor-4`, in which a
-resolved relative date is written into claim text as an ISO value (D41/D32
-amendments of 2026-09-11), and the answer prompt defines the two evidence
-times in plain words: `asserted_at` is when the source made the statement;
-`claim_valid_from` / `claim_valid_until` are when the claim says it happened
-or was true. Stores ingested under v26 are not comparable and must be
-re-ingested. Dataset, models, retrieval behavior, budgets, judge rubric, and
-scoring are unchanged from v26.
+One current execution profile uses Luna 6/Flex for ingestion and vision at low
+reasoning, Luna 6/Flex for answering and judging at high reasoning, and Jev
+for adjudication. Historical protocols are retained in saved run artifacts
+and Git, not as runnable branches. No new benchmark score is claimed.
 
 This directory contains the unshipped full-system LoCoMo adapter. It does not vendor or
 auto-download LoCoMo. Supply the exact pinned `locomo10.json` only after confirming its
@@ -127,12 +21,12 @@ The safe first command is local and makes no API or model call:
 uv run --extra benchmark python -m benchmarks.locomo prepare \
   --dataset /absolute/path/locomo10.json \
   --tier smoke \
-  --protocol full-v38 \
+  --protocol full-v39 \
   --output .benchmark-runs/locomo-smoke
 ```
 
 The harness validates the pinned bytes, renders session documents, and fingerprints the
-eight-question smoke plan. `--protocol` is prepare-only; `full-v38` is the one
+eight-question smoke plan. `--protocol` is prepare-only; `full-v39` is the one
 current-system protocol, and every later stage reads that immutable choice from
 `run.json`. Do not run remote stages until reviewing
 [`locomo_benchmark_design.md`](../../plan/designs/locomo_benchmark_design.md).
@@ -281,7 +175,7 @@ from readiness.
 
 ## Retrieval-access ablations (development only)
 
-The additive D124 runner reuses one completely processed Full-v38 sample and
+The additive D124 runner reuses one completely processed Full-v39 sample and
 compares four answer routes without re-ingesting it:
 
 | Profile | Answer runtime | Available evidence |
@@ -352,159 +246,8 @@ Codex home merely to hide those schemas.
 Only compare `codex-p3` with `codex-p3-mcp`, and `mcp` with `mcp-p3`, as causal
 access changes. Cross-runtime scores are directional because native Codex has
 its own agent loop and shell semantics. A Codex result with `audit_status`
-`pending` or `invalid` is not comparable. The canonical Full-v38 protocol and
+`pending` or `invalid` is not comparable. The canonical Full-v39 protocol and
 its source state are never modified by this command.
-
-## Gemma 4 on Vertex as the answer agent (`full-v38-gemma-vertex`)
-
-`full-v38-gemma-vertex` is a *reader-only variant* of `full-v38`, not a new
-benchmark identity and not a processing configuration: every ingest pin is
-identical -- pipeline stages including `ground_claims`, component generations,
-model bindings, prompts, tool catalog, budgets, temperature, and the frozen
-Luna judge -- except that the answer agent is `google/gemma-4-26b-a4b-it-maas`,
-Google's managed Gemma 4 26B-A4B model on the Gemini Enterprise Agent Platform
-(formerly Vertex AI), and the answer step is pinned as
-`DiscriminatedAnswerAgentStep`. Its scores therefore compare answer agents
-over the same stores. The judge and the preflight embedding stay on OpenRouter,
-so the OpenRouter key is still required; only the answer-agent model name
-routes to Vertex.
-
-The step shape differs for a measured reason. Vertex's constrained decoder
-emits object keys in **alphabetical** order and demands every required key,
-so under the flat `AnswerAgentStep` schema (`action`, `answer`,
-`arguments_json`, `tool_name` in that order) Gemma is forced to fill `answer`
-before `tool_name`, writes the tool name there, cannot close the object, and
-pads whitespace until the output cap (observed 2026-09-04 on every flat
-variant tried, including plain-string and type-array nullables). The
-discriminated form is the same decision with the same field names as a
-two-branch union -- `{action:"tool", tool_name, arguments_json}` or
-`{action:"answer", answer}` -- so no branch has a key the model must invent,
-and the model completes in a few tokens. The prompt is byte-identical to
-v22; only `answer_schema_sha256` differs.
-
-Prepare it explicitly; every later stage reads the immutable choice:
-
-```bash
-uv run --extra benchmark python -m benchmarks.locomo prepare \
-  --dataset /absolute/path/locomo10.json \
-  --tier smoke \
-  --protocol full-v38-gemma-vertex \
-  --output .benchmark-runs/locomo-gemma-smoke
-```
-
-The Vertex binding uses no API key or service-account key. The adapter takes
-short-lived access tokens from Google Application Default Credentials; on the
-benchmark hosts an X.509 client certificate and root-only private key are
-exchanged with Google STS (Workload Identity Federation). Export the workload
-credential the same way the GCS backup path does, plus the project:
-
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/etc/rememberstack/locomo-vertex/credentials.json
-export GOOGLE_API_CERTIFICATE_CONFIG=/etc/rememberstack/locomo-vertex/certificate-config.json
-export GOOGLE_API_USE_CLIENT_CERTIFICATE=true
-export REMEMBERSTACK_VERTEX_PROJECT_ID=<the isolated lab project id>
-# optional: REMEMBERSTACK_VERTEX_LOCATION (default global),
-#           REMEMBERSTACK_VERTEX_MAX_COMPLETION_TOKENS (default 128000),
-#           REMEMBERSTACK_VERTEX_TIMEOUT_S (default no client deadline),
-#           REMEMBERSTACK_VERTEX_PRICE_TABLE_USD_PER_MILLION (JSON; default pins Gemma 4 26B)
-```
-
-Accounting differs from OpenRouter and the run records say so by construction:
-Vertex reports token counts but no charge, so every `cost_usd` for a Vertex
-call is **computed** from the pinned price table (input $0.15, output $0.60
-per million tokens, retrieved 2026-09-04), with every prompt token billed at
-the full input rate and cached-token discounts ignored. The value can only
-over-report. The adapter refuses to call any model without a pinned price and
-refuses any reasoning-effort pin other than `none`; the variant deliberately
-does not use Vertex-specific thinking controls, and silently dropping a pin
-would misstate the protocol. The `--max-evaluator-cost-usd` stop threshold applies to the shared
-ledger exactly as before; the project-level spend cap and guardian in the
-cloud repository are the hard monetary boundary for this provider.
-
-A Vertex `401`/`403` -- a revoked federated identity, a disabled API, or
-unlinked billing, which is what the spend guardian does -- stops the stage
-before the next checkpoint, like an exhausted OpenRouter balance. Any other
-Vertex failure is one failed item after bounded retries for `429` queue-full
-responses, which report no usage. `ingest` still runs the preflight: the chat probe now goes
-to Vertex and proves the certificate, project, and model entitlement before
-any upload.
-
-## Codex ChatGPT subscription for answer and judge
-
-`full-v38-codex-subscription` runs both evaluator seats through the official
-local Codex app-server and the operator's existing ChatGPT login. It does not
-read or copy `~/.codex/auth.json`, accept an OpenAI API key, or call the private
-ChatGPT response route directly. Run `codex login` once, then prepare the
-separately fingerprinted protocol:
-
-```bash
-uv run --extra benchmark python -m benchmarks.locomo prepare \
-  --dataset /absolute/path/locomo10.json \
-  --tier smoke \
-  --protocol full-v38-codex-subscription \
-  --output .benchmark-runs/locomo-codex-smoke
-```
-
-The v38 prompts, schemas, tool loop, call limits, judge rubric, and scoring stay
-the same. The provider controls do not: Codex pins `gpt-5.6-luna`, reasoning
-effort `high`, and temperature `null`. Therefore this is an experimental
-provider variant, not a canonical v38 score.
-
-Each model call uses a fresh ephemeral thread, an empty temporary directory,
-read-only/no-network sandboxing, and deny-all approvals. It receives no custom
-system instruction that could be confused with the shared benchmark prompt.
-The existing LoCoMo runner performs and records every RememberStack retrieval.
-Codex runtime items are appended to `codex-runtime-<stage>.jsonl`; commands,
-file changes, MCP calls, web searches, or sub-agents are recorded there and the
-turn is rejected before its output can enter the score. Tool-returned content is
-omitted from this audit so it cannot become a second corpus or secret store.
-
-Codex reports tokens but no per-turn USD charge. Records therefore carry
-`cost_usd=0` as the provider-reported marginal amount; the answer/judge call
-ceilings and Codex service limits bound subscription usage. The synchronous SDK
-turn has no harness-enforced timeout, and a trivial live probe carried roughly
-10k input tokens of Codex agent context, so start with smoke/development rather
-than treating this as the default publication path.
-
-Fresh ingestion still needs the normal OpenRouter key for the deployment's
-embedding preflight (the chat probe routes to Codex). Against an already
-ingested store, `answer` and `judge` compose only Codex and need no OpenRouter
-or Vertex credential on the evaluator machine.
-
-## GLM ingest variant (`full-v38-glm`)
-
-`full-v38-glm` replays the R14 generation model (`z-ai/glm-5.3-flash` via
-OpenRouter) under the full v38 pipeline: same stages including
-`ground_claims`, component generations, prompts, tool catalog, budgets,
-Qwen embeddings, and the frozen Luna answer agent and judge. Only the ingest
-generation seats and their reasoning-effort pin (`minimal`) change.
-
-Because the ingest models determine what is in the store, this is a new
-ingest-model family baseline, not a canonical v38 score: compare GLM-ingest
-scores only to other GLM-ingest runs, never to Luna-ingest v38 runs. The
-first GLM run sets that baseline; its purpose is to verify the D127
-provider-rotation fix against the exact DeepInfra 429 `engine_overloaded`
-failure that dead-lettered 45 R14 work items. The shard driver routes chat
-through the ordered shortlist `deepinfra,relace,wafer` with fallbacks so
-rotation has somewhere to advance to; pinning `CHAT_PROVIDER_ONLY` would
-reproduce the R14 no-escape behavior.
-
-Prepare and run it with the protocol selected on every invocation (prepare
-records the choice immutably; ingest and answer refuse a deployment whose
-bindings differ from it):
-
-```bash
-export LOCOMO_PROTOCOL=full-v38-glm
-uv run --extra benchmark python -m benchmarks.locomo prepare \
-  --dataset /absolute/path/locomo10.json \
-  --tier smoke \
-  --protocol full-v38-glm \
-  --output .benchmark-runs/locomo-glm-smoke
-```
-
-`run_shard.sh` reads the same `LOCOMO_PROTOCOL` export for the model
-environment, so a shard run without it fails closed at the readiness gate
-instead of silently ingesting under the wrong models.
 
 ## Sharded runs
 

@@ -725,14 +725,18 @@ def test_first_step_provider_outage_is_not_retried() -> None:
     assert provider.answer_calls == 1
 
 
-def test_credit_exhaustion_stops_without_an_answer_checkpoint() -> None:
+@pytest.mark.parametrize("capacity", [False, True])
+def test_provider_rejection_stops_without_an_answer_checkpoint(capacity: bool) -> None:
     client, raw_client = _memory_client()
     state = _run_state()
     provider = _UnavailableProvider(
-        message="OpenRouter /chat/completions returned 402: synthetic credits"
+        message="Flex processing is temporarily unavailable"
+        if capacity
+        else "OpenRouter /chat/completions returned 402: synthetic credits",
+        retryable_unbilled=capacity,
     )
     try:
-        with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+        with pytest.raises(ProviderInfrastructureError, match="unavailable"):
             _answer_one(
                 question=_question(),
                 client=client,
@@ -752,9 +756,10 @@ def test_credit_exhaustion_stops_without_an_answer_checkpoint() -> None:
     assert state.evaluator_cost_usd == 0
 
 
-def test_credit_exhaustion_stops_without_a_judge_checkpoint() -> None:
+@pytest.mark.parametrize("capacity", [False, True])
+def test_provider_rejection_stops_without_a_judge_checkpoint(capacity: bool) -> None:
     state = _run_state()
-    with pytest.raises(ProviderInfrastructureError, match="credits unavailable"):
+    with pytest.raises(ProviderInfrastructureError, match="unavailable"):
         _judge_one(
             question=_question(),
             answer=AnswerRecord(
@@ -772,7 +777,10 @@ def test_credit_exhaustion_stops_without_a_judge_checkpoint() -> None:
                 reader_attempts=1,
             ),
             provider=_UnavailableProvider(
-                message="OpenRouter /chat/completions returned 402: synthetic credits"
+                message="Flex processing is temporarily unavailable"
+                if capacity
+                else "OpenRouter /chat/completions returned 402: synthetic credits",
+                retryable_unbilled=capacity,
             ),
             state=state,
             max_judge_calls=1,
@@ -1047,7 +1055,7 @@ def test_answer_and_judge_refuse_provider_resolved_model_drift() -> None:
     assert answer.failure is not None
     assert answer.failure.kind == "accounting"
     assert "not-luna" in answer.failure.message
-    assert answer_provider.requests[0].reasoning_effort == "none"
+    assert answer_provider.requests[0].reasoning_effort == "high"
 
     judge_provider = _CostProvider(
         cost=Decimal("0.01"), resolved_model="openai/not-luna"
@@ -1102,9 +1110,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
     assert "not-luna" in answer.failure.message
     assert answer.agent_call_count == 2
     assert answer.reader_usage is not None
-    assert answer.reader_usage.model_name == (
-        "mixed:openai/gpt-5.6-luna|openai/not-luna"
-    )
+    assert answer.reader_usage.model_name == ("mixed:openai/gpt-6-luna|openai/not-luna")
     assert answer.reader_usage.cost_usd == Decimal("0.02")
     assert state.evaluator_cost_usd == Decimal("0.02")
 
@@ -1119,18 +1125,7 @@ def test_answer_persists_usage_when_provider_drifts_after_tool_call() -> None:
         "invalid_first_step_completions",
         "invalid_reader_completions",
     ),
-    (
-        ("full-v38", "openai/gpt-5.6-luna", "openai/gpt-5.6-luna", "none", 0.0, 0, 2),
-        (
-            "full-v38-codex-subscription",
-            "gpt-5.6-luna",
-            "gpt-5.6-luna",
-            "high",
-            None,
-            0,
-            0,
-        ),
-    ),
+    (("full-v39", "openai/gpt-6-luna", "openai/gpt-6-luna", "high", 0.0, 0, 2),),
 )
 def test_staged_mock_run_uses_prepared_protocol_and_resumes(
     protocol: ProtocolKey,
@@ -1988,13 +1983,15 @@ def test_single_run_summary_json_is_unchanged(
 ) -> None:
     _patch_prepared_inputs(monkeypatch=monkeypatch)
     run_dir = tmp_path / "run"
-    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    prepared = prepare_run(
+        dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
+    )
 
     serialized = summarize_run(run_dir=run_dir).model_dump_json()
 
     assert serialized == (
-        '{"protocol_name":"RS-LoCoMo-Full-v38","protocol_fingerprint":'
-        '"f2de7d4caf290fe2a7167749c1a9dc0650243fa2ae84b4c6a21615c5c81fe8b6",'
+        '{"protocol_name":"RS-LoCoMo-Full-v39","protocol_fingerprint":'
+        f'"{prepared.protocol_fingerprint}",'
         '"tier":"smoke","questions":1,"judge_correct":0,"judge_percent":0.0,'
         '"official_f1":0.0,"categories":[{"category":1,"questions":0,'
         '"judge_correct":0,"judge_percent":0.0,"official_f1":0.0},{"category":2,'
@@ -2213,9 +2210,9 @@ def test_prepared_protocol_pins_current_surface_and_luna(
         dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir
     )
 
-    assert prepared.protocol_name == "RS-LoCoMo-Full-v38"
-    assert prepared.answer_agent_model == "openai/gpt-5.6-luna"
-    assert prepared.answer_agent_reasoning_effort == "none"
+    assert prepared.protocol_name == "RS-LoCoMo-Full-v39"
+    assert prepared.answer_agent_model == "openai/gpt-6-luna"
+    assert prepared.answer_agent_reasoning_effort == "high"
     assert prepared.answer_reader_retry_budget == 2
     assert prepared.surface_manifest_hash == EXPECTED_SURFACE_MANIFEST_HASH
     assert prepared.tool_catalog_sha256 == tool_catalog_sha256()
@@ -2284,8 +2281,12 @@ def test_recorded_run_preserves_identity_before_retrieval_budget_was_added(
         runner.load_recorded_run(run_dir=run_dir).configuration.protocol_fingerprint
         == (payload["protocol_fingerprint"])
     )
+    assert (
+        summarize_run(run_dir=run_dir).protocol_fingerprint
+        == payload["protocol_fingerprint"]
+    )
     with pytest.raises(BenchmarkRunError, match="adapter version"):
-        summarize_run(run_dir=run_dir)
+        runner._load_run(run_dir=run_dir)
 
 
 def test_remote_stage_requires_explicit_execution(
@@ -2568,14 +2569,17 @@ class _CostProvider:
 class _UnavailableProvider:
     """Provider that fails before returning any reported usage."""
 
-    def __init__(self, *, message: str) -> None:
+    def __init__(self, *, message: str, retryable_unbilled: bool = False) -> None:
         self.message = message
+        self.retryable_unbilled = retryable_unbilled
 
     def generate(
         self, *, request: ModelRequest, response_type: type[ResponseT]
     ) -> GeneratedResponse[ResponseT]:
         del request, response_type
-        raise OpenRouterProviderError(self.message)
+        raise OpenRouterProviderError(
+            self.message, retryable_unbilled=self.retryable_unbilled
+        )
 
     def embed(self, *, request: EmbeddingRequest) -> EmbeddingResponse:
         raise AssertionError(f"unexpected embed call: {request.model}")
@@ -3522,7 +3526,7 @@ def test_preflight_reports_a_vertex_access_failure_as_unusable() -> None:
 
 def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     """The CLI composes providers from the frozen choice, not from ambient env."""
-    protocol = PROTOCOL_REGISTRY["full-v38-gemma-vertex"]
+    protocol = PROTOCOL_REGISTRY["full-v39"]
     configuration = RunConfiguration(
         protocol_name=protocol.name,
         adapter_version="synthetic",
@@ -3553,8 +3557,7 @@ def test_run_protocol_resolves_the_prepared_variant(tmp_path: Path) -> None:
     resolved = run_protocol(run_dir=tmp_path)
 
     assert resolved is protocol
-    assert resolved.answer_agent_provider == "vertex"
-    assert resolved.judge_provider == "openrouter"
+    assert resolved.execution_profile.chat_provider_only == ("openai/flex",)
 
 
 class _DiscriminatedProvider:
@@ -3682,3 +3685,144 @@ def test_configured_retrieval_depth_reaches_the_api_and_saved_trace() -> None:
         "candidate_k": 200,
     }
     assert requests[0] == {"query": "Where?", "k": 50, "candidate_k": 200}
+
+
+def test_historical_protocol_is_read_only_without_an_executable_definition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect old recorded identities without retaining their execution branches."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "historical"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    configuration_path = run_dir / "run.json"
+    configuration = json.loads(configuration_path.read_text())
+    configuration.pop("execution_profile")
+    configuration.update(
+        protocol_name="RS-LoCoMo-Full-v38",
+        adapter_version="historical-adapter",
+        answer_agent_model="openai/gpt-5.6-luna",
+        judge_model="openai/gpt-5.6-luna",
+        answer_agent_reasoning_effort="none",
+        judge_reasoning_effort="none",
+        api_timeout_seconds=60.0,
+    )
+    base = {
+        key: value
+        for key, value in configuration.items()
+        if key not in {"prepared_at", "dataset_path", "protocol_fingerprint"}
+    }
+    configuration["protocol_fingerprint"] = runner._canonical_hash(base)
+    configuration_path.write_text(json.dumps(configuration))
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    state.update(
+        protocol_name=configuration["protocol_name"],
+        protocol_fingerprint=configuration["protocol_fingerprint"],
+    )
+    state_path.write_text(json.dumps(state))
+    before = {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
+    recorded = runner.load_recorded_run(run_dir=run_dir)
+    assert recorded.configuration.answer_agent_model == "openai/gpt-5.6-luna"
+    assert recorded.configuration.execution_profile is None
+    assert summarize_run(run_dir=run_dir).protocol_name == "RS-LoCoMo-Full-v38"
+    with pytest.raises(ValueError, match="historical protocol.*read-only"):
+        run_protocol(run_dir=run_dir)
+    assert before == {p.name: p.read_bytes() for p in run_dir.iterdir() if p.is_file()}
+
+
+@pytest.mark.parametrize("stage", ["answer", "judge"])
+def test_capacity_stop_retries_rejected_item_and_preserves_prior_work(
+    stage: str,
+) -> None:
+    """An unbilled rejection cannot become an immutable WRONG checkpoint."""
+    client, raw_client = _memory_client()
+    state = _run_state()
+    first_question = _question()
+    second_question = first_question.model_copy(update={"item_id": "conv-test/qa/0001"})
+    capacity = _UnavailableProvider(
+        message="Flex processing is temporarily unavailable", retryable_unbilled=True
+    )
+    try:
+        first_answer = _answer_one(
+            question=first_question,
+            client=client,
+            provider=_CostProvider(cost=Decimal("0.01")),
+            tools=(_tool(),),
+            doc_sessions={},
+            state=state,
+            max_agent_calls=20,
+            max_evaluator_cost_usd=Decimal(1),
+        )
+        if stage == "answer":
+            state.answers[first_question.item_id] = first_answer
+            before = first_answer.model_dump_json()
+            spent = state.evaluator_cost_usd
+            with pytest.raises(
+                ProviderInfrastructureError, match="capacity unavailable"
+            ):
+                _answer_one(
+                    question=second_question,
+                    client=client,
+                    provider=capacity,
+                    tools=(_tool(),),
+                    doc_sessions={},
+                    state=state,
+                    max_agent_calls=20,
+                    max_evaluator_cost_usd=Decimal(1),
+                )
+            assert second_question.item_id not in state.answers
+            assert state.evaluator_cost_usd == spent
+            assert state.interrupted_answer_calls == 1
+            resumed = _answer_one(
+                question=second_question,
+                client=client,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                tools=(_tool(),),
+                doc_sessions={},
+                state=state,
+                max_agent_calls=20,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            assert resumed.generated_answer == "Prague"
+            assert state.answers[first_question.item_id].model_dump_json() == before
+        else:
+            first_judge = _judge_one(
+                question=first_question,
+                answer=first_answer,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                state=state,
+                max_judge_calls=4,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            state.judges[first_question.item_id] = first_judge
+            before = first_judge.model_dump_json()
+            spent = state.evaluator_cost_usd
+            second_answer = first_answer.model_copy(
+                update={"item_id": second_question.item_id}
+            )
+            with pytest.raises(
+                ProviderInfrastructureError, match="capacity unavailable"
+            ):
+                _judge_one(
+                    question=second_question,
+                    answer=second_answer,
+                    provider=capacity,
+                    state=state,
+                    max_judge_calls=4,
+                    max_evaluator_cost_usd=Decimal(1),
+                )
+            assert second_question.item_id not in state.judges
+            assert state.evaluator_cost_usd == spent
+            assert state.interrupted_judge_calls == 1
+            resumed = _judge_one(
+                question=second_question,
+                answer=second_answer,
+                provider=_CostProvider(cost=Decimal("0.01")),
+                state=state,
+                max_judge_calls=4,
+                max_evaluator_cost_usd=Decimal(1),
+            )
+            assert resumed.label == "CORRECT"
+            assert state.judges[first_question.item_id].model_dump_json() == before
+    finally:
+        raw_client.close()

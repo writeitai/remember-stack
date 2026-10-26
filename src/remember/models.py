@@ -1338,6 +1338,13 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
+    """One traversed relation; on a citation path, a document reference.
+
+    ``bindings`` and ``source_labels`` are the distinct, sorted ``binding`` and
+    non-null ``source_label`` values of the references a citation edge stands
+    for. Both are empty on entity edges.
+    """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     relation_id: UUID
     subject_id: UUID
@@ -1351,6 +1358,8 @@ class GraphEdge(BaseModel):
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
     support: FactSupport = FactSupport.CURRENT
+    bindings: tuple[ReferenceBinding, ...] = ()
+    source_labels: tuple[str, ...] = ()
 
 
 class GraphPath(BaseModel):

@@ -310,6 +310,21 @@ self-healing gap (a named spike, not papered over):
    `{relations_closed: [r1], observations_closed: [], facts_recounted: [{id: r2, evidence_count: 3→2}], flags_raised: []}`
    — fact IDs and outcomes, never raw claim IDs (the K stale-storm guard).
 
+**Claims mode (D143).** When a deployment's facts layer is off, or the facts backfill has
+not reached a version yet, the version's reconcile runs at component version
+`reconcile-2026.07:claims`. It performs steps 1–5 above (and the deleted-testimony path of §8)
+exactly as the full reconcile does — so facts that already exist keep exact counts and closures,
+and connector-cycle closure still defers to finalization — but opens no fact label and no window
+review. When the facts layer later reaches the version, the full reconcile runs under its own
+key and opens them. **Living supersession guard (configured deployments):** a reconcile computes
+and applies step 2's `version_superseded` transitions in one transaction under the lineage lock,
+and only when the lineage's current version is its own version or its claim occurrences are
+complete — its `embed_chunk` succeeded for its representation and chunk grid, and every chunk's
+Selection and Claimify results are committed or the grid is empty (processing layers design §5.1);
+otherwise the current version's occurrences may not exist yet and the step is skipped — the current version's own reconcile computes it
+lineage-wide. Deployments without a layer configuration run step 2 exactly as before
+([processing layers design §4.2](processing_layers_design.md#42-the-claims-tail-and-the-two-reconcile-modes)).
+
 **Worked example, end to end.** Living document A; version 1 was extracted by extractor v1;
 chunk with block `b2` yielded claim `c1` ("Alice works at Acme") → relation `r1
 (Alice, works_for, Acme)`, `evidence_count = 1` (this lineage is the sole support). Version 2

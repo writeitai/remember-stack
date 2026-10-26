@@ -13,7 +13,6 @@ from typing import Literal
 from benchmarks.locomo.ablation import AblationProfile
 from benchmarks.locomo.ablation import review_retrieval_ablation
 from benchmarks.locomo.ablation import run_retrieval_ablation
-from benchmarks.locomo.model import ProviderKey
 from benchmarks.locomo.protocol import API_TIMEOUT_SECONDS
 from benchmarks.locomo.protocol import DEFAULT_PROTOCOL_KEY
 from benchmarks.locomo.protocol import PROTOCOL_REGISTRY
@@ -23,6 +22,7 @@ from benchmarks.locomo.runner import BenchmarkRunError
 from benchmarks.locomo.runner import ingest_sample
 from benchmarks.locomo.runner import judge_sample
 from benchmarks.locomo.runner import prepare_run
+from benchmarks.locomo.runner import run_api_timeout_seconds
 from benchmarks.locomo.runner import run_protocol
 from benchmarks.locomo.runner import summarize_run
 from benchmarks.locomo.runner import summarize_runs
@@ -30,14 +30,10 @@ from remember.client import MemoryClient
 from remember.errors import MemoryApiError
 from remember.retrieval import ContextRetrievalBudget
 from rememberstack.adapters import build_generation_recorder
-from rememberstack.adapters import CodexSubscriptionModelProvider
 from rememberstack.adapters import GenerationRecorder
 from rememberstack.adapters import LangfuseRecorderSettings
-from rememberstack.adapters import ModelRoutedProvider
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
-from rememberstack.adapters import VertexModelProvider
-from rememberstack.adapters import VertexSettings
 from rememberstack.ports import ModelProviderPort
 
 
@@ -63,7 +59,9 @@ def main(argv: list[str] | None = None) -> int:
             print(configuration.model_dump_json())
             return 0
         if args.command == "ingest":
-            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+            with MemoryClient(
+                timeout=run_api_timeout_seconds(run_dir=args.run)
+            ) as client:
                 records = ingest_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -81,7 +79,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "answer":
             provider = _provider(run_dir=args.run, stage="answer", recorder=recorder)
-            with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
+            with MemoryClient(
+                timeout=run_api_timeout_seconds(run_dir=args.run)
+            ) as client:
                 records = answer_sample(
                     run_dir=args.run,
                     sample_id=args.sample,
@@ -121,11 +121,9 @@ def main(argv: list[str] | None = None) -> int:
             answer_provider = (
                 None
                 if profile.startswith("codex-")
-                else _seat_provider(provider_key="openrouter", recorder=recorder)
+                else _seat_provider(recorder=recorder)
             )
-            judge_provider = _seat_provider(
-                provider_key="openrouter", recorder=recorder
-            )
+            judge_provider = _seat_provider(recorder=recorder)
             if profile in {"codex-p3-mcp", "mcp", "mcp-p3"}:
                 with MemoryClient(timeout=API_TIMEOUT_SECONDS) as client:
                     summary = run_retrieval_ablation(
@@ -189,58 +187,30 @@ ProviderStage = Literal["ingest", "answer", "judge"]
 def _provider(
     *, run_dir: Path, stage: ProviderStage, recorder: GenerationRecorder | None = None
 ) -> ModelProviderPort:
-    """Compose only the provider needed by this frozen protocol stage.
-
-    Ingest uses OpenRouter for the deployment embedding preflight and routes
-    its chat probe to the answer provider. Answer and judge select their
-    independently pinned seats. Stage-local composition lets a
-    Codex-subscription evaluation run without an OpenRouter key once its store
-    has already been ingested.
-    """
+    """Compose the current run's explicit OpenRouter/Flex evaluation binding."""
     protocol = run_protocol(run_dir=run_dir)
-    codex_audit_path = run_dir / f"codex-runtime-{stage}.jsonl"
-    if stage == "ingest":
-        openrouter = _seat_provider(provider_key="openrouter", recorder=recorder)
-        if protocol.answer_agent_provider == "openrouter":
-            return openrouter
-        answer_provider = _seat_provider(
-            provider_key=protocol.answer_agent_provider,
-            codex_audit_path=codex_audit_path,
-            codex_audit_stage=stage,
-            recorder=recorder,
-        )
-        return ModelRoutedProvider(
-            routes={protocol.answer_agent_model: answer_provider}, default=openrouter
-        )
-    provider_key = (
-        protocol.answer_agent_provider if stage == "answer" else protocol.judge_provider
-    )
+    profile = protocol.execution_profile
     return _seat_provider(
-        provider_key=provider_key,
-        codex_audit_path=codex_audit_path,
-        codex_audit_stage=stage,
-        recorder=recorder,
+        chat_provider_only=profile.chat_provider_only, recorder=recorder
     )
 
 
 def _seat_provider(
     *,
-    provider_key: ProviderKey,
-    codex_audit_path: Path | None = None,
-    codex_audit_stage: str = "generation",
     recorder: GenerationRecorder | None = None,
+    chat_provider_only: tuple[str, ...] | None = None,
 ) -> ModelProviderPort:
-    """Build one configured provider without reading unrelated credentials."""
-    if provider_key == "openrouter":
-        return OpenRouterModelProvider(
-            settings=OpenRouterSettings.model_validate({}), recorder=recorder
-        )
-    if provider_key == "vertex":
-        return VertexModelProvider(
-            settings=VertexSettings.model_validate({}), recorder=recorder
-        )
-    return CodexSubscriptionModelProvider(
-        audit_path=codex_audit_path, audit_stage=codex_audit_stage
+    """Build the current OpenRouter binding with an explicit optional shortlist."""
+    return OpenRouterModelProvider(
+        settings=OpenRouterSettings.model_validate(
+            {
+                "chat_provider_only": list(chat_provider_only),
+                "chat_provider_order": None,
+            }
+            if chat_provider_only is not None
+            else {}
+        ),
+        recorder=recorder,
     )
 
 

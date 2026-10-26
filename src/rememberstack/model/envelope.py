@@ -20,6 +20,7 @@ from pydantic import JsonValue
 from pydantic import model_validator
 
 from remember.models import EffectiveInterval
+from remember.models import ReferenceBinding
 from rememberstack.model.adjudication import TranscriptEntry
 from rememberstack.model.claims import ClaimValidPrecision
 from rememberstack.model.claims import EvidenceSpan
@@ -480,7 +481,15 @@ class GraphNode(BaseModel):
 
 
 class GraphEdge(BaseModel):
-    """One traversed relation, carrying its bi-temporal state."""
+    """One traversed relation, carrying its bi-temporal state.
+
+    On a citation path the edge is a document reference (``relation_id`` is
+    its ``crossref_id``). ``bindings`` holds the distinct ``binding`` values of
+    the references the edge stands for and ``source_labels`` their distinct
+    non-null ``source_label`` values, both sorted: ``floating`` means the target
+    versions in force when read, ``pinned`` one named target version, and a
+    label is the caller's own opaque type code. Both are empty on entity edges.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -496,6 +505,8 @@ class GraphEdge(BaseModel):
     ingested_at: UTCDateTime | None
     invalidated_at: UTCDateTime | None
     support: FactSupport = FactSupport.CURRENT  # D54: withdrawn is flagged, not gone
+    bindings: tuple[ReferenceBinding, ...] = ()
+    source_labels: tuple[str, ...] = ()
 
 
 class GraphPath(BaseModel):

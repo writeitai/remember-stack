@@ -7361,6 +7361,39 @@ binary files). Formats that differ inside a family keep their own type:
 `.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
 reports the stored type in its `mime` field.
 
+## Source origins during extraction
+
+Extraction receives the converter's labels for direct text, OCR, observations
+and interpretations alongside verbatim source passages. A mixed target also
+surfaces its direct source text within the existing extraction calls. OCR stays
+eligible evidence about the document; quoted content is not automatically an
+event in the surrounding author's life. Missing origin metadata remains unknown.
+
+This changes extraction and text-origin reuse identities, chunk-row generation
+and embed delivery when explicitly processed under the new code. The source
+bytes, chunk packing and embedding policy/model remain unchanged; exact matching
+vectors are reused, including from an earlier processing of the same version.
+Existing stored claims are not repaired by editing configuration;
+reprocessing must be explicitly requested. Already-flattened plain text cannot
+recover origin labels that were discarded before ingestion.
+
+## Image-description model settings
+
+For deployments routing supported images through the OCR-plus-description
+converter, `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` selects the vision model.
+`REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` optionally pins its effort;
+an unset value preserves the provider default. Set
+`REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` to a JSON list of OpenRouter
+endpoint slugs, for example `["openai/flex"]`, to restrict the description lane
+without marketplace fallback. OCR keeps its independent provider settings.
+
+These settings join the description checkpoint identity. Changing effort or
+routing redoes that lane once and reuses a successful unchanged OCR lane.
+Leaving both options unset preserves the fingerprint for the same explicitly
+configured model. Deployments using the former Gemini default now select Luna
+6, so their description identity changes once; an unchanged OCR lane remains
+reusable. No re-ingestion is performed by editing configuration.
+
 ## What each family becomes
 
 | Family | Extensions (examples) | Converter | Result |
@@ -7634,9 +7667,11 @@ so a retry does not repeat it.
 | Variable | Default | Meaning |
 |---|---|---|
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | none | OpenRouter key for the description call. Required when any route names this converter. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | Must accept image input; a text-only model fails. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | Must accept image input; a text-only model fails. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | API address. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120` | Request timeout in seconds. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | Explicit OpenRouter reasoning effort; the LoCoMo Luna profile uses low. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON endpoint allowlist; the LoCoMo Luna profile uses `["openai/flex"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | Larger images fail before any call. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | Width × height ceiling. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_WIDTH` | `16000` | Pixel width ceiling. |
@@ -12081,10 +12116,10 @@ cites B, B cites C, and so on.
 | `max_hops` | integer | no | `6` | 1 to 6. |
 
 Unknown fields are rejected. At most 10 paths are returned. This route takes
-no clocks; it reads the current document graph. An edge here is one per pair
-of documents and reference kind, among the resolved references made by the
-versions in force now. To follow references at section level, or at another
-time, use [`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
+no clocks. Each edge is one resolved reference, made by a live version of the
+citing document, to a live document, so two references between the same pair
+of documents are two edges and can give two paths. To follow references at
+section level, or at a chosen time, use [`document_references`](https://remember.dev/docs/reference/http-api/sections-and-references#post-documentsreferences).
 
 ### Response
 
@@ -12096,7 +12131,14 @@ documents:
 - each `GraphEdge` is a citation: `relation_id` holds the cross-reference id,
   `subject_id` and `object_id` the citing and cited documents, `predicate` the
   kind of reference and `fact` its context text. `evidence_count` is `0` and
-  the validity fields are `null`.
+  the validity fields are `null`;
+- `bindings` says how the reference picks the cited document's wording:
+  `["floating"]` means whichever versions are in force when you read it,
+  `["pinned"]` means one named version (`document_references` returns which);
+- `source_labels` holds the reference's `source_label`, the type code the
+  caller supplied with it, verbatim; it is empty when there was none. A label
+  such as `wording-unresolved` tells you the citation is uncertain, so read
+  it before you rely on the path.
 
 `temporal_scope.mode` is `current` when chains are found.
 
@@ -13583,6 +13625,8 @@ One recorded decision.
 | `ingested_at` | UTC date-time, nullable | |
 | `invalidated_at` | UTC date-time, nullable | |
 | `support` | [`FactSupport`](#factsupport) | Default `current`. |
+| `bindings` | array of string | On citation paths, the reference's binding: `floating` (the cited document's versions in force when read) or `pinned` (one named version). Empty on entity edges. |
+| `source_labels` | array of string | On citation paths, the reference's caller-supplied `source_label`, verbatim; empty when it has none, and on entity edges. |
 
 ### GraphPath
 
@@ -18871,7 +18915,9 @@ See [File formats and converters](https://remember.dev/docs/self-hosting/convert
 | `REMEMBERSTACK_MISTRAL_OCR_PRICE_USD_PER_1000_PAGES` | `1` | decimal ≥ 0 | Price used to record OCR cost. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_API_KEY` | unset | secret | OpenRouter key for image descriptions; required by `image_ocr_description`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_BASE_URL` | `https://openrouter.ai/api/v1` | URL | API address. |
-| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `google/gemini-2.5-flash` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL` | `openai/gpt-6-luna` | model id | Vision model; must accept image input. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT` | unset | reasoning effort | Optional vision effort; the LoCoMo profile uses low. |
+| `REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY` | unset | JSON string list | Hard OpenRouter endpoint allowlist; for Flex use `["openai/flex"]`. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_TIMEOUT_S` | `120.0` | float > 0 | Request timeout. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_BYTES` | `10000000` | int > 0 | Largest image. |
 | `REMEMBERSTACK_IMAGE_DESCRIPTION_MAX_IMAGE_PIXELS` | `40000000` | int > 0 | Largest width × height. |
@@ -19197,7 +19243,7 @@ model.
 **Warning:**
 
 No score has been recorded for the current protocol,
-`RS-LoCoMo-Full-v38`. The numbers under [Recorded results](#recorded-results)
+`RS-LoCoMo-Full-v39`. The numbers under [Recorded results](#recorded-results)
 belong to earlier protocols and earlier engine builds. Do not compare them
 with other systems' published scores.
 
@@ -19285,26 +19331,66 @@ The summary reports:
 
 ### The current protocol
 
-| Setting | `RS-LoCoMo-Full-v38` (key `full-v38`) |
-|---|---|
-| Answer model | `openai/gpt-5.6-luna`, reasoning effort `none`, temperature 0 |
-| Judge model | `openai/gpt-5.6-luna`, reasoning effort `none`, temperature 0, one judgement per answer |
-| Tool calls per question | at most 8 |
-| Model calls per question | at most 9 |
-| Answer length cap | none |
-| Ingest models | `openai/gpt-5.6-luna` for every generative step; `qwen/qwen3-embedding-8b` for embeddings (served through OpenRouter by Nebius) |
-| Query space | pinned by its manifest hash |
+Execution uses one profile, `RS-LoCoMo-Full-v39` (key `full-v39`). It selects
+Luna 6 with Flex and low reasoning for ingestion and visual descriptions,
+Jev (`jev-latest`) for adjudication, and Luna 6 with Flex and high reasoning for
+answering and judging. Embeddings remain Qwen through Nebius. The existing
+semantic judge policy is retained. The limits remain eight tool calls and
+nine model calls per question, with no hard answer length cap.
 
-Three variants share the v38 ingest and retrieval setup and change one
-thing:
+The saved run records its non-secret ingestion environment, component/model
+bindings, Flex restriction and 180-second API transport budget. CI checks
+all component generations against the current engine. The shard runner
+attests workers against the profile, and backups preserve it. Superseded
+protocols are read-only historical records; they cannot be selected for
+execution or silently used as a fallback. Changing configuration does not
+relabel or re-ingest an old store.
 
-| Key | Change |
-|---|---|
-| `full-v38-gemma-vertex` | The answer model is Gemma 4 26B served on Google Vertex. |
-| `full-v38-codex-subscription` | Answer and judge run through a Codex subscription. |
-| `full-v38-glm` | Ingest uses GLM models instead of Luna. |
+Luna is also the native image-description converter default. The stock
+LoCoMo renderer supplies dataset-derived captions and image queries as
+text; it does not itself fetch images or run OCR. Configuring the vision
+lane does not establish that a particular benchmark run used it. Actual
+conversion metadata must identify whichever cached or native visual data
+was supplied to that run.
 
-Scores from different protocols or variants are not comparable.
+The answerer checks question completeness, distinct events and participants,
+and adjacent dialogue. No score is established for this protocol by its
+offline tests. The partial historical campaign remains a separate result.
+
+### Independent Mem0-like grading of saved answers
+
+`python -m benchmarks.locomo.judge_sidecar` prepares a separate grading result
+without changing answers or canonical grades. It does not retrieve, ingest,
+or regenerate answers. The following command plans the work without model calls:
+
+```bash
+python -m benchmarks.locomo.judge_sidecar \
+  --run /data/locomo/frozen-run \
+  --output /data/locomo/mem0-like-results \
+  --max-calls 2000 --max-cost-usd 10
+```
+
+Execution requires `--execute` and OpenRouter credentials. The sidecar uses
+Luna 6, high reasoning and the Flex allowlist. Its policy accepts one correct
+list item, dates within fourteen days, durations within fifty percent and
+broad paraphrases. This is a policy inspired by the
+[pinned Mem0 source](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/benchmarks/locomo/prompts.py),
+not an exact reproduction of Mem0's published evaluation.
+
+Optional `--with-evidence` supplies gold-referenced source turn text and dates
+to the judge and permits evidence only to increase acceptance. It does not
+supply original image pixels. Category-three gold answers use the text before
+the first semicolon, as in that upstream policy. This preprocessing is local
+to the sidecar; original data stays unchanged.
+
+The output has a separate identity, per-item prompt hashes, model settings,
+usage, explanations and result files. Resume requires the identical frozen
+input snapshot. A call interrupted before its outcome was saved remains
+visible as in flight and must be reconciled before resuming. Received unbilled capacity rejections can resume in the same directory, reusing
+prior successful grades and retaining rejection attempts. Missing answers,
+source failures and judge failures are reported separately. The cost setting
+is a reported-spend stop threshold; the provider account cap is the hard
+monetary boundary. Keep alternate-policy scores separate from canonical scores.
 
 ## BEAM
 
@@ -19352,7 +19438,7 @@ answer agent choosing a weaker retrieval tool for 393 questions, rather than
 at worse ingestion. It is in
 `plan/analysis/locomo_v11_score_regression_analysis.md`.
 
-No run of `RS-LoCoMo-Full-v38`, or of any protocol after v18, is recorded.
+No run of `RS-LoCoMo-Full-v39`, or of any protocol after v18, is recorded.
 When one is, it will appear here with its protocol, revision, tier, cost
 and failure counts.
 
@@ -19389,7 +19475,7 @@ Then, stage by stage, for one conversation (`conv-26`) of the smoke tier:
 ```bash
 uv run python -m benchmarks.locomo prepare \
   --dataset /path/to/locomo10.json --tier smoke \
-  --output .benchmark-runs/smoke --protocol full-v38
+  --output .benchmark-runs/smoke --protocol full-v39
 
 uv run python -m benchmarks.locomo ingest \
   --run .benchmark-runs/smoke --sample conv-26 \
@@ -19421,7 +19507,7 @@ stack, ingests, waits for processing, answers, judges and backs up each
 conversation in turn:
 
 ```bash
-LOCOMO_PROTOCOL=full-v38 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
+LOCOMO_PROTOCOL=full-v39 LOCOMO_MAX_EVALUATOR_COST_USD=60 \
   bash benchmarks/locomo/sharding/run_shard.sh conv-26 .benchmark-runs/my-run /path/to/locomo10.json
 ```
 

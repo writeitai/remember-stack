@@ -32,7 +32,11 @@ composition of three things that already exist:
    rate limiting (Cloud Tasks in the reference adapter; Postgres wake-ups when self-hosted);
 2. **`processing_state`** — state, idempotency, application retries, scheduling, and dead
    letters (D12/D67);
-3. **the chain rule** — a completing worker enqueues the next stage for its target.
+3. **the chain rule** — a completing worker enqueues the next stage for its target. Where a
+   deployment's claims or facts layer begins, the next stage is decided at one **layer
+   boundary** inside the completing transaction (D143,
+   [processing layers design §4](processing_layers_design.md#4-ingestion)). Switching a layer
+   off stops new entries; work already queued for versions that entered it drains.
 
 A workflow engine would duplicate all three, add a second stateful system to operate, and put
 pipeline state somewhere other than the spine — against the grain of "state has one home"
@@ -92,17 +96,35 @@ promotion is announced on the steady route after commit.
 
 Backfill (initial corpus load; version-bump reprocessing) and live ingestion run the **same
 pipeline, same workers, same idempotency keys** — but **separate lanes**, so a million-document
-backfill can never starve a fresh document's freshness SLA ("plane E processes promptly per
-document" — requirements). Rules:
+backfill does not take queue priority from fresh documents ("plane E processes promptly per
+document" — requirements). A lane orders and budgets the *work rows* claimed on it; it does not
+isolate state the two lanes share (below). Rules:
 
-- **A backfill is defined by a version filter, nothing else** (D12): "all documents where
-  `converter_version < X`", "all chunks where `extractor_version < Y`". A deterministic
-  **backfill seeder** job — the one worker this document adds to the inventory — enumerates
-  the filter into the backfill lane in bounded batches. Resumability is free: re-seeding is a
-  no-op for every already-succeeded `(target, stage, version)` row, so a crashed or paused
-  backfill continues by re-running the seeder.
-- **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately, never a
-  surprise on the steady-state budget. The two dominant backfill costs are metered per lane
+- **A version-bump backfill is defined by a version filter, nothing else** (D12): "all
+  documents where `converter_version < X`", "all chunks where `extractor_version < Y`". A
+  deterministic **backfill seeder** job — the one worker this document adds to the inventory —
+  enumerates the filter into the backfill lane in bounded batches. Resumability is free:
+  re-seeding is a no-op for every already-succeeded `(target, stage, version)` row, so a
+  crashed or paused backfill continues by re-running the seeder.
+- **A layer backfill is defined by gap rows** (D143): when a deployment switches its claims or
+  facts layer on, the versions that skipped the layer are entered **one version per lineage at a
+  time** — every version oldest first for snapshot lineages, the current version only for living
+  ones — because cross-version reuse only looks at earlier versions (Rule 4). `setup` advances
+  every lineage once; from then on each completion or deletion advances its own lineage through
+  the chain rule. Its rows run on this lane, and every follow-up row takes the lane of the row that
+  opened it — including fact-application projection repair and window reviews, which no longer
+  hard-code the steady lane
+  ([processing layers design §5](processing_layers_design.md#5-switching-a-layer-on-later)).
+- **What lanes do not isolate.** Fact applications are applied in each entity's canonical order by
+  whichever observation-flush unit holds that entity's stream, so a steady unit can apply (and is
+  metered for) a backfill version's earlier application on a shared entity, and opens its repair on
+  the steady lane; and a fresh version of a lineage that is still being backfilled waits for its
+  predecessors (D143 lineage order). The duplicate-promotion rule above is unchanged.
+- **The self-host profile serves the backfill lane** from the same per-stage worker: a worker
+  claims from its stage's backfill route whenever its steady route has no due row.
+- **Lane budgets are separate** (§4): backfill spend is a knob turned deliberately; apart from the
+  shared-entity applications above, it does not draw on the steady-state budget. The two dominant
+  backfill costs are metered per lane
   and known in advance: extraction-side LLM calls (volume-proportional — design-review F8) and
   database/provider I/O (§5).
 - **Priority is structural, not scheduled**: the steady lane's rate limits are never reduced
