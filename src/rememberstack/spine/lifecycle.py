@@ -997,23 +997,6 @@ class LifecycleCatalog:
                 is not None
             )
 
-    def claim_finalization(self, *, cycle_id: UUID) -> bool:
-        """Atomically claim one cycle's finalization (single winner).
-
-        Two finalizer instances can never both run a cycle's retraction
-        evaluation: the first UPDATE wins, the loser sees False. A crash
-        after claiming leaves any unfinished closure to the next
-        observation of the same lineages (a brief, visible, self-healing
-        gap — the cascade re-derives from current state, never from
-        per-cycle deltas) and tombstone cascades to the deployment-wide
-        sweep.
-        """
-        with self._engine.begin() as connection:
-            claimed = connection.execute(
-                _CLAIM_FINALIZATION, {"cycle_id": cycle_id}
-            ).scalar_one_or_none()
-        return claimed is not None
-
 
 def _record_adjudication(
     *,

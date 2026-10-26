@@ -471,43 +471,31 @@ class CycleFinalizer:
         """Finalize every ready cycle; returns the cycles this call won.
 
         The claim is atomic and FIRST (two finalizer instances never both
-        evaluate one cycle); every cascade re-derives from current state
-        under a derived, stable reconciliation id, so a crash mid-cycle
-        leaves a brief, visible, self-healing gap rather than duplicates.
-        Source-tombstoned lineages are swept deployment-wide on every pass
-        for the same reason. A LOSSY cycle (per-item failures) skips
+        evaluate one cycle), and a cycle's claim and closure commit together;
+        every cascade re-derives from current state under a derived, stable
+        reconciliation id. Source-tombstoned lineages are swept
+        deployment-wide on every pass, each episode in its own transaction. A LOSSY cycle (per-item failures) skips
         absence-based closure — its observation set is incomplete; the next
         healthy cycle of the same source covers it.
         """
         finalized: list[UUID] = []
-        configured = self._catalog.layers_configured(deployment_id=deployment_id)
         for cycle_id, failed_items in self._catalog.cycles_ready_to_finalize(
             deployment_id=deployment_id
         ):
-            if configured:
-                # D143: layers can give a completed cycle new work, so the
-                # candidate is re-checked and closed in one fenced transaction.
-                with self._catalog.transaction() as catalog:
-                    if not catalog.claim_ready_finalization(
-                        deployment_id=deployment_id, cycle_id=cycle_id
-                    ):
-                        continue
-                    if failed_items == 0:
-                        self._close_cycle(
-                            catalog=catalog,
-                            deployment_id=deployment_id,
-                            cycle_id=cycle_id,
-                        )
-                finalized.append(cycle_id)
-                continue
-            if not self._catalog.claim_finalization(cycle_id=cycle_id):
-                continue  # another finalizer won this cycle
-            if failed_items == 0:
-                self._close_cycle(
-                    catalog=self._catalog,
-                    deployment_id=deployment_id,
-                    cycle_id=cycle_id,
-                )
+            # D143: layers can give a completed cycle new work, and setup can
+            # write the first configuration at any moment, so a candidate is a
+            # hint: it is re-checked, claimed and closed in one transaction
+            # under the shared layer fence (identical results when no layer
+            # was ever configured).
+            with self._catalog.transaction() as catalog:
+                if not catalog.claim_ready_finalization(
+                    deployment_id=deployment_id, cycle_id=cycle_id
+                ):
+                    continue  # no longer ready, or another finalizer won it
+                if failed_items == 0:
+                    self._close_cycle(
+                        catalog=catalog, deployment_id=deployment_id, cycle_id=cycle_id
+                    )
             finalized.append(cycle_id)
         for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
             deployment_id=deployment_id

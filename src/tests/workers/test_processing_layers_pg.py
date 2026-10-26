@@ -2914,15 +2914,18 @@ def test_a_deferred_claims_boundary_holds_its_cycle(rig: _LayerRig) -> None:
 
 
 def _cross_lineage_move(
-    rig: _LayerRig,
+    rig: _LayerRig, *, initially_configured: bool = True
 ) -> tuple[UUID, IngestedVersion, IngestedVersion]:
     """The fact's paragraph leaves living A for living B within one cycle.
 
     Both layers are off for the move; returns the completed, drained, not yet
-    finalized cycle and the versions that left (A) and arrived (B).
+    finalized cycle and the versions that left (A) and arrived (B). With
+    ``initially_configured=False`` the deployment has no configuration row
+    until setup switches the layers off for the move (its first write).
     """
     rig.fact_sentence = _FACT_SENTENCE
-    rig.configure_all_on()
+    if initially_configured:
+        rig.configure_all_on()
     c0 = _open_cycle(rig)
     for source_ref, sentence in (
         ("notes/move-a.md", _FACT_SENTENCE),
@@ -3104,16 +3107,21 @@ def _waiting_on_an_advisory_lock(rig: _LayerRig) -> bool:
     )
 
 
+@pytest.mark.parametrize("initially_configured", [True, False])
 def test_a_candidate_selected_before_setup_is_rechecked_before_closing(
-    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch, initially_configured: bool
 ) -> None:
     """Review r3 F2, paused after candidate selection: the finalizer selects
     the sources-only move cycle; before it claims, setup switches both layers
     on, and A's resumed reconcile retires the fact's only support while B's
     resumed work is still pending. The stale candidate is only a hint: the
     claim re-checks the barrier, so nothing finalizes and nothing closes. Once
-    B's work runs the cycle finalizes and the fact was never closed."""
-    c1, left, arrived = _cross_lineage_move(rig)
+    B's work runs the cycle finalizes and the fact was never closed. Review
+    r4 F1: the same holds when the deployment's first configuration row is
+    written after the finalizer started (no configuration is read up front)."""
+    c1, left, arrived = _cross_lineage_move(
+        rig, initially_configured=initially_configured
+    )
     select = rig.lifecycle.cycles_ready_to_finalize
     paused: list[tuple[tuple[UUID, int], ...]] = []
 
@@ -3151,15 +3159,18 @@ def test_a_candidate_selected_before_setup_is_rechecked_before_closing(
     _drain_as_a_support_swap(rig, cycle_id=c1, left=left, arrived=arrived)
 
 
+@pytest.mark.parametrize("initially_configured", [True, False])
 def test_setup_waits_for_a_claimed_finalization_to_commit(
-    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch, initially_configured: bool
 ) -> None:
     """Review r3 F2, paused after claiming: setup started while a claimed
     finalization is still open blocks on the layer fence until that
     transaction commits. The closure ran under the layers-off state (and
     closed nothing); setup then reopens the cycle, and the re-finalization
     after both lineages' work is a support swap that never closes the fact."""
-    c1, left, arrived = _cross_lineage_move(rig)
+    c1, left, arrived = _cross_lineage_move(
+        rig, initially_configured=initially_configured
+    )
     go = threading.Event()
     seen_by_setup: list[datetime | None] = []
     setup_errors: list[BaseException] = []
@@ -3237,17 +3248,12 @@ def test_setup_waits_for_a_claimed_finalization_to_commit(
     _drain_as_a_support_swap(rig, cycle_id=c1, left=left, arrived=arrived)
 
 
-def test_an_unconfigured_deployment_finalizes_through_the_unfenced_claim(
-    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+def test_an_unconfigured_deployment_finalizes_with_unchanged_results(
+    rig: _LayerRig,
 ) -> None:
-    """Review r3 F2: without a layer configuration the finalizer keeps the
-    plain claim — no fence, no barrier re-read — and a removal still closes
-    its fact at finalization; nothing writes a configuration row or a gap."""
-
-    def never(self: LifecycleCatalog, **_: object) -> bool:
-        raise AssertionError("an unconfigured deployment took the configured path")
-
-    monkeypatch.setattr(LifecycleCatalog, "claim_ready_finalization", never)
+    """Review r3 F2 / r4 F1: without a layer configuration the fenced claim
+    gives today's results — a removal closes its fact once at finalization —
+    and nothing writes a configuration row or a gap."""
     rig.fact_sentence = _FACT_SENTENCE
     c0 = _open_cycle(rig)
     rig.ingest(
