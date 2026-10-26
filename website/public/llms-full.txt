@@ -2647,7 +2647,8 @@ the facts about Ravi's projects, not only facts with Ravi in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
-capture. It returns current testimony only. Arguments: `query`, optional
+capture. It returns testimony under the selected time scope. Arguments:
+`query`, optional
 `entity_ids` (up to 20), `k` (default 50, up to 100) and `candidate_k`
 (default max(4*k, 60), up to 400) nominations per search channel. With the
 default k=50, this means 200 candidates per channel.
@@ -2673,8 +2674,8 @@ with remember.Client() as memory:
 
 **Note:**
 
-The Python client's `claims_and_sources_context` sends only `query`. To
-pass `entity_ids`, `k` or `candidate_k`, call
+The Python client's `claims_and_sources_context` accepts `query`, `k`,
+`candidate_k` and `time`. To pass `entity_ids`, call
 `memory.run_operation(name="claims_and_sources_context", arguments={...})`.
 
 A good default order for an agent: resolve the names, ask `facts_context`,
@@ -4556,23 +4557,29 @@ claims only when facts are missing or you need a verbatim quote. Use
 |---|---|---|---|
 | `resolve_entity` | `name` | required | non-empty string |
 | `facts_context` | `query` | required | 1 to 8,192 characters |
-| | `k` (facts returned) | 15 | 1 to 30 |
+| | `k` (facts returned) | 50 | 1 to 100 |
+| | `candidate_k` (nominations per channel) | `max(4*k, 60)` | 1 to 400, at least `k` |
 | | `evidence_per_fact` (claims per fact per stance) | 3 | 1 to 5 |
 | | `hops` (graph expansion around anchors) | 1 | 1 to 2 |
 | | `predicate` | none | 1 to 200 characters |
 | | `entity_ids` (anchors) | none | 1 to 19 unique UUIDs |
 | | `time` | `{"mode": "current"}` | see [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past) |
 | `claims_and_sources_context` | `query` | required | 1 to 8,192 characters |
-| | `k` (results) | 50 | 1 to 100 |
-| | `candidate_k` (nominations per channel) | 200 | 1 to 400, at least `k` |
+| | `k` (claims and chunks, separately) | 50 | 1 to 100 |
+| | `candidate_k` (nominations per channel) | `max(4*k, 60)` | 1 to 400, at least `k` |
 | | `entity_ids` | none | 1 to 20 unique UUIDs |
-| `combined_context` | `query`, `hops`, `predicate`, `entity_ids`, `time` | as `facts_context` | as `facts_context` |
+| `combined_context` | `query`, `k`, `candidate_k`, `hops`, `predicate`, `entity_ids`, `time` | as `facts_context` | as `facts_context` |
 
-`combined_context` always runs its halves at their defaults: 50 claims and
-passages, 15 facts with 3 claims each.
+`combined_context` applies the same `k` and `candidate_k` to both halves.
+Its default is up to 50 facts, 50 claims and 50 chunks, plus the facts'
+backing evidence. At k=50, omitted `candidate_k` resolves to 200 per search
+channel; it is not a global pool of 200.
 
-One fact-context result carries at most 60 evidence links in total, however
-you set `k` and `evidence_per_fact`. Fact retrieval has a 25-second
+One fact-context result carries at most `max(60, 2*k)` evidence links in
+total. Allocation gives every selected fact its available supporting and
+contradicting evidence before adding deeper evidence, within
+`evidence_per_fact` per stance (fixed at 3 for `combined_context`).
+Fact retrieval has a 25-second
 database budget; if the database cannot answer inside it you get a
 `boundary` result, not a partial one.
 
@@ -4591,10 +4598,12 @@ said = client.claims_and_sources_context("invoice exporter rewrite")
 both = client.combined_context("What changed in the billing migration plan?")
 ```
 
-`facts_context` accepts `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` accepts `time`; `claims_and_sources_context` and
-`resolve_entity` accept only the query or name. For every other parameter,
-including `k` and `evidence_per_fact`, use `run_operation`:
+All three context helpers accept `query`, `k`, `candidate_k` and `time`.
+`facts_context` also accepts `hops`, `predicate` and `entity_ids`;
+`resolve_entity` accepts `name`. Use `run_operation` to set
+`evidence_per_fact` on `facts_context`, `entity_ids` on
+`claims_and_sources_context`, or `entity_ids`, `hops` and `predicate` on
+`combined_context`:
 
 ```python
 facts = client.run_operation(
@@ -4721,16 +4730,17 @@ paragraph you can copy.
 The result size is set almost entirely by these numbers:
 
 - **`facts_context`**: `k` facts, each with up to `evidence_per_fact`
-  supporting claims and as many contradicting ones, capped at 60 evidence
-  links. Each claim adds its text and its quoted passage. For a tight
-  budget, `k=8, evidence_per_fact=1` keeps one quote per fact.
+  supporting claims and as many contradicting ones, capped at
+  `max(60, 2*k)` evidence links. Each claim adds its text and its quoted
+  passage. For a tight budget, `k=8, evidence_per_fact=1` requests up to
+  one claim per fact per stance.
 - **`claims_and_sources_context`**: up to `k` claims and up to `k`
   passages, default 50 each.
   Passages are whole chunks of source text and are the largest part of any
   result. Lower `k` first.
-- **`combined_context`**: fixed at both defaults. When it is too large,
-  call `facts_context` and `claims_and_sources_context` separately with
-  smaller `k`.
+- **`combined_context`**: the same `k` limits facts, claims and chunks
+  separately. Lower `k` to shrink all three, or call the two context
+  operations separately when their result counts should differ.
 
 Render, count, and trim from the bottom of each list: results come ranked.
 If you trim, tell the model the list is partial, the same way the
@@ -11295,12 +11305,12 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 ```
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
-says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
-`facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` and `claims_and_sources_context` take `query` and `time`;
-`resolve_entity` takes `name`. Use `run_operation` for the rest
-(`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
-operations).
+says `"contract": "ContextBundle/v2"`. All three context helpers accept
+`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
+`run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
+on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`
+on `combined_context`.
 
 ---
 
@@ -18396,7 +18406,7 @@ What sources said: current claims and the source passages that confirm them.
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
-| `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
@@ -18408,7 +18418,8 @@ with a bounded look at the entities' neighbourhood.
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
-| `k` | integer | no | 1–30; default 15. |
+| `k` | integer | no | 1–100; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `evidence_per_fact` | integer | no | 1–5; default 3. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
@@ -18429,11 +18440,15 @@ versions count as evidence: [Text in force](https://remember.dev/docs/reference/
 
 #### `combined_context`
 
-Both of the above in one call, returned as `ContextBundle/v2`.
+Both of the above in one call, returned as `ContextBundle/v2`. The same
+`k` applies separately to facts, claims and chunks; `candidate_k` bounds
+each search channel, rather than the total across channels.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
+| `k` | integer | no | 1–100 per evidence type; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |

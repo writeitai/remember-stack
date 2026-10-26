@@ -205,7 +205,7 @@ FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 """Maximum fact nominations confirmed by PostgreSQL in one interactive query."""
 
 FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE: Final = 16
-"""Default-k plus one truncation sentinel, without forcing 30-row expansion."""
+"""Minimum confirmation batch for small result counts, within the 30-row cap."""
 
 FACTS_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
 """Operation wall-clock budget; each PostgreSQL statement gets the remainder."""
@@ -1226,7 +1226,7 @@ class QueryEngine:
                 visited_candidates += len(batch)
                 confirmed_rows.extend(batch_rows)
                 # Confirm one extra row so truncation stays truthful without
-                # forcing all 200 semantic nominations through the deep gate.
+                # forcing the entire configured nomination pool through the deep gate.
                 if len(confirmed_rows) > k:
                     break
             has_more_confirmed = len(confirmed_rows) > k
@@ -4167,7 +4167,7 @@ def _fuse_fact_nominations(
 
 
 def _facts_context_confirmation_batch_size(*, k: int) -> int:
-    """Confirm enough rows for k plus truncation without expanding all 30."""
+    """Bound each confirmation batch while allowing a truncation sentinel."""
     return min(
         FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE,
         max(FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE, k + 1),

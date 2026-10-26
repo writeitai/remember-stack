@@ -175,9 +175,9 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 ```
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
-says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
-`facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` and `claims_and_sources_context` take `query` and `time`;
-`resolve_entity` takes `name`. Use `run_operation` for the rest
-(`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
-operations).
+says `"contract": "ContextBundle/v2"`. All three context helpers accept
+`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
+`run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
+on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`
+on `combined_context`.
