@@ -2,7 +2,7 @@
 
 The same code runs on the pre-D143 base and on the current branch, so the
 checked-in ``fixtures/d143_default_operations.json`` (captured on the base,
-175138484) and the branch's output can be compared byte for byte by
+0d05b97e6) and the branch's output can be compared byte for byte by
 ``test_d143_default_operations_pg.py``.
 
 The seed is the D143 retrieval rig's live lineage (one chunk, one current
