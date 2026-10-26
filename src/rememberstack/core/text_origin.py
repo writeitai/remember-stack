@@ -15,7 +15,7 @@ from typing import Final
 
 from rememberstack.model import TextOriginMatch
 
-REUSE_IDENTITY_VERSION: Final = "d140-reuse-identity-1"
+REUSE_IDENTITY_VERSION: Final = "d140-reuse-identity-2"
 """Generation of the identity payload layout; a change re-keys every chunk."""
 
 
@@ -27,6 +27,7 @@ def reuse_identity_hash(
     blockizer_version: str,
     structurer_version: str,
     extractor_version: str,
+    provenance_hashes: tuple[str, ...] = (),
 ) -> str:
     """The date-free chunk identity used to find its text origin (D140 §5).
 
@@ -44,6 +45,7 @@ def reuse_identity_hash(
             blockizer_version,
             structurer_version,
             extractor_version,
+            "\n".join(provenance_hashes),
         )
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

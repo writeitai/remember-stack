@@ -281,6 +281,7 @@ def test_e1_records_eligibility_and_keys_ineligible_chunks_apart(
         ),
         index=1,
         chunker_version=chunker_version(params=params),
+        derivation_ranges=_notebook_ranges(),
         reuse_identity_hash="identity",
         text_origin_at=None,
     )
@@ -293,6 +294,7 @@ def test_e1_records_eligibility_and_keys_ineligible_chunks_apart(
         packed=packed,
         index=0,
         chunker_version=chunker_version(params=params),
+        derivation_ranges=_notebook_ranges(),
         reuse_identity_hash="identity",
         text_origin_at=None,
     )

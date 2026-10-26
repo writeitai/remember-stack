@@ -287,7 +287,11 @@ def _with_blocks(objects: dict[str, bytes]) -> dict[str, bytes]:
 
 
 def _handler(
-    *, catalog: _RecordingCatalog, store: _MemoryStore, source: ChunkSource
+    *,
+    catalog: _RecordingCatalog,
+    store: _MemoryStore,
+    source: ChunkSource,
+    provider: FakeModelProvider | None = None,
 ) -> ExtractClaimsHandler:
     chunk = _chunk()
     return ExtractClaimsHandler(
@@ -296,7 +300,7 @@ def _handler(
             "ChunkCatalog", SingleChunkCatalog(source=source, chunk=chunk)
         ),
         artifact_store=cast("ObjectStorePort", store),
-        model_provider=FakeModelProvider(generate_router=_payloads),
+        model_provider=provider or FakeModelProvider(generate_router=_payloads),
         settings=E2Settings(),
         chunker_version="test-chunker",
     )
@@ -316,11 +320,20 @@ def test_fresh_extract_stamps_ocr_and_description_separately() -> None:
         )
     )
     catalog = _RecordingCatalog()
-    handler = _handler(catalog=catalog, store=store, source=_source())
+    provider = FakeModelProvider(generate_router=_payloads)
+    handler = _handler(
+        catalog=catalog, store=store, source=_source(), provider=provider
+    )
     work = _work()
     handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
     handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+    assert len(provider.generated_prompts) == 2, "origins add no extraction model pass"
+    for prompt in provider.generated_prompts:
+        assert '"derivation_kinds":["ocr"]' in prompt
+        assert '"evidence_modes":["source_expression"]' in prompt
+        assert '"derivation_kinds":["vlm_description"]' in prompt
+        assert '"evidence_modes":["model_observation"]' in prompt
     assert catalog.record_calls == 1
     assert catalog.occurrences is not None
     by_span = {
@@ -349,13 +362,16 @@ def test_missing_conversion_manifest_does_not_persist_claims() -> None:
     store = _MemoryStore(
         objects=_with_blocks({_MARKDOWN_URI: _DOCUMENT.encode("utf-8")})
     )
-    handler = _handler(catalog=catalog, store=store, source=_source())
+    provider = FakeModelProvider(generate_router=_payloads)
+    handler = _handler(
+        catalog=catalog, store=store, source=_source(), provider=provider
+    )
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="conversion manifest"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
     assert catalog.claims == ()
+    assert provider.generated_prompts == [], "missing provenance fails before paid work"
 
 
 def test_corrupt_conversion_manifest_is_terminal_and_persists_nothing() -> None:
@@ -368,9 +384,8 @@ def test_corrupt_conversion_manifest_is_terminal_and_persists_nothing() -> None:
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(NonRetryableHandlerError, match="corrupt"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 
@@ -387,9 +402,8 @@ def test_missing_referenced_source_map_does_not_persist_claims() -> None:
     )
     handler = _handler(catalog=catalog, store=store, source=_source())
     work = _work()
-    handler.handle(work=work, meter=NoopCostMeter())
     with pytest.raises(ProvenanceMetadataMissingError, match="source map"):
-        handler.handle(work=with_ground_claims(work=work), meter=NoopCostMeter())
+        handler.handle(work=work, meter=NoopCostMeter())
     assert catalog.record_calls == 0
 
 

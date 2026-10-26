@@ -7359,6 +7359,22 @@ binary files). Formats that differ inside a family keep their own type:
 `.doc` is `application/msword`, `.jpg` is `image/jpeg`. The ingest response
 reports the stored type in its `mime` field.
 
+## Source origins during extraction
+
+Extraction receives the converter's labels for direct text, OCR, observations
+and interpretations alongside verbatim source passages. A mixed target also
+surfaces its direct source text within the existing extraction calls. OCR stays
+eligible evidence about the document; quoted content is not automatically an
+event in the surrounding author's life. Missing origin metadata remains unknown.
+
+This changes extraction and text-origin reuse identities, chunk-row generation
+and embed delivery when explicitly processed under the new code. The source
+bytes, chunk packing and embedding policy/model remain unchanged; exact matching
+vectors are reused, including from an earlier processing of the same version.
+Existing stored claims are not repaired by editing configuration;
+reprocessing must be explicitly requested. Already-flattened plain text cannot
+recover origin labels that were discarded before ingestion.
+
 ## Image-description model settings
 
 For deployments routing supported images through the OCR-plus-description

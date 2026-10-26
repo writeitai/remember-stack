@@ -120,6 +120,7 @@ def test_claimify_prompt_contains_cross_turn_anaphora_guidance() -> None:
 def test_claimify_prompt_renders_cleanly() -> None:
     """Prompt format strings and curly braces do not trigger format errors."""
     rendered = _CLAIMIFY_PROMPT.format(
+        source_focus="",
         cards="(none)",
         keeps=f"- {_KEEP_SPAN}",
         passages="[S1] TARGET (origin-eligible):\n[D12:14] Joanna: Yep! I chose to write about this...",
