@@ -110,3 +110,35 @@ def test_sdk_and_both_mcp_hosts_report_the_same_code(
     for error in (engine, local):
         assert (error["code"], error["status_code"]) == (code, status)
     assert engine["agent_action"] == local["agent_action"]
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda client: client.run_operation(
+            name="combined_context", arguments={"query": "tariff"}, layers=[]
+        ),
+        lambda client: client.combined_context("tariff", layers=[]),
+        lambda client: client.query_sql(sql="SELECT 1", layers=[]),
+        lambda client: client.explain_sql(sql="SELECT 1", layers=[]),
+        lambda client: client.run_saved_query(
+            namespace="ops", name="recent", layers=[]
+        ),
+    ],
+)
+def test_an_empty_selection_is_refused_before_any_request(call: object) -> None:
+    """§7.1: ``layers`` is non-empty; an empty one never becomes a full read."""
+    requests: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    client = MemoryClient(
+        client=httpx.Client(
+            base_url="http://engine.test", transport=httpx.MockTransport(record)
+        )
+    )
+    with pytest.raises(ValueError, match="at least one of sources, claims, facts"):
+        call(client)  # type: ignore[operator]
+    assert requests == []

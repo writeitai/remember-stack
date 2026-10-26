@@ -343,6 +343,9 @@ def advance_on(
             "layer": layer,
         },
     )
+    # A connector cycle that finalized while this version waited outside the
+    # layer must evaluate its closure again once the resumed work is done.
+    connection.execute(_REOPEN_FINALIZED_CYCLE, {"version_id": admitted.version_id})
     lane = admitted.gaps[layer].lane
     if layer is ProcessingLayer.CLAIMS:
         outcomes.extend(
@@ -469,6 +472,10 @@ class ProcessingLayerCatalog:
                     )
                     if not configuration.configured:
                         return advanced
+                    if not configuration.enabled(layer=layer):
+                        # A disabled layer is never entered; owed claims tails
+                        # are released by boundary, frontier and deletion events.
+                        break
                     doc_ids = tuple(
                         connection.execute(
                             _SELECT_LINEAGES_WITH_UNENTERED_GAPS,
@@ -1328,6 +1335,17 @@ _STAMP_ENTERED = text(
     UPDATE processing_layer_gaps SET entered_at = now()
     WHERE deployment_id = :deployment_id AND version_id = :version_id
       AND layer = :layer AND entered_at IS NULL AND discharged_at IS NULL
+    """
+)
+
+_REOPEN_FINALIZED_CYCLE = text(
+    """
+    UPDATE connector_sync_cycles y
+    SET finalized_at = NULL, layers_reopened_at = now()
+    FROM document_versions v
+    WHERE v.version_id = :version_id
+      AND y.cycle_id = v.sync_cycle_id
+      AND y.finalized_at IS NOT NULL
     """
 )
 

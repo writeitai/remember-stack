@@ -126,6 +126,7 @@ from rememberstack.model.client import SECTION_HISTORY_DEFAULT_K
 from rememberstack.model.client import SECTION_HISTORY_MAX_K
 from rememberstack.model.client import SectionHistoryPage
 from rememberstack.model.client import SectionHistoryRequest
+from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.model.processing_layers import LayerSelectionError
 from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.ports.auth import AuthPerimeterPort
@@ -141,6 +142,7 @@ from rememberstack.surfaces.operation_surface import OperationSurface
 from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
 from rememberstack.surfaces.operation_surface import unserved_operation_names
+from rememberstack.surfaces.query_engine import disclose_layers
 from rememberstack.surfaces.query_engine import QueryEngine
 from rememberstack.surfaces.query_engine import RESOLVE_CONTEXT_LIMIT
 from rememberstack.surfaces.query_sandbox.errors import QueryErrorCode
@@ -1116,15 +1118,27 @@ def _layer_selection(
     return None if layers is None else frozenset(layers)
 
 
-def _require_facts(*, layers: ProcessingLayersPort | None, deployment_id: UUID) -> None:
-    """Refuse an entity-graph read when the deployment does not serve facts."""
-    if layers is not None and layers.states(deployment_id=deployment_id).facts == (
-        "disabled"
-    ):
+def _require_facts(
+    *, layers: ProcessingLayersPort | None, deployment_id: UUID
+) -> LayerAdmission:
+    """Admit an entity-graph read: refused without facts, disclosed while backfilling."""
+    state = (
+        "enabled"
+        if layers is None
+        else layers.states(deployment_id=deployment_id).facts
+    )
+    if state == "disabled":
         raise LayerUnavailableError(
             layer=ProcessingLayer.FACTS,
             message="this deployment does not process the facts layer",
         )
+    return LayerAdmission(
+        consulted=_FACTS_LAYER,
+        backfilling=_FACTS_LAYER if state == "backfilling" else frozenset(),
+    )
+
+
+_FACTS_LAYER: Final = frozenset({ProcessingLayer.FACTS})
 
 
 def _mount_graph(
@@ -1143,9 +1157,9 @@ def _mount_graph(
     @app.post("/graph/neighborhood", response_model=Envelope)
     def graph_neighborhood(body: GraphNeighborhoodRequest) -> Envelope:
         """Return a current or bitemporal bounded entity neighborhood."""
-        _require_facts(layers=layers, deployment_id=deployment_id)
+        admission = _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
-            return graph.neighborhood(
+            envelope = graph.neighborhood(
                 entity_id=body.entity_id,
                 hops=body.hops,
                 predicates=body.predicates,
@@ -1155,13 +1169,15 @@ def _mount_graph(
                 continuation=body.continuation,
                 include_paths=body.include_paths,
             )
+        # D143 §7.3: an empty answer while facts backfill is a boundary.
+        return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/path", response_model=Envelope)
     def graph_path(body: GraphPathRequest) -> Envelope:
         """Return bounded equal-length shortest paths between two entities."""
-        _require_facts(layers=layers, deployment_id=deployment_id)
+        admission = _require_facts(layers=layers, deployment_id=deployment_id)
         with _graph_errors():
-            return graph.path(
+            envelope = graph.path(
                 from_entity_id=body.from_entity_id,
                 to_entity_id=body.to_entity_id,
                 max_hops=body.max_hops,
@@ -1169,6 +1185,7 @@ def _mount_graph(
                 valid_at=body.valid_at,
                 believed_at=body.believed_at,
             )
+        return disclose_layers(envelope=envelope, admission=admission)
 
     @app.post("/graph/citation-path", response_model=Envelope)
     def graph_citation_path(body: GraphCitationPathRequest) -> Envelope:

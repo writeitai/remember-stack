@@ -1467,6 +1467,13 @@ def _layer_params(layers: Sequence[str] | None) -> tuple[tuple[str, str], ...] |
     """The D143 ``layers`` selection as repeated query parameters, or none."""
     if layers is None:
         return None
+    if isinstance(layers, str) or not layers:
+        # Omitting ``layers`` reads every served layer; an empty selection is
+        # not that request, so it is refused rather than widened.
+        raise ValueError(
+            "layers must name at least one of sources, claims, facts; omit it"
+            " to read every layer the deployment serves"
+        )
     return tuple(("layers", str(layer)) for layer in layers)
 
 

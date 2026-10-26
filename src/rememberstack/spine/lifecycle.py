@@ -868,6 +868,17 @@ class LifecycleCatalog:
             )
         return tuple((row["cycle_id"], row["failed_items"]) for row in rows)
 
+    def cycle_reopened_at(self, *, cycle_id: UUID) -> datetime | None:
+        """When a D143 layer entry last reopened the cycle, if it ever did."""
+        with self._engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT layers_reopened_at FROM connector_sync_cycles"
+                    " WHERE cycle_id = :cycle_id"
+                ),
+                {"cycle_id": cycle_id},
+            ).scalar_one_or_none()
+
     def cycle_lineages(self, *, cycle_id: UUID) -> tuple[UUID, ...]:
         """Lineages the cycle observed via ingested versions."""
         with self._engine.connect() as connection:
@@ -1593,6 +1604,24 @@ _SELECT_READY_CYCLES = text(
            AND w.component_version LIKE '%entity-fanout%'
           WHERE v.sync_cycle_id = y.cycle_id
             AND (w.status IS NULL OR w.status <> 'succeeded')
+      )
+      AND NOT EXISTS (
+          -- D143: a live version waiting to enter an enabled layer has work
+          -- still to come (no row exists yet); a disabled layer never holds.
+          SELECT 1
+          FROM document_versions v
+          JOIN documents d ON d.doc_id = v.doc_id
+          JOIN processing_layer_gaps g
+            ON g.deployment_id = y.deployment_id AND g.version_id = v.version_id
+          LEFT JOIN deployment_processing_layers l
+            ON l.deployment_id = y.deployment_id
+          WHERE v.sync_cycle_id = y.cycle_id
+            AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+            AND g.entered_at IS NULL AND g.discharged_at IS NULL
+            AND CASE g.layer
+                  WHEN 'claims' THEN coalesce(l.claims_enabled, true)
+                  ELSE coalesce(l.facts_enabled, true)
+                END
       )
     ORDER BY y.started_at
     """

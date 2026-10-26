@@ -2529,3 +2529,90 @@ def test_backfilled_claimify_reruns_stay_inside_the_edited_neighbourhood(
     expectation lives in the passing test above."""
     _always_on, backfilled = rule4_traces
     assert backfilled["claimify_changed"] <= backfilled["allowed"]
+
+
+def test_a_gap_reopened_between_readiness_and_the_gap_read_is_never_certified(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§4.5 (review r2 F2): readiness sees v1's discharged claims stages as
+    ``skipped`` and v1 ready; before the meter reads v1's gaps, deleting v2
+    restores v1 and reopens its claims gap. The meter must not certify the
+    stale ready report: no receipt now, and success only after v1 really
+    extracts."""
+    rig.configure(claims=True, facts=False)
+    metered = _Metered(rig=rig)
+    first = _observed_metered(
+        metered,
+        source_ref="notes/race.md",
+        content=_document(edited=False, paragraphs=3),
+    )
+    second = rig.ingest(
+        source_ref="notes/race.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="living",
+        at=None,
+    )
+    rig.drain(stages=_STAGES[:2])
+    rig.drain()
+    gap = rig.gap(version_id=first.version_id, layer="claims")
+    assert gap is not None and gap["discharged_at"] is not None
+    assert rig.minted(version_id=first.version_id) == 0
+
+    inspect = metered.meter._readiness.inspect  # noqa: SLF001
+
+    def inspect_then_restore(**kwargs: object) -> object:
+        report = inspect(**kwargs)  # type: ignore[arg-type]
+        monkeypatch.setattr(metered.meter._readiness, "inspect", inspect)  # noqa: SLF001
+        rig.deletion.delete_version(version_id=second.version_id)
+        return report
+
+    monkeypatch.setattr(
+        metered.meter._readiness,  # noqa: SLF001
+        "inspect",
+        inspect_then_restore,
+    )
+    assert metered.outcome(version_id=first.version_id)["outcome"] is None
+    reopened = rig.gap(version_id=first.version_id, layer="claims")
+    assert reopened is not None and reopened["discharged_at"] is None
+    assert not metered.receipts.outcomes or all(
+        item.outcome != "succeeded" for item in metered.receipts.outcomes
+    )
+    rig.drain()
+    assert rig.minted(version_id=first.version_id) > 0
+    assert metered.outcome(version_id=first.version_id) == _succeeded(
+        "doc-text-claims-v1"
+    )
+
+
+def test_setup_does_not_sweep_the_gaps_of_disabled_layers(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§3.4/§5.4 (review r2 F5): with both layers off and gaps accumulated,
+    seeding advances no lineage; enabling claims advances only claims."""
+    rig.configure(claims=False, facts=False)
+    for index in range(3):
+        rig.ingest(
+            source_ref=f"docs/seed-{index}.md",
+            content=_document(edited=False, paragraphs=2),
+            mode="snapshot",
+            at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+    rig.drain()
+    assert rig.scalar("SELECT count(*) FROM processing_layer_gaps") == 6
+    advanced: list[ProcessingLayer] = []
+    import rememberstack.spine.processing_layers as layers_module
+
+    real_advance = layers_module.advance_on
+
+    def counting_advance(**kwargs: object) -> object:
+        advanced.append(kwargs["layer"])  # type: ignore[arg-type]
+        return real_advance(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(layers_module, "advance_on", counting_advance)
+    assert rig.layers.seed(deployment_id=_DEPLOYMENT_ID, batch_size=2) == 0
+    assert advanced == []
+    rig.layers.reconcile_settings(
+        deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=False
+    )
+    assert rig.layers.seed(deployment_id=_DEPLOYMENT_ID, batch_size=2) == 3
+    assert advanced == [ProcessingLayer.CLAIMS] * 3

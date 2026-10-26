@@ -14,7 +14,12 @@ Two tables:
   derived from it and never stored. Like ``obs_flush_version_state`` it carries
   no foreign key: deletion and hard forget delete the rows explicitly.
 
-Both are additive; the downgrade drops them.
+It also adds ``connector_sync_cycles.layers_reopened_at``: entering a layer
+for a version whose connector cycle already finalized reopens that cycle, so
+its zero-support closure is evaluated again once the resumed work is done; the
+stamp gives the repeated finalization its own reconciliation id.
+
+All of it is additive; the downgrade drops it.
 """
 
 from collections.abc import Sequence
@@ -54,9 +59,14 @@ COMMENT ON TABLE processing_layer_gaps IS
 CREATE INDEX ix_layer_gaps_open
   ON processing_layer_gaps (deployment_id, layer, doc_id)
   WHERE discharged_at IS NULL;
+
+ALTER TABLE connector_sync_cycles ADD COLUMN layers_reopened_at timestamptz;
+COMMENT ON COLUMN connector_sync_cycles.layers_reopened_at IS
+  'D143: when a layer entry last reopened this finalized cycle (finalized_at cleared) so its closure runs again after the resumed work; NULL when never reopened.';
 """
 
 _DOWNGRADE = """
+ALTER TABLE connector_sync_cycles DROP COLUMN layers_reopened_at;
 DROP TABLE processing_layer_gaps;
 DROP TABLE deployment_processing_layers;
 """

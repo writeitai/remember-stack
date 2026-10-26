@@ -136,6 +136,21 @@ test('a layers selection the read cannot honour keeps its invalid_parameter code
   }finally{client.close();await engine.close();}
 });
 
+test('an empty layers selection is refused before any request',async()=>{
+  const engine=await server({handler:({response})=>json({response,status:500,value:{}})});
+  const client=new Client({apiKey:'fixture',baseUrl:engine.url});
+  try {
+    for(const call of [
+      ()=>client.runOperation({name:'combined_context',arguments:{query:'fixture'},layers:[]}),
+      ()=>client.combinedContext({query:'fixture',layers:[]}),
+      ()=>client.querySql({sql:'SELECT 1',layers:[]}),
+      ()=>client.explainSql({sql:'SELECT 1',layers:[]}),
+      ()=>client.runSavedQuery({namespace:'ops',name:'recent',layers:[]}),
+    ])await assert.rejects(call(),error=>error instanceof InputValidationError&&/at least one of sources, claims, facts/.test(error.message));
+    assert.equal(engine.requests.length,0);
+  }finally{client.close();await engine.close();}
+});
+
 test('account paths and redirects stay within the issuer origin',async()=>{
   clearMetadataCache();const trap=await server({handler:({response})=>json({response,value:{}})});let issuer;
   issuer=await server({handler:({recorded,response})=>{

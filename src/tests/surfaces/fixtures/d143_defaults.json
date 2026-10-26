@@ -5762,8 +5762,20 @@
           },
           "GraphEdge": {
             "additionalProperties": false,
-            "description": "One traversed relation, carrying its bi-temporal state.",
+            "description": "One traversed relation, carrying its bi-temporal state.\n\nOn a citation path the edge is a document reference (``relation_id`` is\nits ``crossref_id``). ``bindings`` holds the distinct ``binding`` values of\nthe references the edge stands for and ``source_labels`` their distinct\nnon-null ``source_label`` values, both sorted: ``floating`` means the target\nversions in force when read, ``pinned`` one named target version, and a\nlabel is the caller's own opaque type code. Both are empty on entity edges.",
             "properties": {
+              "bindings": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "floating",
+                    "pinned"
+                  ],
+                  "type": "string"
+                },
+                "title": "Bindings",
+                "type": "array"
+              },
               "evidence_count": {
                 "title": "Evidence Count",
                 "type": "integer"
@@ -5816,6 +5828,14 @@
                 "format": "uuid",
                 "title": "Relation Id",
                 "type": "string"
+              },
+              "source_labels": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Labels",
+                "type": "array"
               },
               "subject_id": {
                 "format": "uuid",
@@ -7901,8 +7921,20 @@
           },
           "GraphEdge": {
             "additionalProperties": false,
-            "description": "One traversed relation, carrying its bi-temporal state.",
+            "description": "One traversed relation, carrying its bi-temporal state.\n\nOn a citation path the edge is a document reference (``relation_id`` is\nits ``crossref_id``). ``bindings`` holds the distinct ``binding`` values of\nthe references the edge stands for and ``source_labels`` their distinct\nnon-null ``source_label`` values, both sorted: ``floating`` means the target\nversions in force when read, ``pinned`` one named target version, and a\nlabel is the caller's own opaque type code. Both are empty on entity edges.",
             "properties": {
+              "bindings": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "floating",
+                    "pinned"
+                  ],
+                  "type": "string"
+                },
+                "title": "Bindings",
+                "type": "array"
+              },
               "evidence_count": {
                 "title": "Evidence Count",
                 "type": "integer"
@@ -7955,6 +7987,14 @@
                 "format": "uuid",
                 "title": "Relation Id",
                 "type": "string"
+              },
+              "source_labels": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Labels",
+                "type": "array"
               },
               "subject_id": {
                 "format": "uuid",
@@ -10051,8 +10091,20 @@
           },
           "GraphEdge": {
             "additionalProperties": false,
-            "description": "One traversed relation, carrying its bi-temporal state.",
+            "description": "One traversed relation, carrying its bi-temporal state.\n\nOn a citation path the edge is a document reference (``relation_id`` is\nits ``crossref_id``). ``bindings`` holds the distinct ``binding`` values of\nthe references the edge stands for and ``source_labels`` their distinct\nnon-null ``source_label`` values, both sorted: ``floating`` means the target\nversions in force when read, ``pinned`` one named target version, and a\nlabel is the caller's own opaque type code. Both are empty on entity edges.",
             "properties": {
+              "bindings": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "floating",
+                    "pinned"
+                  ],
+                  "type": "string"
+                },
+                "title": "Bindings",
+                "type": "array"
+              },
               "evidence_count": {
                 "title": "Evidence Count",
                 "type": "integer"
@@ -10105,6 +10157,14 @@
                 "format": "uuid",
                 "title": "Relation Id",
                 "type": "string"
+              },
+              "source_labels": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Labels",
+                "type": "array"
               },
               "subject_id": {
                 "format": "uuid",
@@ -12394,8 +12454,20 @@
           },
           "GraphEdge": {
             "additionalProperties": false,
-            "description": "One traversed relation, carrying its bi-temporal state.",
+            "description": "One traversed relation, carrying its bi-temporal state.\n\nOn a citation path the edge is a document reference (``relation_id`` is\nits ``crossref_id``). ``bindings`` holds the distinct ``binding`` values of\nthe references the edge stands for and ``source_labels`` their distinct\nnon-null ``source_label`` values, both sorted: ``floating`` means the target\nversions in force when read, ``pinned`` one named target version, and a\nlabel is the caller's own opaque type code. Both are empty on entity edges.",
             "properties": {
+              "bindings": {
+                "default": [],
+                "items": {
+                  "enum": [
+                    "floating",
+                    "pinned"
+                  ],
+                  "type": "string"
+                },
+                "title": "Bindings",
+                "type": "array"
+              },
               "evidence_count": {
                 "title": "Evidence Count",
                 "type": "integer"
@@ -12448,6 +12520,14 @@
                 "format": "uuid",
                 "title": "Relation Id",
                 "type": "string"
+              },
+              "source_labels": {
+                "default": [],
+                "items": {
+                  "type": "string"
+                },
+                "title": "Source Labels",
+                "type": "array"
               },
               "subject_id": {
                 "format": "uuid",
@@ -13171,9 +13251,9 @@
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "7ccbb174e5ba679b6148b0482fcb03278f6ec0bab1525781e7716bdb301b0e8d",
-    "checked_in_manifest_sha256": "7ccbb174e5ba679b6148b0482fcb03278f6ec0bab1525781e7716bdb301b0e8d",
-    "surface_manifest_hash": "f91c463643b59a1608c91cee7625fcc95c1802d8f99bdeab16d29d599b91705f"
+    "built_manifest_sha256": "27438ec75f796f8940f6c46729148dfe8cafe6d51706852c46bbfa9c60fd0c76",
+    "checked_in_manifest_sha256": "27438ec75f796f8940f6c46729148dfe8cafe6d51706852c46bbfa9c60fd0c76",
+    "surface_manifest_hash": "4f8f0389654c3c9240bca35bdc735cc59fa6501dd494d9b81fbcf502c364f56c"
   },
   "readiness_expected_components": [
     [

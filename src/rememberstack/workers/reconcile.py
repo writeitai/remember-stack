@@ -486,9 +486,13 @@ class CycleFinalizer:
             if not self._catalog.claim_finalization(cycle_id=cycle_id):
                 continue  # another finalizer won this cycle
             if failed_items == 0:
+                reopened_at = self._catalog.cycle_reopened_at(cycle_id=cycle_id)
                 for doc_id in self._catalog.cycle_lineages(cycle_id=cycle_id):
                     self._close_lineage_zero_support(
-                        deployment_id=deployment_id, cycle_id=cycle_id, doc_id=doc_id
+                        deployment_id=deployment_id,
+                        cycle_id=cycle_id,
+                        doc_id=doc_id,
+                        reopened_at=reopened_at,
                     )
             finalized.append(cycle_id)
         for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
@@ -536,7 +540,12 @@ class CycleFinalizer:
         return tuple(finalized)
 
     def _close_lineage_zero_support(
-        self, *, deployment_id: UUID, cycle_id: UUID, doc_id: UUID
+        self,
+        *,
+        deployment_id: UUID,
+        cycle_id: UUID,
+        doc_id: UUID,
+        reopened_at: datetime | None,
     ) -> None:
         """§4 source-acted closure for one observed lineage, cycle-scoped."""
         claim_ids = self._catalog.lineage_claim_ids(
@@ -544,8 +553,17 @@ class CycleFinalizer:
         )
         relation_ids = self._catalog.affected_relation_ids(claim_ids=claim_ids)
         observation_ids = self._catalog.affected_observation_ids(claim_ids=claim_ids)
-        reconciliation_id = _derived_run_id(
-            kind="finalize", cycle_id=cycle_id, doc_id=doc_id
+        reconciliation_id = (
+            _derived_run_id(kind="finalize", cycle_id=cycle_id, doc_id=doc_id)
+            if reopened_at is None
+            # D143: a cycle reopened by a layer entry finalizes again as its
+            # own run, so its closures are recorded rather than deduplicated.
+            else _derived_run_id(
+                kind="refinalize",
+                cycle_id=cycle_id,
+                doc_id=doc_id,
+                at=reopened_at.isoformat(),
+            )
         )
         closed_relations = self._catalog.close_relations(
             deployment_id=deployment_id,

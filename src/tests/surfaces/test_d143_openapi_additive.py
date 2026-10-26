@@ -20,9 +20,9 @@ _ROOT = Path(__file__).parents[3]
 sys.path.insert(0, str(_ROOT / "scripts"))
 
 _PRE_D143_SHA256: Final = (
-    "5406471efe4f301f219466987bffce99cd7e2758ed92f01848f3e6701b77f574"
+    "c2bce70429554311e8564e59b2429e371798da1712e3be6aa3bb1c44eff5578f"
 )
-"""Canonical hash of ``openapi.json`` at 615c942c (the commit before D143's code)."""
+"""Canonical hash of ``openapi.json`` at 175138484 (main just before D143's code)."""
 
 _ADDED_ROUTES: Final = frozenset({"/processing-layers"})
 _ADDED_SCHEMAS: Final = frozenset(

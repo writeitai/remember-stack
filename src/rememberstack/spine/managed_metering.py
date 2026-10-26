@@ -374,8 +374,10 @@ class ManagedMeterCatalog:
                 version = report.versions[0]
                 failed = any(stage.status == "dead_letter" for stage in version.stages)
                 # Serving readiness reads a discharged layer as skipped; a
-                # receipt needs the measured stages to have actually run.
-                profile_changed = self._profile_unreachable(
+                # receipt needs the measured stages to have actually run. The
+                # gaps are read after readiness, so a gap reopened in between
+                # is seen and the version is checked again later.
+                profile_changed, measured_gap = self._measured_gaps(
                     deployment_id=deployment_id,
                     version_id=version_id,
                     measured_layers=measured_layers,
@@ -399,7 +401,7 @@ class ManagedMeterCatalog:
                     reason_code = "pipeline_terminal_failure"
                     profile_complete = False
                     sequence = None
-                elif version.ready:
+                elif version.ready and not measured_gap:
                     outcome = "succeeded"
                     completed_at = max(
                         stage.finished_at
@@ -437,19 +439,22 @@ class ManagedMeterCatalog:
                     created += 1
         return created
 
-    def _profile_unreachable(
+    def _measured_gaps(
         self,
         *,
         deployment_id: UUID,
         version_id: UUID,
         measured_layers: frozenset[ProcessingLayer],
-    ) -> bool:
-        """Whether the version can no longer complete its measured profile.
+    ) -> tuple[bool, bool]:
+        """Whether the measured profile is unreachable, and whether any gap is open.
 
-        True when it has a discharged gap in a measured layer, or a gap it never
-        entered in a measured layer that is now disabled (D143 §4.5). An entered
-        gap drains to completion, so it does not count.
+        Unreachable: a discharged gap in a measured layer, or a gap never
+        entered in a measured layer that is now disabled (D143 §4.5); an entered
+        gap drains to completion. Any measured gap at all means the measured
+        stages have not all run yet: a version reaches a layer's frontier, which
+        deletes its gap, before it can be ready.
         """
+        measured_gap = False
         with self._engine.connect() as connection:
             configuration = layer_configuration_on(
                 connection=connection, deployment_id=deployment_id
@@ -461,11 +466,12 @@ class ManagedMeterCatalog:
                 layer = ProcessingLayer(str(row["layer"]))
                 if layer not in measured_layers:
                     continue
+                measured_gap = True
                 if row["discharged_at"] is not None:
-                    return True
+                    return True, True
                 if row["entered_at"] is None and not configuration.enabled(layer=layer):
-                    return True
-        return False
+                    return True, True
+        return False, measured_gap
 
     def _record_outcome_check_retry(self, *, measurement_id: UUID) -> None:
         """Back off a non-terminal readiness check to prevent head blocking."""

@@ -18,7 +18,12 @@ type Envelope = Models.OutputEnvelope;
 type ContextBundle = Models.OutputContextBundleV2;
 type Params = Record<string,string|number|boolean|null|undefined> | ReadonlyArray<readonly [string,string]>;
 /** Render a D143 layer selection (any of sources, claims, facts; omitted means every served layer) as repeated layers query parameters. */
-function layerParams({layers}:{layers?:readonly string[]|null}):Params|undefined {return layers==null?undefined:layers.map(layer=>['layers',String(layer)] as const);}
+function layerParams({layers}:{layers?:readonly string[]|null}):Params|undefined {
+  if(layers==null)return undefined;
+  // Omitting layers reads every served layer; an empty selection is not that request, so it is refused rather than widened.
+  if(typeof layers==='string'||layers.length===0)throw new InputValidationError({detail:'layers must name at least one of sources, claims, facts; omit it to read every layer the deployment serves'});
+  return layers.map(layer=>['layers',String(layer)] as const);
+}
 /** Encode one identifier as a URL segment, including characters encodeURIComponent leaves literal. */
 function segment({value}:{value:string}):string {return encodeURIComponent(value).replace(/[!'()*]/g,c=>`%${c.charCodeAt(0).toString(16).toUpperCase()}`);}
 /** Adapt direct SDK identifier failures to Python's ordinary ValueError behavior. */
