@@ -329,7 +329,7 @@ class GraphQueries:
                     )
             raw = _rows(
                 connection=connection,
-                statement=_CITATION_HELPER,
+                statement=_CITATION_PATHS,
                 parameters={
                     "deployment_id": self._deployment_id,
                     "from_doc_id": from_doc_id,
@@ -343,8 +343,13 @@ class GraphQueries:
             )
             data, status = _split_status(rows=raw)
             paths = _hydrate_citation_paths(
-                connection=connection, deployment_id=self._deployment_id, rows=data
+                connection=connection,
+                deployment_id=self._deployment_id,
+                rows=data,
+                edge_rows=cast(list[dict[str, object]], status["edge_rows"]),
             )
+            # The instant the traversal and its edges were evaluated at.
+            evaluation = cast(datetime, status["evaluated_at"])
         if not paths and not bool(status["truncated"]):
             return self._empty(
                 explanation=(
@@ -554,11 +559,62 @@ SELECT * FROM memory_v1.graph_path(
 )
 """
 
-_CITATION_HELPER = """
-SELECT * FROM memory_v1.graph_citation_path(
-  :deployment_id, :from_doc_id, :to_doc_id, :max_depth, :max_paths,
-  :expansion_budget, :frontier_budget, :time_budget_ms
+# Traversal and edge hydration are one statement. The citation projection is
+# "references of the versions in force at statement_timestamp()", and a
+# repeatable-read snapshot freezes rows, not that clock: a second statement
+# could cross an effective-period boundary and see different edges. Each
+# returned edge is read from the projection through grouping columns: the
+# path's own documents on either side of it (crossref_ids[i] leads from
+# document_ids[i] to document_ids[i + 1]). OFFSET 0 keeps that lookup a
+# correlated subquery, so they are pushed below the aggregation and the read
+# starts from the citing lineage's in-force version instead of aggregating
+# every reference in the deployment. The hydrated edges ride on the terminal
+# status row.
+_CITATION_PATHS = """
+WITH traversal AS MATERIALIZED (
+  SELECT *
+  FROM memory_v1.graph_citation_path(
+    :deployment_id, :from_doc_id, :to_doc_id, :max_depth, :max_paths,
+    :expansion_budget, :frontier_budget, :time_budget_ms
+  ) WITH ORDINALITY AS helper
+),
+returned AS (
+  SELECT DISTINCT path.crossref_ids[step] AS crossref_id,
+         path.document_ids[step] AS from_doc_id,
+         path.document_ids[step + 1] AS to_doc_id
+  FROM traversal AS path
+  CROSS JOIN LATERAL generate_subscripts(path.crossref_ids, 1) AS step
+  WHERE path.row_kind = 'data'
+),
+edges AS (
+  SELECT projected.crossref_id, projected.from_doc_id, projected.to_doc_id,
+         projected.kind, projected.context, projected.bindings,
+         projected.source_labels
+  FROM returned
+  CROSS JOIN LATERAL (
+    SELECT group_edge.crossref_id, group_edge.from_doc_id, group_edge.to_doc_id,
+           group_edge.kind, group_edge.context, group_edge.bindings,
+           group_edge.source_labels
+    FROM rememberstack_graph_internal.crossrefs_live AS group_edge
+    WHERE group_edge.deployment_id = :deployment_id
+      AND group_edge.from_doc_id = returned.from_doc_id
+      AND group_edge.to_doc_id = returned.to_doc_id
+    OFFSET 0
+  ) AS projected
+  WHERE projected.crossref_id = returned.crossref_id
 )
+SELECT traversal.row_kind, traversal.hops, traversal.crossref_ids,
+       traversal.document_ids, traversal.truncated, traversal.truncation_reason,
+       traversal.examined_edges, traversal.returned_paths,
+       traversal.evaluated_at,
+       CASE WHEN traversal.row_kind = 'status' THEN (
+         SELECT coalesce(
+           jsonb_agg(to_jsonb(edges) ORDER BY edges.crossref_id), '[]'::jsonb
+         )
+         FROM edges
+       ) END AS edge_rows
+FROM traversal
+ORDER BY traversal.ordinality
 """
 
 _ENTITY_EXISTS = text(
@@ -609,32 +665,6 @@ _DOCUMENT_ROWS = text(
     WHERE deployment_id = :deployment_id AND doc_id IN :document_ids
     """
 ).bindparams(bindparam("document_ids", expanding=True))
-
-# A citation edge is a projection row, keyed by its representative reference.
-# The public row of that reference names the group (source, target, kind); the
-# projection is filtered on those grouping columns, never on the aggregated
-# id, so the read stays one indexed probe per edge. An edge whose
-# representative changed since the traversal statement is absent.
-_CROSSREF_ROWS = text(
-    """
-    SELECT edge.crossref_id, edge.from_doc_id, edge.to_doc_id, edge.kind,
-           edge.context, edge.bindings, edge.source_labels
-    FROM memory_v1.document_crossrefs_live AS reference
-    CROSS JOIN LATERAL (
-      SELECT projected.crossref_id, projected.from_doc_id, projected.to_doc_id,
-             projected.kind, projected.context, projected.bindings,
-             projected.source_labels
-      FROM rememberstack_graph_internal.crossrefs_live AS projected
-      WHERE projected.deployment_id = reference.deployment_id
-        AND projected.from_doc_id = reference.from_doc_id
-        AND projected.to_doc_id = reference.to_doc_id
-        AND projected.kind = reference.kind
-    ) AS edge
-    WHERE reference.deployment_id = :deployment_id
-      AND reference.crossref_id IN :crossref_ids
-      AND edge.crossref_id = reference.crossref_id
-    """
-).bindparams(bindparam("crossref_ids", expanding=True))
 
 
 def _rows(
@@ -897,9 +927,17 @@ def _hydrate_neighbor_nodes(
 
 
 def _hydrate_citation_paths(
-    *, connection: Connection, deployment_id: UUID, rows: list[RowMapping]
+    *,
+    connection: Connection,
+    deployment_id: UUID,
+    rows: list[RowMapping],
+    edge_rows: list[dict[str, object]],
 ) -> tuple[GraphPath, ...]:
-    """Hydrate complete directed document paths from live authority views."""
+    """Hydrate complete directed document paths from live authority views.
+
+    ``edge_rows`` are the projection rows of the returned edges, read in the
+    traversal's own statement.
+    """
     document_ids = tuple(
         dict.fromkeys(UUID(str(value)) for row in rows for value in row["document_ids"])
     )
@@ -917,13 +955,7 @@ def _hydrate_citation_paths(
             {"deployment_id": deployment_id, "document_ids": document_ids},
         ).mappings()
     }
-    crossrefs = {
-        UUID(str(row["crossref_id"])): row
-        for row in connection.execute(
-            _CROSSREF_ROWS,
-            {"deployment_id": deployment_id, "crossref_ids": crossref_ids},
-        ).mappings()
-    }
+    crossrefs = {UUID(str(row["crossref_id"])): row for row in edge_rows}
     paths: list[GraphPath] = []
     for row in rows:
         raw_nodes = tuple(UUID(str(value)) for value in row["document_ids"])
@@ -949,7 +981,7 @@ def _hydrate_citation_paths(
     return tuple(paths)
 
 
-def _citation_edge(*, row: RowMapping) -> GraphEdge:
+def _citation_edge(*, row: dict[str, object]) -> GraphEdge:
     """Convert one projection row into a document-to-document edge.
 
     The edge merges every current reference between its two documents of one

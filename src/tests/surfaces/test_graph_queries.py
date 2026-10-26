@@ -21,6 +21,7 @@ from alembic.config import Config
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
@@ -1295,6 +1296,157 @@ def test_reference_made_only_by_a_superseded_version_is_not_traversed(
         from_doc_id=docs["Follow-up"], to_doc_id=docs["Original Spec"]
     )
     assert still.negative is None and still.paths[0].length == 1
+
+
+_UNRELATED_CITERS = 500
+
+
+def _add_unrelated_citers(*, connection: Connection, target: UUID) -> None:
+    """Give the deployment many other served lineages that all cite ``target``."""
+    lineage = " FROM generate_series(1, :citers) AS ordinal"
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "citers": _UNRELATED_CITERS,
+        "target": target,
+    }
+    for statement in (
+        "INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref,"
+        " title) SELECT md5('citer-doc-' || ordinal)::uuid, :deployment_id,"
+        " 'upload', 'citer-' || ordinal, 'Citer ' || ordinal" + lineage,
+        "INSERT INTO content_objects (deployment_id, content_hash, mime, raw_uri)"
+        " SELECT :deployment_id, 'citer-' || ordinal, 'text/plain', 'raw'" + lineage,
+        "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+        " content_hash, version_no, status) SELECT"
+        " md5('citer-version-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-doc-' || ordinal)::uuid, 'citer-' || ordinal, 1, 'ready'"
+        + lineage,
+        "INSERT INTO document_representations (representation_id, deployment_id,"
+        " version_id, route, status) SELECT"
+        " md5('citer-representation-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-version-' || ordinal)::uuid, 'passthrough', 'ready'" + lineage,
+        "UPDATE document_versions AS v SET current_representation_id ="
+        " md5('citer-representation-' || ordinal)::uuid"
+        " FROM generate_series(1, :citers) AS ordinal"
+        " WHERE v.version_id = md5('citer-version-' || ordinal)::uuid",
+        "UPDATE documents AS d SET current_version_id ="
+        " md5('citer-version-' || ordinal)::uuid"
+        " FROM generate_series(1, :citers) AS ordinal"
+        " WHERE d.doc_id = md5('citer-doc-' || ordinal)::uuid",
+        "INSERT INTO document_reference_generations (generation_id,"
+        " deployment_id, doc_id, version_id, origin, input_hash, request_seq,"
+        " artifact_uri, status) SELECT md5('citer-generation-' || ordinal)::uuid,"
+        " :deployment_id, md5('citer-doc-' || ordinal)::uuid,"
+        " md5('citer-version-' || ordinal)::uuid, 'supplied', 'h', 1,"
+        " 'refs.ndjson', 'active'" + lineage,
+        "INSERT INTO document_crossrefs (crossref_id, deployment_id, from_doc_id,"
+        " from_version_id, generation_id, to_doc_id, kind, origin, resolved)"
+        " SELECT md5('citer-reference-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-doc-' || ordinal)::uuid,"
+        " md5('citer-version-' || ordinal)::uuid,"
+        " md5('citer-generation-' || ordinal)::uuid, :target, 'cites',"
+        " 'supplied', true" + lineage,
+    ):
+        connection.execute(text(statement), parameters)
+
+
+def test_citation_edge_hydration_reads_only_the_returned_groups(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Hydrating one edge reads that edge's references, not the deployment's.
+
+    Many other lineages cite the same target, the worst case for a probe on
+    the target. The projection lookup must still be bounded by the edge's own
+    source, target and kind, under the graph role and its executor settings.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    with database_engine.begin() as connection:
+        _add_unrelated_citers(connection=connection, target=docs["Original Spec"])
+        for table in (
+            "documents",
+            "document_versions",
+            "document_version_scope",
+            "document_reference_generations",
+            "document_crossrefs",
+        ):
+            connection.exec_driver_sql(f"ANALYZE {table}")
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "from_doc_id": docs["Follow-up"],
+        "to_doc_id": docs["Original Spec"],
+        "max_depth": 6,
+        "max_paths": 10,
+        "expansion_budget": 2000,
+        "frontier_budget": 1000,
+        "time_budget_ms": 1000,
+    }
+    with graph._transaction() as connection:  # noqa: SLF001
+        plan = connection.execute(
+            text(
+                "EXPLAIN (ANALYZE, FORMAT JSON) " + graph_queries_module._CITATION_PATHS  # noqa: SLF001
+            ),
+            parameters,
+        ).scalar_one()
+    reference_nodes = [
+        node
+        for node in _walk_plan_nodes(plan[0]["Plan"])
+        if node.get("Relation Name") == "document_crossrefs"
+    ]
+    assert reference_nodes, plan
+    read = sum(
+        (
+            int(node["Actual Rows"])
+            + int(node.get("Rows Removed by Filter", 0))
+            + int(node.get("Rows Removed by Index Recheck", 0))
+        )
+        * int(node["Actual Loops"])
+        for node in reference_nodes
+    )
+    assert read <= 10, [
+        {key: node.get(key) for key in ("Index Name", "Index Cond", "Actual Loops")}
+        for node in reference_nodes
+    ]
+
+    answer = graph.citation_path(
+        from_doc_id=docs["Follow-up"], to_doc_id=docs["Original Spec"]
+    )
+    assert answer.negative is None and len(answer.paths) == 1
+    assert answer.paths[0].edges[0].source_labels == ("wording-unresolved",)
+
+
+def test_citation_traversal_and_its_edges_are_one_statement(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Traversal and edge hydration read the projection at one instant.
+
+    The projection is "the versions in force at statement_timestamp()", which
+    a repeatable-read snapshot does not freeze; a second statement could cross
+    an effective-period boundary. So exactly one statement reads it, and the
+    answer reports that statement's instant.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    statements: list[str] = []
+
+    def record(*arguments: object) -> None:
+        statements.append(str(arguments[2]))
+
+    event.listen(database_engine, "before_cursor_execute", record)
+    try:
+        answer = graph.citation_path(
+            from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+        )
+    finally:
+        event.remove(database_engine, "before_cursor_execute", record)
+
+    readers = [
+        statement
+        for statement in statements
+        if "crossrefs_live" in statement or "graph_citation_path" in statement
+    ]
+    assert len(readers) == 1
+    assert "rememberstack_graph_internal.crossrefs_live" in readers[0]
+    assert "memory_v1.graph_citation_path" in readers[0]
+    assert answer.negative is None and answer.paths[0].length == 2
+    assert answer.temporal_scope.evaluated_at == answer.freshness.pg_live_ts
 
 
 def test_typed_absence_boundaries_and_hard_depth_limits(graph: GraphQueries) -> None:

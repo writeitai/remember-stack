@@ -94,6 +94,25 @@ def citation_path_helper() -> str:
     )
 
 
+def citation_path_helper_body() -> str:
+    """The helper's exact PL/pgSQL source, as ``pg_proc.prosrc`` stores it."""
+    return citation_path_helper().split("$function$")[1]
+
+
+PROJECTION_COLUMNS = (
+    ("deployment_id", "uuid"),
+    ("crossref_id", "uuid"),
+    ("from_doc_id", "uuid"),
+    ("to_doc_id", "uuid"),
+    ("kind", "text"),
+    ("context", "text"),
+    ("created_at", "timestamp with time zone"),
+    ("bindings", "text[]"),
+    ("source_labels", "text[]"),
+)
+"""The projection's columns and types, in order."""
+
+
 def _replaceable(*, sql: str) -> str:
     """Replace the helper in place so its comment, owner and grants survive."""
     return _replace_exact(

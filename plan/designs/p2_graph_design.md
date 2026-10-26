@@ -479,6 +479,16 @@ and one temporal instant without changing the public current-view definition.
 Long read transactions remain bounded by statement/transaction timeouts so
 they do not pin vacuum indefinitely.
 
+Citation paths take no instants: the citation projection is "the references
+of the versions in force at `statement_timestamp()`", and its in-force test
+has no explicit-instant form. The typed citation operation therefore runs the
+traversal and the hydration of the returned edges as one statement, and its
+`evaluated_at` is that statement's instant. A second statement would see the
+same rows but a later clock, so an effective-period boundary between the two
+could remove an edge or change its merged qualifiers. Each returned edge is
+read from the projection by its own grouping columns (the documents on either
+side of it in the path), so hydration reads only those lineages' references.
+
 “Live” means no projection publication lag. It does not erase valid-time or
 belief-time semantics.
 

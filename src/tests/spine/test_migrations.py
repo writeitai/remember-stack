@@ -1270,8 +1270,9 @@ def test_citation_projection_migration_round_trips_graph_metadata() -> None:
     """p9_40 swaps the citation source in place and its downgrade restores p9_39.
 
     At head the projection carries the merged qualifiers, the helper expands
-    it, and the D98 catalog check passes; the downgrade leaves the view, the
-    helper, the property graph and their grants exactly as p9_39 had them.
+    it, and the D98 catalog check passes, while it flags the p9_39 traversal;
+    the downgrade leaves the view, the helper, the property graph and their
+    grants exactly as p9_39 had them.
     """
     from rememberstack.spine.graph_catalog import graph_catalog_problems
 
@@ -1325,6 +1326,13 @@ def test_citation_projection_migration_round_trips_graph_metadata() -> None:
     command.upgrade(config=config, revision="p9_39_0060")
     prior = metadata()
     assert "memory_v1.document_crossrefs_live" in str(prior["helper"])
+    # the head catalog contract flags exactly the p9_39 citation traversal
+    prior_problems = problems()
+    assert len(prior_problems) == 2
+    assert prior_problems[0].startswith(
+        "helper contract mismatch for graph_citation_path"
+    )
+    assert prior_problems[1].startswith("citation projection columns expected")
     try:
         command.upgrade(config=config, revision="p9_40_0061")
         head = metadata()
@@ -1340,7 +1348,7 @@ def test_citation_projection_migration_round_trips_graph_metadata() -> None:
         assert problems() == ()
         command.downgrade(config=config, revision="p9_39_0060")
         assert metadata() == prior
-        assert problems() == ()
+        assert problems() == prior_problems
     finally:
         command.upgrade(config=config, revision="head")
 

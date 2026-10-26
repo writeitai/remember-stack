@@ -31,6 +31,24 @@ _HEAD = "p9_38_0059"
 _DEPLOYMENT_ID = UUID("14000000-0000-0000-0000-0000000000a1")
 
 
+def _catalog_problems_before_p9_40(*, connection: Connection) -> tuple[str, ...]:
+    """Catalog problems, less the citation traversal that p9_40_0061 replaces.
+
+    The check verifies the head contract; before p9_40_0061 the citation
+    helper and its projection are the per-reference ones, by design.
+    """
+    return tuple(
+        problem
+        for problem in graph_catalog_problems(connection=connection)
+        if not problem.startswith(
+            (
+                "helper contract mismatch for graph_citation_path",
+                "citation projection columns expected",
+            )
+        )
+    )
+
+
 @pytest.fixture()
 def migrated() -> Iterator[tuple[Config, Engine]]:
     """A store at the revision before D140; restored to head afterwards."""
@@ -181,7 +199,7 @@ def test_the_upgrade_fills_the_projection_for_every_existing_lineage(
         only: ("{}", False, True),
     }
     with engine.connect() as connection:
-        assert graph_catalog_problems(connection=connection) == ()
+        assert _catalog_problems_before_p9_40(connection=connection) == ()
     # the fill equals a rebuild of every live lineage
     before = _projection(engine)
     with engine.connect() as connection:
@@ -250,7 +268,7 @@ def test_an_empty_store_downgrades_and_upgrades_again(
             ).scalar_one()
             == 0
         )
-        assert graph_catalog_problems(connection=connection) == ()
+        assert _catalog_problems_before_p9_40(connection=connection) == ()
     command.upgrade(config=config, revision=_HEAD)
     assert _revision(engine) == _HEAD
     # the binding contract is the head's; later revisions sit on top of D140
