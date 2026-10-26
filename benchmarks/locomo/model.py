@@ -20,6 +20,7 @@ from pydantic import SerializerFunctionWrapHandler
 
 from remember.models import ContextBundleV2 as RememberContextBundleV2
 from remember.models import Envelope as RememberEnvelope
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.model import ContextBundleV2 as RememberstackContextBundleV2
 from rememberstack.model import Envelope as RememberstackEnvelope
 from rememberstack.model import PipelineReadinessReport
@@ -156,6 +157,9 @@ class RunConfiguration(FrozenModel):
     answer_agent_model: AnswerAgentModel = "openai/gpt-6-luna"
     answer_agent_reasoning_effort: ReasoningEffort | None = "high"
     answer_word_cap: int | None = Field(default=None, ge=1)
+    retrieval_budget: ContextRetrievalBudget = Field(
+        default_factory=ContextRetrievalBudget
+    )
     judge_model: JudgeModel = "openai/gpt-6-luna"
     judge_reasoning_effort: ReasoningEffort | None = "high"
     answer_agent_temperature: float | None = Field(default=0.0, ge=0, le=2)

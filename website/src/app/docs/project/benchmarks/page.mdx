@@ -70,6 +70,22 @@ The dataset file is `locomo10.json` from the LoCoMo repository at commit
 `3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376`. The harness checks its SHA-256
 (`79fa87e9…a698ff4`) and refuses any other file.
 
+### Retrieval depth
+
+Prepare-time flags `--retrieval-k` and `--retrieval-candidate-k` configure the
+context tools used by the answer agent. Defaults are 50 confirmed results per
+type and 200 internal candidates per search channel. Counts apply separately
+to facts, claims and chunks; a combined call may return 150 primary records
+plus linked fact evidence. Candidate counts are not returned-result counts.
+
+For example, `prepare --retrieval-k 50 --retrieval-candidate-k 200` freezes
+that budget in run.json and its fingerprint. Effective arguments are enforced
+and saved on every context-tool call. A different budget requires a new run;
+changing it in an existing checkpoint fails fingerprint verification. Larger
+budgets have no established accuracy advantage and increase returned text and
+reader cost. The run directory retains generated answers and complete tool
+traces so they can be regraded without repeating ingestion or answering.
+
 ### How a LoCoMo run works
 
 The harness lives in `benchmarks/locomo/` and runs as

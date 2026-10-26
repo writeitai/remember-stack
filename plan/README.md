@@ -89,6 +89,11 @@ For the full TypeScript counterpart, see [D141 TypeScript client](designs/typesc
 [analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
 and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.
 
+For configurable context result counts, automatic fourfold candidate overfetch,
+and the separate full LoCoMo retrieval budget, start with
+[context operations](designs/open_query_space_design.md#31-platform-operations)
+and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
+
 To switch the claims or facts layer off for a deployment, narrow a request to some layers, or
 understand how a layer switched on later is backfilled without re-paying for unchanged text,
 start with [D143's processing layers design](designs/processing_layers_design.md) and its

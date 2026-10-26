@@ -77,7 +77,8 @@ with `evidence_count` 10. Arguments:
 |---|---|---|
 | `query` | required | 1 to 8,192 characters |
 | `entity_ids` | none | 1 to 19 IDs |
-| `k` | 15 | 1 to 30 facts |
+| `k` | 50 | 1 to 100 facts |
+| `candidate_k` | max(4*k, 60) | 1 to 400; at least k |
 | `evidence_per_fact` | 3 | 1 to 5 claims |
 | `hops` | 1 | 1 or 2 |
 | `predicate` | none | one predicate name |
@@ -90,14 +91,16 @@ the facts about Ravi's projects, not only facts with Ravi in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
-capture. It returns current testimony only. Arguments: `query`, optional
+capture. It returns testimony under the selected time scope. Arguments:
+`query`, optional
 `entity_ids` (up to 20), `k` (default 50, up to 100) and `candidate_k`
-(default 200, up to 400) nominations per search channel.
+(default max(4*k, 60), up to 400) nominations per search channel. With the
+default k=50, this means 200 candidates per channel.
 
 **Use `combined_context` when you want both** and do not want to make two
 calls. It runs the two operations independently and returns them side by
-side, never blended. It takes `query`, `entity_ids`, `hops`, `predicate` and
-`time`.
+side, never blended. It takes `query`, `entity_ids`, `k`, `candidate_k`, `hops`, `predicate` and
+`time`. The same depth controls apply separately to all three evidence types.
 
 ```python
 import remember
@@ -115,8 +118,8 @@ with remember.Client() as memory:
 
 <Callout type="note">
 
-The Python client's `claims_and_sources_context` sends only `query`. To
-pass `entity_ids`, `k` or `candidate_k`, call
+The Python client's `claims_and_sources_context` accepts `query`, `k`,
+`candidate_k` and `time`. To pass `entity_ids`, call
 `memory.run_operation(name="claims_and_sources_context", arguments={...})`.
 
 </Callout>

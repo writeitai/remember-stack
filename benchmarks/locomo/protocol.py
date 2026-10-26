@@ -36,7 +36,7 @@ from rememberstack.model import ToolDescriptor
 
 PROTOCOL_NAME: Final = "RS-LoCoMo-Full-v39"
 DEFAULT_PROTOCOL_KEY: Final = "full-v39"
-ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-current-v39"
+ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v39"
 """Current Full-v39 evaluation identity, with explicit Luna/Flex and Jev roles."""
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
@@ -48,7 +48,7 @@ EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
 """Concise adjudication projector/response-adapter generation (D121/D123)."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "4f8f0389654c3c9240bca35bdc735cc59fa6501dd494d9b81fbcf502c364f56c"
+    "f8a6e2e20e404fd14d0963cbd4f5808ca0b19882356b5c1f21b2e9397b0a03d2"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",

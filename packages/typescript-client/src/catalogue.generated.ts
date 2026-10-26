@@ -821,7 +821,7 @@ export default {
         "additionalProperties": false,
         "properties": {
           "candidate_k": {
-            "default": 200,
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
@@ -838,6 +838,7 @@ export default {
           },
           "k": {
             "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -922,7 +923,7 @@ export default {
       },
       "name": "claims_and_sources_context",
       "permission": "memory:read",
-      "tool_version": 3
+      "tool_version": 4
     },
     {
       "annotations": {
@@ -935,6 +936,12 @@ export default {
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -958,8 +965,9 @@ export default {
             "type": "integer"
           },
           "k": {
-            "default": 15,
-            "maximum": 30,
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -1048,7 +1056,7 @@ export default {
       },
       "name": "facts_context",
       "permission": "memory:read",
-      "tool_version": 3
+      "tool_version": 4
     },
     {
       "annotations": {
@@ -1061,6 +1069,12 @@ export default {
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -1074,6 +1088,13 @@ export default {
           "hops": {
             "default": 1,
             "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "k": {
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -1162,7 +1183,7 @@ export default {
       },
       "name": "combined_context",
       "permission": "memory:read",
-      "tool_version": 4
+      "tool_version": 5
     },
     {
       "annotations": {

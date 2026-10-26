@@ -2633,7 +2633,8 @@ with `evidence_count` 10. Arguments:
 |---|---|---|
 | `query` | required | 1 to 8,192 characters |
 | `entity_ids` | none | 1 to 19 IDs |
-| `k` | 15 | 1 to 30 facts |
+| `k` | 50 | 1 to 100 facts |
+| `candidate_k` | max(4*k, 60) | 1 to 400; at least k |
 | `evidence_per_fact` | 3 | 1 to 5 claims |
 | `hops` | 1 | 1 or 2 |
 | `predicate` | none | one predicate name |
@@ -2646,14 +2647,16 @@ the facts about Ravi's projects, not only facts with Ravi in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
-capture. It returns current testimony only. Arguments: `query`, optional
+capture. It returns testimony under the selected time scope. Arguments:
+`query`, optional
 `entity_ids` (up to 20), `k` (default 50, up to 100) and `candidate_k`
-(default 200, up to 400) nominations per search channel.
+(default max(4*k, 60), up to 400) nominations per search channel. With the
+default k=50, this means 200 candidates per channel.
 
 **Use `combined_context` when you want both** and do not want to make two
 calls. It runs the two operations independently and returns them side by
-side, never blended. It takes `query`, `entity_ids`, `hops`, `predicate` and
-`time`.
+side, never blended. It takes `query`, `entity_ids`, `k`, `candidate_k`, `hops`, `predicate` and
+`time`. The same depth controls apply separately to all three evidence types.
 
 ```python
 import remember
@@ -2671,8 +2674,8 @@ with remember.Client() as memory:
 
 **Note:**
 
-The Python client's `claims_and_sources_context` sends only `query`. To
-pass `entity_ids`, `k` or `candidate_k`, call
+The Python client's `claims_and_sources_context` accepts `query`, `k`,
+`candidate_k` and `time`. To pass `entity_ids`, call
 `memory.run_operation(name="claims_and_sources_context", arguments={...})`.
 
 A good default order for an agent: resolve the names, ask `facts_context`,
@@ -4554,23 +4557,29 @@ claims only when facts are missing or you need a verbatim quote. Use
 |---|---|---|---|
 | `resolve_entity` | `name` | required | non-empty string |
 | `facts_context` | `query` | required | 1 to 8,192 characters |
-| | `k` (facts returned) | 15 | 1 to 30 |
+| | `k` (facts returned) | 50 | 1 to 100 |
+| | `candidate_k` (nominations per channel) | `max(4*k, 60)` | 1 to 400, at least `k` |
 | | `evidence_per_fact` (claims per fact per stance) | 3 | 1 to 5 |
 | | `hops` (graph expansion around anchors) | 1 | 1 to 2 |
 | | `predicate` | none | 1 to 200 characters |
 | | `entity_ids` (anchors) | none | 1 to 19 unique UUIDs |
 | | `time` | `{"mode": "current"}` | see [Ask about the past](https://remember.dev/docs/guides/ask-about-the-past) |
 | `claims_and_sources_context` | `query` | required | 1 to 8,192 characters |
-| | `k` (results) | 50 | 1 to 100 |
-| | `candidate_k` (nominations per channel) | 200 | 1 to 400, at least `k` |
+| | `k` (claims and chunks, separately) | 50 | 1 to 100 |
+| | `candidate_k` (nominations per channel) | `max(4*k, 60)` | 1 to 400, at least `k` |
 | | `entity_ids` | none | 1 to 20 unique UUIDs |
-| `combined_context` | `query`, `hops`, `predicate`, `entity_ids`, `time` | as `facts_context` | as `facts_context` |
+| `combined_context` | `query`, `k`, `candidate_k`, `hops`, `predicate`, `entity_ids`, `time` | as `facts_context` | as `facts_context` |
 
-`combined_context` always runs its halves at their defaults: 50 claims and
-passages, 15 facts with 3 claims each.
+`combined_context` applies the same `k` and `candidate_k` to both halves.
+Its default is up to 50 facts, 50 claims and 50 chunks, plus the facts'
+backing evidence. At k=50, omitted `candidate_k` resolves to 200 per search
+channel; it is not a global pool of 200.
 
-One fact-context result carries at most 60 evidence links in total, however
-you set `k` and `evidence_per_fact`. Fact retrieval has a 25-second
+One fact-context result carries at most `max(60, 2*k)` evidence links in
+total. Allocation gives every selected fact its available supporting and
+contradicting evidence before adding deeper evidence, within
+`evidence_per_fact` per stance (fixed at 3 for `combined_context`).
+Fact retrieval has a 25-second
 database budget; if the database cannot answer inside it you get a
 `boundary` result, not a partial one.
 
@@ -4589,10 +4598,12 @@ said = client.claims_and_sources_context("invoice exporter rewrite")
 both = client.combined_context("What changed in the billing migration plan?")
 ```
 
-`facts_context` accepts `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` accepts `time`; `claims_and_sources_context` and
-`resolve_entity` accept only the query or name. For every other parameter,
-including `k` and `evidence_per_fact`, use `run_operation`:
+All three context helpers accept `query`, `k`, `candidate_k` and `time`.
+`facts_context` also accepts `hops`, `predicate` and `entity_ids`;
+`resolve_entity` accepts `name`. Use `run_operation` to set
+`evidence_per_fact` on `facts_context`, `entity_ids` on
+`claims_and_sources_context`, or `entity_ids`, `hops` and `predicate` on
+`combined_context`:
 
 ```python
 facts = client.run_operation(
@@ -4719,16 +4730,17 @@ paragraph you can copy.
 The result size is set almost entirely by these numbers:
 
 - **`facts_context`**: `k` facts, each with up to `evidence_per_fact`
-  supporting claims and as many contradicting ones, capped at 60 evidence
-  links. Each claim adds its text and its quoted passage. For a tight
-  budget, `k=8, evidence_per_fact=1` keeps one quote per fact.
+  supporting claims and as many contradicting ones, capped at
+  `max(60, 2*k)` evidence links. Each claim adds its text and its quoted
+  passage. For a tight budget, `k=8, evidence_per_fact=1` requests up to
+  one claim per fact per stance.
 - **`claims_and_sources_context`**: up to `k` claims and up to `k`
   passages, default 50 each.
   Passages are whole chunks of source text and are the largest part of any
   result. Lower `k` first.
-- **`combined_context`**: fixed at both defaults. When it is too large,
-  call `facts_context` and `claims_and_sources_context` separately with
-  smaller `k`.
+- **`combined_context`**: the same `k` limits facts, claims and chunks
+  separately. Lower `k` to shrink all three, or call the two context
+  operations separately when their result counts should differ.
 
 Render, count, and trim from the bottom of each list: results come ranked.
 If you trim, tell the model the list is partial, the same way the
@@ -11230,7 +11242,7 @@ runs:
 - `entity_ids` must be an array of UUID strings, with no duplicates;
 - `time` must be an object in one of the four modes;
 - length, item-count and range bounds from the descriptor apply;
-- for `claims_and_sources_context`, `candidate_k` may not be smaller than `k`.
+- for every context operation, `candidate_k` may not be smaller than `k`.
 
 The parameters of each operation are listed in
 [Assured operations](https://remember.dev/docs/reference/assured-operations).
@@ -11260,7 +11272,7 @@ See [Reading a result](https://remember.dev/docs/concepts/reading-results).
 | `422` | `{"code": "invalid_parameter", "message": "unknown argument(s): …"}` | An argument the operation does not take. |
 | `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` object. |
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
-| `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | `claims_and_sources_context` only. |
+| `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | All three context operations. |
 | `422` | validation list | The body is not a JSON object. |
 | `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
 
@@ -11293,12 +11305,12 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 ```
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
-says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
-`facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` and `claims_and_sources_context` take `query` and `time`;
-`resolve_entity` takes `name`. Use `run_operation` for the rest
-(`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
-operations).
+says `"contract": "ContextBundle/v2"`. All three context helpers accept
+`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
+`run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
+on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`
+on `combined_context`.
 
 ---
 
@@ -12824,9 +12836,9 @@ four:
 | Operation | Version | Answers from | Result | Grain |
 |---|---|---|---|---|
 | [`resolve_entity`](#resolve_entity) | 1 | identity | `Envelope` | `fact` |
-| [`claims_and_sources_context`](#claims_and_sources_context) | 3 | what sources said | `Envelope` | `evidence` |
-| [`facts_context`](#facts_context) | 3 | what is held true | `Envelope` | `fact` |
-| [`combined_context`](#combined_context) | 4 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
+| [`claims_and_sources_context`](#claims_and_sources_context) | 4 | what sources said | `Envelope` | `evidence` |
+| [`facts_context`](#facts_context) | 4 | what is held true | `Envelope` | `fact` |
+| [`combined_context`](#combined_context) | 5 | both, side by side | `ContextBundle/v2` | none (two envelopes) |
 
 None of them calls a language model. `claims_and_sources_context`,
 `facts_context` and `combined_context` embed the query text to search by
@@ -12986,7 +12998,7 @@ Return what the sources said about a query: claims and the source passages
 around them, with high recall. This is testimony, not the memory's settled
 view.
 
-**Version** 3. **Answer intent** `claims_and_sources`. **Result contract**
+**Version** 4. **Answer intent** `claims_and_sources`. **Result contract**
 `envelope`, grain `evidence`. **Plan** one step: `claims_and_sources_context`.
 
 ### Parameters
@@ -12996,7 +13008,7 @@ view.
 | `query` | string | yes | | 1 to 8,192 characters. |
 | `entity_ids` | array of UUID | no | none | 1 to 20 unique ids. Restricts the search to claims and chunks about these entities. |
 | `k` | integer | no | `50` | 1 to 100. The most claims, and separately the most chunks, returned. |
-| `candidate_k` | integer | no | `200` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
+| `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`. How many candidates each search channel nominates. |
 | `time` | object | no | `{"mode": "current"}` | Which versions of documents with declared effective periods are read. See [The time object](#the-time-object). |
 
 ### What it does
@@ -13047,7 +13059,7 @@ Return the facts the memory holds true — relations and observations it has
 adjudicated — for a query, under an explicit time scope, each with its
 supporting and contradicting evidence.
 
-**Version** 3. **Answer intent** `facts`. **Result contract** `envelope`,
+**Version** 4. **Answer intent** `facts`. **Result contract** `envelope`,
 grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 
 ### Parameters
@@ -13056,7 +13068,8 @@ grain `fact`. **Plan** two steps: `graph_neighborhood`, then `facts_context`.
 |---|---|---|---|---|
 | `query` | string | yes | | 1 to 8,192 characters. |
 | `entity_ids` | array of UUID | no | none | 1 to 19 unique ids. The anchors. |
-| `k` | integer | no | `15` | 1 to 30. The most facts returned. |
+| `k` | integer | no | `50` | 1 to 100. The most facts returned. |
+| `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`. Internal fact nomination depth. |
 | `evidence_per_fact` | integer | no | `3` | 1 to 5. The most claims returned per fact and per stance (supporting, contradicting). |
 | `hops` | integer | no | `1` | 1 to 2. How far the live graph expands from each anchor. |
 | `predicate` | string | no | none | 1 to 200 characters. Only relations with this predicate are expanded and returned. |
@@ -13078,11 +13091,12 @@ With `entity_ids`:
    instant to expand at, so only the anchors are used.
 3. Facts are searched inside that set of entities.
 
-Then, in every case: up to 200 candidates are nominated, confirmed against
+Then, in every case: up to `candidate_k` candidates are nominated, confirmed against
 the database in batches until `k` facts (plus one, to know whether there are
 more) have been confirmed, and their evidence is attached — up to
-`evidence_per_fact` claims per fact and stance, and at most 60 claims in the
-whole result.
+`evidence_per_fact` claims per fact and stance, within a total association budget
+of `max(60, 2*k)`. Evidence is allocated across every selected fact and both
+stances before additional claims are attached to earlier facts.
 
 The operation has a 25-second database budget. If it runs out, or the live
 graph or search index cannot answer, the result is `negative.kind`
@@ -13187,7 +13201,7 @@ envelope = memory.facts_context(
 Return `claims_and_sources_context` and `facts_context` for the same query in
 one response, side by side and never blended.
 
-**Version** 4. **Answer intent** `combined_context`. **Result contract**
+**Version** 5. **Answer intent** `combined_context`. **Result contract**
 `context_bundle_v2`; no single grain. **Plan** an operation bundle whose
 children are `claims_and_sources_context` then `facts_context`; its
 `implementation_plan_hash` covers both children's plan hashes.
@@ -13198,13 +13212,16 @@ children are `claims_and_sources_context` then `facts_context`; its
 |---|---|---|---|---|
 | `query` | string | yes | | 1 to 8,192 characters. |
 | `entity_ids` | array of UUID | no | none | 1 to 19 unique ids. Passed to both children. |
+| `k` | integer | no | `50` | 1 to 100; passed to both children, separately per type. |
+| `candidate_k` | integer | no | `max(4*k, 60)` | 1 to 400, and at least `k`; passed to both children. |
 | `hops` | integer | no | `1` | 1 to 2. Passed to `facts_context`. |
 | `predicate` | string | no | none | 1 to 200 characters. Passed to `facts_context`. |
 | `time` | object | no | `{"mode": "current"}` | Passed to both children. |
 
-The children's other parameters are fixed: `claims_and_sources_context` runs
-with `k` 50 and `candidate_k` 200; `facts_context` with `k` 15 and
-`evidence_per_fact` 3. Both run at the same evaluation instant.
+Both children use the requested `k` and `candidate_k` at the same evaluation
+instant. Defaults return up to 50 facts, 50 claims and 50 chunks, plus attached
+fact evidence. `evidence_per_fact` remains 3. These are separate typed lists,
+not one shared 50-item result cap.
 
 ### Result
 
@@ -13245,9 +13262,9 @@ per operation. The values that identify the shipped build:
 | Operation | `version` | `result_contract` | `output_grain` | `answer_intent` | `implementation_plan_hash` |
 |---|---|---|---|---|---|
 | `resolve_entity` | 1 | `envelope` | `fact` | `identity` | `fcf8f8bd08efe28d62af572dbd4f81601b03f1744d993021225454b55748059a` |
-| `claims_and_sources_context` | 3 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
-| `facts_context` | 3 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
-| `combined_context` | 4 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
+| `claims_and_sources_context` | 4 | `envelope` | `evidence` | `claims_and_sources` | `cb897d871de908ee47b4bd80b313cf3b1df86c6e6d2a83882c3c3c3320ce4278` |
+| `facts_context` | 4 | `envelope` | `fact` | `facts` | `88264ee8ce445d7145b6138e8ea97e9c91d441512816186d5d064519499e339f` |
+| `combined_context` | 5 | `context_bundle_v2` | `null` | `combined_context` | `d9e9b28cfdf398658459e17839e8f732437c5514aa9927d4f622d9d5175d0f10` |
 
 The hashes are those recorded in the `memory_v1` manifest for this release.
 The registry refuses any stored operation that does not match its canonical
@@ -16544,6 +16561,8 @@ result = memory.run_operation(
 MemoryClient.facts_context(
     query: str,
     *,
+    k: int | None = None,
+    candidate_k: int | None = None,
     time: Mapping[str, object] | None = None,
     hops: int | None = None,
     predicate: str | None = None,
@@ -16570,11 +16589,15 @@ for fact in facts.facts:
     print(fact.label, fact.validity.valid_from, fact.validity.valid_until)
 ```
 
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `claims_and_sources_context`
 
 ```python
 MemoryClient.claims_and_sources_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
 ) -> Envelope
 ```
 
@@ -16590,11 +16613,15 @@ for claim in said.evidence:
     print(claim.claim_text, claim.asserted_at, claim.document_title)
 ```
 
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
+
 #### `combined_context`
 
 ```python
 MemoryClient.combined_context(
-    query: str, *, time: Mapping[str, object] | None = None
+    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
 ) -> ContextBundleV2
 ```
 
@@ -16606,6 +16633,10 @@ both results in one bundle: `bundle.claims_and_sources` and `bundle.facts`.
 bundle = memory.combined_context("What did Ravi decide about invoicing?")
 print(len(bundle.facts.facts), len(bundle.claims_and_sources.evidence))
 ```
+
+`k` controls confirmed results per type (default 50, range 1–100).
+`candidate_k` controls internal search depth (1–400, at least k); omitted depth
+is max(4*k, 60), which is 200 at the default k.
 
 #### `resolve_entity`
 
@@ -18375,7 +18406,7 @@ What sources said: current claims and the source passages that confirm them.
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
-| `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
@@ -18387,7 +18418,8 @@ with a bounded look at the entities' neighbourhood.
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
-| `k` | integer | no | 1–30; default 15. |
+| `k` | integer | no | 1–100; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `evidence_per_fact` | integer | no | 1–5; default 3. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
@@ -18408,11 +18440,15 @@ versions count as evidence: [Text in force](https://remember.dev/docs/reference/
 
 #### `combined_context`
 
-Both of the above in one call, returned as `ContextBundle/v2`.
+Both of the above in one call, returned as `ContextBundle/v2`. The same
+`k` applies separately to facts, claims and chunks; `candidate_k` bounds
+each search channel, rather than the total across channels.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
+| `k` | integer | no | 1–100 per evidence type; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
@@ -19254,6 +19290,22 @@ Three fixed question sets (tiers) are committed with the harness:
 The dataset file is `locomo10.json` from the LoCoMo repository at commit
 `3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376`. The harness checks its SHA-256
 (`79fa87e9…a698ff4`) and refuses any other file.
+
+### Retrieval depth
+
+Prepare-time flags `--retrieval-k` and `--retrieval-candidate-k` configure the
+context tools used by the answer agent. Defaults are 50 confirmed results per
+type and 200 internal candidates per search channel. Counts apply separately
+to facts, claims and chunks; a combined call may return 150 primary records
+plus linked fact evidence. Candidate counts are not returned-result counts.
+
+For example, `prepare --retrieval-k 50 --retrieval-candidate-k 200` freezes
+that budget in run.json and its fingerprint. Effective arguments are enforced
+and saved on every context-tool call. A different budget requires a new run;
+changing it in an existing checkpoint fails fingerprint verification. Larger
+budgets have no established accuracy advantage and increase returned text and
+reader cost. The run directory retains generated answers and complete tool
+traces so they can be regraded without repeating ingestion or answering.
 
 ### How a LoCoMo run works
 

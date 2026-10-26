@@ -390,7 +390,7 @@ What sources said: current claims and the source passages that confirm them.
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–20, unique. |
 | `k` | integer | no | 1–100; default 50. |
-| `candidate_k` | integer | no | 1–400; default 200; not smaller than `k`. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `time` | object | no | Default `{"mode": "current"}`; the forms are under `facts_context`. Which versions of documents with declared effective periods are read. |
 
 #### `facts_context`
@@ -402,7 +402,8 @@ with a bounded look at the entities' neighbourhood.
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
-| `k` | integer | no | 1–30; default 15. |
+| `k` | integer | no | 1–100; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `evidence_per_fact` | integer | no | 1–5; default 3. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |
@@ -423,11 +424,15 @@ versions count as evidence: [Text in force](/docs/reference/assured-operations#t
 
 #### `combined_context`
 
-Both of the above in one call, returned as `ContextBundle/v2`.
+Both of the above in one call, returned as `ContextBundle/v2`. The same
+`k` applies separately to facts, claims and chunks; `candidate_k` bounds
+each search channel, rather than the total across channels.
 
 | Parameter | Type | Required | Limits and default |
 |---|---|---|---|
 | `query` | string | yes | 1–8,192 characters. |
+| `k` | integer | no | 1–100 per evidence type; default 50. |
+| `candidate_k` | integer | no | 1–400; omitted means `max(4*k, 60)` per search channel; not smaller than `k`. |
 | `entity_ids` | array of UUID strings | no | 1–19, unique. |
 | `hops` | integer | no | 1–2; default 1. |
 | `predicate` | string | no | 1–200 characters. |

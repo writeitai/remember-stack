@@ -107,7 +107,7 @@ def test_time_is_on_the_wire_contracts() -> None:
     assert SearchRequest(query="x").time is None
     definition = tool("claims_and_sources_context")
     assert "time" in definition.input_schema["properties"]  # type: ignore[operator]
-    assert definition.tool_version == 3
+    assert definition.tool_version == 4
     documents = tool("search_documents")
     assert "time" in documents.input_schema["properties"]  # type: ignore[operator]
     assert documents.tool_version == 2

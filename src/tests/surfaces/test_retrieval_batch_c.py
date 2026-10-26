@@ -23,6 +23,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 
+from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from rememberstack.adapters import BoundedPostgresReadPool
 import rememberstack.adapters.bounded_postgres_read as bounded_read_module
 from rememberstack.adapters.testing import FakeModelProvider
@@ -53,7 +54,6 @@ from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces import QueryEngine
 from rememberstack.surfaces.graph_queries import GraphBusyError
 from rememberstack.surfaces.graph_queries import GraphHydrationError
-from rememberstack.surfaces.query_engine import FACTS_CONTEXT_CANDIDATE_K
 from tests.database_reset import reset_database
 
 _EXHAUSTED_ACCOUNT = P1SearchAccount(termination=P1Termination.EXHAUSTED)
@@ -970,20 +970,26 @@ def test_retrieval_snapshot_reuses_one_read_only_mvcc_cut(corpus: _Corpus) -> No
             )
 
 
+@pytest.mark.parametrize(
+    "k,candidate_k,expected_depth",
+    [(2, None, 60), (50, None, 200), (100, None, 400), (2, 300, 300)],
+)
 def test_facts_context_returns_both_fact_kinds_with_both_stances(
-    corpus: _Corpus,
+    corpus: _Corpus, k: int, candidate_k: int | None, expected_depth: int
 ) -> None:
+    """Configured nomination depths preserve confirmed facts and both evidence stances."""
     engine, index = corpus.query_engine(
         fact_ids=(corpus.relation_id, corpus.observation_id)
     )
     answer = engine.facts_context(
         deployment_id=_DEPLOYMENT_ID,
         query="Where does Alice work and what does she prefer?",
-        k=2,
+        k=k,
+        candidate_k=candidate_k,
         evidence_per_fact=2,
     )
 
-    assert index.requested_k == [FACTS_CONTEXT_CANDIDATE_K + 1]
+    assert index.requested_k == [expected_depth + 1]
     assert tuple(fact.kind for fact in answer.facts) == ("relation", "observation")
     for fact in answer.facts:
         assert {
@@ -1499,8 +1505,8 @@ def test_facts_context_uses_profile_text_to_rescue_list_queries(
     assert tuple(fact.fact_id for fact in answer.facts) == (corpus.bank_observation_id,)
     assert index.profile_requests == 1
     assert index.requested_k == [
-        FACTS_CONTEXT_CANDIDATE_K + 1,
-        FACTS_CONTEXT_CANDIDATE_K + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
+        DEFAULT_CONTEXT_CANDIDATES + 1,
     ]
     assert len(index.requested_deadlines) == 2
     assert index.requested_deadlines[0] == index.requested_deadlines[1]
@@ -1611,7 +1617,7 @@ def test_facts_context_keeps_evidence_separate_across_kind_id_collisions(
     ("k", "evidence_per_fact", "message"),
     (
         (0, 1, "k must"),
-        (31, 1, "k must"),
+        (101, 1, "k must"),
         (1, 0, "evidence_per_fact"),
         (1, 6, "evidence_per_fact"),
     ),

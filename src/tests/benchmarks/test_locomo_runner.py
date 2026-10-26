@@ -66,6 +66,7 @@ import pytest
 
 from remember.client import MemoryClient
 from remember.errors import MemoryApiError
+from remember.retrieval import ContextRetrievalBudget
 from rememberstack.adapters.openrouter import OpenRouterInvalidResponseError
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.testing import FakeModelProvider
@@ -2253,6 +2254,41 @@ def test_protocol_mutation_is_rejected(
         summarize_run(run_dir=run_dir)
 
 
+def test_recorded_run_preserves_identity_before_retrieval_budget_was_added(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Historical comparisons hash recorded fields without inventing new inputs."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    run_dir = tmp_path / "recorded"
+    prepare_run(dataset_path=tmp_path / "synthetic.json", tier="smoke", output=run_dir)
+    run_path = run_dir / "run.json"
+    payload = json.loads(run_path.read_text())
+    del payload["retrieval_budget"]
+    payload["adapter_version"] = "recorded-before-configurable-retrieval"
+    identity = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"prepared_at", "dataset_path", "protocol_fingerprint"}
+    }
+    payload["protocol_fingerprint"] = runner._canonical_hash(identity)
+    run_path.write_text(json.dumps(payload))
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text())
+    state["protocol_fingerprint"] = payload["protocol_fingerprint"]
+    state_path.write_text(json.dumps(state))
+
+    assert (
+        runner.load_recorded_run(run_dir=run_dir).configuration.protocol_fingerprint
+        == (payload["protocol_fingerprint"])
+    )
+    assert (
+        summarize_run(run_dir=run_dir).protocol_fingerprint
+        == payload["protocol_fingerprint"]
+    )
+    with pytest.raises(BenchmarkRunError, match="adapter version"):
+        runner._load_run(run_dir=run_dir)
+
+
 def test_remote_stage_requires_explicit_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3583,6 +3619,72 @@ def test_answer_loop_completes_with_the_discriminated_step_schema() -> None:
     assert record.agent_call_count == 2
     assert [call.name for call in record.tool_calls] == ["claims_and_sources_context"]
     assert record.tool_calls[0].arguments == {"query": "Where?"}
+
+
+@pytest.mark.parametrize("k, candidate_k", [(50, 200), (60, 240), (100, 400)])
+def test_retrieval_budget_is_fingerprinted_and_verified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, k: int, candidate_k: int
+) -> None:
+    """Changing retrieval depth creates a distinct run and cannot be edited on resume."""
+    _patch_prepared_inputs(monkeypatch=monkeypatch)
+    standard = prepare_run(
+        dataset_path=tmp_path / "synthetic.json",
+        tier="smoke",
+        output=tmp_path / "standard",
+    )
+    custom_dir = tmp_path / "custom"
+    custom = prepare_run(
+        dataset_path=tmp_path / "synthetic.json",
+        tier="smoke",
+        output=custom_dir,
+        retrieval_budget=ContextRetrievalBudget(k=k),
+    )
+    assert custom.retrieval_budget.candidate_k == candidate_k
+    assert (custom.protocol_fingerprint == standard.protocol_fingerprint) == (k == 50)
+    payload = json.loads((custom_dir / "run.json").read_text())
+    payload["retrieval_budget"]["candidate_k"] = candidate_k - 1
+    (custom_dir / "run.json").write_text(json.dumps(payload))
+    with pytest.raises(BenchmarkRunError, match="fingerprint changed"):
+        summarize_run(run_dir=custom_dir)
+
+
+def test_configured_retrieval_depth_reaches_the_api_and_saved_trace() -> None:
+    """The configured budget overrides smaller model arguments before execution."""
+    client, raw_client = _memory_client()
+    requests: list[dict[str, object]] = []
+    raw_client.event_hooks["request"].append(
+        lambda request: requests.append(json.loads(request.content))
+    )
+
+    def choose_small_pool(prompt: str, type_name: str) -> dict[str, object]:
+        """Try a smaller tool depth so the test proves enforcement, not defaults."""
+        step = _tool_then_answer(prompt=prompt, type_name=type_name)
+        if step["action"] == "tool":
+            step["arguments_json"] = '{"query":"Where?","k":1,"candidate_k":1}'
+        assert "k=50" in prompt and "candidate_k=200" in prompt
+        return step
+
+    try:
+        answer = _answer_one(
+            question=_question(),
+            client=client,
+            provider=FakeModelProvider(generate_router=choose_small_pool),
+            tools=(_tool(),),
+            doc_sessions={},
+            state=_run_state(),
+            max_agent_calls=9,
+            max_evaluator_cost_usd=Decimal("1"),
+            retrieval_budget=ContextRetrievalBudget(k=50, candidate_k=200),
+        )
+    finally:
+        raw_client.close()
+    assert answer.generated_answer == "Prague"
+    assert answer.tool_calls[0].arguments == {
+        "query": "Where?",
+        "k": 50,
+        "candidate_k": 200,
+    }
+    assert requests[0] == {"query": "Where?", "k": 50, "candidate_k": 200}
 
 
 def test_historical_protocol_is_read_only_without_an_executable_definition(

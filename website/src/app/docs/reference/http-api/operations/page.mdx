@@ -105,7 +105,7 @@ runs:
 - `entity_ids` must be an array of UUID strings, with no duplicates;
 - `time` must be an object in one of the four modes;
 - length, item-count and range bounds from the descriptor apply;
-- for `claims_and_sources_context`, `candidate_k` may not be smaller than `k`.
+- for every context operation, `candidate_k` may not be smaller than `k`.
 
 The parameters of each operation are listed in
 [Assured operations](/docs/reference/assured-operations).
@@ -135,7 +135,7 @@ See [Reading a result](/docs/concepts/reading-results).
 | `422` | `{"code": "invalid_parameter", "message": "unknown argument(s): …"}` | An argument the operation does not take. |
 | `422` | `{"code": "invalid_parameter", "message": "invalid <name>: …"}` | Wrong type, a malformed UUID, or a bad `time` object. |
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
-| `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | `claims_and_sources_context` only. |
+| `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | All three context operations. |
 | `422` | validation list | The body is not a JSON object. |
 | `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
 
@@ -175,9 +175,9 @@ both = memory.combined_context("billing migration status", time={"mode": "curren
 ```
 
 `run_operation` returns an `Envelope`, or a `ContextBundleV2` when the body
-says `"contract": "ContextBundle/v2"`. The helpers pass only some parameters:
-`facts_context` takes `query`, `time`, `hops`, `predicate` and `entity_ids`;
-`combined_context` and `claims_and_sources_context` take `query` and `time`;
-`resolve_entity` takes `name`. Use `run_operation` for the rest
-(`k`, `candidate_k`, `evidence_per_fact`, and `entity_ids` on the other
-operations).
+says `"contract": "ContextBundle/v2"`. All three context helpers accept
+`query`, `k`, `candidate_k` and `time`. `facts_context` also accepts `hops`,
+`predicate` and `entity_ids`; `resolve_entity` takes `name`. Use
+`run_operation` to set `evidence_per_fact` on `facts_context`, `entity_ids`
+on `claims_and_sources_context`, or `entity_ids`, `hops` and `predicate`
+on `combined_context`.

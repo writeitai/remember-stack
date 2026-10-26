@@ -1372,10 +1372,12 @@
     {
       "method": "facts_context",
       "options": {
+        "candidate_k": 240,
         "entity_ids": [
           "10000000-0000-0000-0000-000000000001"
         ],
         "hops": 3,
+        "k": 60,
         "predicate": "works_at",
         "query": "fixture",
         "time": {
@@ -1456,10 +1458,12 @@
       },
       "typescriptMethod": "factsContext",
       "typescriptOptions": {
+        "candidateK": 240,
         "entityIds": [
           "10000000-0000-0000-0000-000000000001"
         ],
         "hops": 3,
+        "k": 60,
         "predicate": "works_at",
         "query": "fixture",
         "time": {
@@ -1470,10 +1474,12 @@
       "wire": [
         {
           "body": {
+            "candidate_k": 240,
             "entity_ids": [
               "10000000-0000-0000-0000-000000000001"
             ],
             "hops": 3,
+            "k": 60,
             "predicate": "works_at",
             "query": "fixture",
             "time": {
@@ -1662,6 +1668,8 @@
     {
       "method": "combined_context",
       "options": {
+        "candidate_k": 200,
+        "k": 50,
         "query": "fixture",
         "time": {
           "mode": "current"
@@ -1817,6 +1825,8 @@
       },
       "typescriptMethod": "combinedContext",
       "typescriptOptions": {
+        "candidateK": 200,
+        "k": 50,
         "query": "fixture",
         "time": {
           "mode": "current"
@@ -1826,6 +1836,8 @@
       "wire": [
         {
           "body": {
+            "candidate_k": 200,
+            "k": 50,
             "query": "fixture",
             "time": {
               "mode": "current"
@@ -1937,6 +1949,8 @@
     {
       "method": "claims_and_sources_context",
       "options": {
+        "candidate_k": 400,
+        "k": 100,
         "query": "other",
         "time": {
           "mode": "history"
@@ -2016,6 +2030,8 @@
       },
       "typescriptMethod": "claimsAndSourcesContext",
       "typescriptOptions": {
+        "candidateK": 400,
+        "k": 100,
         "query": "other",
         "time": {
           "mode": "history"
@@ -2025,6 +2041,8 @@
       "wire": [
         {
           "body": {
+            "candidate_k": 400,
+            "k": 100,
             "query": "other",
             "time": {
               "mode": "history"
