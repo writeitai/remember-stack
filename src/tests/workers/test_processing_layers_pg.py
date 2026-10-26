@@ -67,6 +67,7 @@ from rememberstack.spine import LifecycleCatalog
 from rememberstack.spine import RESOLVER_VERSION
 from rememberstack.spine import ReviewQueue
 from rememberstack.spine import SupersessionAdjudicator
+from rememberstack.spine import SyncCatalog
 from rememberstack.spine import WorkLedger
 from rememberstack.spine import WorkLedgerSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
@@ -80,6 +81,7 @@ from rememberstack.workers import AdjudicateObservationsHandler
 from rememberstack.workers import AdjudicateSupersessionHandler
 from rememberstack.workers import ChunkHandler
 from rememberstack.workers import ConvertHandler
+from rememberstack.workers import CycleFinalizer
 from rememberstack.workers import DeletionService
 from rememberstack.workers import DocumentDeleter
 from rememberstack.workers import E1Settings
@@ -282,6 +284,8 @@ class _LayerRig:
         artifact_store = LocalFSObjectStore(root=root / "artifacts")
         self.extraction_calls: list[tuple[str, str]] = []
         """Every Selection/Claimify call as (response type, target span)."""
+        self.fact_sentence: str | None = None
+        """When set, only a claim carrying this sentence normalizes to the fact."""
 
         def route(prompt: str, type_name: str) -> dict[str, object]:
             if type_name in {"SelectionResponse", "ClaimifyResponse"}:
@@ -289,6 +293,12 @@ class _LayerRig:
                 self.extraction_calls.append(
                     (type_name, match.group(1).strip() if match is not None else "")
                 )
+            if (
+                type_name == "NormalizationResponse"
+                and self.fact_sentence is not None
+                and self.fact_sentence not in prompt
+            ):
+                return {"relations": [], "observations": []}
             return _route(prompt, type_name)
 
         self.provider = FakeModelProvider(generate_router=route)
@@ -455,6 +465,8 @@ class _LayerRig:
             registry=registry,
         )
         self.layers = ProcessingLayerCatalog(engine=engine)
+        self.sync = SyncCatalog(engine=engine)
+        self.finalizer = CycleFinalizer(catalog=self.lifecycle)
 
     def configure(self, *, claims: bool, facts: bool) -> None:
         """What ``setup`` does: write the configuration, then seed."""
@@ -475,9 +487,15 @@ class _LayerRig:
         assert self.layers.configuration(deployment_id=_DEPLOYMENT_ID).configured
 
     def ingest(
-        self, *, source_ref: str, content: str, mode: str, at: datetime | None
+        self,
+        *,
+        source_ref: str,
+        content: str,
+        mode: str,
+        at: datetime | None,
+        sync_cycle_id: UUID | None = None,
     ) -> IngestedVersion:
-        """One observation of a lineage."""
+        """One observation of a lineage, optionally stamped with a sync cycle."""
         return self.ingestor.ingest_observed(
             deployment_id=_DEPLOYMENT_ID,
             source_kind="watched_directory",
@@ -490,7 +508,7 @@ class _LayerRig:
             versioning_mode=mode,
             source_modified_at=at,
             source_version_ref=None,
-            sync_cycle_id=None,
+            sync_cycle_id=sync_cycle_id,
         )
 
     def drain(
@@ -2616,3 +2634,367 @@ def test_setup_does_not_sweep_the_gaps_of_disabled_layers(
     )
     assert rig.layers.seed(deployment_id=_DEPLOYMENT_ID, batch_size=2) == 3
     assert advanced == [ProcessingLayer.CLAIMS] * 3
+
+
+# --- D143 review r2 F1: connector cycles and deferred layer entry -----------
+
+_FACT_SENTENCE = "Alice Novak works for Acme."
+_FILLER_SENTENCE = "The office plants are thriving this month."
+
+
+def _open_cycle(rig: _LayerRig) -> UUID:
+    """One connector poll pass."""
+    return rig.sync.open_cycle(
+        deployment_id=_DEPLOYMENT_ID, source_kind="watched_directory"
+    )
+
+
+def _cycle(rig: _LayerRig, *, cycle_id: UUID) -> dict[str, Any]:
+    """The cycle's completion, finalization and D143 reopen instants."""
+    with rig.engine.connect() as connection:
+        return dict(
+            connection.execute(
+                text(
+                    "SELECT completed_at, finalized_at, layers_reopened_at"
+                    " FROM connector_sync_cycles WHERE cycle_id = :c"
+                ),
+                {"c": cycle_id},
+            )
+            .mappings()
+            .one()
+        )
+
+
+def _fact(rig: _LayerRig) -> dict[str, Any]:
+    """The single works_for relation with its lifecycle columns."""
+    with rig.engine.connect() as connection:
+        return dict(
+            connection.execute(
+                text(
+                    "SELECT relation_id, evidence_count, valid_until, invalidated_at"
+                    " FROM relations WHERE predicate = 'works_for'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+
+
+def _closed(fact: dict[str, Any]) -> bool:
+    """Whether the fact's belief or validity was closed."""
+    return fact["invalidated_at"] is not None or fact["valid_until"] is not None
+
+
+def _retractions(rig: _LayerRig) -> int:
+    """Recorded source-removal closures."""
+    return int(
+        str(
+            rig.scalar(
+                "SELECT count(*) FROM relation_adjudications"
+                " WHERE outcome = 'retracted_source_removal'"
+            )
+        )
+    )
+
+
+def _source_work(rig: _LayerRig) -> tuple[int, int, int, int]:
+    """Chunks, chunk embeddings, chunk-embedding calls and source-stage attempts."""
+    return (
+        int(str(rig.scalar("SELECT count(*) FROM chunks"))),
+        int(str(rig.scalar("SELECT count(*) FROM chunk_search"))),
+        rig.calls()["chunk_embed"],
+        int(
+            str(
+                rig.scalar(
+                    "SELECT coalesce(sum(attempts), 0) FROM processing_state"
+                    " WHERE stage IN ('convert', 'structure', 'chunk', 'embed_chunk')"
+                )
+            )
+        ),
+    )
+
+
+def _reconciled(rig: _LayerRig, *, version_id: UUID, component: str) -> bool:
+    """Whether the version's reconcile at ``component`` succeeded."""
+    return (
+        rig.status(version_id=version_id, stage="reconcile", version=component)
+        == "succeeded"
+    )
+
+
+class _FinalizerLoop:
+    """The self-host loop's finalizer, run after every completed work row.
+
+    Records each pass that finalized ``cycle_id`` and whether ``done()`` held
+    at that moment, so a proof can show the cycle never finalized early.
+    """
+
+    def __init__(
+        self, *, rig: _LayerRig, cycle_id: UUID, done: Callable[[], bool]
+    ) -> None:
+        """Watch one cycle; ``done`` names the work it must wait for."""
+        self._rig = rig
+        self._cycle_id = cycle_id
+        self._done = done
+        self.finalized_when_done: list[bool] = []
+
+    def __call__(self) -> None:
+        """One finalizer pass."""
+        won = self._rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID)
+        if self._cycle_id in won:
+            self.finalized_when_done.append(self._done())
+
+
+def test_a_removal_in_a_sources_only_cycle_closes_after_the_claims_backfill(
+    rig: _LayerRig,
+) -> None:
+    """Review r2 F1: a cycle that finalized while both layers were off is
+    reopened when its version enters claims, finalizes again only once that
+    version's claims work is done, and then closes the fact its replacement
+    removed — without repeating any source-stage work."""
+    rig.fact_sentence = _FACT_SENTENCE
+    rig.configure_all_on()
+    c0 = _open_cycle(rig)
+    rig.ingest(
+        source_ref="notes/gone.md",
+        content=f"{_FACT_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c0,
+    )
+    rig.sync.complete_cycle(cycle_id=c0, observed=1, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c0,)
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 1 and not _closed(fact)
+
+    rig.configure(claims=False, facts=False)
+    c1 = _open_cycle(rig)
+    replacement = rig.ingest(
+        source_ref="notes/gone.md",
+        content=f"{_FILLER_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c1,
+    )
+    rig.sync.complete_cycle(cycle_id=c1, observed=1, failed=0)
+    rig.drain()
+    gap = rig.gap(version_id=replacement.version_id, layer="claims")
+    assert gap is not None and gap["entered_at"] is None
+    # disabled layers never hold a cycle: the sources-only cycle finalizes
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
+    assert _cycle(rig, cycle_id=c1)["layers_reopened_at"] is None
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 1 and not _closed(fact)  # nothing retired
+    source_work = _source_work(rig)
+
+    rig.configure(claims=True, facts=False)  # seeding enters the replacement
+    reopened = _cycle(rig, cycle_id=c1)
+    assert reopened["finalized_at"] is None
+    assert reopened["layers_reopened_at"] is not None
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()
+
+    def claims_done() -> bool:
+        return _reconciled(
+            rig, version_id=replacement.version_id, component=RECONCILE_CLAIMS_VERSION
+        )
+
+    loop = _FinalizerLoop(rig=rig, cycle_id=c1, done=claims_done)
+    rig.drain(observe=loop)
+    loop()
+    assert claims_done()
+    assert loop.finalized_when_done == [True]  # once, and only after the claims work
+    assert _cycle(rig, cycle_id=c1)["finalized_at"] is not None
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 0
+    assert fact["invalidated_at"] is not None
+    assert _retractions(rig) == 1
+    # the re-finalization's closure is announced (its own evidence change)
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM knowledge_refresh_queue"
+            " WHERE trigger = 'evidence_changed'"
+            "   AND payload -> 'relations_closed' ? :r",
+            r=str(fact["relation_id"]),
+        )
+        == 1
+    )
+    assert _source_work(rig) == source_work  # nothing re-chunked or re-embedded
+    assert rig.fact_work(version_id=replacement.version_id) == {}  # facts off
+
+    # facts on later: the fact stays closed, still nothing re-chunked
+    rig.configure(claims=True, facts=True)
+    facts_loop = _FinalizerLoop(rig=rig, cycle_id=c1, done=lambda: True)
+    rig.drain(observe=facts_loop)
+    facts_loop()
+    assert facts_loop.finalized_when_done == [True]  # the facts entry reopened it
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 0 and fact["invalidated_at"] is not None
+    assert _retractions(rig) == 1
+    assert _source_work(rig) == source_work
+
+
+def test_a_deferred_claims_boundary_holds_its_cycle(rig: _LayerRig) -> None:
+    """Review r2 F1: with claims on, a cycle-stamped version whose claims entry
+    waits behind a predecessor still extracting has no work row at all — its
+    unentered gap alone holds the cycle until the version is processed."""
+    rig.configure(claims=True, facts=False)
+    first = rig.ingest(
+        source_ref="docs/deferred.md",
+        content=_document(edited=False, paragraphs=3),
+        mode="snapshot",
+        at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    rig.drain(stages=_STAGES[:4])  # v1 entered claims; its extraction waits
+    assert rig.extraction_rows(version_id=first.version_id)
+    cycle = _open_cycle(rig)
+    second = rig.ingest(
+        source_ref="docs/deferred.md",
+        content=_document(edited=False, paragraphs=4),
+        mode="snapshot",
+        at=datetime(2026, 2, 1, tzinfo=UTC),
+        sync_cycle_id=cycle,
+    )
+    rig.drain(stages=_STAGES[:4])
+    rig.sync.complete_cycle(cycle_id=cycle, observed=1, failed=0)
+    gap = rig.gap(version_id=second.version_id, layer="claims")
+    assert gap is not None and gap["entered_at"] is None  # deferred
+    # nothing but the gap holds: v2 has no extraction row and no open work
+    assert rig.extraction_rows(version_id=second.version_id) == []
+    assert (
+        rig.scalar(
+            "SELECT count(*) FROM processing_state WHERE target_id = :v"
+            " AND status <> 'succeeded'",
+            v=second.version_id,
+        )
+        == 0
+    )
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()
+
+    def claims_done() -> bool:
+        return _reconciled(
+            rig, version_id=second.version_id, component=RECONCILE_CLAIMS_VERSION
+        )
+
+    loop = _FinalizerLoop(rig=rig, cycle_id=cycle, done=claims_done)
+    rig.drain(observe=loop)
+    loop()
+    assert claims_done()
+    assert loop.finalized_when_done == [True]
+    assert rig.minted(version_id=second.version_id) > 0
+    # never finalized before entry, so its entry reopened nothing
+    assert _cycle(rig, cycle_id=cycle)["layers_reopened_at"] is None
+
+
+def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
+    rig: _LayerRig,
+) -> None:
+    """Review r2 F1: within one cycle the fact's paragraph leaves A and arrives
+    in B while both layers are off. Switching them on resumes both lineages;
+    the fact is never closed at any step and ends supported by B.
+
+    Claim reuse is lineage-scoped (D56), so B's support is its own claim,
+    normalized by the facts layer: both layers are switched on together."""
+    rig.fact_sentence = _FACT_SENTENCE
+    rig.configure_all_on()
+    c0 = _open_cycle(rig)
+    for source_ref, sentence in (
+        ("notes/move-a.md", _FACT_SENTENCE),
+        ("notes/move-b.md", _FILLER_SENTENCE),
+    ):
+        rig.ingest(
+            source_ref=source_ref,
+            content=f"{sentence}\n",
+            mode="living",
+            at=None,
+            sync_cycle_id=c0,
+        )
+    rig.sync.complete_cycle(cycle_id=c0, observed=2, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c0,)
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 1 and not _closed(fact)
+
+    rig.configure(claims=False, facts=False)
+    c1 = _open_cycle(rig)
+    left = rig.ingest(
+        source_ref="notes/move-a.md",
+        content=f"{_FILLER_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c1,
+    )
+    arrived = rig.ingest(
+        source_ref="notes/move-b.md",
+        content=f"{_FACT_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c1,
+    )
+    rig.sync.complete_cycle(cycle_id=c1, observed=2, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
+    source_work = _source_work(rig)
+
+    rig.configure(claims=True, facts=True)
+    assert _cycle(rig, cycle_id=c1)["finalized_at"] is None  # reopened
+
+    def both_done() -> bool:
+        return all(
+            _reconciled(rig, version_id=version.version_id, component=RECONCILE_VERSION)
+            for version in (left, arrived)
+        )
+
+    loop = _FinalizerLoop(rig=rig, cycle_id=c1, done=both_done)
+    closed_at_some_step: list[dict[str, Any]] = []
+
+    def observe() -> None:
+        loop()
+        fact = _fact(rig)
+        if _closed(fact):
+            closed_at_some_step.append(fact)
+
+    rig.drain(observe=observe)
+    observe()
+    assert both_done()
+    assert closed_at_some_step == []  # a support swap, never a retract
+    assert loop.finalized_when_done == [True]
+    assert _retractions(rig) == 0
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 1 and not _closed(fact)
+    supporters = rig.scalar(
+        "SELECT array_agg(DISTINCT e.doc_id) FROM relation_evidence e"
+        " JOIN claims cl ON cl.claim_id = e.claim_id"
+        " WHERE e.relation_id = :r AND cl.is_current_testimony",
+        r=fact["relation_id"],
+    )
+    assert supporters == [arrived.doc_id]
+    assert _source_work(rig) == source_work
+
+
+def test_a_disabled_facts_layer_never_holds_a_cycle(rig: _LayerRig) -> None:
+    """Review r2 F1: with facts off, cycle-stamped versions carry unentered
+    facts gaps, and their cycle finalizes as soon as the claims work is done."""
+    rig.configure(claims=True, facts=False)
+    cycle = _open_cycle(rig)
+    versions = [
+        rig.ingest(
+            source_ref=f"docs/facts-off-{index}.md",
+            content=_document(edited=False, paragraphs=2),
+            mode="snapshot",
+            at=datetime(2026, 1, 1, tzinfo=UTC),
+            sync_cycle_id=cycle,
+        )
+        for index in range(2)
+    ]
+    rig.sync.complete_cycle(cycle_id=cycle, observed=2, failed=0)
+    rig.drain()
+    for version in versions:
+        gap = rig.gap(version_id=version.version_id, layer="facts")
+        assert gap is not None and gap["entered_at"] is None
+        assert gap["discharged_at"] is None
+        assert _reconciled(
+            rig, version_id=version.version_id, component=RECONCILE_CLAIMS_VERSION
+        )
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
+    assert _cycle(rig, cycle_id=cycle)["layers_reopened_at"] is None
