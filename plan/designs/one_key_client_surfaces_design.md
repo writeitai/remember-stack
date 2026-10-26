@@ -203,7 +203,11 @@ separately, so a host's catalogue and a deployment can differ.
   object mapping tool name to `tool_version`, e.g. `{"facts_context": 3, …}`.
   The seven query tools appear only when the open query facade is composed,
   `adjacent_chunks` whenever operations are composed, and `delete_document`
-  only when deletion is composed.
+  only when deletion is composed. `facts_context` and `resolve_entity` appear
+  only while the deployment serves its facts layer (D143); the layer states
+  themselves are read from `GET /processing-layers`, and this response's
+  shape is unchanged
+  ([processing layers design §7.4](processing_layers_design.md#74-discovery)).
 - A host renders a catalogue tool for a deployment only when the deployment
   lists it with the **same** `tool_version`. Otherwise the tool is omitted and
   `remember doctor` names it and the fix (upgrade `remember`, or upgrade the
@@ -281,6 +285,11 @@ the deployment. Giving both an explicit engine URL and a remote MCP URL is a
 start-up error.
 
 ### 5.2 Engine mode
+
+`remember mcp --layers sources,claims` (or `REMEMBER_LAYERS`) narrows the
+session to those processing layers (D143): every operation and sandbox call
+carries the selection, and tools that read only excluded layers are not
+listed. Tool schemas are unchanged.
 
 #### 5.2.1 Transports
 

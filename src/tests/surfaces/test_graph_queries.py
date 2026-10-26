@@ -27,6 +27,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 
+from remember.models import Envelope as ClientEnvelope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import NegativeKind
 from rememberstack.spine import DeploymentBootstrapper
@@ -192,9 +193,11 @@ class _GraphCorpus:
                         "title": title,
                     },
                 )
-            for citing, cited in (
-                ("Report", "Follow-up"),
-                ("Follow-up", "Original Spec"),
+            # One pinned reference and one floating reference that carries the
+            # caller's label, so citation edges prove both qualifiers.
+            for citing, cited, binding, version_key, label in (
+                ("Report", "Follow-up", "pinned", "follow-up-v1", None),
+                ("Follow-up", "Original Spec", "floating", None, "wording-unresolved"),
             ):
                 # D140: a reference is made by the citing document's served
                 # version, through its active reference generation
@@ -221,10 +224,12 @@ class _GraphCorpus:
                     text(
                         "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
                         " from_doc_id, from_version_id, generation_id, to_doc_id,"
-                        " kind, origin, resolved)"
+                        " kind, origin, resolved, binding, to_version_key,"
+                        " source_label)"
                         " VALUES (:crossref_id, :deployment_id, :from_doc_id,"
                         " :version_id, :generation, :to_doc_id, 'cites', 'supplied',"
-                        " true)"
+                        " true, CAST(:binding AS crossref_binding), :version_key,"
+                        " :label)"
                     ),
                     {
                         "crossref_id": uuid4(),
@@ -233,6 +238,9 @@ class _GraphCorpus:
                         "version_id": version_id,
                         "generation": generation_id,
                         "to_doc_id": self.docs[cited],
+                        "binding": binding,
+                        "version_key": version_key,
+                        "label": label,
                     },
                 )
 
@@ -1100,6 +1108,53 @@ def test_recursive_citation_path_is_directed(graph: GraphQueries) -> None:
         reverse.negative is not None
         and reverse.negative.kind is NegativeKind.KNOWN_EMPTY
     )
+
+
+def test_citation_edges_carry_reference_binding_and_label(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Each citation edge returns its reference's binding and source label.
+
+    The pinned reference and the floating one with a caller label both
+    round-trip, through the path's edges and the envelope's distinct edges,
+    without changing the stored direction or the reference's identity.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    chain = graph.citation_path(
+        from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+    )
+    assert chain.negative is None and len(chain.paths) == 1
+    pinned, floating = chain.paths[0].edges
+    assert (pinned.subject_id, pinned.object_id) == (docs["Report"], docs["Follow-up"])
+    assert pinned.bindings == ("pinned",) and pinned.source_labels == ()
+    assert (floating.subject_id, floating.object_id) == (
+        docs["Follow-up"],
+        docs["Original Spec"],
+    )
+    assert floating.bindings == ("floating",)
+    assert floating.source_labels == ("wording-unresolved",)
+    assert chain.edges == chain.paths[0].edges
+    with database_engine.connect() as connection:
+        stored = {
+            row.crossref_id: (row.binding, row.source_label)
+            for row in connection.execute(
+                text(
+                    "SELECT crossref_id, binding::text AS binding, source_label"
+                    " FROM document_crossrefs WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
+        }
+    assert stored[pinned.relation_id] == ("pinned", None)
+    assert stored[floating.relation_id] == ("floating", "wording-unresolved")
+    wire = ClientEnvelope.model_validate_json(chain.model_dump_json())
+    assert [
+        (edge.relation_id, edge.bindings, edge.source_labels)
+        for edge in wire.paths[0].edges
+    ] == [
+        (pinned.relation_id, ("pinned",), ()),
+        (floating.relation_id, ("floating",), ("wording-unresolved",)),
+    ]
 
 
 def test_typed_absence_boundaries_and_hard_depth_limits(graph: GraphQueries) -> None:

@@ -3200,7 +3200,20 @@ export default {
     },
     "GraphEdge": {
       "additionalProperties": false,
+      "description": "One traversed relation; on a citation path, a document reference.\n\n``bindings`` and ``source_labels`` are the distinct, sorted ``binding`` and\nnon-null ``source_label`` values of the references a citation edge stands\nfor. Both are empty on entity edges.",
       "properties": {
+        "bindings": {
+          "default": [],
+          "items": {
+            "enum": [
+              "floating",
+              "pinned"
+            ],
+            "type": "string"
+          },
+          "title": "Bindings",
+          "type": "array"
+        },
         "evidence_count": {
           "title": "Evidence Count",
           "type": "integer"
@@ -3255,6 +3268,14 @@ export default {
           "format": "uuid",
           "title": "Relation Id",
           "type": "string"
+        },
+        "source_labels": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Labels",
+          "type": "array"
         },
         "subject_id": {
           "format": "uuid",
