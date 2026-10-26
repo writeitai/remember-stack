@@ -15,6 +15,8 @@ from datetime import timedelta
 from datetime import UTC
 from pathlib import Path
 import re
+import threading
+import time
 from typing import Any
 from uuid import UUID
 from uuid import uuid4
@@ -2911,15 +2913,14 @@ def test_a_deferred_claims_boundary_holds_its_cycle(rig: _LayerRig) -> None:
     assert _cycle(rig, cycle_id=cycle)["layers_reopened_at"] is None
 
 
-def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
+def _cross_lineage_move(
     rig: _LayerRig,
-) -> None:
-    """Review r2 F1: within one cycle the fact's paragraph leaves A and arrives
-    in B while both layers are off. Switching them on resumes both lineages;
-    the fact is never closed at any step and ends supported by B.
+) -> tuple[UUID, IngestedVersion, IngestedVersion]:
+    """The fact's paragraph leaves living A for living B within one cycle.
 
-    Claim reuse is lineage-scoped (D56), so B's support is its own claim,
-    normalized by the facts layer: both layers are switched on together."""
+    Both layers are off for the move; returns the completed, drained, not yet
+    finalized cycle and the versions that left (A) and arrived (B).
+    """
     rig.fact_sentence = _FACT_SENTENCE
     rig.configure_all_on()
     c0 = _open_cycle(rig)
@@ -2958,11 +2959,25 @@ def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
     )
     rig.sync.complete_cycle(cycle_id=c1, observed=2, failed=0)
     rig.drain()
-    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
-    source_work = _source_work(rig)
+    return c1, left, arrived
 
-    rig.configure(claims=True, facts=True)
-    assert _cycle(rig, cycle_id=c1)["finalized_at"] is None  # reopened
+
+def _supporters(rig: _LayerRig, *, relation_id: UUID) -> object:
+    """Lineages whose current testimony supports the relation."""
+    return rig.scalar(
+        "SELECT array_agg(DISTINCT e.doc_id) FROM relation_evidence e"
+        " JOIN claims cl ON cl.claim_id = e.claim_id"
+        " WHERE e.relation_id = :r AND cl.is_current_testimony",
+        r=relation_id,
+    )
+
+
+def _drain_as_a_support_swap(
+    rig: _LayerRig, *, cycle_id: UUID, left: IngestedVersion, arrived: IngestedVersion
+) -> None:
+    """Drain with a finalizer pass after every row: the cycle finalizes once,
+    only after both versions' full reconciles, and the fact is never closed
+    at any step and ends supported by B alone."""
 
     def both_done() -> bool:
         return all(
@@ -2970,7 +2985,7 @@ def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
             for version in (left, arrived)
         )
 
-    loop = _FinalizerLoop(rig=rig, cycle_id=c1, done=both_done)
+    loop = _FinalizerLoop(rig=rig, cycle_id=cycle_id, done=both_done)
     closed_at_some_step: list[dict[str, Any]] = []
 
     def observe() -> None:
@@ -2984,16 +2999,30 @@ def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
     assert both_done()
     assert closed_at_some_step == []  # a support swap, never a retract
     assert loop.finalized_when_done == [True]
+    assert _cycle(rig, cycle_id=cycle_id)["finalized_at"] is not None
     assert _retractions(rig) == 0
     fact = _fact(rig)
     assert fact["evidence_count"] == 1 and not _closed(fact)
-    supporters = rig.scalar(
-        "SELECT array_agg(DISTINCT e.doc_id) FROM relation_evidence e"
-        " JOIN claims cl ON cl.claim_id = e.claim_id"
-        " WHERE e.relation_id = :r AND cl.is_current_testimony",
-        r=fact["relation_id"],
-    )
-    assert supporters == [arrived.doc_id]
+    assert _supporters(rig, relation_id=fact["relation_id"]) == [arrived.doc_id]
+
+
+def test_a_cross_lineage_move_after_a_sources_only_cycle_is_a_support_swap(
+    rig: _LayerRig,
+) -> None:
+    """Review r2 F1: within one cycle the fact's paragraph leaves A and arrives
+    in B while both layers are off. Switching them on resumes both lineages;
+    the fact is never closed at any step and ends supported by B.
+
+    Claim reuse is lineage-scoped (D56), so B's support is its own claim,
+    normalized by the facts layer: both layers are switched on together."""
+    c1, left, arrived = _cross_lineage_move(rig)
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
+    source_work = _source_work(rig)
+
+    rig.configure(claims=True, facts=True)
+    assert _cycle(rig, cycle_id=c1)["finalized_at"] is None  # reopened
+
+    _drain_as_a_support_swap(rig, cycle_id=c1, left=left, arrived=arrived)
     assert _source_work(rig) == source_work
 
 
@@ -3023,3 +3052,231 @@ def test_a_disabled_facts_layer_never_holds_a_cycle(rig: _LayerRig) -> None:
         )
     assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (cycle,)
     assert _cycle(rig, cycle_id=cycle)["layers_reopened_at"] is None
+
+
+# --- D143 review r3 F2: finalization raced against setup ---------------------
+
+_RACE_TIMEOUT_S = 30.0
+
+
+def _hold_version_work(rig: _LayerRig, *, version_id: UUID, held: bool) -> int:
+    """Park (or release) the pending work of one version and its chunks.
+
+    Parked rows stay ``pending`` — open work the barrier must see — but the
+    worker cannot claim them, so a proof can run one lineage's resumed work
+    while the other's is still to come.
+    """
+    with rig.engine.begin() as connection:
+        return connection.execute(
+            text(
+                "UPDATE processing_state SET not_before = CASE WHEN :held"
+                "   THEN now() + interval '1 day' ELSE now() END"
+                " WHERE status = 'pending'"
+                "   AND (target_id = :v OR target_id IN"
+                "        (SELECT chunk_id FROM chunks WHERE version_id = :v))"
+            ),
+            {"v": version_id, "held": held},
+        ).rowcount
+
+
+def _layer_settings(rig: _LayerRig) -> tuple[bool, bool] | None:
+    """The committed configuration row, read without the layer fence."""
+    with rig.engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT claims_enabled, facts_enabled"
+                " FROM deployment_processing_layers WHERE deployment_id = :d"
+            ),
+            {"d": _DEPLOYMENT_ID},
+        ).one_or_none()
+    return None if row is None else (bool(row[0]), bool(row[1]))
+
+
+def _waiting_on_an_advisory_lock(rig: _LayerRig) -> bool:
+    """Whether some session of this database waits on an advisory lock."""
+    return bool(
+        rig.scalar(
+            "SELECT count(*) > 0 FROM pg_locks l"
+            " JOIN pg_database d ON d.oid = l.database"
+            " WHERE l.locktype = 'advisory' AND NOT l.granted"
+            "   AND d.datname = current_database()"
+        )
+    )
+
+
+def test_a_candidate_selected_before_setup_is_rechecked_before_closing(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r3 F2, paused after candidate selection: the finalizer selects
+    the sources-only move cycle; before it claims, setup switches both layers
+    on, and A's resumed reconcile retires the fact's only support while B's
+    resumed work is still pending. The stale candidate is only a hint: the
+    claim re-checks the barrier, so nothing finalizes and nothing closes. Once
+    B's work runs the cycle finalizes and the fact was never closed."""
+    c1, left, arrived = _cross_lineage_move(rig)
+    select = rig.lifecycle.cycles_ready_to_finalize
+    paused: list[tuple[tuple[UUID, int], ...]] = []
+
+    def select_then_switch_on(*, deployment_id: UUID) -> tuple[tuple[UUID, int], ...]:
+        candidates = select(deployment_id=deployment_id)
+        assert [cycle for cycle, _ in candidates] == [c1]  # ready under layers off
+        paused.append(candidates)
+        rig.configure(claims=True, facts=True)  # what setup does
+        assert _hold_version_work(rig, version_id=arrived.version_id, held=True) > 0
+        rig.run_until(
+            done=lambda: _reconciled(
+                rig, version_id=left.version_id, component=RECONCILE_VERSION
+            )
+        )
+        # the hazard is real: A's reconcile retired the fact's only support
+        fact = _fact(rig)
+        assert fact["evidence_count"] == 0 and not _closed(fact)
+        assert rig.minted(version_id=arrived.version_id) == 0  # B still pending
+        assert select(deployment_id=deployment_id) == ()
+        return candidates
+
+    monkeypatch.setattr(
+        rig.lifecycle, "cycles_ready_to_finalize", select_then_switch_on
+    )
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()
+    monkeypatch.undo()
+    assert len(paused) == 1
+    cycle = _cycle(rig, cycle_id=c1)
+    assert cycle["finalized_at"] is None
+    assert cycle["layers_reopened_at"] is None  # never finalized, so never reopened
+    fact = _fact(rig)
+    assert not _closed(fact) and _retractions(rig) == 0
+
+    _hold_version_work(rig, version_id=arrived.version_id, held=False)
+    _drain_as_a_support_swap(rig, cycle_id=c1, left=left, arrived=arrived)
+
+
+def test_setup_waits_for_a_claimed_finalization_to_commit(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r3 F2, paused after claiming: setup started while a claimed
+    finalization is still open blocks on the layer fence until that
+    transaction commits. The closure ran under the layers-off state (and
+    closed nothing); setup then reopens the cycle, and the re-finalization
+    after both lineages' work is a support swap that never closes the fact."""
+    c1, left, arrived = _cross_lineage_move(rig)
+    go = threading.Event()
+    seen_by_setup: list[datetime | None] = []
+    setup_errors: list[BaseException] = []
+
+    def setup() -> None:
+        try:
+            if not go.wait(timeout=_RACE_TIMEOUT_S):
+                raise AssertionError("the finalizer never reached its claim")
+            rig.layers.reconcile_settings(
+                deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=True
+            )
+            # the configuration committed after the finalization did
+            seen_by_setup.append(_cycle(rig, cycle_id=c1)["finalized_at"])
+            rig.layers.seed(deployment_id=_DEPLOYMENT_ID, batch_size=10)
+        except BaseException as error:  # reported by the main thread
+            setup_errors.append(error)
+
+    setup_thread = threading.Thread(target=setup, name="d143-setup", daemon=True)
+    claim = LifecycleCatalog.claim_ready_finalization
+    claimed: list[UUID] = []
+
+    def claim_then_start_setup(
+        self: LifecycleCatalog, *, deployment_id: UUID, cycle_id: UUID
+    ) -> bool:
+        won = claim(self, deployment_id=deployment_id, cycle_id=cycle_id)
+        assert won and cycle_id == c1
+        claimed.append(cycle_id)
+        go.set()  # setup starts while the claim's transaction is still open
+        deadline = time.monotonic() + _RACE_TIMEOUT_S
+        while not _waiting_on_an_advisory_lock(rig):
+            if not setup_thread.is_alive() or time.monotonic() > deadline:
+                raise AssertionError(
+                    "setup did not block on the layer fence while a claimed"
+                    f" finalization was open (errors: {setup_errors})"
+                )
+            time.sleep(0.02)
+        return won
+
+    close_cycle = rig.finalizer._close_cycle  # pyright: ignore[reportPrivateUsage]
+    during_closure: list[tuple[bool, tuple[bool, bool] | None]] = []
+
+    def close_while_setup_waits(
+        *, catalog: LifecycleCatalog, deployment_id: UUID, cycle_id: UUID
+    ) -> None:
+        close_cycle(catalog=catalog, deployment_id=deployment_id, cycle_id=cycle_id)
+        during_closure.append((_waiting_on_an_advisory_lock(rig), _layer_settings(rig)))
+
+    monkeypatch.setattr(
+        LifecycleCatalog, "claim_ready_finalization", claim_then_start_setup
+    )
+    monkeypatch.setattr(rig.finalizer, "_close_cycle", close_while_setup_waits)
+    setup_thread.start()
+    try:
+        assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
+    finally:
+        go.set()
+        setup_thread.join(timeout=_RACE_TIMEOUT_S)
+    monkeypatch.undo()
+    assert not setup_thread.is_alive(), "setup never finished after the commit"
+    assert setup_errors == []
+    assert claimed == [c1]
+    # the closure ran (and was evaluated) under the old configuration while
+    # setup still waited on the fence; setup saw the committed finalization
+    assert during_closure == [(True, (False, False))]
+    assert len(seen_by_setup) == 1 and seen_by_setup[0] is not None
+    assert _layer_settings(rig) == (True, True)
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 1 and not _closed(fact)
+    assert _retractions(rig) == 0
+    # the entries setup seeded reopened the cycle it waited for
+    reopened = _cycle(rig, cycle_id=c1)
+    assert reopened["finalized_at"] is None
+    assert reopened["layers_reopened_at"] is not None
+
+    _drain_as_a_support_swap(rig, cycle_id=c1, left=left, arrived=arrived)
+
+
+def test_an_unconfigured_deployment_finalizes_through_the_unfenced_claim(
+    rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review r3 F2: without a layer configuration the finalizer keeps the
+    plain claim — no fence, no barrier re-read — and a removal still closes
+    its fact at finalization; nothing writes a configuration row or a gap."""
+
+    def never(self: LifecycleCatalog, **_: object) -> bool:
+        raise AssertionError("an unconfigured deployment took the configured path")
+
+    monkeypatch.setattr(LifecycleCatalog, "claim_ready_finalization", never)
+    rig.fact_sentence = _FACT_SENTENCE
+    c0 = _open_cycle(rig)
+    rig.ingest(
+        source_ref="notes/plain.md",
+        content=f"{_FACT_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c0,
+    )
+    rig.sync.complete_cycle(cycle_id=c0, observed=1, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c0,)
+    assert _fact(rig)["evidence_count"] == 1
+
+    c1 = _open_cycle(rig)
+    rig.ingest(
+        source_ref="notes/plain.md",
+        content=f"{_FILLER_SENTENCE}\n",
+        mode="living",
+        at=None,
+        sync_cycle_id=c1,
+    )
+    rig.sync.complete_cycle(cycle_id=c1, observed=1, failed=0)
+    rig.drain()
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == (c1,)
+    assert rig.finalizer.finalize_ready(deployment_id=_DEPLOYMENT_ID) == ()
+    assert _cycle(rig, cycle_id=c1)["finalized_at"] is not None
+    fact = _fact(rig)
+    assert fact["evidence_count"] == 0 and fact["invalidated_at"] is not None
+    assert _retractions(rig) == 1
+    assert _layer_settings(rig) is None
+    assert rig.scalar("SELECT count(*) FROM processing_layer_gaps") == 0
