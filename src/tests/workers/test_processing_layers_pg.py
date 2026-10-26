@@ -2552,11 +2552,12 @@ def test_backfilled_claimify_reruns_stay_inside_the_edited_neighbourhood(
 def test_a_gap_reopened_between_readiness_and_the_gap_read_is_never_certified(
     rig: _LayerRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """§4.5 (review r2 F2): readiness sees v1's discharged claims stages as
-    ``skipped`` and v1 ready; before the meter reads v1's gaps, deleting v2
-    restores v1 and reopens its claims gap. The meter must not certify the
-    stale ready report: no receipt now, and success only after v1 really
-    extracts."""
+    """§4.5 (review r2 F2, r3 F1): v1's claims gap is discharged. Right after
+    the meter reads readiness, deleting v2 restores v1, and v1 extracts and
+    embeds its claims (its claims frontier deletes the gap) while its
+    claims-mode reconcile is still pending. No receipt certifies a stage that
+    did not run: nothing until the reconcile succeeds, and a dead-lettered
+    reconcile fails the receipt."""
     rig.configure(claims=True, facts=False)
     metered = _Metered(rig=rig)
     first = _observed_metered(
@@ -2582,6 +2583,12 @@ def test_a_gap_reopened_between_readiness_and_the_gap_read_is_never_certified(
         report = inspect(**kwargs)  # type: ignore[arg-type]
         monkeypatch.setattr(metered.meter._readiness, "inspect", inspect)  # noqa: SLF001
         rig.deletion.delete_version(version_id=second.version_id)
+        # v1 reaches its claims frontier; its claims reconcile stays pending
+        rig.drain(
+            stages=tuple(
+                stage for stage in _STAGES if stage is not PipelineStage.RECONCILE
+            )
+        )
         return report
 
     monkeypatch.setattr(
@@ -2590,16 +2597,34 @@ def test_a_gap_reopened_between_readiness_and_the_gap_read_is_never_certified(
         inspect_then_restore,
     )
     assert metered.outcome(version_id=first.version_id)["outcome"] is None
-    reopened = rig.gap(version_id=first.version_id, layer="claims")
-    assert reopened is not None and reopened["discharged_at"] is None
-    assert not metered.receipts.outcomes or all(
-        item.outcome != "succeeded" for item in metered.receipts.outcomes
-    )
-    rig.drain()
     assert rig.minted(version_id=first.version_id) > 0
-    assert metered.outcome(version_id=first.version_id) == _succeeded(
-        "doc-text-claims-v1"
+    assert rig.gap(version_id=first.version_id, layer="claims") is None
+    assert (
+        rig.status(
+            version_id=first.version_id,
+            stage="reconcile",
+            version=RECONCILE_CLAIMS_VERSION,
+        )
+        == "pending"
     )
+    assert all(item.outcome != "succeeded" for item in metered.receipts.outcomes)
+    assert metered.outcome(version_id=first.version_id)["outcome"] is None
+    with rig.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE processing_state SET status = 'dead_letter',"
+                " finished_at = now() WHERE target_id = :v AND stage = 'reconcile'"
+                " AND component_version = :claims"
+            ),
+            {"v": first.version_id, "claims": RECONCILE_CLAIMS_VERSION},
+        )
+    assert metered.outcome(version_id=first.version_id) == {
+        "processing_profile_id": "doc-text-claims-v1",
+        "outcome": "failed",
+        "reason_code": "pipeline_terminal_failure",
+        "profile_complete": False,
+    }
+    _assert_no_success_receipt(metered, version_id=first.version_id)
 
 
 def test_setup_does_not_sweep_the_gaps_of_disabled_layers(

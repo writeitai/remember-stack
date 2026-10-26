@@ -968,6 +968,35 @@ class LifecycleCatalog:
                 _SELECT_CLOSURE_BOUNDARY, {"doc_id": doc_id}
             ).scalar_one_or_none()
 
+    def claim_ready_finalization(self, *, deployment_id: UUID, cycle_id: UUID) -> bool:
+        """Claim a cycle only if it is still ready, serialized against layers (D143).
+
+        Used on a pinned transaction that also runs the cycle's closure. The
+        shared layer fence keeps a configuration change out until commit; the
+        cycle row lock and the barrier re-read inside it make a candidate list
+        a hint only: a layer entry or new work since selection keeps the cycle
+        open, and a later entry reopens what this commits.
+        """
+        from rememberstack.spine.processing_layers import take_layer_fence_on
+
+        with self._engine.begin() as connection:
+            take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+            connection.execute(_LOCK_CYCLE, {"cycle_id": cycle_id})
+            still_ready = cycle_id in {
+                row["cycle_id"]
+                for row in connection.execute(
+                    _SELECT_READY_CYCLES, {"deployment_id": deployment_id}
+                ).mappings()
+            }
+            if not still_ready:
+                return False
+            return (
+                connection.execute(
+                    _CLAIM_FINALIZATION, {"cycle_id": cycle_id}
+                ).scalar_one_or_none()
+                is not None
+            )
+
     def claim_finalization(self, *, cycle_id: UUID) -> bool:
         """Atomically claim one cycle's finalization (single winner).
 
@@ -1607,7 +1636,9 @@ _SELECT_READY_CYCLES = text(
       )
       AND NOT EXISTS (
           -- D143: a live version waiting to enter an enabled layer has work
-          -- still to come (no row exists yet); a disabled layer never holds.
+          -- still to come (no row exists yet), and one inside a layer holds
+          -- until that layer's frontier (a claims tail may still be owed); an
+          -- unentered gap of a disabled layer never holds.
           SELECT 1
           FROM document_versions v
           JOIN documents d ON d.doc_id = v.doc_id
@@ -1617,11 +1648,14 @@ _SELECT_READY_CYCLES = text(
             ON l.deployment_id = y.deployment_id
           WHERE v.sync_cycle_id = y.cycle_id
             AND v.deleted_at IS NULL AND d.deleted_at IS NULL
-            AND g.entered_at IS NULL AND g.discharged_at IS NULL
-            AND CASE g.layer
-                  WHEN 'claims' THEN coalesce(l.claims_enabled, true)
-                  ELSE coalesce(l.facts_enabled, true)
-                END
+            AND g.discharged_at IS NULL
+            AND (
+                g.entered_at IS NOT NULL
+                OR CASE g.layer
+                     WHEN 'claims' THEN coalesce(l.claims_enabled, true)
+                     ELSE coalesce(l.facts_enabled, true)
+                   END
+            )
       )
     ORDER BY y.started_at
     """
@@ -1717,6 +1751,10 @@ _SELECT_CLOSURE_BOUNDARY = text(
     JOIN document_versions v ON v.version_id = d.current_version_id
     WHERE d.doc_id = :doc_id
     """
+)
+
+_LOCK_CYCLE = text(
+    "SELECT cycle_id FROM connector_sync_cycles WHERE cycle_id = :cycle_id FOR UPDATE"
 )
 
 _CLAIM_FINALIZATION = text(

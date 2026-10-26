@@ -64,13 +64,16 @@ class PipelineReadinessCatalog:
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
         layers: frozenset[ProcessingLayer] | None = None,
+        discharged_as_skipped: bool = True,
     ) -> PipelineReadinessReport:
         """Return readiness without mutating or waiting for the pipeline.
 
         D143: the expected stages are those of ``layers`` — by default the
         layers the deployment serves now; a managed receipt passes the layers
         of the profile the version was measured under. With every layer
-        expected the report is exactly the pre-D143 one.
+        expected the report is exactly the pre-D143 one. Serving readiness
+        reads a discharged layer's stages as ``skipped``; a receipt passes
+        ``discharged_as_skipped=False`` so only stages that really ran count.
         """
         from rememberstack.workers.reconcile import RECONCILE_CLAIMS_VERSION
 
@@ -286,7 +289,11 @@ class PipelineReadinessCatalog:
                         component_version = RECONCILE_CLAIMS_VERSION
                 status = "missing" if row is None else str(row["status"])
                 finished_at = None if row is None else row["finished_at"]
-                if status != "succeeded" and (version_id, layer) in discharged:
+                if (
+                    discharged_as_skipped
+                    and status != "succeeded"
+                    and (version_id, layer) in discharged
+                ):
                     # D143 §5.3: a superseded living version the layer will
                     # never process (its gap was discharged).
                     status = "skipped"

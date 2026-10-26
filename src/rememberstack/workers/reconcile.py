@@ -480,20 +480,34 @@ class CycleFinalizer:
         healthy cycle of the same source covers it.
         """
         finalized: list[UUID] = []
+        configured = self._catalog.layers_configured(deployment_id=deployment_id)
         for cycle_id, failed_items in self._catalog.cycles_ready_to_finalize(
             deployment_id=deployment_id
         ):
+            if configured:
+                # D143: layers can give a completed cycle new work, so the
+                # candidate is re-checked and closed in one fenced transaction.
+                with self._catalog.transaction() as catalog:
+                    if not catalog.claim_ready_finalization(
+                        deployment_id=deployment_id, cycle_id=cycle_id
+                    ):
+                        continue
+                    if failed_items == 0:
+                        self._close_cycle(
+                            catalog=catalog,
+                            deployment_id=deployment_id,
+                            cycle_id=cycle_id,
+                        )
+                finalized.append(cycle_id)
+                continue
             if not self._catalog.claim_finalization(cycle_id=cycle_id):
                 continue  # another finalizer won this cycle
             if failed_items == 0:
-                reopened_at = self._catalog.cycle_reopened_at(cycle_id=cycle_id)
-                for doc_id in self._catalog.cycle_lineages(cycle_id=cycle_id):
-                    self._close_lineage_zero_support(
-                        deployment_id=deployment_id,
-                        cycle_id=cycle_id,
-                        doc_id=doc_id,
-                        reopened_at=reopened_at,
-                    )
+                self._close_cycle(
+                    catalog=self._catalog,
+                    deployment_id=deployment_id,
+                    cycle_id=cycle_id,
+                )
             finalized.append(cycle_id)
         for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
             deployment_id=deployment_id
@@ -539,20 +553,35 @@ class CycleFinalizer:
                 )
         return tuple(finalized)
 
+    def _close_cycle(
+        self, *, catalog: LifecycleCatalog, deployment_id: UUID, cycle_id: UUID
+    ) -> None:
+        """Source-acted closure for every lineage the cycle observed."""
+        reopened_at = catalog.cycle_reopened_at(cycle_id=cycle_id)
+        for doc_id in catalog.cycle_lineages(cycle_id=cycle_id):
+            self._close_lineage_zero_support(
+                catalog=catalog,
+                deployment_id=deployment_id,
+                cycle_id=cycle_id,
+                doc_id=doc_id,
+                reopened_at=reopened_at,
+            )
+
     def _close_lineage_zero_support(
         self,
         *,
+        catalog: LifecycleCatalog,
         deployment_id: UUID,
         cycle_id: UUID,
         doc_id: UUID,
         reopened_at: datetime | None,
     ) -> None:
         """§4 source-acted closure for one observed lineage, cycle-scoped."""
-        claim_ids = self._catalog.lineage_claim_ids(
+        claim_ids = catalog.lineage_claim_ids(
             deployment_id=deployment_id, doc_id=doc_id
         )
-        relation_ids = self._catalog.affected_relation_ids(claim_ids=claim_ids)
-        observation_ids = self._catalog.affected_observation_ids(claim_ids=claim_ids)
+        relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
+        observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
         reconciliation_id = (
             _derived_run_id(kind="finalize", cycle_id=cycle_id, doc_id=doc_id)
             if reopened_at is None
@@ -565,22 +594,22 @@ class CycleFinalizer:
                 at=reopened_at.isoformat(),
             )
         )
-        closed_relations = self._catalog.close_relations(
+        closed_relations = catalog.close_relations(
             deployment_id=deployment_id,
-            relation_ids=self._catalog.open_zero_support_relations(
+            relation_ids=catalog.open_zero_support_relations(
                 deployment_id=deployment_id, relation_ids=relation_ids
             ),
-            boundary=self._catalog.closure_boundary(doc_id=doc_id),
+            boundary=catalog.closure_boundary(doc_id=doc_id),
             reconciliation_id=reconciliation_id,
         )
-        closed_observations = self._catalog.close_observations(
+        closed_observations = catalog.close_observations(
             deployment_id=deployment_id,
-            observation_ids=self._catalog.open_zero_support_observations(
+            observation_ids=catalog.open_zero_support_observations(
                 deployment_id=deployment_id, observation_ids=observation_ids
             ),
             reconciliation_id=reconciliation_id,
         )
-        self._catalog.emit_evidence_changed(
+        catalog.emit_evidence_changed(
             deployment_id=deployment_id,
             delta=ReconciliationDelta(
                 reconciliation_id=reconciliation_id,
