@@ -16,6 +16,7 @@ from remember.client import MemoryClient
 from remember.connection import resolve_connection
 from remember.errors import AccountApiUnavailable
 from remember.errors import ConnectorNotFoundError
+from remember.errors import LayerUnavailable
 from remember.errors import MemoryApiError
 from remember.errors import PipelineDeadLettered
 from remember.errors import ProjectResolutionError
@@ -52,6 +53,8 @@ from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
+from remember.models import ProcessingLayer
+from remember.models import ProcessingLayerStates
 from remember.models import QueryResultDict
 from remember.models import ReadinessRequirements
 from remember.models import ReadTime
@@ -128,11 +131,14 @@ __all__ = (
     "EffectiveTimeCleared",
     "Envelope",
     "IngestedVersion",
+    "LayerUnavailable",
     "MemoryApiError",
     "MemoryClient",
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
+    "ProcessingLayer",
+    "ProcessingLayerStates",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",

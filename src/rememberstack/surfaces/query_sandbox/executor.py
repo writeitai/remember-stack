@@ -16,6 +16,7 @@ import hashlib
 import json
 import time
 from typing import Final
+from typing import Protocol
 from uuid import UUID
 from uuid import uuid4
 
@@ -23,6 +24,8 @@ import psycopg
 from psycopg import sql as pgsql
 from pydantic import ValidationError
 
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.spine.query_space.canonical import surface_manifest_hash
 from rememberstack.spine.query_space.manifest import build_hash_members
 from rememberstack.spine.query_space.manifest import declared_views
@@ -38,6 +41,8 @@ from rememberstack.surfaces.query_sandbox.errors import SandboxRejection
 from rememberstack.surfaces.query_sandbox.grammar import PUBLIC_SRF_NAMES
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 from rememberstack.surfaces.query_sandbox.grammar import ValidatedQuery
+from rememberstack.surfaces.query_sandbox.layers import entity_filtered_claim_search
+from rememberstack.surfaces.query_sandbox.layers import statement_layers
 from rememberstack.surfaces.query_sandbox.limits import clamp_bytes
 from rememberstack.surfaces.query_sandbox.limits import clamp_rows
 from rememberstack.surfaces.query_sandbox.limits import clamp_timeout_ms
@@ -60,6 +65,8 @@ _EVALUATED_AT_RELATIONS: Final = frozenset(
 # As-of functions answer at an instant the caller names, which is equally a
 # single applied instant; every other public function is not instant-scoped.
 _AS_OF_FUNCTIONS: Final = frozenset({"facts_as_of"})
+_ALL_ENABLED: Final = ProcessingLayerStates(claims="enabled", facts="enabled")
+"""What a sandbox composed without a layers port serves (D143 §8)."""
 _GRAPH_FUNCTIONS: Final = frozenset(
     {"graph_neighborhood", "graph_path", "graph_citation_path"}
 )
@@ -353,6 +360,21 @@ def _sql_type_family(value: object) -> str:
     return type(value).__name__.lower()
 
 
+class LayerStatesPort(Protocol):
+    """The D143 layer states the sandbox consults (``ProcessingLayerCatalog``)."""
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """Each switchable layer's state: enabled, backfilling or disabled."""
+        ...
+
+
+def _with_warnings(*, result: QueryResult, warnings: tuple[str, ...]) -> QueryResult:
+    """Append D143 backfill warnings; an unchanged result when there are none."""
+    if not warnings:
+        return result
+    return result.model_copy(update={"warnings": (*result.warnings, *warnings)})
+
+
 class QuerySandboxExecutor:
     """One deployment's sandboxed SQL surface.
 
@@ -372,6 +394,7 @@ class QuerySandboxExecutor:
         analytical_entitlement: bool = False,
         search: object | None = None,
         embed: Callable[..., tuple[float, ...]] | None = None,
+        layers: LayerStatesPort | None = None,
     ) -> None:
         # The public functions need a projection to nominate from and a way to
         # embed a query; without them the statement still parses, and a call
@@ -386,6 +409,9 @@ class QuerySandboxExecutor:
         self._audit = audit or AuditTrail.disabled()
         self._kills = kill_switches or KillSwitches()
         self._manifest_hash = surface_manifest_hash(build_hash_members())
+        # D143 §7.5: which processing layers the deployment serves. Absent,
+        # every layer is served (a composition without the configuration).
+        self._layers = layers
 
     @property
     def deployment_id(self) -> UUID:
@@ -404,6 +430,7 @@ class QuerySandboxExecutor:
         max_bytes: int | None = None,
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """One sandboxed statement; `QueryResult/v1` in every outcome.
 
@@ -420,6 +447,7 @@ class QuerySandboxExecutor:
             tier=tier,
             principal=principal,
             explain=False,
+            layers=layers,
         )
 
     def explain_sql(
@@ -429,6 +457,7 @@ class QuerySandboxExecutor:
         parameters: Sequence[object] = (),
         tier: LimitTier = LimitTier.INTERACTIVE,
         principal: str = "agent",
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         """`EXPLAIN (FORMAT JSON)` without execution; the same gates apply."""
         return self._run(
@@ -440,6 +469,7 @@ class QuerySandboxExecutor:
             tier=tier,
             principal=principal,
             explain=True,
+            layers=layers,
         )
 
     # -- the request pipeline -------------------------------------------------
@@ -455,6 +485,7 @@ class QuerySandboxExecutor:
         tier: LimitTier,
         principal: str,
         explain: bool,
+        layers: frozenset[ProcessingLayer] | None = None,
     ) -> QueryResult:
         request_id = uuid4()
         started = datetime.now().astimezone()
@@ -523,6 +554,11 @@ class QuerySandboxExecutor:
             )
         if len(parameters) > limits.parameters_max:
             return failed(QueryErrorCode.INVALID_PARAMETER, "too many parameters")
+        layer_refusal, layer_warnings = self._gate_layers(
+            validated=validated, parameters=parameters, requested=layers
+        )
+        if layer_refusal is not None:
+            return failed(*layer_refusal)
         encoded_parameter_bytes = sum(_encoded_size(value) for value in parameters)
         if encoded_parameter_bytes > limits.parameters_bytes:
             return failed(
@@ -549,19 +585,22 @@ class QuerySandboxExecutor:
             return failed(code, admission)
 
         try:
-            return self._execute(
-                validated=validated,
-                parameters=parameters,
-                limits_model=result_limits,
-                row_cap=row_cap,
-                byte_cap=byte_cap,
-                statement_timeout_ms=timeout_ms,
-                tier=tier,
-                explain=explain,
-                request_id=request_id,
-                started=started,
-                clock=clock,
-                principal=principal,
+            return _with_warnings(
+                result=self._execute(
+                    validated=validated,
+                    parameters=parameters,
+                    limits_model=result_limits,
+                    row_cap=row_cap,
+                    byte_cap=byte_cap,
+                    statement_timeout_ms=timeout_ms,
+                    tier=tier,
+                    explain=explain,
+                    request_id=request_id,
+                    started=started,
+                    clock=clock,
+                    principal=principal,
+                ),
+                warnings=layer_warnings,
             )
         finally:
             self._kills.record_spend(
@@ -570,6 +609,91 @@ class QuerySandboxExecutor:
                 seconds=time.monotonic() - clock,
             )
             self._kills.release(deployment_id=self._deployment_id, principal=principal)
+
+    def _gate_layers(
+        self,
+        *,
+        validated: ValidatedQuery,
+        parameters: Sequence[object],
+        requested: frozenset[ProcessingLayer] | None,
+    ) -> tuple[tuple[QueryErrorCode, str] | None, tuple[str, ...]]:
+        """D143 §7.5: refuse a statement reading an unserved or excluded layer.
+
+        Runs after validation and before any planning. Returns the refusal (code
+        and message) or None, and the ``layer_backfilling:<layer>`` warnings for
+        layers the statement reads that are still being backfilled.
+        """
+        if self._layers is None and requested is None:
+            return None, ()
+        states = (
+            self._layers.states(deployment_id=self._deployment_id)
+            if self._layers is not None
+            else _ALL_ENABLED
+        )
+        served = {ProcessingLayer.SOURCES} | {
+            layer
+            for layer, state in (
+                (ProcessingLayer.CLAIMS, states.claims),
+                (ProcessingLayer.FACTS, states.facts),
+            )
+            if state != "disabled"
+        }
+        backfilling = {
+            layer
+            for layer, state in (
+                (ProcessingLayer.CLAIMS, states.claims),
+                (ProcessingLayer.FACTS, states.facts),
+            )
+            if state == "backfilling"
+        }
+        admitted = served if requested is None else served & requested
+        needed = statement_layers(
+            views=validated.referenced_views, functions=validated.referenced_functions
+        )
+        # A view or function of a missing layer keeps its own public code,
+        # whether the deployment does not process the layer or the request
+        # excludes it (§7.5).
+        for layer, names in sorted(needed.items(), key=lambda item: item[0].value):
+            if layer in admitted:
+                continue
+            views = [name for name in names if name in validated.referenced_views]
+            if views:
+                return (
+                    QueryErrorCode.RELATION_NOT_ALLOWED,
+                    f"{views[0]} belongs to the {layer.value} layer, which this"
+                    " deployment does not process or this request excludes",
+                ), ()
+            return (
+                QueryErrorCode.FUNCTION_NOT_ALLOWED,
+                f"{names[0]} belongs to the {layer.value} layer, which this"
+                " deployment does not process or this request excludes",
+            ), ()
+        # An entity filter reads facts-owned mentions: a mandatory dependency.
+        entity_search = entity_filtered_claim_search(
+            bindings=validated.srf_bindings, parameters=parameters
+        )
+        if entity_search is not None and ProcessingLayer.FACTS not in admitted:
+            return (
+                QueryErrorCode.INVALID_PARAMETER,
+                f"{entity_search} with an entity_id filter needs the facts layer,"
+                " which this deployment does not process or this request excludes",
+            ), ()
+        unserved = sorted(
+            (layer.value for layer in (requested or ()) if layer not in served)
+        )
+        if unserved:
+            return (
+                QueryErrorCode.INVALID_PARAMETER,
+                f"this deployment does not process the {unserved[0]} layer",
+            ), ()
+        read = set(needed) | (
+            {ProcessingLayer.FACTS} if entity_search is not None else set()
+        )
+        warnings = tuple(
+            f"layer_backfilling:{layer.value}"
+            for layer in sorted(backfilling & read, key=lambda item: item.value)
+        )
+        return None, warnings
 
     def _execute(
         self,

@@ -46,6 +46,7 @@ The client is synchronous. There is no async client yet
 | `RateLimited` | exception | [Errors](#errors) |
 | `StoredKeyRefused` | exception | [Errors](#errors) |
 | `PipelineDeadLettered` | exception | [Errors](#errors) |
+| `LayerUnavailable` | exception | [Errors](#errors) |
 | `ConnectorNotFoundError` | exception | [Errors](#errors) |
 | `CapabilityReadiness` | model | [Models](#models) |
 | `ClaimOccurrence` | model | [Models](#models) |
@@ -78,6 +79,8 @@ The client is synchronous. There is no async client yet
 | `NamedReferenceTarget` | model | [Models](#models) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
+| `ProcessingLayer` | enum | [Models](#models) |
+| `ProcessingLayerStates` | model | [Models](#models) |
 | `QueryResultDict` | dict subclass | [Models](#models) |
 | `ReadinessRequirements` | model | [Models](#models) |
 | `ReadTime` | type alias | [Models](#models) |
@@ -329,6 +332,7 @@ resolves its connection the same way ([Connecting](#connecting)).
 | [`pipeline_readiness`](#pipeline_readiness) | `POST /readiness` | `PipelineReadinessReport` |
 | [`wait_for_readiness`](#wait_for_readiness) | `POST /readiness`, repeated | `PipelineReadinessReport` |
 | [`deployment_build_info`](#deployment_build_info) | `GET /deployment` | `DeploymentBuildInfo` |
+| [`processing_layers`](#processing_layers) | `GET /processing-layers` | `ProcessingLayerStates` |
 | [`list_documents`](#list_documents) | `GET /documents` | `DocumentPage` |
 | [`search_documents`](#search_documents) | `POST /documents/search` | `DocumentSearchPage` |
 | [`delete_document`](#delete_document) | `DELETE /documents/{doc_id}` | `DocumentDeletion` |
@@ -533,6 +537,22 @@ memory tool name to tool version). The class is
 ```python
 info = memory.deployment_build_info()
 print(info.build_revision, info.model_bindings.get("claim_extraction"))
+```
+
+#### `processing_layers`
+
+```python
+MemoryClient.processing_layers() -> ProcessingLayerStates
+```
+
+Returns the state of each switchable
+[processing layer](/docs/concepts/pipeline#processing-layers): `claims` and
+`facts`, each `"enabled"`, `"backfilling"` or `"disabled"`.
+
+```python
+layers = memory.processing_layers()
+if layers.facts == "disabled":
+    answer = memory.claims_and_sources_context("harbour tariff")
 ```
 
 #### `list_documents`
@@ -790,9 +810,16 @@ for op in memory.list_operations():
 
 ```python
 MemoryClient.run_operation(
-    *, name: str, arguments: Mapping[str, object] | None = None
+    *,
+    name: str,
+    arguments: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> Envelope | ContextBundleV2
 ```
+
+`layers` narrows the processing layers the operation may read (any of
+`"sources"`, `"claims"`, `"facts"`; default every layer the deployment
+serves). See [Narrowing a read to layers](/docs/concepts/retrieval#narrowing-a-read-to-layers).
 
 Runs one operation by name with its JSON arguments. Returns a
 `ContextBundleV2` when the response is a combined bundle, otherwise an
@@ -854,7 +881,12 @@ is max(4*k, 60), which is 200 at the default k.
 
 ```python
 MemoryClient.claims_and_sources_context(
-    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
+    query: str,
+    *,
+    k: int | None = None,
+    candidate_k: int | None = None,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> Envelope
 ```
 
@@ -879,7 +911,12 @@ is max(4*k, 60), which is 200 at the default k.
 
 ```python
 MemoryClient.combined_context(
-    query: str, *, k: int | None = None, candidate_k: int | None = None, time: Mapping[str, object] | None = None
+    query: str,
+    *,
+    k: int | None = None,
+    candidate_k: int | None = None,
+    time: Mapping[str, object] | None = None,
+    layers: Sequence[str] | None = None,
 ) -> ContextBundleV2
 ```
 
@@ -1145,6 +1182,7 @@ MemoryClient.query_sql(
     sql: str,
     parameters: list[object] | tuple[object, ...] = (),
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -1175,7 +1213,10 @@ for row in res.rows:
 
 ```python
 MemoryClient.explain_sql(
-    *, sql: str, parameters: list[object] | tuple[object, ...] = ()
+    *,
+    sql: str,
+    parameters: list[object] | tuple[object, ...] = (),
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -1248,6 +1289,7 @@ MemoryClient.run_saved_query(
     parameters: list[object] | tuple[object, ...] = (),
     version: int | None = None,
     max_rows: int | None = None,
+    layers: Sequence[str] | None = None,
 ) -> dict[str, object]
 ```
 
@@ -1342,6 +1384,14 @@ the address came from `base_url` or `REMEMBER_API_URL` and is not an address
 that key may be sent to ([Connecting](#connecting)). Pass the key as
 `api_key` or in `REMEMBER_API_KEY` to use it there.
 
+### LayerUnavailable
+
+A `MemoryApiError` (`status_code` 409, `code` `layer_unavailable`) raised when
+a read needs a [processing layer](/docs/concepts/pipeline#processing-layers)
+the deployment does not process. `layer` is `"claims"` or `"facts"`. Check
+[`processing_layers`](#processing_layers) and use a read the deployment
+serves.
+
 ### PipelineDeadLettered
 
 Raised by `wait_for_readiness` when a stage of a version it waits on is
@@ -1400,6 +1450,8 @@ models below are Pydantic models (frozen) unless noted.
 | `PipelineReadinessReport` | `ready`, `versions` (tuple of `VersionPipelineReadiness`), `capabilities` (dict of capability name to `CapabilityReadiness`), `document_binding_generation`, `model_bindings`, `build_revision`. |
 | `VersionPipelineReadiness` | `version_id`, `ready`, `stages` (tuple of `PipelineStageReadiness`). |
 | `PipelineStageReadiness` | `stage`, `component_version`, `status` (`missing`, `pending`, `running`, `succeeded`, `failed`, `dead_letter`, `skipped`), `finished_at`, `defer_reason` (why waiting work waits: `no_route`, `budget`, `scheduled`, `retry_backoff`, or `None`). |
+| `ProcessingLayer` | String enum: `sources`, `claims`, `facts`. |
+| `ProcessingLayerStates` | The result of `processing_layers`: `claims` and `facts`, each `enabled`, `backfilling` or `disabled`. |
 | `CapabilityReadiness` | `required`, `ready`, `checked_at`, `reason`, `version`, `built_at`, `published_at`. |
 | `ToolDescriptor` | One operation's descriptor: `name`, `description`, `input_schema`, `result_schema`, `result_contract`, `output_grain`, `answer_intent`, `mutates`, `version`, `implementation_plan_hash`. |
 | `QueryResultDict` | A `dict` holding a `QueryResult/v1` response, with three read-only attributes: `rows` (list of rows; each row is a list of column values in column order), `columns` (list of `{"name", "type", "nullable"}` dicts) and `truncated` (bool). |

@@ -99,6 +99,7 @@ src/tests/surfaces/test_graph_http_api.py
 src/tests/surfaces/test_http_api_robustness.py
 src/tests/surfaces/test_mcp_tool_catalogue.py
 src/tests/surfaces/test_context_retrieval_budget.py
+src/tests/surfaces/test_d143_defaults_unchanged.py
 src/tests/surfaces/test_mcp_write_tools.py
 src/tests/surfaces/test_openapi_export.py
 src/tests/surfaces/test_post_search.py
@@ -155,3 +156,6 @@ src/tests/core/test_text_scope.py
 src/tests/core/test_period_adjudication.py
 src/tests/surfaces/test_d142_accounts.py
 src/tests/surfaces/test_query_sandbox_budget.py
+src/tests/surfaces/test_query_sandbox_layers.py
+src/tests/surfaces/test_d143_openapi_additive.py
+src/tests/surfaces/test_d143_layer_errors.py

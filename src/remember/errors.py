@@ -64,6 +64,19 @@ class RateLimited(MemoryApiError):
         self.retry_after = retry_after
 
 
+class LayerUnavailable(MemoryApiError):
+    """The read needs a processing layer the deployment does not serve (``409``).
+
+    ``layer`` is ``claims`` or ``facts`` (D143). ``code`` is ``layer_unavailable``.
+    Check ``processing_layers()`` and use a read the deployment serves.
+    """
+
+    def __init__(self, *, detail: str, layer: str) -> None:
+        """Bind the missing layer."""
+        super().__init__(status_code=409, detail=detail, code="layer_unavailable")
+        self.layer = layer
+
+
 class ProjectResolutionError(MemoryApiError):
     """A signed key's project could not be resolved to a deployment.
 

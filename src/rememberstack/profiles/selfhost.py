@@ -122,6 +122,15 @@ class SelfHostSettings(BaseSettings):
     )
 
     deployment_id: UUID
+    #: D143: process and serve the claims layer (claim extraction, claim
+    #: embeddings, testimony currency). ``REMEMBERSTACK_SELFHOST_CLAIMS_LAYER``.
+    claims_layer: bool = True
+    #: D143: process and serve the facts layer (normalisation, entity
+    #: resolution, fact adjudication, labels, profiles, graph). Requires the
+    #: claims layer. ``REMEMBERSTACK_SELFHOST_FACTS_LAYER``.
+    facts_layer: bool = True
+    #: Lineages advanced per seeding batch when ``setup`` starts a layer backfill.
+    layer_seed_batch_size: int = Field(default=500, gt=0)
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
@@ -884,6 +893,38 @@ class SelfHostProfile:
             self._retrieval_engine.dispose()
         self._engine.dispose()
 
+    def _reconcile_processing_layers(self) -> bool:
+        """D143 §3.4: write the configured layers, then seed any backfill.
+
+        Seeding runs on every setup, so an interrupted backfill seed resumes
+        on the next start; it is idempotent. Returns whether the facts layer
+        changed, so setup publishes a P3 snapshot for the new served set.
+        """
+        from rememberstack.model.client import ProcessingLayer  # noqa: PLC0415
+        from rememberstack.spine.processing_layers import (  # noqa: PLC0415
+            ProcessingLayerCatalog,
+        )
+
+        catalog = ProcessingLayerCatalog(engine=self._engine)
+        changes = catalog.reconcile_settings(
+            deployment_id=self._settings.deployment_id,
+            claims_enabled=self._settings.claims_layer,
+            facts_enabled=self._settings.facts_layer,
+        )
+        gaps = catalog.gap_counts(deployment_id=self._settings.deployment_id)
+        for change in changes:
+            _logger.info(
+                "processing_layers.changed layer=%s enabled=%s gaps=%s",
+                change.layer.value,
+                change.enabled,
+                json.dumps(dict(gaps), sort_keys=True),
+            )
+        catalog.seed(
+            deployment_id=self._settings.deployment_id,
+            batch_size=self._settings.layer_seed_batch_size,
+        )
+        return any(change.layer is ProcessingLayer.FACTS for change in changes)
+
     def setup(self) -> None:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
@@ -908,6 +949,7 @@ class SelfHostProfile:
             ),
             sole_deployment=True,
         )
+        facts_layer_changed = self._reconcile_processing_layers()
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
         )
@@ -1013,6 +1055,10 @@ class SelfHostProfile:
         p1_index.configure_channels(
             deployment_id=self._settings.deployment_id, include_entity=True
         )
+        if facts_layer_changed:
+            # D143 §7.6: the mount must not keep serving entity files built
+            # for the previous served set.
+            self.run_projection(plane="p3")
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
@@ -1084,6 +1130,10 @@ class SelfHostProfile:
             fact_read_pool=retrieval_reads,
             surface_cost=surface_cost,
         )
+        from rememberstack.spine.processing_layers import (  # noqa: PLC0415
+            ProcessingLayerCatalog,
+        )
+
         sql_executor = QuerySandboxExecutor(
             deployment_id=self._settings.deployment_id,
             connect=query_role_connect,
@@ -1091,6 +1141,7 @@ class SelfHostProfile:
             embed=embed_query,
             kill_switches=kill_switches,
             audit=audit_trail,
+            layers=ProcessingLayerCatalog(engine=self._engine),
         )
         manifest_hash = surface_manifest_hash(build_hash_members())
         open_query = OpenQueryFacade(
@@ -1134,6 +1185,7 @@ class SelfHostProfile:
                     root=self._settings.forget_manifest_root
                 )
             ),
+            processing_layers=ProcessingLayerCatalog(engine=self._engine),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
                 executor=OperationExecutor(
@@ -1298,6 +1350,7 @@ class SelfHostProfile:
             ),
             database_url=_psycopg_url(),
             fallback_poll_s=self._settings.worker_fallback_poll_s,
+            serve_backfill=True,
         )
 
     def run_worker(self, *, stage: PipelineStage) -> None:

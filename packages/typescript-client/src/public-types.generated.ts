@@ -73,6 +73,7 @@ export type { OutputPendingRevocation as PendingRevocation, PendingRevocation as
 export type { OutputPendingRevocations as PendingRevocations, PendingRevocations as PendingRevocationsInput } from './generated';
 export type { OutputPipelineReadinessReport as PipelineReadinessReport, PipelineReadinessReport as PipelineReadinessReportInput } from './generated';
 export type { OutputPipelineStageReadiness as PipelineStageReadiness, PipelineStageReadiness as PipelineStageReadinessInput } from './generated';
+export type { OutputProcessingLayerStates as ProcessingLayerStates, ProcessingLayerStates as ProcessingLayerStatesInput } from './generated';
 export type { OutputQueryErrorCode as QueryErrorCode, QueryErrorCode as QueryErrorCodeInput } from './generated';
 export type { OutputQueryResult as QueryResult, QueryResult as QueryResultInput } from './generated';
 export type { OutputRankedItem as RankedItem, RankedItem as RankedItemInput } from './generated';

@@ -206,6 +206,10 @@ export default {
     {
       "method": "GET",
       "pattern": "^/deployment$"
+    },
+    {
+      "method": "GET",
+      "pattern": "^/processing-layers$"
     }
   ],
   "secretConfigurationKeys": [

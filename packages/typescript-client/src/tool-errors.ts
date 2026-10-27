@@ -1,5 +1,5 @@
 import {isQueryArgumentError} from './query-arguments';
-import { AbortError, InputValidationError, MemoryApiError, NumericPrecisionError, RateLimited, TimeoutError } from './errors';
+import { AbortError, InputValidationError, LayerUnavailable, MemoryApiError, NumericPrecisionError, RateLimited, TimeoutError } from './errors';
 /** Source-compatible structured tool error fields use their wire names. */
 export interface ToolErrorFields {code:string;detail:string;status_code:number|null;retryable:boolean;agent_action:string;reason_code?:string;request_id?:string;retry_after?:number;}
 /** One transport-neutral error envelope for every tool family. */
@@ -25,6 +25,8 @@ export class ToolArgumentError extends Error {
 }
 /** Produce a safe local invalid-argument refusal. */
 export function invalidArguments({detail}:{detail:string}):ToolError {return new ToolError({code:'invalid_arguments',detail,status_code:null,retryable:false,agent_action:'Fix the tool arguments and retry.'});}
+/** D143: the call needs a processing layer the deployment does not serve. */
+export function layerUnavailable({layer,detail}:{layer:string;detail:string}):ToolError {return new ToolError({code:'layer_unavailable',detail,status_code:409,retryable:false,agent_action:`This deployment does not process the ${layer} layer. Use the tools tools/list offers, such as claims_and_sources_context.`});}
 /** Render a transport-neutral MCP result; hosts own tool execution. */
 export function errorResult({error}:{error:ToolError}):{content:{type:'text';text:string}[];isError:true} {return {content:[{type:'text',text:JSON.stringify(error.asDict())}],isError:true};}
 const retryableQuery=new Set(['quota_exceeded','concurrency_exceeded','saved_query_revalidation_pending','statement_timeout','lock_timeout','pg_unavailable','p1_unavailable','graph_unavailable','corpus_body_unavailable','generation_unavailable']);
@@ -39,6 +41,8 @@ export function mapError({error}:{error:unknown}):ToolError {
     return invalidArguments({detail:error.message});
   }
   if(error instanceof TimeoutError)return new ToolError({code:'transport_error',detail:error.message,status_code:0,retryable:true,agent_action:'Retry with back-off; check the deployment URL and network.'});
+  // D143: the same envelope the engine's in-process MCP server returns.
+  if(error instanceof LayerUnavailable) return layerUnavailable({layer:error.layer,detail:error.detail});
   if(error instanceof MemoryApiError) {
     const status=error.statusCode;const detail=error.detail;const separator=detail.indexOf(':');
     const head=separator<0?detail:detail.slice(0,separator);

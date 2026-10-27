@@ -127,6 +127,56 @@ class LifecycleCatalog:
             )
         return dict(row)
 
+    def layers_configured(self, *, deployment_id: UUID) -> bool:
+        """Whether the deployment has a D143 processing-layer configuration."""
+        from rememberstack.spine.processing_layers import layer_configuration_on
+
+        with self._engine.connect() as connection:
+            return layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            ).configured
+
+    def apply_guarded_supersession(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        version_id: UUID,
+        reconciliation_id: UUID,
+    ) -> tuple[CurrencyTransition, ...]:
+        """D143 §4.2: living supersession against a settled current version only.
+
+        In one transaction under the lineage lock: read the current version,
+        require it to be ``version_id`` or to have complete claim occurrences,
+        compute the stale set and apply it. Otherwise nothing is retired; the
+        current version's own reconcile settles the lineage when it runs.
+        """
+        from rememberstack.spine.processing_layers import occurrences_complete_on
+
+        with self.transaction() as catalog, catalog._engine.connect() as connection:
+            current = connection.execute(
+                text(
+                    "SELECT current_version_id FROM documents"
+                    " WHERE doc_id = :doc_id FOR SHARE"
+                ),
+                {"doc_id": doc_id},
+            ).scalar_one_or_none()
+            if current is None:
+                return ()
+            if current != version_id and not occurrences_complete_on(
+                connection=connection, version_id=current
+            ):
+                return ()
+            stale = catalog.stale_for_supersession(
+                deployment_id=deployment_id, doc_id=doc_id, current_version_id=current
+            )
+            catalog.apply_transitions(
+                deployment_id=deployment_id,
+                reconciliation_id=reconciliation_id,
+                transitions=stale,
+            )
+            return stale
+
     def stale_for_supersession(
         self, *, deployment_id: UUID, doc_id: UUID, current_version_id: UUID
     ) -> tuple[CurrencyTransition, ...]:
@@ -595,7 +645,22 @@ class LifecycleCatalog:
         pointer, the latest remaining live version takes it (NULL when none
         remain). Returns the lineage context for the caller's cascade.
         """
+        from rememberstack.spine.processing_layers import lineage_changed_on
+        from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
+
         with self._engine.begin() as connection:
+            lineage = (
+                connection.execute(_SELECT_VERSION_LINEAGE, {"version_id": version_id})
+                .mappings()
+                .one()
+            )
+            # D143 §6.3: the layer fence and lineage lock precede the tombstone,
+            # so the repoint and the gap wake-up commit together.
+            lock_lineage_for_layers_on(
+                connection=connection,
+                deployment_id=lineage["deployment_id"],
+                doc_id=lineage["doc_id"],
+            )
             row = (
                 connection.execute(_TOMBSTONE_VERSION, {"version_id": version_id})
                 .mappings()
@@ -617,6 +682,13 @@ class LifecycleCatalog:
                 doc_id=row["doc_id"],
                 reason="version_deleted",
             )
+            # D143: a deleted head never blocks its successors; a repointed
+            # living lineage processes its new current version.
+            lineage_changed_on(
+                connection=connection,
+                deployment_id=row["deployment_id"],
+                doc_id=row["doc_id"],
+            )
         return dict(row)
 
     def delete_lineage(self, *, doc_id: UUID) -> datetime:
@@ -630,14 +702,21 @@ class LifecycleCatalog:
         returning bytes are processed as a new version (D135). Returns the
         lineage's deletion instant (the first one, on a repeated call).
         """
+        from rememberstack.spine.processing_layers import lineage_changed_on
+        from rememberstack.spine.processing_layers import lock_lineage_for_layers_on
+
         with self._engine.begin() as connection:
-            connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
-            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
-            connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
             deployment_id = connection.execute(
                 text("SELECT deployment_id FROM documents WHERE doc_id = :doc_id"),
                 {"doc_id": doc_id},
             ).scalar_one()
+            # D143 §6.3: fence and lineage lock first; gaps go with the tombstone.
+            lock_lineage_for_layers_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
+            )
+            connection.execute(_TOMBSTONE_LINEAGE_BY_ID, {"doc_id": doc_id})
+            connection.execute(_TOMBSTONE_LINEAGE_VERSIONS, {"doc_id": doc_id})
+            connection.execute(_CLEAR_DOCUMENT_BINDINGS_BY_DOC, {"doc_id": doc_id})
             # D140 §8.2: facts that also rest on other sources lose this
             # lineage's periods; queued in the tombstone's transaction
             _request_review_on(
@@ -645,6 +724,9 @@ class LifecycleCatalog:
                 deployment_id=deployment_id,
                 doc_id=doc_id,
                 reason="lineage_deleted",
+            )
+            lineage_changed_on(
+                connection=connection, deployment_id=deployment_id, doc_id=doc_id
             )
             return connection.execute(
                 _SELECT_LINEAGE_DELETED_AT, {"doc_id": doc_id}
@@ -786,6 +868,17 @@ class LifecycleCatalog:
             )
         return tuple((row["cycle_id"], row["failed_items"]) for row in rows)
 
+    def cycle_reopened_at(self, *, cycle_id: UUID) -> datetime | None:
+        """When a D143 layer entry last reopened the cycle, if it ever did."""
+        with self._engine.connect() as connection:
+            return connection.execute(
+                text(
+                    "SELECT layers_reopened_at FROM connector_sync_cycles"
+                    " WHERE cycle_id = :cycle_id"
+                ),
+                {"cycle_id": cycle_id},
+            ).scalar_one_or_none()
+
     def cycle_lineages(self, *, cycle_id: UUID) -> tuple[UUID, ...]:
         """Lineages the cycle observed via ingested versions."""
         with self._engine.connect() as connection:
@@ -875,22 +968,34 @@ class LifecycleCatalog:
                 _SELECT_CLOSURE_BOUNDARY, {"doc_id": doc_id}
             ).scalar_one_or_none()
 
-    def claim_finalization(self, *, cycle_id: UUID) -> bool:
-        """Atomically claim one cycle's finalization (single winner).
+    def claim_ready_finalization(self, *, deployment_id: UUID, cycle_id: UUID) -> bool:
+        """Claim a cycle only if it is still ready, serialized against layers (D143).
 
-        Two finalizer instances can never both run a cycle's retraction
-        evaluation: the first UPDATE wins, the loser sees False. A crash
-        after claiming leaves any unfinished closure to the next
-        observation of the same lineages (a brief, visible, self-healing
-        gap — the cascade re-derives from current state, never from
-        per-cycle deltas) and tombstone cascades to the deployment-wide
-        sweep.
+        Used on a pinned transaction that also runs the cycle's closure. The
+        shared layer fence keeps a configuration change out until commit; the
+        cycle row lock and the barrier re-read inside it make a candidate list
+        a hint only: a layer entry or new work since selection keeps the cycle
+        open, and a later entry reopens what this commits.
         """
+        from rememberstack.spine.processing_layers import take_layer_fence_on
+
         with self._engine.begin() as connection:
-            claimed = connection.execute(
-                _CLAIM_FINALIZATION, {"cycle_id": cycle_id}
-            ).scalar_one_or_none()
-        return claimed is not None
+            take_layer_fence_on(connection=connection, deployment_id=deployment_id)
+            connection.execute(_LOCK_CYCLE, {"cycle_id": cycle_id})
+            still_ready = cycle_id in {
+                row["cycle_id"]
+                for row in connection.execute(
+                    _SELECT_READY_CYCLES, {"deployment_id": deployment_id}
+                ).mappings()
+            }
+            if not still_ready:
+                return False
+            return (
+                connection.execute(
+                    _CLAIM_FINALIZATION, {"cycle_id": cycle_id}
+                ).scalar_one_or_none()
+                is not None
+            )
 
 
 def _record_adjudication(
@@ -1274,6 +1379,12 @@ _INSERT_EVIDENCE_CHANGED = text(
     """
 ).bindparams(bindparam("payload", type_=JSON))
 
+_SELECT_VERSION_LINEAGE = text(
+    """
+    SELECT deployment_id, doc_id FROM document_versions WHERE version_id = :version_id
+    """
+)
+
 _TOMBSTONE_VERSION = text(
     """
     UPDATE document_versions SET deleted_at = coalesce(deleted_at, now())
@@ -1506,6 +1617,29 @@ _SELECT_READY_CYCLES = text(
           WHERE v.sync_cycle_id = y.cycle_id
             AND (w.status IS NULL OR w.status <> 'succeeded')
       )
+      AND NOT EXISTS (
+          -- D143: a live version waiting to enter an enabled layer has work
+          -- still to come (no row exists yet), and one inside a layer holds
+          -- until that layer's frontier (a claims tail may still be owed); an
+          -- unentered gap of a disabled layer never holds.
+          SELECT 1
+          FROM document_versions v
+          JOIN documents d ON d.doc_id = v.doc_id
+          JOIN processing_layer_gaps g
+            ON g.deployment_id = y.deployment_id AND g.version_id = v.version_id
+          LEFT JOIN deployment_processing_layers l
+            ON l.deployment_id = y.deployment_id
+          WHERE v.sync_cycle_id = y.cycle_id
+            AND v.deleted_at IS NULL AND d.deleted_at IS NULL
+            AND g.discharged_at IS NULL
+            AND (
+                g.entered_at IS NOT NULL
+                OR CASE g.layer
+                     WHEN 'claims' THEN coalesce(l.claims_enabled, true)
+                     ELSE coalesce(l.facts_enabled, true)
+                   END
+            )
+      )
     ORDER BY y.started_at
     """
 )
@@ -1600,6 +1734,10 @@ _SELECT_CLOSURE_BOUNDARY = text(
     JOIN document_versions v ON v.version_id = d.current_version_id
     WHERE d.doc_id = :doc_id
     """
+)
+
+_LOCK_CYCLE = text(
+    "SELECT cycle_id FROM connector_sync_cycles WHERE cycle_id = :cycle_id FOR UPDATE"
 )
 
 _CLAIM_FINALIZATION = text(

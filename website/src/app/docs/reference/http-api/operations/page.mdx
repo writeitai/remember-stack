@@ -91,6 +91,7 @@ four declare themselves read-only (`mutates: false`). See
 | Name | In | Type | Required | Constraints |
 |---|---|---|---|---|
 | `name` | path | string | yes | One of `resolve_entity`, `claims_and_sources_context`, `facts_context`, `combined_context`. |
+| `layers` | query | `sources`, `claims` or `facts`, repeatable | no | The [processing layers](/docs/concepts/retrieval#narrowing-a-read-to-layers) the call may read. Default: every layer the deployment serves. |
 
 ### Request body
 
@@ -137,6 +138,8 @@ See [Reading a result](/docs/concepts/reading-results).
 | `422` | `{"code": "invalid_parameter", "message": "<name> violates maxLength=8192"}` (and similar) | A length, item-count, uniqueness or range bound. |
 | `422` | `{"code": "invalid_parameter", "message": "candidate_k cannot be smaller than k"}` | All three context operations. |
 | `422` | validation list | The body is not a JSON object. |
+| `409` | `{"code": "layer_unavailable", "layer": "facts", "status": "disabled", "message": "…"}` | The operation, an argument or `layers` needs a layer the deployment does not process. |
+| `422` | `{"code": "invalid_parameter", "message": "…"}` | `layers` leaves none of the operation's layers, or excludes one an argument needs (such as `facts` for `entity_ids`). |
 | `503` | `model provider unavailable` | Embedding the query failed at the model provider. Retry later. |
 
 <Cloud>

@@ -9,6 +9,8 @@ Architecture lives in the design; this file only sequences it.
 implementation follows in one pull request from the updated `main`, reviewed again as a whole,
 with every work package below and the design's §9 acceptance tests.
 
+**Status.** Implemented in pull request #518 (all work packages and the §9 acceptance tests).
+
 **Operational constraint.** Development and tests use isolated databases only. No work package
 connects to a running benchmark host, its database or deployment, and no work package makes
 paid model calls; tests use the recorded or fake model providers.

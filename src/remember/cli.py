@@ -492,7 +492,7 @@ def _run_operations(args: argparse.Namespace) -> int:
             return 2
         print(
             client.run_operation(
-                name=args.operation, arguments=arguments
+                name=args.operation, arguments=arguments, layers=args.layers
             ).model_dump_json()
         )
         return 0
@@ -505,8 +505,15 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
         if command == "text":
             query_text = args.query_text
             if getattr(args, "combined", False):
-                ans = client.combined_context(query=query_text)
+                ans = client.combined_context(query=query_text, layers=args.layers)
                 print(ans.model_dump_json(indent=2))
+            elif args.layers is not None:
+                narrowed = client.run_operation(
+                    name="facts_context",
+                    arguments={"query": query_text},
+                    layers=args.layers,
+                )
+                print(narrowed.model_dump_json(indent=2))
             else:
                 fact = client.facts_context(query=query_text)
                 print(fact.model_dump_json(indent=2))
@@ -518,6 +525,7 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
                         sql=args.statement,
                         parameters=_json_list(args.parameters),
                         max_rows=args.max_rows,
+                        layers=args.layers,
                     ),
                     default=str,
                 )
@@ -527,7 +535,9 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
             print(
                 json.dumps(
                     client.explain_sql(
-                        sql=args.statement, parameters=_json_list(args.parameters)
+                        sql=args.statement,
+                        parameters=_json_list(args.parameters),
+                        layers=args.layers,
                     ),
                     default=str,
                 )
@@ -580,6 +590,7 @@ def _run_open_query(*, client: MemoryClient, args: argparse.Namespace) -> int:
                         version=args.version,
                         parameters=_json_list(args.parameters),
                         max_rows=args.max_rows,
+                        layers=args.layers,
                     ),
                     default=str,
                 )
@@ -768,6 +779,7 @@ def _run_mcp(args: argparse.Namespace) -> int:
             bind=args.bind,
             engine_url=connection.api_url or DEFAULT_API_URL,
             read_only=bool(args.read_only),
+            layers=args.layers,
         )
     remote_url = connection.mcp_url
     if remote_url is None and not explicit_engine and connection.claims is not None:
@@ -776,6 +788,11 @@ def _run_mcp(args: argparse.Namespace) -> int:
                 connection.claims.iss, http=http
             ).remember_mcp_endpoint
     if remote_url is not None:
+        if args.layers is not None:
+            return _usage_error(
+                "--layers narrows an engine-mode session; a remote MCP server"
+                " applies its own deployment's layers"
+            )
         return _run_mcp_bridge(args, connection=connection, remote_url=remote_url)
     from remember.mcp_engine import EngineMcpServer
     from remember.mcp_engine import serve_stdio
@@ -783,7 +800,10 @@ def _run_mcp(args: argparse.Namespace) -> int:
     with _cli_memory_client(args) as client:
         return serve_stdio(
             server=EngineMcpServer(
-                client=client, read_only=bool(args.read_only), path_ingest=True
+                client=client,
+                read_only=bool(args.read_only),
+                path_ingest=True,
+                layers=args.layers,
             )
         )
 
@@ -830,6 +850,17 @@ def _run_mcp_bridge(
         read_only=bool(args.read_only),
     )
     return bridge.run()
+
+
+def _layer_list(value: str) -> tuple[str, ...]:
+    """Parse a comma-separated D143 ``--layers`` value (sources, claims, facts)."""
+    layers = tuple(part.strip() for part in value.split(",") if part.strip())
+    unknown = sorted(set(layers) - {"sources", "claims", "facts"})
+    if not layers or unknown:
+        raise argparse.ArgumentTypeError(
+            "--layers takes a comma-separated subset of sources,claims,facts"
+        )
+    return layers
 
 
 def _usage_error(message: str) -> int:
@@ -1038,6 +1069,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     run_operation.add_argument(
         "--arg", action="append", default=[], metavar="KEY=VALUE", help="repeatable"
     )
+    run_operation.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help="comma-separated processing layers to read (sources,claims,facts; D143)",
+    )
 
     query = commands.add_parser("query", help="query knowledge or open retrieval space")
     query_commands = query.add_subparsers(dest="query_command", required=True)
@@ -1053,12 +1090,24 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         default=False,
         help="run combined_context instead of facts_context",
     )
+    text_p.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help="comma-separated processing layers to read (sources,claims,facts; D143)",
+    )
     sql = query_commands.add_parser(
         "sql", parents=[client_flags], help="run one sandboxed SQL statement"
     )
     sql.add_argument("statement", help="SQL text")
     sql.add_argument("--parameters", help="JSON array of positional bound parameters")
     sql.add_argument("--max-rows", type=int)
+    sql.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help="comma-separated processing layers to read (sources,claims,facts; D143)",
+    )
     explain_sql = query_commands.add_parser(
         "explain-sql",
         parents=[client_flags],
@@ -1067,6 +1116,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
     explain_sql.add_argument("statement", help="SQL text")
     explain_sql.add_argument(
         "--parameters", help="JSON array of positional bound parameters"
+    )
+    explain_sql.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help="comma-separated processing layers to read (sources,claims,facts; D143)",
     )
     space = query_commands.add_parser(
         "space",
@@ -1107,6 +1162,12 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--parameters", help="JSON array of positional bound parameters"
     )
     run_saved.add_argument("--max-rows", type=int)
+    run_saved.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help="comma-separated processing layers to read (sources,claims,facts; D143)",
+    )
     adjacent_chunks = query_commands.add_parser(
         "adjacent-chunks",
         parents=[client_flags],
@@ -1265,6 +1326,16 @@ def _build_parser(*, include_internal_ops: bool = False) -> argparse.ArgumentPar
         "--bind",
         default="127.0.0.1:8765",
         help="loopback HOST:PORT for --transport http (default 127.0.0.1:8765)",
+    )
+    mcp.add_argument(
+        "--layers",
+        type=_layer_list,
+        default=None,
+        help=(
+            "comma-separated processing layers this session may read"
+            " (sources,claims,facts; default every layer the deployment serves);"
+            " engine mode only (D143)"
+        ),
     )
     mcp.add_argument(
         "--remote-url",

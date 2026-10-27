@@ -22,6 +22,7 @@ from typing import cast
 from typing import Literal
 from uuid import UUID
 
+from remember.errors import MemoryApiError
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import DELETE_DOCUMENT_TOOL_NAME
 from remember.mcp_tools import DOCUMENT_REFERENCES_TOOL_NAME
@@ -33,6 +34,7 @@ from remember.mcp_tools import handle_search_documents_tool
 from remember.mcp_tools import handle_section_history_tool
 from remember.mcp_tools import INGEST_TOOL_NAME
 from remember.mcp_tools import invalid_arguments
+from remember.mcp_tools import layer_unavailable
 from remember.mcp_tools import map_error
 from remember.mcp_tools import MEMORY_WRITE_TOOL_NAMES
 from remember.mcp_tools import OPEN_QUERY_TOOL_NAMES
@@ -59,6 +61,8 @@ from rememberstack.model.documents import ChunkNotFoundError
 from rememberstack.model.documents import DocumentNotFoundError
 from rememberstack.model.documents import DocumentUpload
 from rememberstack.model.documents import IngestedVersion
+from rememberstack.model.processing_layers import LayerSelectionError
+from rememberstack.model.processing_layers import LayerUnavailableError
 from rememberstack.surfaces.http_api import DocumentDeletionPort
 from rememberstack.surfaces.http_api import DocumentReferencesPort
 from rememberstack.surfaces.http_api import DocumentSearchPort
@@ -68,7 +72,9 @@ from rememberstack.surfaces.http_api import SectionHistoryPort
 from rememberstack.surfaces.operation_surface import InvalidArgumentError
 from rememberstack.surfaces.operation_surface import MissingArgumentError
 from rememberstack.surfaces.operation_surface import OperationSurface
+from rememberstack.surfaces.operation_surface import ProcessingLayersPort
 from rememberstack.surfaces.operation_surface import UnknownOperationError
+from rememberstack.surfaces.operation_surface import unserved_operation_names
 from rememberstack.surfaces.query_sandbox.discovery import (
     query_space_description_payload,
 )
@@ -270,6 +276,7 @@ class OperationMcpServer:
         document_search: DocumentSearchPort | None = None,
         section_history: SectionHistoryPort | None = None,
         document_references: DocumentReferencesPort | None = None,
+        processing_layers: ProcessingLayersPort | None = None,
     ) -> None:
         """Bind the MCP server to the operation surface and optional ports.
 
@@ -294,6 +301,7 @@ class OperationMcpServer:
                 " omitted — half-wired write tools are not allowed"
             )
         self._surface = surface
+        self._layers = processing_layers
         self._open_query = open_query
         self._write_backend: _LocalMemoryWriteBackend | None = None
         if ingest is not None and pipeline_readiness is not None:
@@ -354,7 +362,12 @@ class OperationMcpServer:
             names.append(SECTION_HISTORY_TOOL_NAME)
         if self._references_backend is not None:
             names.append(DOCUMENT_REFERENCES_TOOL_NAME)
-        names.extend(OPERATION_TOOL_NAMES)
+        # D143 §7.4: operations whose layer the deployment does not serve
+        # (facts_context, resolve_entity without facts) are not listed.
+        unserved = unserved_operation_names(
+            layers=self._layers, deployment_id=self._surface.deployment_id
+        )
+        names.extend(name for name in OPERATION_TOOL_NAMES if name not in unserved)
         names.append(ADJACENT_CHUNKS_TOOL_NAME)
         if self._open_query is not None:
             names.extend(OPEN_QUERY_TOOL_NAMES)
@@ -452,6 +465,19 @@ class OperationMcpServer:
             )
         except (MissingArgumentError, InvalidArgumentError) as error:
             return error_result(invalid_arguments(detail=str(error)))
+        except LayerSelectionError as error:
+            # D143 §7.2: the 422 the HTTP route answers, as engine-mode maps it.
+            return error_result(
+                map_error(
+                    MemoryApiError(
+                        status_code=422, detail=str(error), code="invalid_parameter"
+                    )
+                )
+            )
+        except LayerUnavailableError as error:
+            return error_result(
+                layer_unavailable(layer=error.layer.value, detail=str(error))
+            )
         except Exception:  # noqa: BLE001 — the MCP wire boundary
             return _internal_error(name=name)
         return {

@@ -26,11 +26,13 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import PipelineStageReadiness
 from rememberstack.model import ReadinessRequirements
 from rememberstack.model import VersionPipelineReadiness
+from rememberstack.model.client import ProcessingLayer
 from rememberstack.spine.graph_catalog import graph_catalog_problems
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
+from rememberstack.spine.processing_layers import layer_configuration_on
 from rememberstack.spine.projection import ProjectionCatalog
 
 
@@ -61,8 +63,20 @@ class PipelineReadinessCatalog:
         deployment_id: UUID,
         version_ids: tuple[UUID, ...],
         require: ReadinessRequirements,
+        layers: frozenset[ProcessingLayer] | None = None,
+        discharged_as_skipped: bool = True,
     ) -> PipelineReadinessReport:
-        """Return readiness without mutating or waiting for the pipeline."""
+        """Return readiness without mutating or waiting for the pipeline.
+
+        D143: the expected stages are those of ``layers`` — by default the
+        layers the deployment serves now; a managed receipt passes the layers
+        of the profile the version was measured under. With every layer
+        expected the report is exactly the pre-D143 one. Serving readiness
+        reads a discharged layer's stages as ``skipped``; a receipt passes
+        ``discharged_as_skipped=False`` so only stages that really ran count.
+        """
+        from rememberstack.workers.reconcile import RECONCILE_CLAIMS_VERSION
+
         version_ids = tuple(dict.fromkeys(version_ids))
         if not version_ids:
             raise ValueError("pipeline readiness requires at least one version_id")
@@ -165,6 +179,31 @@ class PipelineReadinessCatalog:
                     .mappings()
                     .all()
                 )
+            configuration = layer_configuration_on(
+                connection=connection, deployment_id=deployment_id
+            )
+            expected_layers = configuration.served if layers is None else layers
+            discharged = {
+                (UUID(str(row["version_id"])), ProcessingLayer(str(row["layer"])))
+                for row in connection.execute(
+                    _DISCHARGED_GAPS,
+                    {"deployment_id": deployment_id, "version_ids": version_ids},
+                ).mappings()
+            }
+            claims_reconcile_rows = (
+                ()
+                if ProcessingLayer.FACTS in expected_layers
+                else connection.execute(
+                    _CLAIMS_RECONCILE_WORK,
+                    {
+                        "deployment_id": deployment_id,
+                        "version_ids": version_ids,
+                        "claims_version": RECONCILE_CLAIMS_VERSION,
+                    },
+                )
+                .mappings()
+                .all()
+            )
             p1_ready = bool(
                 connection.execute(
                     _P1_READY, {"deployment_id": deployment_id}
@@ -226,14 +265,39 @@ class PipelineReadinessCatalog:
                 str(row["component_version"]),
             )
             by_key[key] = row
+        claims_reconciles = {
+            UUID(str(row["target_id"])): row for row in claims_reconcile_rows
+        }
         versions: list[VersionPipelineReadiness] = []
         terminal_at = None
         for version_id in version_ids:
             stages: list[PipelineStageReadiness] = []
-            for stage, component_version in self._expected:
+            for stage, configured_version in self._expected:
+                layer = _stage_layer(
+                    stage=stage, facts_expected=ProcessingLayer.FACTS in expected_layers
+                )
+                if layer not in expected_layers:
+                    continue
+                component_version = configured_version
                 row = by_key.get((version_id, stage, component_version))
+                if stage is PipelineStage.RECONCILE and layer is ProcessingLayer.CLAIMS:
+                    # Facts not expected: a succeeded full reconcile from before
+                    # the switch satisfies the claims reconcile (D143 §4.5).
+                    claims_row = claims_reconciles.get(version_id)
+                    if row is None or row["status"] != "succeeded":
+                        row = claims_row
+                        component_version = RECONCILE_CLAIMS_VERSION
                 status = "missing" if row is None else str(row["status"])
                 finished_at = None if row is None else row["finished_at"]
+                if (
+                    discharged_as_skipped
+                    and status != "succeeded"
+                    and (version_id, layer) in discharged
+                ):
+                    # D143 §5.3: a superseded living version the layer will
+                    # never process (its gap was discharged).
+                    status = "skipped"
+                    finished_at = checked_at
                 stages.append(
                     PipelineStageReadiness.model_validate(
                         {
@@ -335,6 +399,29 @@ _VERSION_WORK = text(
     """
 ).bindparams(bindparam("version_ids", expanding=True))
 
+_DISCHARGED_GAPS = text(
+    """
+    SELECT version_id, layer
+    FROM processing_layer_gaps
+    WHERE deployment_id = :deployment_id
+      AND version_id IN :version_ids
+      AND discharged_at IS NOT NULL
+    """
+).bindparams(bindparam("version_ids", expanding=True))
+
+_CLAIMS_RECONCILE_WORK = text(
+    """
+    SELECT target_id, stage::text AS stage, component_version,
+           status::text AS status, finished_at, defer_reason::text AS defer_reason
+    FROM processing_state
+    WHERE deployment_id = :deployment_id
+      AND target_kind = 'document_version'
+      AND target_id IN :version_ids
+      AND stage = 'reconcile'
+      AND component_version = :claims_version
+    """
+).bindparams(bindparam("version_ids", expanding=True))
+
 _P1_READY = text(
     """
     SELECT count(*) = 7 AND coalesce(bool_and(ready), false)
@@ -402,6 +489,39 @@ _CITATION_PATH_HEALTH = text(
       :deployment_id, :candidate_id, :candidate_id, 1, 1, 8, 8, 1000
     )
     """
+)
+
+
+def _stage_layer(*, stage: PipelineStage, facts_expected: bool) -> ProcessingLayer:
+    """The processing layer an expected per-version stage belongs to (D143 §2).
+
+    ``reconcile`` belongs to facts when facts are expected (the full
+    reconcile) and to claims otherwise (either reconcile satisfies it).
+    """
+    if stage in _CLAIMS_STAGES:
+        return ProcessingLayer.CLAIMS
+    if stage is PipelineStage.RECONCILE:
+        return ProcessingLayer.FACTS if facts_expected else ProcessingLayer.CLAIMS
+    if stage in _FACTS_STAGES:
+        return ProcessingLayer.FACTS
+    return ProcessingLayer.SOURCES
+
+
+_CLAIMS_STAGES = frozenset(
+    {
+        PipelineStage.EXTRACT_CLAIMS,
+        PipelineStage.GROUND_CLAIMS,
+        PipelineStage.EMBED_CLAIM,
+    }
+)
+_FACTS_STAGES = frozenset(
+    {
+        PipelineStage.NORMALIZE_RELATIONS,
+        PipelineStage.ADJUDICATE_OBSERVATIONS,
+        PipelineStage.ADJUDICATE_SUPERSESSION,
+        PipelineStage.LABEL_RELATION,
+        PipelineStage.REVIEW_FACT_WINDOWS,
+    }
 )
 
 

@@ -23,10 +23,13 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from rememberstack.adapters.selfhost import LocalFSObjectStore
+from rememberstack.adapters.selfhost import LocalMountPublisher
+from rememberstack.adapters.selfhost.mounts import EMPTY_CORPUS_NOTE
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import ObjectKey
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import ProjectionCatalog
+from rememberstack.spine.processing_layers import ProcessingLayerCatalog
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.workers import CorpusFsBuilder
 from rememberstack.workers import CorpusFsSettings
@@ -666,3 +669,125 @@ def test_purged_and_unaccepted_originals_are_not_advertised(corpus: _Corpus) -> 
         assert row["stored_version_id"] == version_id
     with catalog.corpus_export(deployment_id=uuid4()) as export:
         assert export.documents() == ()
+
+
+class _OpenAdmission:
+    """D74 never fences these proofs."""
+
+    def assert_available(self, *, deployment_id: UUID) -> None:
+        """Always available."""
+        del deployment_id
+
+
+def test_a_facts_off_snapshot_omits_entities_and_mounts_serve_only_matching_ones(
+    corpus: _Corpus, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """§9.13 mounts: after an all-on publication facts are switched off. The
+    all-on snapshot is never activated for the new served set (placeholder,
+    no knowledge mount); the matching build omits ``entities/`` and every
+    line linking to it and records ``facts=False``; a build that started
+    under facts-on and publishes after the switch is not activated."""
+    catalog = ProjectionCatalog(engine=corpus.engine)
+    store = LocalFSObjectStore(root=tmp_path / "corpusfs")
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    publisher = LocalMountPublisher(
+        root=tmp_path / "mounts",
+        catalog=catalog,
+        corpusfs_store=store,
+        knowledge_root=knowledge,
+        admission=_OpenAdmission(),
+    )
+    layers = ProcessingLayerCatalog(engine=corpus.engine)
+
+    CorpusFsBuilder(catalog=catalog, snapshot_store=store).build(
+        deployment_id=_DEPLOYMENT_ID, version="a-all-on"
+    )
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert (Path(mounts.p3) / "entities" / "_index.md").exists()
+    assert mounts.knowledge is not None
+    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P3_corpusfs")
+    assert latest is not None and "facts" not in dict(latest["validation"])  # type: ignore[arg-type]
+
+    # A slow build starts while facts are served; before it publishes, setup
+    # switches facts off and publishes the matching snapshot.
+    stale_catalog = ProjectionCatalog(engine=corpus.engine)
+    publish_stale = stale_catalog.publish
+    published: dict[str, object] = {}
+
+    def switch_then_publish(**kwargs: object) -> bool:
+        layers.reconcile_settings(
+            deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=False
+        )
+        placeholder = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+        published["placeholder"] = (Path(placeholder.p3) / "llms.txt").read_text()
+        published["placeholder_entities"] = (Path(placeholder.p3) / "entities").exists()
+        published["placeholder_knowledge"] = placeholder.knowledge
+        published["matching"] = CorpusFsBuilder(
+            catalog=catalog, snapshot_store=store
+        ).build(deployment_id=_DEPLOYMENT_ID, version="b-no-facts")
+        return publish_stale(**kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(stale_catalog, "publish", switch_then_publish)
+    stale = CorpusFsBuilder(catalog=stale_catalog, snapshot_store=store).build(
+        deployment_id=_DEPLOYMENT_ID, version="c-stale-all-on"
+    )
+
+    # the all-on snapshot was never activated for the facts-off set
+    assert published["placeholder"] == EMPTY_CORPUS_NOTE
+    assert published["placeholder_entities"] is False
+    assert published["placeholder_knowledge"] is None
+    # the stale build is recorded for its own configuration and not activated
+    assert stale["published"] is False
+    with corpus.engine.connect() as connection:
+        stale_row = (
+            connection.execute(
+                text(
+                    "SELECT status::text AS status, validation"
+                    " FROM projection_snapshots WHERE version = 'c-stale-all-on'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert stale_row["status"] == "superseded"
+    assert "facts" not in stale_row["validation"]
+
+    latest = catalog.latest_snapshot(deployment_id=_DEPLOYMENT_ID, plane="P3_corpusfs")
+    assert latest is not None and latest["version"] == "b-no-facts"
+    assert dict(latest["validation"])["facts"] is False  # type: ignore[arg-type]
+    tree = _Tree(store=store, prefix=str(latest["gcs_uri"]))
+    paths = tree.paths()
+    assert paths and not any(path.startswith("entities/") for path in paths)
+    assert not any("entities/" in tree.read(path) for path in paths)
+    assert "Acme's 2023 results." in tree.read("by-source/upload/_index.md")
+
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    served = Path(mounts.p3)
+    assert (served / ".snapshot-version").read_text() == "b-no-facts"
+    assert not (served / "entities").exists()
+    assert "entities/" not in (served / "llms.txt").read_text()
+    assert mounts.knowledge is None
+
+    # Facts back on before a matching build exists: the earlier all-on
+    # publication is the latest snapshot built for this set, so it serves
+    # again; the stale build that never published does not.
+    layers.reconcile_settings(
+        deployment_id=_DEPLOYMENT_ID, claims_enabled=True, facts_enabled=True
+    )
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert (Path(mounts.p3) / ".snapshot-version").read_text() == "a-all-on"
+    assert (Path(mounts.p3) / "entities" / "_index.md").exists()
+    # A deletion after that publication retires it: an older tree never
+    # brings deleted content back, so the placeholder stands until a rebuild.
+    with corpus.engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE documents SET deleted_at = now()"
+                " WHERE doc_id = (SELECT doc_id FROM documents"
+                " WHERE deployment_id = :d LIMIT 1)"
+            ),
+            {"d": _DEPLOYMENT_ID},
+        )
+    mounts = publisher.publish(deployment_id=_DEPLOYMENT_ID)
+    assert (Path(mounts.p3) / "llms.txt").read_text() == EMPTY_CORPUS_NOTE

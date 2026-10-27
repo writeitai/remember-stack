@@ -28,6 +28,8 @@ from rememberstack.model import Grain
 from rememberstack.model import PrimitiveChainPlan
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
@@ -288,6 +290,14 @@ class _AuthorityStub:
     def __init__(self) -> None:
         self.evaluated_at: list[datetime] = []
         self.default_fact_arguments: list[dict[str, object]] = []
+
+    def layer_admission(
+        self, *, channels: frozenset[ProcessingLayer], **_: object
+    ) -> LayerAdmission:
+        """Every layer served and complete (an unconfigured deployment)."""
+        return LayerAdmission(
+            consulted=channels, unconsulted=frozenset(), backfilling=frozenset()
+        )
 
     def claims_and_sources_context(self, **arguments: object) -> Envelope:
         """Return testimony while recording the executor's evaluation instant."""

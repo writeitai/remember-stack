@@ -263,18 +263,24 @@ remember documents delete a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b
 
 ```text
 remember query "QUESTION" [--combined]
-remember query text "QUESTION" [--combined]
-remember query sql STATEMENT [--parameters JSON] [--max-rows N]
-remember query explain-sql STATEMENT [--parameters JSON]
+remember query text "QUESTION" [--combined] [--layers LIST]
+remember query sql STATEMENT [--parameters JSON] [--max-rows N] [--layers LIST]
+remember query explain-sql STATEMENT [--parameters JSON] [--layers LIST]
 remember query space [--pattern GLOB] [--include-examples]
 remember query search-space QUERY [--k N]
 remember query list-saved [--namespace NS] [--status STATUS]
 remember query describe-saved NAMESPACE NAME [--version N]
-remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max-rows N]
+remember query run-saved NAMESPACE NAME [--version N] [--parameters JSON] [--max-rows N] [--layers LIST]
 remember query adjacent-chunks CHUNK_ID [--window {1,2}]
 ```
 
 Every subcommand also takes `--api-url`, `--api-key` and `--project`.
+
+`--layers` narrows a read to some of the deployment's
+[processing layers](/docs/concepts/retrieval#narrowing-a-read-to-layers): a
+comma-separated subset of `sources`, `claims` and `facts`, for example
+`--layers sources,claims`. Without it a read uses every layer the deployment
+serves.
 
 #### Asking a question
 
@@ -339,7 +345,7 @@ remember query adjacent-chunks 6f1c2d0e-… --window 2
 
 ```text
 remember operations list [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember operations run NAME [--arg KEY=VALUE]... [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember operations run NAME [--arg KEY=VALUE]... [--layers LIST] [--api-url URL] [--api-key KEY] [--project PROJECT]
 ```
 
 `list` prints one JSON descriptor per line for the four assured operations,
@@ -347,7 +353,7 @@ with each one's input schema.
 
 `run` runs one operation. Each `--arg` is `KEY=VALUE`; the value is parsed as
 JSON when it can be, otherwise kept as a string. The result prints as one
-line of JSON.
+line of JSON. `--layers` narrows the layers it reads, as for `remember query`.
 
 ```bash
 remember operations run facts_context \
@@ -364,8 +370,8 @@ in [Assured operations](/docs/reference/assured-operations).
 ### `remember mcp`
 
 ```text
-remember mcp [--read-only] [--api-url URL] [--api-key KEY] [--project PROJECT]
-remember mcp --transport http [--bind HOST:PORT] [--read-only] [--api-url URL]
+remember mcp [--read-only] [--layers LIST] [--api-url URL] [--api-key KEY] [--project PROJECT]
+remember mcp --transport http [--bind HOST:PORT] [--read-only] [--layers LIST] [--api-url URL]
 ```
 
 <Cloud>
@@ -382,7 +388,9 @@ command<Cloud>, so after `remember login` it needs no flags</Cloud>.
 `--transport http` serves the same tools over HTTP at
 `http://127.0.0.1:8765/mcp` instead (`--bind` picks another loopback address or port).
 `--read-only` removes the tools that change memory, `ingest` and
-`delete_document`.
+`delete_document`. `--layers` narrows every read of the session to those
+[processing layers](/docs/concepts/retrieval#narrowing-a-read-to-layers) and
+leaves out the tools that read only other layers.
 
 <Cloud>
 

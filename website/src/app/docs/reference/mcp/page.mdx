@@ -87,6 +87,13 @@ out: upgrade `remember` or the engine so their versions match. If
 `-32603`, so a wrong key never looks like an empty tool list. A full server
 lists 18 tools: 6 + 4 + 1 + 7.
 
+A deployment that does not process the facts
+[layer](/docs/concepts/pipeline#processing-layers) does not report
+`resolve_entity` or `facts_context`, so they are left out. With `--layers`,
+the server also leaves out every tool that reads only layers outside the
+selection, and each remaining read uses only the selected layers. A call that
+needs a missing layer fails with `layer_unavailable`.
+
 Every tool carries MCP tool annotations:
 `readOnlyHint` is `true` for a tool that only reads and `false` for
 `ingest` and `delete_document`, and `destructiveHint` is `true` only for

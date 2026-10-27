@@ -819,16 +819,26 @@ def _extract_follow_up(
     chunks: tuple[ChunkForEmbedding, ...],
     chunker_version: str,
 ) -> HandlerOutcome:
-    """D84: fan out one extract_claims job per chunk (or normalize if none)."""
+    """D84: fan out one extract_claims job per chunk (or normalize if none).
+
+    The outcome carries the D143 claims boundary: the ledger runs these
+    follow-ups unchanged for an unconfigured deployment and decides by the
+    lineage order for a configured one.
+    """
+    from rememberstack.workers.base import ClaimsBoundary
     from rememberstack.workers.base import EmptyObsFlushComplete
     from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 
+    boundary = ClaimsBoundary(
+        deployment_id=work.deployment_id, version_id=source.version_id, lane=work.lane
+    )
     if not chunks:
         # D90: no claims ⇒ durable empty_complete + supersession + embed_claim.
         # Never insert a document_version adjudicate_observations row at the
         # entity-fanout component version (§5.7 / §5.8).
         return HandlerOutcome(
             follow_up=(),
+            claims_boundary=boundary,
             empty_obs_flush=EmptyObsFlushComplete(
                 deployment_id=work.deployment_id,
                 version_id=source.version_id,
@@ -842,6 +852,7 @@ def _extract_follow_up(
             ),
         )
     return HandlerOutcome(
+        claims_boundary=boundary,
         follow_up=tuple(
             EnqueueWork(
                 deployment_id=work.deployment_id,
@@ -858,7 +869,7 @@ def _extract_follow_up(
                 },
             )
             for chunk in chunks
-        )
+        ),
     )
 
 

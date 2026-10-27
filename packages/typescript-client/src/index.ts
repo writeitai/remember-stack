@@ -1,5 +1,7 @@
 /** Remember's Node.js client and transport-neutral tool support. */
 export type * from './public-types.generated';
+/** D143 processing layer names; Python's ProcessingLayer StrEnum projected as a string union. */
+export type {ProcessingLayer} from './generated';
 export * from './errors';
 export {SecretString,configDir,credentialsPath,loadCredentials} from './credentials';
 export type {StoredCredentials,ConnectionEnvironment} from './credentials';

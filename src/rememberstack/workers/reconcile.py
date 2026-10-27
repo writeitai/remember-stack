@@ -38,6 +38,7 @@ from rememberstack.model import EnqueueWork
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
+from rememberstack.model import ProcessingLane
 from rememberstack.model import ReconciliationDelta
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
@@ -45,6 +46,8 @@ from rememberstack.ports.profile_refresher import ProfileRefresherPort
 from rememberstack.spine.admission import active_forget_id_on
 from rememberstack.spine.fact_applications import ApplicationInputChanged
 from rememberstack.spine.lifecycle import LifecycleCatalog
+from rememberstack.spine.processing_layers import lineage_changed_on
+from rememberstack.spine.processing_layers import take_layer_fence_on
 from rememberstack.spine.review import ReviewQueue
 from rememberstack.workers.base import HandlerOutcome
 from rememberstack.workers.e1 import E2_EXTRACTOR_VERSION
@@ -53,6 +56,14 @@ from rememberstack.workers.p1 import P1Settings
 
 RECONCILE_VERSION = "reconcile-2026.07"
 """The reconcile stage's component version (D12 idempotency key member)."""
+
+RECONCILE_CLAIMS_VERSION = f"{RECONCILE_VERSION}:claims"
+"""The claims-mode reconcile of a version that did not enter facts (D143 §4.2).
+
+Same logic as the full reconcile; it opens no ``label_relation`` and no fact
+window review. A distinct component version so the full reconcile can still
+run for the version when the facts layer later reaches it.
+"""
 
 _logger = logging.getLogger(__name__)
 
@@ -108,11 +119,22 @@ class ReconcileHandler:
             context["versioning_mode"] == "living"
             and context["current_version_id"] is not None
         ):
-            source_acted = self._catalog.stale_for_supersession(
-                deployment_id=deployment_id,
-                doc_id=context["doc_id"],  # type: ignore[arg-type]
-                current_version_id=context["current_version_id"],  # type: ignore[arg-type]
-            )
+            if self._catalog.layers_configured(deployment_id=deployment_id):
+                # D143 §4.2: retire only against a current version whose
+                # claim occurrences are complete, checked and applied in one
+                # transaction under the lineage lock.
+                source_acted = self._catalog.apply_guarded_supersession(
+                    deployment_id=deployment_id,
+                    doc_id=context["doc_id"],  # type: ignore[arg-type]
+                    version_id=version_id,
+                    reconciliation_id=reconciliation_id,
+                )
+            else:
+                source_acted = self._catalog.stale_for_supersession(
+                    deployment_id=deployment_id,
+                    doc_id=context["doc_id"],  # type: ignore[arg-type]
+                    current_version_id=context["current_version_id"],  # type: ignore[arg-type]
+                )
         transcription = self._catalog.stale_for_reextraction(
             version_id=version_id,
             representation_id=representation_id,
@@ -231,6 +253,9 @@ class ReconcileHandler:
             raise NonRetryableHandlerError(
                 f"version {version_id} reconciliation context has no doc_id"
             )
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
+            # D143 §4.2: the claims mode opens no fact label and no review.
+            return HandlerOutcome()
         return HandlerOutcome(
             follow_up=(
                 *_window_review(
@@ -241,6 +266,7 @@ class ReconcileHandler:
                     request_id=uuid5(
                         NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                     ),
+                    lane=work.lane,
                 ),
                 EnqueueWork(
                     deployment_id=work.deployment_id,
@@ -343,7 +369,10 @@ class ReconcileHandler:
                 reconciliation_id,
             )
         # D140 §8.2: late testimony retired from a deleted version changes
-        # the lineage's evidence; review its facts (only if it had periods)
+        # the lineage's evidence; review its facts (only if it had periods).
+        # The claims mode opens no review (D143 §4.2).
+        if work.component_version == RECONCILE_CLAIMS_VERSION:
+            return HandlerOutcome()
         return HandlerOutcome(
             follow_up=_window_review(
                 catalog=self._catalog,
@@ -353,6 +382,7 @@ class ReconcileHandler:
                 request_id=uuid5(
                     NAMESPACE_URL, f"fact-window-review:{reconciliation_id}"
                 ),
+                lane=work.lane,
             )
         )
 
@@ -441,11 +471,10 @@ class CycleFinalizer:
         """Finalize every ready cycle; returns the cycles this call won.
 
         The claim is atomic and FIRST (two finalizer instances never both
-        evaluate one cycle); every cascade re-derives from current state
-        under a derived, stable reconciliation id, so a crash mid-cycle
-        leaves a brief, visible, self-healing gap rather than duplicates.
-        Source-tombstoned lineages are swept deployment-wide on every pass
-        for the same reason. A LOSSY cycle (per-item failures) skips
+        evaluate one cycle), and a cycle's claim and closure commit together;
+        every cascade re-derives from current state under a derived, stable
+        reconciliation id. Source-tombstoned lineages are swept
+        deployment-wide on every pass, each episode in its own transaction. A LOSSY cycle (per-item failures) skips
         absence-based closure — its observation set is incomplete; the next
         healthy cycle of the same source covers it.
         """
@@ -453,12 +482,19 @@ class CycleFinalizer:
         for cycle_id, failed_items in self._catalog.cycles_ready_to_finalize(
             deployment_id=deployment_id
         ):
-            if not self._catalog.claim_finalization(cycle_id=cycle_id):
-                continue  # another finalizer won this cycle
-            if failed_items == 0:
-                for doc_id in self._catalog.cycle_lineages(cycle_id=cycle_id):
-                    self._close_lineage_zero_support(
-                        deployment_id=deployment_id, cycle_id=cycle_id, doc_id=doc_id
+            # D143: layers can give a completed cycle new work, and setup can
+            # write the first configuration at any moment, so a candidate is a
+            # hint: it is re-checked, claimed and closed in one transaction
+            # under the shared layer fence (identical results when no layer
+            # was ever configured).
+            with self._catalog.transaction() as catalog:
+                if not catalog.claim_ready_finalization(
+                    deployment_id=deployment_id, cycle_id=cycle_id
+                ):
+                    continue  # no longer ready, or another finalizer won it
+                if failed_items == 0:
+                    self._close_cycle(
+                        catalog=catalog, deployment_id=deployment_id, cycle_id=cycle_id
                     )
             finalized.append(cycle_id)
         for doc_id, episode_at in self._catalog.stranded_deletion_episodes(
@@ -505,34 +541,63 @@ class CycleFinalizer:
                 )
         return tuple(finalized)
 
+    def _close_cycle(
+        self, *, catalog: LifecycleCatalog, deployment_id: UUID, cycle_id: UUID
+    ) -> None:
+        """Source-acted closure for every lineage the cycle observed."""
+        reopened_at = catalog.cycle_reopened_at(cycle_id=cycle_id)
+        for doc_id in catalog.cycle_lineages(cycle_id=cycle_id):
+            self._close_lineage_zero_support(
+                catalog=catalog,
+                deployment_id=deployment_id,
+                cycle_id=cycle_id,
+                doc_id=doc_id,
+                reopened_at=reopened_at,
+            )
+
     def _close_lineage_zero_support(
-        self, *, deployment_id: UUID, cycle_id: UUID, doc_id: UUID
+        self,
+        *,
+        catalog: LifecycleCatalog,
+        deployment_id: UUID,
+        cycle_id: UUID,
+        doc_id: UUID,
+        reopened_at: datetime | None,
     ) -> None:
         """§4 source-acted closure for one observed lineage, cycle-scoped."""
-        claim_ids = self._catalog.lineage_claim_ids(
+        claim_ids = catalog.lineage_claim_ids(
             deployment_id=deployment_id, doc_id=doc_id
         )
-        relation_ids = self._catalog.affected_relation_ids(claim_ids=claim_ids)
-        observation_ids = self._catalog.affected_observation_ids(claim_ids=claim_ids)
-        reconciliation_id = _derived_run_id(
-            kind="finalize", cycle_id=cycle_id, doc_id=doc_id
+        relation_ids = catalog.affected_relation_ids(claim_ids=claim_ids)
+        observation_ids = catalog.affected_observation_ids(claim_ids=claim_ids)
+        reconciliation_id = (
+            _derived_run_id(kind="finalize", cycle_id=cycle_id, doc_id=doc_id)
+            if reopened_at is None
+            # D143: a cycle reopened by a layer entry finalizes again as its
+            # own run, so its closures are recorded rather than deduplicated.
+            else _derived_run_id(
+                kind="refinalize",
+                cycle_id=cycle_id,
+                doc_id=doc_id,
+                at=reopened_at.isoformat(),
+            )
         )
-        closed_relations = self._catalog.close_relations(
+        closed_relations = catalog.close_relations(
             deployment_id=deployment_id,
-            relation_ids=self._catalog.open_zero_support_relations(
+            relation_ids=catalog.open_zero_support_relations(
                 deployment_id=deployment_id, relation_ids=relation_ids
             ),
-            boundary=self._catalog.closure_boundary(doc_id=doc_id),
+            boundary=catalog.closure_boundary(doc_id=doc_id),
             reconciliation_id=reconciliation_id,
         )
-        closed_observations = self._catalog.close_observations(
+        closed_observations = catalog.close_observations(
             deployment_id=deployment_id,
-            observation_ids=self._catalog.open_zero_support_observations(
+            observation_ids=catalog.open_zero_support_observations(
                 deployment_id=deployment_id, observation_ids=observation_ids
             ),
             reconciliation_id=reconciliation_id,
         )
-        self._catalog.emit_evidence_changed(
+        catalog.emit_evidence_changed(
             deployment_id=deployment_id,
             delta=ReconciliationDelta(
                 reconciliation_id=reconciliation_id,
@@ -710,6 +775,8 @@ class DocumentDeleter:
             raise ForgetInProgressError(
                 f"deployment {deployment_id} is honoring a hard forget"
             )
+        # D143 §3.3 lock order: the layer fence before the lineage lock.
+        take_layer_fence_on(connection=connection, deployment_id=deployment_id)
         catalog = LifecycleCatalog.on_connection(connection=connection)
         # Lock the lineage BEFORE reading its state: a concurrent delete of
         # the same document waits here, then reads the committed tombstone
@@ -750,6 +817,10 @@ class DocumentDeleter:
             raise DocumentNotFoundError(str(doc_id))
         # D140 §8.2: catalog.delete_lineage queued the window review in this
         # transaction (only for a lineage that ever had periods)
+        # D143: the deleted lineage's gaps go in the same transaction.
+        lineage_changed_on(
+            connection=connection, deployment_id=deployment_id, doc_id=doc_id
+        )
         return delta, deleted_at
 
 
@@ -928,8 +999,12 @@ def _window_review(
     doc_id: UUID,
     reason: str,
     request_id: UUID,
+    lane: ProcessingLane | None,
 ) -> tuple[EnqueueWork, ...]:
-    """A D140 §8.2 lineage review job, only for a lineage that had periods."""
+    """A D140 §8.2 lineage review job, only for a lineage that had periods.
+
+    It takes the lane of the reconcile that requests it (D143 §5.5).
+    """
     from rememberstack.spine.period_adjudication import review_request
 
     if not catalog.lineage_ever_periodised(deployment_id=deployment_id, doc_id=doc_id):
@@ -940,5 +1015,6 @@ def _window_review(
             doc_id=doc_id,
             reason=reason,
             request_id=request_id,
+            lane=lane,
         ),
     )

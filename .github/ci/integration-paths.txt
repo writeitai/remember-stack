@@ -76,3 +76,6 @@ src/tests/spine/test_document_references.py
 src/tests/surfaces/test_d140_scoped_retrieval.py
 src/tests/spine/test_d140_period_adjudication_pg.py
 src/tests/workers/test_d140_period_reuse_pg.py
+src/tests/surfaces/test_processing_layers_retrieval_pg.py
+src/tests/surfaces/test_d143_default_operations_pg.py
+src/tests/workers/test_processing_layers_pg.py

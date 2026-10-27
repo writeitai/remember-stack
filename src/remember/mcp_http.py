@@ -127,13 +127,20 @@ class McpHttpServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(
-        self, *, host: str, port: int, engine_url: str, read_only: bool
+        self,
+        *,
+        host: str,
+        port: int,
+        engine_url: str,
+        read_only: bool,
+        layers: tuple[str, ...] | None = None,
     ) -> None:
         if ":" in host:
             self.address_family = socket.AF_INET6
         super().__init__((host, port), _Handler)
         self.engine_url = engine_url.rstrip("/")
         self.read_only = read_only
+        self.layers = layers
         self.sessions = _Sessions()
         self.slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
         bound_port = self.server_address[1]
@@ -297,6 +304,7 @@ class _Handler(BaseHTTPRequestHandler):
                 client=MemoryClient(client=http),
                 read_only=self.listener.read_only,
                 path_ingest=False,
+                layers=self.listener.layers,
             )
             return dispatch(server=server, message=message)
 
@@ -346,20 +354,38 @@ def _error_body(message: str) -> dict[str, object]:
     return {"error": message}
 
 
-def build_server(*, bind: str, engine_url: str, read_only: bool) -> McpHttpServer:
+def build_server(
+    *,
+    bind: str,
+    engine_url: str,
+    read_only: bool,
+    layers: tuple[str, ...] | None = None,
+) -> McpHttpServer:
     """Bind the listener on a loopback address (not yet serving)."""
     host, port = parse_bind(bind)
     try:
         return McpHttpServer(
-            host=host, port=port, engine_url=engine_url, read_only=read_only
+            host=host,
+            port=port,
+            engine_url=engine_url,
+            read_only=read_only,
+            layers=layers,
         )
     except OSError as error:
         raise HttpTransportError(f"cannot listen on {bind}: {error}") from error
 
 
-def serve_http(*, bind: str, engine_url: str, read_only: bool) -> int:
+def serve_http(
+    *,
+    bind: str,
+    engine_url: str,
+    read_only: bool,
+    layers: tuple[str, ...] | None = None,
+) -> int:
     """Serve until interrupted."""
-    server = build_server(bind=bind, engine_url=engine_url, read_only=read_only)
+    server = build_server(
+        bind=bind, engine_url=engine_url, read_only=read_only, layers=layers
+    )
     print(
         f"remember mcp: serving {server.url} for the engine at {engine_url}",
         file=sys.stderr,

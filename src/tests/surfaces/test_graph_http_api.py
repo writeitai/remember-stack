@@ -20,6 +20,10 @@ from rememberstack.model import Grain
 from rememberstack.model import GraphEdge
 from rememberstack.model import GraphNode
 from rememberstack.model import GraphPath
+from rememberstack.model import Negative
+from rememberstack.model import NegativeKind
+from rememberstack.model.client import ProcessingLayerState
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
 
@@ -321,3 +325,76 @@ def test_graph_edge_reference_qualifiers_default_empty_and_reject_unknown(
     assert edge.bindings == () and edge.source_labels == ()
     with pytest.raises(ValidationError):
         model.model_validate({**legacy, "bindings": ["dynamic"]})
+
+
+class _EmptyGraph(_Graph):
+    """Answer every entity-graph read with nothing found."""
+
+    def _answer(self) -> Envelope:
+        """An empty ``known_empty`` fact envelope."""
+        return (
+            super()
+            ._answer()
+            .model_copy(
+                update={
+                    "negative": Negative(
+                        kind=NegativeKind.KNOWN_EMPTY, explanation="no matching edges"
+                    )
+                }
+            )
+        )
+
+
+class _Layers:
+    """A fixed facts state for the D143 layers port."""
+
+    def __init__(self, *, facts: ProcessingLayerState) -> None:
+        self._states = ProcessingLayerStates(claims="enabled", facts=facts)
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """The fixed states."""
+        assert deployment_id == _DEPLOYMENT_ID
+        return self._states
+
+
+_ENTITY_READS = (
+    ("/graph/neighborhood", {"entity_id": str(_ENTITY_A)}),
+    ("/graph/path", {"from_entity_id": str(_ENTITY_A), "to_entity_id": str(_ENTITY_B)}),
+)
+
+
+@pytest.mark.parametrize(("route", "body"), _ENTITY_READS)
+@pytest.mark.parametrize(
+    ("facts", "status", "negative"),
+    [
+        ("enabled", 200, "known_empty"),
+        ("backfilling", 200, "boundary"),
+        ("disabled", 409, None),
+    ],
+)
+def test_entity_graph_reads_follow_the_facts_layer(
+    route: str,
+    body: dict[str, object],
+    facts: ProcessingLayerState,
+    status: int,
+    negative: str | None,
+) -> None:
+    """D143 §7.3: facts disabled is 409; an empty answer while facts backfill is
+    a boundary; with facts complete the envelope is unchanged."""
+    boundary = _Ready()
+    client = TestClient(
+        build_api(
+            engine=_UnusedEngine(),  # type: ignore[arg-type]
+            deployment_id=_DEPLOYMENT_ID,
+            admission=boundary,
+            readiness=boundary,
+            graph=_EmptyGraph(),
+            processing_layers=_Layers(facts=facts),
+        )
+    )
+    response = client.post(route, json=body)
+    assert response.status_code == status
+    if negative is None:
+        assert response.json()["detail"]["code"] == "layer_unavailable"
+    else:
+        assert response.json()["negative"]["kind"] == negative

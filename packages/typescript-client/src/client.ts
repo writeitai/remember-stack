@@ -17,6 +17,13 @@ export type QueryResultDict = Models.OutputQueryResult;
 type Envelope = Models.OutputEnvelope;
 type ContextBundle = Models.OutputContextBundleV2;
 type Params = Record<string,string|number|boolean|null|undefined> | ReadonlyArray<readonly [string,string]>;
+/** Render a D143 layer selection (any of sources, claims, facts; omitted means every served layer) as repeated layers query parameters. */
+function layerParams({layers}:{layers?:readonly string[]|null}):Params|undefined {
+  if(layers==null)return undefined;
+  // Omitting layers reads every served layer; an empty selection is not that request, so it is refused rather than widened.
+  if(typeof layers==='string'||layers.length===0)throw new InputValidationError({detail:'layers must name at least one of sources, claims, facts; omit it to read every layer the deployment serves'});
+  return layers.map(layer=>['layers',String(layer)] as const);
+}
 /** Encode one identifier as a URL segment, including characters encodeURIComponent leaves literal. */
 function segment({value}:{value:string}):string {return encodeURIComponent(value).replace(/[!'()*]/g,c=>`%${c.charCodeAt(0).toString(16).toUpperCase()}`);}
 /** Adapt direct SDK identifier failures to Python's ordinary ValueError behavior. */
@@ -126,22 +133,22 @@ export class MemoryClient {
   /** Return every assured-operation descriptor served by the deployment. */
   async listOperations({signal}:RequestOptions={}):Promise<Models.OutputToolDescriptor[]> {return listResponse({name:'ToolDescriptor',value:await this.json({method:'GET',path:'/operations',signal})});}
   /** Run an assured operation, discriminating the exact public response contract. */
-  async runOperation({name,arguments:args={},signal}:{name:string;arguments?:Record<string,Models.JsonValue>;signal?:AbortSignal}):Promise<Envelope|ContextBundle> {
-    const value=await this.json({method:'POST',path:`/operations/${segment({value:name})}`,body:args,signal});
+  async runOperation({name,arguments:args={},layers,signal}:{name:string;arguments?:Record<string,Models.JsonValue>;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<Envelope|ContextBundle> {
+    const value=await this.json({method:'POST',path:`/operations/${segment({value:name})}`,params:layerParams({layers}),body:args,signal});
     const contract=(value as {contract?:unknown}|null)?.contract;
     return validateModel({name:contract==='ContextBundle/v2'?'ContextBundleV2':'Envelope',value,response:true});
   }
   /** Execute one sandboxed SQL statement. */
-  async querySql({sql,parameters=[],maxRows,signal}:{sql:string;parameters?:Models.JsonValue[];maxRows?:number|null;signal?:AbortSignal}):Promise<QueryResultDict> {
+  async querySql({sql,parameters=[],maxRows,layers,signal}:{sql:string;parameters?:Models.JsonValue[];maxRows?:number|null;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<QueryResultDict> {
     const body:Record<string,unknown>={sql,parameters};if(maxRows!=null)body.max_rows=maxRows;
-    return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:'/query/sql',body,signal}),response:true});
+    return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:'/query/sql',params:layerParams({layers}),body,signal}),response:true});
   }
   /** Python-compatible convenience name returning native .rows/.columns/.truncated properties. */
-  async openQuery(options:Parameters<MemoryClient['querySql']>[0]):Promise<QueryResultDict> {return this.querySql(options);}
+  async openQuery({sql,parameters,maxRows,signal}:{sql:string;parameters?:Models.JsonValue[];maxRows?:number|null;signal?:AbortSignal}):Promise<QueryResultDict> {return this.querySql({sql,parameters,maxRows,signal});}
   /** Explain one sandboxed SQL statement without executing it. */
-  async explainSql({sql,parameters=[],signal}:{sql:string;parameters?:Models.JsonValue[];signal?:AbortSignal}):Promise<QueryResultDict> {return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:'/query/sql/explain',body:{sql,parameters},signal}),response:true});}
+  async explainSql({sql,parameters=[],layers,signal}:{sql:string;parameters?:Models.JsonValue[];layers?:readonly string[]|null;signal?:AbortSignal}):Promise<QueryResultDict> {return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:'/query/sql/explain',params:layerParams({layers}),body:{sql,parameters},signal}),response:true});}
   /** Convenience alias for explainSql. */
-  async explainQuery(options:Parameters<MemoryClient['explainSql']>[0]):Promise<QueryResultDict> {return this.explainSql(options);}
+  async explainQuery({sql,parameters,signal}:{sql:string;parameters?:Models.JsonValue[];signal?:AbortSignal}):Promise<QueryResultDict> {return this.explainSql({sql,parameters,signal});}
   /** Discover manifest-backed schema objects and optional examples. */
   async describeQuerySpace({pattern,includeExamples=false,signal}:{pattern?:string|null;includeExamples?:boolean;signal?:AbortSignal}={}):Promise<Record<string,Models.JsonValue>> {return objectResponse({value:await this.json({method:'GET',path:'/query/space',params:{include_examples:includeExamples,pattern},signal})});}
   /** Search manifest text with atomic typed result validation. */
@@ -154,25 +161,26 @@ export class MemoryClient {
     return objectResponse({value:await this.json({method:'GET',path:`/query/saved/${namespace}/${name}`,params:{version},signal})});
   }
   /** Execute one active saved-query version through the sandbox. */
-  async runSavedQuery({namespace,name,parameters=[],version,maxRows,signal}:{namespace:string;name:string;parameters?:Models.JsonValue[];version?:number|null;maxRows?:number|null;signal?:AbortSignal}):Promise<QueryResultDict> {
+  async runSavedQuery({namespace,name,parameters=[],version,maxRows,layers,signal}:{namespace:string;name:string;parameters?:Models.JsonValue[];version?:number|null;maxRows?:number|null;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<QueryResultDict> {
     clientIdentifier({value:namespace,field:'namespace'});clientIdentifier({value:name,field:'name'});
     const body:Record<string,unknown>={parameters};if(version!=null)body.version=version;if(maxRows!=null)body.max_rows=maxRows;
-    return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:`/query/saved/${namespace}/${name}/run`,body,signal}),response:true});
+    return validateModel({name:'QueryResult',value:await this.json({method:'POST',path:`/query/saved/${namespace}/${name}/run`,params:layerParams({layers}),body,signal}),response:true});
   }
-  /** Dispatch the seven open-query infrastructure tools after catalogue validation. */
-  async callOpenQuery({name,arguments:args,signal}:{name:string;arguments:Record<string,unknown>;signal?:AbortSignal}):Promise<unknown> {
+  /** Dispatch the seven open-query infrastructure tools after catalogue validation; layers narrows executing tools' reads. */
+  async callOpenQuery({name,arguments:args,layers,signal}:{name:string;arguments:Record<string,unknown>;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<unknown> {
     if(!OPEN_QUERY_TOOL_NAMES.includes(name))throw new InputValidationError({detail:'unknown open-query tool'});
     const parsed=await validateArguments({name,arguments:args});
     const camel=Object.fromEntries(Object.entries(parsed).map(([key,value])=>[key.replace(/_([a-z])/g,(_,c:string)=>c.toUpperCase()),value]));
     Object.assign(camel,{signal});
+    const executing={...camel,layers};
     switch(name) {
-      case 'query_sql':return this.querySql(camel as Parameters<MemoryClient['querySql']>[0]);
-      case 'explain_sql':return this.explainSql(camel as Parameters<MemoryClient['explainSql']>[0]);
+      case 'query_sql':return this.querySql(executing as Parameters<MemoryClient['querySql']>[0]);
+      case 'explain_sql':return this.explainSql(executing as Parameters<MemoryClient['explainSql']>[0]);
       case 'describe_query_space':return this.describeQuerySpace(camel);
       case 'search_query_space':return this.searchQuerySpace(camel as Parameters<MemoryClient['searchQuerySpace']>[0]);
       case 'list_saved_queries':return this.listSavedQueries(camel);
       case 'describe_saved_query':return this.describeSavedQuery(camel as Parameters<MemoryClient['describeSavedQuery']>[0]);
-      case 'run_saved_query':return this.runSavedQuery(camel as Parameters<MemoryClient['runSavedQuery']>[0]);
+      case 'run_saved_query':return this.runSavedQuery(executing as Parameters<MemoryClient['runSavedQuery']>[0]);
       default:throw new InputValidationError({detail:'unknown open-query tool'});
     }
   }
@@ -181,12 +189,12 @@ export class MemoryClient {
     const args:Record<string,Models.JsonValue>={query};if(time!=null)args.time=time;if(hops!=null)args.hops=hops;if(predicate!=null)args.predicate=predicate;if(entityIds!=null)args.entity_ids=entityIds;if(k!=null)args.k=k;if(candidateK!=null)args.candidate_k=candidateK;
     const value=await this.runOperation({name:'facts_context',arguments:args,signal});return validateModel({name:'Envelope',value,response:true});
   }
-  /** Run assured combined fact and source recall. */
-  async combinedContext({query,time,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<ContextBundle> {
-    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},signal});return validateModel({name:'ContextBundleV2',value,response:true});
+  /** Run assured combined fact and source recall; a side with none of its layers admitted returns empty with a boundary negative. */
+  async combinedContext({query,time,k,candidateK,layers,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<ContextBundle> {
+    const value=await this.runOperation({name:'combined_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},layers,signal});return validateModel({name:'ContextBundleV2',value,response:true});
   }
-  /** Run assured source-claim recall. */
-  async claimsAndSourcesContext({query,time,k,candidateK,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},signal}),response:true});}
+  /** Run assured source-claim recall; layers ['sources'] answers from source passages only. */
+  async claimsAndSourcesContext({query,time,k,candidateK,layers,signal}:{query:string;time?:Record<string,Models.JsonValue>|null;k?:number;candidateK?:number;layers?:readonly string[]|null;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'claims_and_sources_context',arguments:{query,...(time!=null?{time}:{}),...(k!=null?{k}:{}),...(candidateK!=null?{candidate_k:candidateK}:{})},layers,signal}),response:true});}
   /** Run assured entity resolution. */
   async resolveEntity({name,signal}:{name:string;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.runOperation({name:'resolve_entity',arguments:{name},signal}),response:true});}
   /** Resolve a name with optional repeated focal-entity query parameters. */
@@ -225,6 +233,8 @@ export class MemoryClient {
   async graphCitationPath({fromDocId,toDocId,maxHops=6,signal}:{fromDocId:string;toDocId:string;maxHops?:number;signal?:AbortSignal}):Promise<Envelope> {return validateModel({name:'Envelope',value:await this.json({method:'POST',path:'/graph/citation-path',body:{from_doc_id:fromDocId,to_doc_id:toDocId,max_hops:maxHops},signal}),response:true});}
   /** Read serving code/model bindings before submitting work. */
   async deploymentBuildInfo({signal}:RequestOptions={}):Promise<Models.OutputDeploymentBuildInfo> {return validateModel({name:'DeploymentBuildInfo',value:await this.json({method:'GET',path:'/deployment',signal}),response:true});}
+  /** Read which switchable processing layers (claims, facts) are enabled, backfilling or disabled. */
+  async processingLayers({signal}:RequestOptions={}):Promise<Models.OutputProcessingLayerStates> {return validateModel({name:'ProcessingLayerStates',value:await this.json({method:'GET',path:'/processing-layers',signal}),response:true});}
   /** Inspect exact capabilities for a nonempty set of version identifiers. */
   async pipelineReadiness({versionIds,require,signal}:{versionIds:string[];require:Models.ReadinessRequirements;signal?:AbortSignal}):Promise<Models.OutputPipelineReadinessReport> {
     if(!versionIds.length)throw new InputValidationError({detail:'pipeline readiness requires at least one version_id'});
