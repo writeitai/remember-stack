@@ -5,7 +5,7 @@
     <title>Coverage for src/rememberstack/workers/fact_window_review.py: 90.8%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
-    <script src="coverage_html_cb_15cffcd0.js" defer></script>
+    <script src="coverage_html_cb_54cfdca1.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
@@ -66,8 +66,8 @@
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_a2296a8460817c7b_forget_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-26 11:34 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
+            created at 2026-10-27 11:02 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -248,20 +248,21 @@
     <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">                        <span class="nam">NAMESPACE_URL</span><span class="op">,</span> <span class="fst">f&quot;</span><span class="fst">fact-window-review-next:</span><span class="op">{</span><span class="nam">work</span><span class="op">.</span><span class="nam">processing_id</span><span class="op">}</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">                    <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">                    <span class="nam">after</span><span class="op">=</span><span class="nam">next_after</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">                <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">        <span class="key">return</span> <span class="nam">HandlerOutcome</span><span class="op">(</span><span class="nam">follow_up</span><span class="op">=</span><span class="op">(</span><span class="op">*</span><span class="nam">reviews</span><span class="op">,</span> <span class="op">*</span><span class="nam">continuation</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">                    <span class="nam">lane</span><span class="op">=</span><span class="nam">work</span><span class="op">.</span><span class="nam">lane</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">                <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">        <span class="key">return</span> <span class="nam">HandlerOutcome</span><span class="op">(</span><span class="nam">follow_up</span><span class="op">=</span><span class="op">(</span><span class="op">*</span><span class="nam">reviews</span><span class="op">,</span> <span class="op">*</span><span class="nam">continuation</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t"><span class="key">def</span> <span class="nam">_payload_uuid</span><span class="op">(</span><span class="op">*</span><span class="op">,</span> <span class="nam">work</span><span class="op">:</span> <span class="nam">ClaimedWork</span><span class="op">,</span> <span class="nam">field</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">UUID</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Read a required UUID from the claimed payload; absence is non-retryable.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t">    <span class="nam">value</span> <span class="op">=</span> <span class="op">(</span><span class="nam">work</span><span class="op">.</span><span class="nam">payload</span> <span class="key">or</span> <span class="op">{</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">field</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">value</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">176&#x202F;&#x219B;&#x202F;177</span><span class="annotate long">line 176 didn't jump to line 177 because the condition on line 176 was never true</span></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t">        <span class="key">raise</span> <span class="nam">NonRetryableHandlerError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t">            <span class="fst">f&quot;</span><span class="fst">stage </span><span class="op">{</span><span class="nam">work</span><span class="op">.</span><span class="nam">stage</span><span class="op">}</span><span class="fst"> work </span><span class="op">{</span><span class="nam">work</span><span class="op">.</span><span class="nam">processing_id</span><span class="op">}</span><span class="fst"> carries no </span><span class="op">{</span><span class="nam">field</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst"> payload</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis mis2 show_mis"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t">    <span class="key">return</span> <span class="nam">UUID</span><span class="op">(</span><span class="nam">value</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t"><span class="key">def</span> <span class="nam">_payload_uuid</span><span class="op">(</span><span class="op">*</span><span class="op">,</span> <span class="nam">work</span><span class="op">:</span> <span class="nam">ClaimedWork</span><span class="op">,</span> <span class="nam">field</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-&gt;</span> <span class="nam">UUID</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t">    <span class="str">&quot;&quot;&quot;Read a required UUID from the claimed payload; absence is non-retryable.&quot;&quot;&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t">    <span class="nam">value</span> <span class="op">=</span> <span class="op">(</span><span class="nam">work</span><span class="op">.</span><span class="nam">payload</span> <span class="key">or</span> <span class="op">{</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">field</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t177" href="#t177">177</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">value</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">177&#x202F;&#x219B;&#x202F;178</span><span class="annotate long">line 177 didn't jump to line 178 because the condition on line 177 was never true</span></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t178" href="#t178">178</a></span><span class="t">        <span class="key">raise</span> <span class="nam">NonRetryableHandlerError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t179" href="#t179">179</a></span><span class="t">            <span class="fst">f&quot;</span><span class="fst">stage </span><span class="op">{</span><span class="nam">work</span><span class="op">.</span><span class="nam">stage</span><span class="op">}</span><span class="fst"> work </span><span class="op">{</span><span class="nam">work</span><span class="op">.</span><span class="nam">processing_id</span><span class="op">}</span><span class="fst"> carries no </span><span class="op">{</span><span class="nam">field</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst"> payload</span><span class="fst">&quot;</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t180" href="#t180">180</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t181" href="#t181">181</a></span><span class="t">    <span class="key">return</span> <span class="nam">UUID</span><span class="op">(</span><span class="nam">value</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -270,8 +271,8 @@
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_a2296a8460817c7b_forget_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.16.2">coverage.py v7.16.2</a>,
-            created at 2026-10-26 11:34 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.17.0">coverage.py v7.17.0</a>,
+            created at 2026-10-27 11:02 +0000
         </p>
     </div>
 </footer>
