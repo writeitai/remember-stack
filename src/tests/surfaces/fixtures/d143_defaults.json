@@ -7,14 +7,14 @@
     },
     "tools": {
       "adjacent_chunks": 1,
-      "claims_and_sources_context": 3,
-      "combined_context": 4,
+      "claims_and_sources_context": 4,
+      "combined_context": 5,
       "delete_document": 1,
       "describe_query_space": 1,
       "describe_saved_query": 1,
       "document_references": 1,
       "explain_sql": 1,
-      "facts_context": 3,
+      "facts_context": 4,
       "ingest": 2,
       "list_saved_queries": 1,
       "pipeline_readiness": 1,
@@ -666,7 +666,7 @@
           "additionalProperties": false,
           "properties": {
             "candidate_k": {
-              "default": 200,
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
               "maximum": 400,
               "minimum": 1,
               "type": "integer"
@@ -683,6 +683,7 @@
             },
             "k": {
               "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
               "maximum": 100,
               "minimum": 1,
               "type": "integer"
@@ -776,6 +777,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -799,8 +806,9 @@
               "type": "integer"
             },
             "k": {
-              "default": 15,
-              "maximum": 30,
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -898,6 +906,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -911,6 +925,13 @@
             "hops": {
               "default": 1,
               "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "k": {
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -1711,7 +1732,7 @@
           "additionalProperties": false,
           "properties": {
             "candidate_k": {
-              "default": 200,
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
               "maximum": 400,
               "minimum": 1,
               "type": "integer"
@@ -1728,6 +1749,7 @@
             },
             "k": {
               "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
               "maximum": 100,
               "minimum": 1,
               "type": "integer"
@@ -1821,6 +1843,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -1844,8 +1872,9 @@
               "type": "integer"
             },
             "k": {
-              "default": 15,
-              "maximum": 30,
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -1943,6 +1972,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -1956,6 +1991,13 @@
             "hops": {
               "default": 1,
               "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "k": {
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -2932,7 +2974,7 @@
           "additionalProperties": false,
           "properties": {
             "candidate_k": {
-              "default": 200,
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
               "maximum": 400,
               "minimum": 1,
               "type": "integer"
@@ -2949,6 +2991,7 @@
             },
             "k": {
               "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
               "maximum": 100,
               "minimum": 1,
               "type": "integer"
@@ -3042,6 +3085,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -3065,8 +3114,9 @@
               "type": "integer"
             },
             "k": {
-              "default": 15,
-              "maximum": 30,
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -3164,6 +3214,12 @@
         "inputSchema": {
           "additionalProperties": false,
           "properties": {
+            "candidate_k": {
+              "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+              "maximum": 400,
+              "minimum": 1,
+              "type": "integer"
+            },
             "entity_ids": {
               "items": {
                 "format": "uuid",
@@ -3177,6 +3233,13 @@
             "hops": {
               "default": 1,
               "maximum": 2,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "k": {
+              "default": 50,
+              "description": "Maximum confirmed results per evidence type.",
+              "maximum": 100,
               "minimum": 1,
               "type": "integer"
             },
@@ -4120,7 +4183,7 @@
         "additionalProperties": false,
         "properties": {
           "candidate_k": {
-            "default": 200,
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
@@ -4137,6 +4200,7 @@
           },
           "k": {
             "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -4230,6 +4294,12 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -4253,8 +4323,9 @@
             "type": "integer"
           },
           "k": {
-            "default": 15,
-            "maximum": 30,
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -4352,6 +4423,12 @@
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -4365,6 +4442,13 @@
           "hops": {
             "default": 1,
             "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "k": {
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -6746,7 +6830,7 @@
         "additionalProperties": false,
         "properties": {
           "candidate_k": {
-            "default": 200,
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
             "maximum": 400,
             "minimum": 1,
             "type": "integer"
@@ -6763,6 +6847,7 @@
           },
           "k": {
             "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
             "maximum": 100,
             "minimum": 1,
             "type": "integer"
@@ -8895,7 +8980,7 @@
         "title": "Envelope",
         "type": "object"
       },
-      "version": 3
+      "version": 4
     },
     {
       "answer_intent": "facts",
@@ -8904,6 +8989,12 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -8927,8 +9018,9 @@
             "type": "integer"
           },
           "k": {
-            "default": 15,
-            "maximum": 30,
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -11065,7 +11157,7 @@
         "title": "Envelope",
         "type": "object"
       },
-      "version": 3
+      "version": 4
     },
     {
       "answer_intent": "combined_context",
@@ -11074,6 +11166,12 @@
       "input_schema": {
         "additionalProperties": false,
         "properties": {
+          "candidate_k": {
+            "description": "Internal candidates per search channel; omitted means max(4*k, 60). Must be at least k.",
+            "maximum": 400,
+            "minimum": 1,
+            "type": "integer"
+          },
           "entity_ids": {
             "items": {
               "format": "uuid",
@@ -11087,6 +11185,13 @@
           "hops": {
             "default": 1,
             "maximum": 2,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "k": {
+            "default": 50,
+            "description": "Maximum confirmed results per evidence type.",
+            "maximum": 100,
             "minimum": 1,
             "type": "integer"
           },
@@ -13247,13 +13352,13 @@
         "title": "ContextBundleV2",
         "type": "object"
       },
-      "version": 4
+      "version": 5
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "27438ec75f796f8940f6c46729148dfe8cafe6d51706852c46bbfa9c60fd0c76",
-    "checked_in_manifest_sha256": "27438ec75f796f8940f6c46729148dfe8cafe6d51706852c46bbfa9c60fd0c76",
-    "surface_manifest_hash": "4f8f0389654c3c9240bca35bdc735cc59fa6501dd494d9b81fbcf502c364f56c"
+    "built_manifest_sha256": "6c8da13344b745f5cc187ef6f92b0cbe5d3a65065ff9f5e31039fab454294eb7",
+    "checked_in_manifest_sha256": "6c8da13344b745f5cc187ef6f92b0cbe5d3a65065ff9f5e31039fab454294eb7",
+    "surface_manifest_hash": "f8a6e2e20e404fd14d0963cbd4f5808ca0b19882356b5c1f21b2e9397b0a03d2"
   },
   "readiness_expected_components": [
     [

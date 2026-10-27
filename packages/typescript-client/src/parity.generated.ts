@@ -64,12 +64,12 @@ export default {
         "returns": "Envelope"
       },
       "call_open_query": {
-        "arguments": "self, *, name: str, arguments: Mapping[str, object]",
+        "arguments": "self, *, name: str, arguments: Mapping[str, object], layers: Sequence[str] | None=None",
         "property": false,
         "returns": "object"
       },
       "claims_and_sources_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
         "property": false,
         "returns": "Envelope"
       },
@@ -84,7 +84,7 @@ export default {
         "returns": "None"
       },
       "combined_context": {
-        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None",
+        "arguments": "self, query: str, *, k: int | None=None, candidate_k: int | None=None, time: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
         "property": false,
         "returns": "ContextBundleV2"
       },
@@ -134,7 +134,7 @@ export default {
         "returns": "QueryResultDict"
       },
       "explain_sql": {
-        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=()",
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), layers: Sequence[str] | None=None",
         "property": false,
         "returns": "dict[str, object]"
       },
@@ -208,8 +208,13 @@ export default {
         "property": false,
         "returns": "PipelineReadinessReport"
       },
+      "processing_layers": {
+        "arguments": "self",
+        "property": false,
+        "returns": "ProcessingLayerStates"
+      },
       "query_sql": {
-        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), max_rows: int | None=None",
+        "arguments": "self, *, sql: str, parameters: list[object] | tuple[object, ...]=(), max_rows: int | None=None, layers: Sequence[str] | None=None",
         "property": false,
         "returns": "dict[str, object]"
       },
@@ -229,12 +234,12 @@ export default {
         "returns": "Envelope"
       },
       "run_operation": {
-        "arguments": "self, *, name: str, arguments: Mapping[str, object] | None=None",
+        "arguments": "self, *, name: str, arguments: Mapping[str, object] | None=None, layers: Sequence[str] | None=None",
         "property": false,
         "returns": "Envelope | ContextBundleV2"
       },
       "run_saved_query": {
-        "arguments": "self, *, namespace: str, name: str, parameters: list[object] | tuple[object, ...]=(), version: int | None=None, max_rows: int | None=None",
+        "arguments": "self, *, namespace: str, name: str, parameters: list[object] | tuple[object, ...]=(), version: int | None=None, max_rows: int | None=None, layers: Sequence[str] | None=None",
         "property": false,
         "returns": "dict[str, object]"
       },
@@ -327,6 +332,7 @@ export default {
     "EffectiveTimeCleared",
     "Envelope",
     "IngestedVersion",
+    "LayerUnavailable",
     "MatchingEdition",
     "MemoryApiError",
     "MemoryClient",
@@ -334,6 +340,8 @@ export default {
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
+    "ProcessingLayer",
+    "ProcessingLayerStates",
     "ProjectResolutionError",
     "QueryResultDict",
     "RateLimited",
@@ -482,6 +490,11 @@ export default {
         "returns": "ToolError",
         "typescript": "invalidArguments"
       },
+      "remember.mcp_tools._errors.layer_unavailable": {
+        "arguments": "*, layer: str, detail: str",
+        "returns": "ToolError",
+        "typescript": "layerUnavailable"
+      },
       "remember.mcp_tools._errors.map_error": {
         "arguments": "error: BaseException",
         "returns": "ToolError",
@@ -605,6 +618,10 @@ export default {
         "invalid_arguments": {
           "disposition": "public client support export",
           "typescript": "invalidArguments"
+        },
+        "layer_unavailable": {
+          "disposition": "public client support export",
+          "typescript": "layerUnavailable"
         },
         "map_error": {
           "disposition": "public client support export",

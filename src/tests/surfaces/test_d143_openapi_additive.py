@@ -22,7 +22,7 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 _PRE_D143_SHA256: Final = (
     "c2bce70429554311e8564e59b2429e371798da1712e3be6aa3bb1c44eff5578f"
 )
-"""Canonical hash of ``openapi.json`` at 0d05b97e6 (main just before D143's code)."""
+"""Canonical hash of ``openapi.json`` at fbcd489bd (main just before D143's code)."""
 
 _ADDED_ROUTES: Final = frozenset({"/processing-layers"})
 _ADDED_SCHEMAS: Final = frozenset(

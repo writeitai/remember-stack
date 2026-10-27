@@ -2,7 +2,7 @@
 
 ``fixtures/d143_default_operations.json`` is the output of
 :mod:`tests.surfaces.d143_operations_capture` run on the pre-D143 base
-(0d05b97e6) against a database migrated to that base's head. This proof seeds
+(fbcd489bd) against a database migrated to that base's head. This proof seeds
 the same deployment at the current head, runs the same four assured
 operations (through the executor at a fixed ``evaluated_at`` and through
 ``POST /operations/{name}``) and pipeline readiness, and requires the

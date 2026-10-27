@@ -2,7 +2,7 @@
 
 ``fixtures/d143_defaults.json`` was captured by
 :func:`tests.surfaces.d143_defaults_capture.capture_defaults` on the pre-D143
-base (0d05b97e6). It holds the serialized ``GET /operations`` list, the
+base (fbcd489bd). It holds the serialized ``GET /operations`` list, the
 ``GET /deployment`` body with its tools map, the in-process MCP tool list and
 the ``remember-mcp`` engine-mode tool lists (names and input schemas), the
 readiness expected stages with their component versions, and the
