@@ -185,6 +185,71 @@ def test_graph_catalog_ensure_repairs_missing_replayable_metadata(
     assert result.problems_before
     assert result.problems_after == ()
     assert set(result.definitions) == {"memory_current", "memory_history"}
+    # The replay restores head's citation source: the merged projection with
+    # its qualifiers, and the helper that traverses it (p9_40_0061).
+    with engine.connect() as connection:
+        helper = str(
+            connection.execute(
+                text(
+                    "SELECT prosrc FROM pg_proc WHERE oid ="
+                    " 'memory_v1.graph_citation_path(uuid, uuid, uuid, integer,"
+                    " integer, integer, integer, integer)'::regprocedure"
+                )
+            ).scalar_one()
+        )
+        columns = set(
+            connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = 'rememberstack_graph_internal'"
+                    " AND table_name = 'crossrefs_live'"
+                )
+            ).scalars()
+        )
+    assert "FROM rememberstack_graph_internal.crossrefs_live AS x" in helper
+    assert {"bindings", "source_labels"} <= columns
+
+
+def test_graph_catalog_detects_and_repairs_the_per_reference_citation_helper(
+    ready_rows: tuple[Engine, UUID],
+) -> None:
+    """A citation helper that walks every live reference row is drift.
+
+    Both property graphs stay intact and the old helper keeps the current
+    helper's identity, attributes, comment and grants, so only the semantic
+    check can see it; the repair puts the projection traversal back.
+    """
+    from rememberstack.spine.migrations.versions import (
+        p9_17_0038_postgres19_live_graph as graph,
+    )
+    from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+        _replaceable,
+    )
+    from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+        citation_path_helper_body,
+    )
+
+    engine, _version_id = ready_rows
+    with engine.begin() as connection:
+        connection.exec_driver_sql(_replaceable(sql=graph._CITATION_PATH_HELPER))
+
+    result = ensure_graph_catalog(engine=engine)
+
+    assert result.changed is True
+    assert result.problems_before == (
+        "helper contract mismatch for graph_citation_path: it does not traverse"
+        " the current reference projection",
+    )
+    assert result.problems_after == ()
+    with engine.connect() as connection:
+        helper = connection.execute(
+            text(
+                "SELECT prosrc FROM pg_proc WHERE oid ="
+                " 'memory_v1.graph_citation_path(uuid, uuid, uuid, integer,"
+                " integer, integer, integer, integer)'::regprocedure"
+            )
+        ).scalar_one()
+    assert helper == citation_path_helper_body()
 
 
 def test_graph_catalog_ensure_repairs_graph_role_limits_and_helper_acl(

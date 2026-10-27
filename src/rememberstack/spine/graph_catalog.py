@@ -492,6 +492,7 @@ def graph_catalog_problems(*, connection: Connection) -> tuple[str, ...]:
         expected=_EXPECTED_PROPERTY_TYPES,
     )
     _check_helpers(connection=connection, problems=problems)
+    _check_citation_traversal(connection=connection, problems=problems)
     _check_role(connection=connection, problems=problems)
     return tuple(problems)
 
@@ -612,6 +613,55 @@ def _check_helpers(*, connection: Connection, problems: list[str]) -> None:
             or row["graph_role_execute"] is not True
         ):
             problems.append(f"helper contract mismatch for {name}")
+
+
+def _check_citation_traversal(*, connection: Connection, problems: list[str]) -> None:
+    """Verify citation paths traverse the current merged reference projection.
+
+    The helper's identity, attributes and comment are the same as the
+    per-reference helper it replaced (p9_40_0061), so only its source and the
+    projection's qualifier columns tell the two apart.
+    """
+    from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+        citation_path_helper_body,
+    )
+    from rememberstack.spine.migrations.versions.p9_40_0061_citation_path_projection import (
+        PROJECTION_COLUMNS,
+    )
+
+    sources = (
+        connection.execute(
+            text(
+                "SELECT p.prosrc FROM pg_proc AS p "
+                "JOIN pg_namespace AS n ON n.oid = p.pronamespace "
+                "WHERE n.nspname = 'memory_v1' AND p.proname = 'graph_citation_path'"
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if sources and any(source != citation_path_helper_body() for source in sources):
+        problems.append(
+            "helper contract mismatch for graph_citation_path: it does not "
+            "traverse the current reference projection"
+        )
+    columns = tuple(
+        (str(row.attname), str(row.data_type))
+        for row in connection.execute(
+            text(
+                "SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS data_type "
+                "FROM pg_attribute AS a "
+                "WHERE a.attrelid = to_regclass("
+                "'rememberstack_graph_internal.crossrefs_live') "
+                "AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum"
+            )
+        )
+    )
+    if columns != PROJECTION_COLUMNS:
+        problems.append(
+            f"citation projection columns expected {PROJECTION_COLUMNS!r}, "
+            f"observed {columns!r}"
+        )
 
 
 def _check_role(*, connection: Connection, problems: list[str]) -> None:

@@ -368,8 +368,8 @@ One recorded decision.
 | `ingested_at` | UTC date-time, nullable | |
 | `invalidated_at` | UTC date-time, nullable | |
 | `support` | [`FactSupport`](#factsupport) | Default `current`. |
-| `bindings` | array of string | On citation paths, the reference's binding: `floating` (the cited document's versions in force when read) or `pinned` (one named version). Empty on entity edges. |
-| `source_labels` | array of string | On citation paths, the reference's caller-supplied `source_label`, verbatim; empty when it has none, and on entity edges. |
+| `bindings` | array of string | On citation paths, the distinct bindings of the references the edge merges, sorted: `floating` (the cited document's versions in force when read), `pinned` (one named version). Empty on entity edges. |
+| `source_labels` | array of string | On citation paths, the distinct caller-supplied `source_label` values of the merged references, sorted and verbatim; empty when none has one, and on entity edges. |
 
 ### GraphPath
 
