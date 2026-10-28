@@ -225,7 +225,7 @@
 | src/rememberstack/spine/entity\_registry.py                                                   |       49 |        6 |        4 |        1 |     83.0% |64-\>84, 121, 125-131 |
 | src/rememberstack/spine/extension\_packs.py                                                   |       40 |        1 |       16 |        1 |     96.4% |       119 |
 | src/rememberstack/spine/fact\_adjudication.py                                                 |      317 |       23 |      114 |       26 |     88.6% |331, 338-\>303, 374, 434-435, 438, 440, 500, 513, 531, 534, 538, 542, 595-\>600, 596-\>595, 606-\>660, 618-\>622, 619-\>618, 632, 636-\>660, 674-675, 706, 806, 821, 833, 835, 890, 940-941, 1024-\>1043 |
-| src/rememberstack/spine/fact\_application\_inputs.py                                          |      126 |        7 |       40 |        8 |     91.0% |66, 94, 187, 264, 293, 442, 533, 537-\>534 |
+| src/rememberstack/spine/fact\_application\_inputs.py                                          |      126 |        6 |       40 |        7 |     92.2% |66, 94, 264, 293, 442, 533, 537-\>534 |
 | src/rememberstack/spine/fact\_applications.py                                                 |      119 |        7 |       30 |        7 |     90.6% |54, 74, 96, 196, 204, 263, 536 |
 | src/rememberstack/spine/fact\_catalog.py                                                      |      147 |       25 |       14 |        2 |     80.7% |49, 64, 105, 291-\>293, 316, 327-336, 342-343, 361-362, 386-405, 411-423, 454-465 |
 | src/rememberstack/spine/fact\_graph\_contract.py                                              |       37 |        0 |       10 |        0 |    100.0% |           |
@@ -379,7 +379,7 @@
 | src/rememberstack/workers/reconcile.py                                                        |      263 |       14 |       64 |       13 |     91.7% |164, 245-246, 253, 311, 365-366, 375, 412, 417, 451-\>443, 453, 495-\>499, 641-\>652, 678-\>682, 740, 989, 1012 |
 | src/rememberstack/workers/section\_orientation.py                                             |       48 |        4 |       18 |        4 |     87.9% |46, 83, 95, 97 |
 | src/rememberstack/workers/sync.py                                                             |       70 |        0 |       18 |        1 |     98.9% |  108-\>85 |
-| **TOTAL**                                                                                     | **41172** | **3272** | **10464** | **1639** | **89.6%** |           |
+| **TOTAL**                                                                                     | **41172** | **3271** | **10464** | **1638** | **89.6%** |           |
 
 
 ## Setup coverage badge
