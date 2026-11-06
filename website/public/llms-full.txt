@@ -19127,6 +19127,7 @@ Read by `compose.yaml` from `.env`, not by the engine.
 | `REMEMBERSTACK_SELFHOST_ARTIFACTS_MOUNT_ROOT` | unset | path | Default `--artifacts-root` for `mounts`. |
 | `REMEMBERSTACK_SELFHOST_PROJECTION_WORK_ROOT` | `/var/lib/rememberstack/projection-work` | path | Working directory created by `setup`. |
 | `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_ROOT` | `/var/lib/rememberstack/forget-manifests` | path | Where hard-forget manifests are read. |
+| `REMEMBERSTACK_SELFHOST_FORGET_MANIFEST_BUCKET_NAME` | unset | string | Keep hard-forget manifests in this dedicated bucket instead of the manifest root. Never one of the three data buckets. |
 | `REMEMBERSTACK_SELFHOST_MIGRATION_CONFIG` | `alembic.ini` | path | Alembic configuration used by `setup`. |
 
 ## Authentication
@@ -19174,6 +19175,8 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | `REMEMBERSTACK_SELFHOST_GRAPH_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a graph slot. |
 | `REMEMBERSTACK_SELFHOST_GRAPH_MAX_CONCURRENCY` | `2` | int 1–32, ≤ pool size | Graph queries at once. |
 | `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
+| `REMEMBERSTACK_SELFHOST_QUERY_ROLE_HOST` | unset (the database URL's host) | hostname | Where `query_sql` connects as the deployment's query role, for example PostgreSQL itself when the database URL points at a connection pooler. |
+| `REMEMBERSTACK_SELFHOST_QUERY_ROLE_PORT` | unset (the database URL's port) | int 1–65535 | Port for that connection. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
 | `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |

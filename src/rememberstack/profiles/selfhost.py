@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from dataclasses import field
+from dataclasses import replace
 from functools import partial
 import json
 import logging
@@ -203,6 +204,11 @@ class SelfHostSettings(BaseSettings):
     #: ``forget_manifest_root``, so a process keeps no deployment state on
     #: local disk. Never one of the ordinary data buckets above.
     forget_manifest_bucket_name: str | None = Field(default=None, min_length=1)
+    #: Where customer SQL connects as the deployment's query role. Unset, the
+    #: host and port of the database URL are used; set them when that URL
+    #: points at a pooler the query role must bypass.
+    query_role_host: str | None = Field(default=None, min_length=1)
+    query_role_port: int | None = Field(default=None, ge=1, le=65_535)
     migration_config: Path = Path("alembic.ini")
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8000, ge=1, le=65_535)
@@ -736,12 +742,15 @@ class _SelfHostSavedQueryReads:
             return action(registry)
 
 
-def _query_role_connect_factory(*, engine: Engine):
+def _query_role_connect_factory(
+    *, engine: Engine, host: str | None = None, port: int | None = None
+):
     """Bind a query-role connection factory to one profile engine URL.
 
     Uses psycopg keyword arguments so passwords containing ``@``, ``:``, or
-    ``/`` cannot corrupt a reconstructed DSN. Derives host/port/database/
-    password from the injected profile engine rather than reloading settings.
+    ``/`` cannot corrupt a reconstructed DSN. Derives database/password, and
+    host/port unless given, from the injected profile engine rather than
+    reloading settings.
     """
     from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (  # noqa: PLC0415
         query_role_name,
@@ -751,8 +760,8 @@ def _query_role_connect_factory(*, engine: Engine):
     database = url.database or ""
     role = query_role_name(database)
     password = url.password or ""
-    host = url.host or "localhost"
-    port = int(url.port or 5432)
+    host = host or url.host or "localhost"
+    port = port or int(url.port or 5432)
 
     def connect() -> psycopg.Connection:
         """Open as the deployment query role with keyword connection args."""
@@ -1204,12 +1213,8 @@ class SelfHostProfile:
             deployment_per_minute=self._settings.api_admission_deployment_per_minute,
             deployment_in_flight=self._settings.api_admission_deployment_in_flight,
         )
-        deployment = self.api_deployment()
-        app = build_api(
-            **vars(deployment),
-            ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
-            trusted_principal_source=self._settings.trusted_principal_source,
-            browser_origins=_browser_origins(self._settings.browser_origins),
+        deployment = replace(
+            self.api_deployment(),
             auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
             direct_admission=(
                 DirectPathAdmission(limits=admission_limits)
@@ -1217,6 +1222,12 @@ class SelfHostProfile:
                 else None
             ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
+        )
+        app = build_api(
+            **vars(deployment),
+            ingest_body_max_bytes=self._settings.ingest_body_max_bytes,
+            trusted_principal_source=self._settings.trusted_principal_source,
+            browser_origins=_browser_origins(self._settings.browser_origins),
             readiness=_FreshDeploymentReadiness(store=self._forget_manifest_store()),
         )
 
@@ -1245,7 +1256,10 @@ class SelfHostProfile:
         """This deployment's HTTP capabilities, as one request's context (D147).
 
         A host serving several deployments returns one of these per request
-        from its override of ``deployment_context``.
+        from its override of ``deployment_context``. Its perimeter (``auth``,
+        ``direct_admission``, ``spend_lease``) is empty; :meth:`api` fills it
+        from settings, and a host sets its own, for example with
+        ``dataclasses.replace(profile.api_deployment(), auth=...)``.
         """
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
@@ -1288,7 +1302,11 @@ class SelfHostProfile:
         # One admission + audit authority for open SQL.
         kill_switches = KillSwitches()
         audit_trail = AuditTrail()
-        query_role_connect = _query_role_connect_factory(engine=self._engine)
+        query_role_connect = _query_role_connect_factory(
+            engine=self._engine,
+            host=self._settings.query_role_host,
+            port=self._settings.query_role_port,
+        )
         surface_cost = SqlSurfaceCostRecorder(
             engine=self._engine, deployment_id=self._settings.deployment_id
         )

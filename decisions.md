@@ -7343,8 +7343,8 @@ deployment's values into another's work.
    returns the deployment `build_api` was composed with. A host replaces it with
    `app.dependency_overrides[deployment_context] = resolve` and returns each request's
    own `ApiDeployment` (`SelfHostProfile.api_deployment()`). The D74 admission barrier
-   uses the same per-request deployment. The perimeter gate, direct admission, the spend
-   lease and the startup readiness check stay composed per app.
+   uses the same per-request deployment, and so does the perimeter (item 5). Only the
+   startup readiness check stays composed per app.
 
 4. **What a push-delivery host needs on top (2026-11-06, relaunch designs).**
    - *New work is announced through the context's queue.* Every work row is inserted by
@@ -7373,6 +7373,19 @@ deployment's values into another's work.
      keywords to the main engine (for example `NullPool` for a worker that must hold no
      connection between tasks, or a pool sized to a worker's concurrency);
      `SelfHostProfile.close()` disposes every engine.
+
+5. **One app, a perimeter per request (2026-11-06).** `ApiDeployment` also carries the
+   request's perimeter: `auth`, `direct_admission` and `spend_lease`. The perimeter gate
+   resolves the request's deployment first, by calling the app's `deployment_context`
+   override with the request (a plain or `async` function; it may raise `HTTPException`),
+   then authenticates against that deployment, admits under its limits, and the spend
+   lease middleware uses its lease. Without an override the composed deployment applies,
+   exactly as before. Routes, the D74 barrier, the scope check, ingest attribution and
+   open-query principal forwarding all read the same resolved deployment, and every route
+   is built held so per-request admission keeps its slot accounting.
+   `install_browser_origins(app=…, origins=…)` is public for a host composing its own app.
+   `SelfHostSettings.query_role_host` / `query_role_port` send customer SQL straight to
+   PostgreSQL when the database URL points at a pooler.
 
 No module-level variable holds a deployment's values. Per-deployment state lives on the
 profile, so a host may hold several profiles in one process.

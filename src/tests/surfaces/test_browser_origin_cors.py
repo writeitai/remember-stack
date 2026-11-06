@@ -15,7 +15,7 @@ from uuid import UUID
 
 import pytest
 
-from rememberstack.surfaces.http_api import _install_browser_origins
+from rememberstack.surfaces.http_api import install_browser_origins
 
 
 class _App:
@@ -35,7 +35,7 @@ def test_a_deployment_told_of_no_origin_advertises_nothing() -> None:
     to make authenticated requests from a visitor's browser.
     """
     app = _App()
-    _install_browser_origins(app=app, origins=())  # type: ignore[arg-type]
+    install_browser_origins(app=app, origins=())  # type: ignore[arg-type]
     assert app.installed == []
 
 
@@ -46,7 +46,7 @@ def test_the_named_origin_is_allowed_without_cookies() -> None:
     never see; the browser credential travels in the header instead.
     """
     app = _App()
-    _install_browser_origins(
+    install_browser_origins(
         app=app,  # type: ignore[arg-type]
         origins=("https://app.remember.dev",),
     )
@@ -70,7 +70,7 @@ def test_a_wildcard_or_insecure_origin_is_refused(origin: str) -> None:
     """
     app = _App()
     with pytest.raises(ValueError, match="exactly as a browser serializes"):
-        _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+        install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -127,7 +127,7 @@ def test_an_origin_a_browser_could_never_send_is_refused(origin: str) -> None:
     app = _App()
 
     with pytest.raises(ValueError, match="exactly as a browser serializes"):
-        _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+        install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
     assert app.installed == []
 
@@ -174,7 +174,7 @@ def test_the_forms_a_browser_does_send_are_allowed(origin: str) -> None:
     """
     app = _App()
 
-    _install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
+    install_browser_origins(app=app, origins=(origin,))  # type: ignore[arg-type]
 
     assert app.installed[0]["allow_origins"] == [origin]
 
@@ -199,7 +199,7 @@ def test_a_stray_comma_is_refused_rather_than_skipped() -> None:
 
     app = _App()
     with pytest.raises(ValueError, match="exactly as a browser serializes"):
-        _install_browser_origins(
+        install_browser_origins(
             app=app,  # type: ignore[arg-type]
             origins=_browser_origins("https://a.example,"),
         )
@@ -217,7 +217,7 @@ def test_only_the_headers_a_browser_client_sends_are_advertised() -> None:
     """
     app = _App()
 
-    _install_browser_origins(
+    install_browser_origins(
         app=app,  # type: ignore[arg-type]
         origins=("https://app.example.com",),
     )

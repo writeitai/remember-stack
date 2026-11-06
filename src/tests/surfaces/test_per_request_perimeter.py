@@ -1,0 +1,162 @@
+"""D147: one app, each request checked against its own deployment's perimeter.
+
+A host that serves several deployments from one app resolves the request's
+deployment through ``deployment_context``; the perimeter gate then applies
+that deployment's credential check, admission limits and spend lease.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from typing import cast
+from uuid import UUID
+
+from fastapi import HTTPException
+from fastapi import Request
+from fastapi.testclient import TestClient
+
+from rememberstack.model import AuthenticatedContext
+from rememberstack.model import PerimeterCredential
+from rememberstack.surfaces.direct_admission import AdmissionLimits
+from rememberstack.surfaces.direct_admission import DirectPathAdmission
+from rememberstack.surfaces.http_api import ApiDeployment
+from rememberstack.surfaces.http_api import build_api
+from rememberstack.surfaces.http_api import deployment_context
+from rememberstack.surfaces.query_engine import QueryEngine
+
+_A = UUID("14700000-0000-0000-0000-00000000000a")
+_B = UUID("14700000-0000-0000-0000-00000000000b")
+
+
+class _Auth:
+    """``Bearer <deployment>-key`` is valid for exactly that deployment."""
+
+    def __init__(self, deployment_id: UUID) -> None:
+        self.deployment_id = deployment_id
+
+    def authenticate(self, *, credential: PerimeterCredential) -> AuthenticatedContext:
+        value = credential.value.get_secret_value().decode()
+        owner = {"a-key": _A, "b-key": _B}.get(value)
+        if owner is None:
+            raise ValueError("unknown credential")
+        return AuthenticatedContext(deployment_id=owner, principal=f"{value}-user")
+
+
+class _Open:
+    def assert_available(self, *, deployment_id: UUID) -> None:
+        return None
+
+
+class _Ready:
+    def ensure_ready(self, *, deployment_id: UUID) -> tuple[UUID, ...]:
+        return ()
+
+
+class _Lease:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def reserve(self, **_: object) -> str:
+        self.calls.append("reserve")
+        return "hold"
+
+    def commit(self, **_: object) -> None:
+        self.calls.append("commit")
+
+    def release(self, **_: object) -> None:
+        self.calls.append("release")
+
+
+def _client() -> tuple[TestClient, dict[str, ApiDeployment], dict[UUID, _Lease]]:
+    # The composing deployment has no perimeter at all.
+    app = build_api(
+        engine=cast(QueryEngine, object()),
+        deployment_id=_A,
+        admission=_Open(),
+        readiness=_Ready(),
+    )
+    template: ApiDeployment = app.state.api_deployment
+    leases = {_A: _Lease(), _B: _Lease()}
+    deployments = {
+        "a": replace(template, auth=_Auth(_A), spend_lease=leases[_A]),
+        "b": replace(
+            template,
+            deployment_id=_B,
+            auth=_Auth(_B),
+            spend_lease=leases[_B],
+            direct_admission=DirectPathAdmission(
+                limits=AdmissionLimits(deployment_per_minute=1)
+            ),
+        ),
+    }
+
+    def resolve(request: Request) -> ApiDeployment:
+        name = request.headers.get("x-deployment")
+        if name not in deployments:
+            raise HTTPException(status_code=401, detail="unknown deployment")
+        return deployments[name]
+
+    app.dependency_overrides[deployment_context] = resolve
+
+    @app.post("/ingest")
+    def probe(request: Request) -> dict[str, str]:
+        context = request.state.perimeter_context
+        return {"principal": context.principal}
+
+    return TestClient(app), deployments, leases
+
+
+def _headers(deployment: str, key: str | None) -> dict[str, str]:
+    headers = {"x-deployment": deployment}
+    if key is not None:
+        headers["Authorization"] = f"Bearer {key}"
+    return headers
+
+
+def test_each_request_meets_its_own_deployments_perimeter() -> None:
+    client, _, leases = _client()
+
+    ok = client.post("/ingest", headers=_headers("a", "a-key"))
+    assert ok.status_code == 200, ok.text
+    assert ok.json() == {"principal": "a-key-user"}
+    assert leases[_A].calls == ["reserve", "commit"]
+    assert leases[_B].calls == []
+
+    # A's credential is refused by B, and B's own credential is accepted.
+    assert client.post("/ingest", headers=_headers("b", "a-key")).status_code == 403
+    assert client.post("/ingest", headers=_headers("b", None)).status_code == 401
+    assert client.post("/ingest", headers=_headers("b", "b-key")).status_code == 200
+    assert leases[_B].calls == ["reserve", "commit"]
+
+    # B alone has a rate limit: one request per minute.
+    refused = client.post("/ingest", headers=_headers("b", "b-key"))
+    assert refused.status_code == 429
+    assert client.post("/ingest", headers=_headers("a", "a-key")).status_code == 200
+
+    # The resolver's own refusal reaches the caller before anything else runs.
+    assert client.post("/ingest", headers=_headers("c", "a-key")).status_code == 401
+
+
+def test_without_an_override_the_composed_perimeter_applies() -> None:
+    app = build_api(
+        engine=cast(QueryEngine, object()),
+        deployment_id=_A,
+        admission=_Open(),
+        readiness=_Ready(),
+        auth=_Auth(_A),
+    )
+
+    @app.get("/probe")
+    def probe() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    client = TestClient(app)
+    assert client.get("/probe").status_code == 401
+    assert (
+        client.get("/probe", headers={"Authorization": "Bearer b-key"}).status_code
+        == 403
+    )
+    assert (
+        client.get("/probe", headers={"Authorization": "Bearer a-key"}).status_code
+        == 200
+    )

@@ -30,7 +30,6 @@ from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionLimits
 from rememberstack.surfaces.direct_admission import AdmissionRefused
 from rememberstack.surfaces.direct_admission import DirectPathAdmission
-from rememberstack.surfaces.http_api import _HeldRoute
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.query_engine import QueryEngine
 
@@ -398,7 +397,6 @@ def _bearer(value: str) -> dict[str, str]:
 def test_without_configured_limits_nothing_is_ever_refused() -> None:
     """The default: no admission object, so the gate only authenticates."""
     app, _ = _app(None)
-    assert app.router.route_class is not _HeldRoute
     client = TestClient(app)
     for _ in range(300):
         assert client.get("/probe", headers=_bearer("key-a")).status_code == 200
