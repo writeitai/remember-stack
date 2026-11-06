@@ -20,6 +20,8 @@ from uuid import UUID
 from pydantic import BaseModel
 from pydantic import ConfigDict
 
+from rememberstack.core.object_transfer import current_object_transfer
+from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueWork
@@ -383,8 +385,14 @@ class Worker:
         This is the worker's single catch-to-log boundary (core value 6): the
         full traceback is logged and recorded on the row; a
         `NonRetryableHandlerError` dead-letters immediately, anything else
-        retries with backoff until the attempt limit dead-letters it.
+        retries with backoff until the attempt limit dead-letters it. The
+        attempt's ``worker.run`` event carries the object-storage bytes it
+        moved.
         """
+        with object_transfer_scope():
+            return self._run_claimed(claimed=claimed, started_ns=started_ns)
+
+    def _run_claimed(self, *, claimed: ClaimedWork, started_ns: int) -> RunResult:
         handler = self._registry.handler_for(stage=claimed.stage)
         meter = _LedgerCostMeter(ledger=self._ledger, work=claimed)
         try:
@@ -685,7 +693,22 @@ def _worker_event(
     outcome: RunResultOutcome,
     started_ns: int,
 ) -> TelemetryEvent:
-    """Build the one stable provider-neutral worker event vocabulary."""
+    """Build the one stable provider-neutral worker event vocabulary.
+
+    Inside a claimed attempt it also carries the object-storage bytes the
+    attempt read and wrote so far.
+    """
+    transfer = current_object_transfer()
+    moved = (
+        ()
+        if transfer is None
+        else (
+            TelemetryAttribute(name="object_bytes_read", value=transfer.bytes_read),
+            TelemetryAttribute(
+                name="object_bytes_written", value=transfer.bytes_written
+            ),
+        )
+    )
     return TelemetryEvent(
         name="worker.run",
         occurred_at=datetime.now(UTC),
@@ -699,5 +722,6 @@ def _worker_event(
             TelemetryAttribute(
                 name="duration_ms", value=(time.monotonic_ns() - started_ns) / 1e6
             ),
+            *moved,
         ),
     )

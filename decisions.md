@@ -7492,3 +7492,24 @@ rewritten; threads reuse the synchronous handlers, which share no mutable state.
 of fourteen stage workers; `worker --stage` is gone. Contract in
 [packaging §3, worker classes](plan/designs/packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells).
 
+## D148. Object-storage bytes are reported per worker attempt
+
+**Status:** accepted. **Date:** 2026-11-06.
+
+**Context.** When the object store is reached over a network that bills transfer (another
+cloud, another region), the bytes each stage reads and writes become a running cost. Nothing
+measured them, so it was unknown which stages move the most data or whether compressing
+artifacts would pay for itself.
+
+**Decision.** The networked (S3) object-store adapter reports every object it reads, and every
+write it sends, into a per-task counter that the worker opens around each claimed attempt. The
+attempt's `worker.run` telemetry event carries the totals as `object_bytes_read` and
+`object_bytes_written`. No new store, table or exporter: the existing worker event is the
+metrics path, and per-stage totals are a sum over it. The local-filesystem adapter is not
+counted (no network transfer), nor are calls outside a worker attempt (API, setup), nor calls
+on helper threads a handler starts itself (today those make only model calls). Artifact
+compression is not part of this decision; these numbers are what would justify it.
+
+**Consequences.** [Orchestration §7](plan/designs/orchestration_design.md#7-observable-state-and-telemetry--no-dashboard-subsystem)
+lists the attributes; the observability docs describe them.
+

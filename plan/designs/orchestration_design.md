@@ -296,11 +296,15 @@ well above the longest pause a live worker can have between renewals.
 ## 7. Observable state and telemetry — no dashboard subsystem
 
 Everything below derives from tables that already exist (`processing_state`, `cost_ledger`,
-`projection_snapshots`, `knowledge_compilations`). The library exposes it through typed admin/CLI
+`projection_snapshots`, `knowledge_compilations`) or from the worker's existing `worker.run`
+telemetry event. The library exposes it through typed admin/CLI
 results and the D61 telemetry port; it does not ship a dashboard backend or a second bookkeeping
 system:
 
 - per-stage throughput / latency / error rate / DLQ depth (`processing_state`);
+- per-stage object-storage traffic: each claimed attempt's `worker.run` event carries the bytes
+  it read from and wrote to networked object storage (`object_bytes_read`,
+  `object_bytes_written`, D148), so storage egress is summed per stage from the same telemetry;
 - spend by stage × cascade tier × lane against budget (`cost_ledger`);
 - the end-to-end trace of one document — its `processing_state` rows, ordered, *are* the
   trace;

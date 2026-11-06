@@ -9,6 +9,8 @@ from rememberstack.adapters.selfhost import MinIOObjectStore
 from rememberstack.adapters.selfhost.minio import _GetObjectOutput
 from rememberstack.adapters.selfhost.minio import _HeadObjectOutput
 from rememberstack.adapters.selfhost.minio import _ListObjectsOutput
+from rememberstack.core.object_transfer import current_object_transfer
+from rememberstack.core.object_transfer import object_transfer_scope
 from rememberstack.model import ObjectAlreadyExistsError
 from rememberstack.model import ObjectKey
 from rememberstack.model import ObjectKeyEscapesRootError
@@ -129,6 +131,24 @@ def test_bucket_provision_and_immutable_round_trip() -> None:
             storage_class="cold",
         )
     assert store.read_bytes(key=ObjectKey("documents/a.md")) == b"first"
+
+
+def test_bytes_moved_are_counted_in_the_current_transfer_scope() -> None:
+    """Reads and attempted writes add to the open scope; outside one, nothing is kept."""
+    store = MinIOObjectStore(bucket="raw", client=_MemoryS3())
+    store.ensure_bucket()
+    store.write_bytes(key=ObjectKey("a.md"), content=b"12345", storage_class="hot")
+
+    with object_transfer_scope() as transfer:
+        assert store.read_bytes(key=ObjectKey("a.md")) == b"12345"
+        store.write_bytes(key=ObjectKey("b.md"), content=b"123", storage_class="hot")
+        with pytest.raises(ObjectAlreadyExistsError):
+            store.write_bytes(
+                key=ObjectKey("b.md"), content=b"1234", storage_class="hot"
+            )
+
+    assert (transfer.bytes_read, transfer.bytes_written) == (5, 7)
+    assert current_object_transfer() is None
 
 
 def test_missing_object_is_file_not_found() -> None:
