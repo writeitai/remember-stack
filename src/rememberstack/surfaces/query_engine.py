@@ -4582,10 +4582,7 @@ def _configure_facts_context_connection(
         f"SET LOCAL transaction_timeout = '{timeout_ms}ms'"  # noqa: S608
     )
     connection.exec_driver_sql("SET LOCAL jit = off")
-    connection.exec_driver_sql("SET LOCAL join_collapse_limit = 1")
-    connection.exec_driver_sql("SET LOCAL from_collapse_limit = 1")
     connection.exec_driver_sql("SET LOCAL max_parallel_workers_per_gather = 0")
-    connection.exec_driver_sql("SET LOCAL enable_nestloop = off")
 
 
 def _fact_temporal_scope(*, time: FactTime, evaluated_at: datetime):
@@ -5524,8 +5521,7 @@ def _confirm_facts_context_statement(
           AND visible.fact_id = requested.fact_id
         OFFSET 0
     ) AS fact
-    WHERE fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))
-      AND (CAST(:predicate AS text) IS NULL
+    WHERE (CAST(:predicate AS text) IS NULL
            OR (fact.fact_kind = 'relation' AND fact.predicate = :predicate))
       {_FACTS_CONTEXT_TIME_PREDICATE} {_FACTS_CONTEXT_ENTITY_PREDICATE}
       AND {fact_in_scope(fact_kind=fact_kind, fact_id="fact.fact_id")}

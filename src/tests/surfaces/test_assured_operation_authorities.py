@@ -83,7 +83,7 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
     assert "CROSS JOIN LATERAL" in confirmation_sql
     assert "visible.fact_id = requested.fact_id" in confirmation_sql
     assert "OFFSET 0" in confirmation_sql
-    assert "fact.fact_id = ANY(CAST(:fact_ids AS uuid[]))" in confirmation_sql
+    assert "fact.fact_id = ANY" not in confirmation_sql
     assert "visible.fact_kind = 'relation'" in confirmation_sql
     assert "visible.fact_kind = 'observation'" in confirmation_sql
     assert "fact.predicate = :predicate" in confirmation_sql
@@ -136,7 +136,7 @@ def test_facts_context_uses_fact_and_contradiction_authorities() -> None:
 def test_facts_context_bounds_planning_and_keeps_contradictions_kind_qualified() -> (
     None
 ):
-    """Interactive fact reads stop before transport and avoid nested-loop expansion."""
+    """Interactive reads bound runtime without disabling indexed join plans."""
     connection = MagicMock()
 
     _configure_facts_context_connection(
@@ -147,10 +147,7 @@ def test_facts_context_bounds_planning_and_keeps_contradictions_kind_qualified()
         "SET LOCAL statement_timeout = '25000ms'",
         "SET LOCAL transaction_timeout = '25000ms'",
         "SET LOCAL jit = off",
-        "SET LOCAL join_collapse_limit = 1",
-        "SET LOCAL from_collapse_limit = 1",
         "SET LOCAL max_parallel_workers_per_gather = 0",
-        "SET LOCAL enable_nestloop = off",
     ]
     contradiction_sql = str(_FACTS_CONTEXT_CONTRADICTION_MEMBERS)
     assert "memory_v1.facts_visible_history" in contradiction_sql

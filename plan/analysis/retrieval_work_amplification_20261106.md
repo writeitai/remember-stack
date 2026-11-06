@@ -106,3 +106,14 @@ fact-ID lookup inside a correlated lateral subquery with `OFFSET 0`, keeping
 all current predicates and returned counts, so hydration is also proportional
 to requested candidates. This is the same planning constraint used for D142
 index-cursor confirmation, applied to the final value fetch.
+
+The full replay also revealed legacy connection controls that forced
+`join_collapse_limit=1`, `from_collapse_limit=1` and `enable_nestloop=off`.
+These conflict with indexed per-ID lookups inside the authority views. Remove
+those overrides rather than retaining a second planner path. Keep the whole
+operation deadline, JIT suppression and bounded per-query parallelism. A
+prototype restoring normal join planning reduced the 100k-entity full request
+from 31.4 seconds with the fence plus old overrides to 2.45 seconds. Remove
+the now-redundant outer `fact_id = ANY(requested_ids)` check too: the inner
+lookup already binds every output to its requested ID. Scope, provenance,
+time and evidence gates remain required and unchanged.

@@ -333,6 +333,10 @@ ordinary join does not prevent PostgreSQL from scanning unrelated entity
 provenance. The inner lookup filters deployment, fixed fact kind and requested
 ID; outer temporal, entity, evidence and predicate gates remain unchanged.
 The fence changes the plan, not membership, ordering or requested counts.
+Do not force join order or disable nested-loop plans on fact-read connections:
+those overrides prevent efficient indexed lookups inside the bounded authority
+query. Runtime/transaction deadlines, JIT suppression and bounded per-query
+parallelism remain operation controls, separate from the join strategy.
 
 ### 8.3 Nominate, confirm, continue (D142)
 
