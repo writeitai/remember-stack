@@ -1941,7 +1941,7 @@ def main(argv: list[str] | None = None) -> int:
     profile = SelfHostProfile.from_settings(
         EngineSettings.from_env(),
         error_telemetry=error_telemetry,
-        worker_concurrency=concurrency or None,
+        engine_options=_worker_pool(concurrency=concurrency) if concurrency else None,
     )
     try:
         if args.command == "setup":
@@ -1984,6 +1984,15 @@ def _initialize_error_tracking(
     return initialize_sentry(
         dsn=dsn, environment=environment, sample_rate=settings.sample_rate
     )
+
+
+def _worker_pool(*, concurrency: int) -> dict[str, Any]:
+    """A worker's main pool: every in-flight task may hold two connections.
+
+    One code path nests a read inside a transaction, and lease renewals and
+    the reaper need a few more, so SQLAlchemy's fixed 5 + 10 would not do.
+    """
+    return {"pool_size": concurrency + 2, "max_overflow": concurrency}
 
 
 def _positive_int(value: str) -> int:
