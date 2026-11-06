@@ -332,6 +332,7 @@ from rememberstack.model.processing import CostBudget
 from rememberstack.model.processing import DeferReason
 from rememberstack.model.processing import EnqueueOutcome
 from rememberstack.model.processing import EnqueueWork
+from rememberstack.model.processing import ExpiredLease
 from rememberstack.model.processing import HandlerAlreadyRegisteredError
 from rememberstack.model.processing import LaneRouteError
 from rememberstack.model.processing import NonRetryableHandlerError
@@ -422,6 +423,7 @@ __all__ = (
     "ClaimValidKind",
     "ClaimValidPrecision",
     "ClaimedWork",
+    "ExpiredLease",
     "ClaimifyResponse",
     "ClusterConfig",
     "ComponentVersionConflictError",

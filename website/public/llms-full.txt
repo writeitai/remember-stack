@@ -8451,6 +8451,12 @@ When a stage fails on an item:
 - A **non-retryable** failure, such as a file that cannot be converted,
   goes straight to the dead letters.
 - An item that uses its last attempt goes to the dead letters.
+- A worker that **dies** while running an item (killed, out of memory,
+  restarted) stops renewing its hold on the item. Once the hold runs out
+  (`REMEMBERSTACK_WORK_LEASE_S`, 60 seconds by default), another worker
+  puts the item back in the queue, or sends it to the dead letters if that
+  was its last attempt. The `last_error` then starts with
+  `lease expired`.
 
 HTTP 429 answers from OpenRouter are handled inside the provider call and do
 not use attempts ([Models and providers](https://remember.dev/docs/self-hosting/models#openrouter-routing-and-limits)).
@@ -9021,7 +9027,9 @@ docker compose logs --since 1h
   `deployment_id`, `processing_id`, `stage`, `lane`, `attempt`, `outcome`
   and `duration_ms`. The outcome is one of
   `succeeded`, `retry_scheduled`, `dead_lettered`, `budget_parked`,
-  `no_route_parked` or `no_work`. A failure adds an `exception` object with
+  `no_route_parked`, `lease_lost` or `no_work`. `lease_lost` means the
+  worker took longer than its hold on the item without renewing it, the
+  item was handed back to the queue, and this run's result was discarded. A failure adds an `exception` object with
   the error type, message and full traceback.
 
 An error message can quote the input that caused it, so treat worker logs
@@ -19176,6 +19184,7 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
+| `REMEMBERSTACK_WORK_LEASE_S` | `60.0` | float | How long a worker's hold on an item lasts without renewal. A running worker renews it every third of this; an item whose worker died is retried once it runs out ([Operating](https://remember.dev/docs/self-hosting/operating#retries-and-dead-letters)). |
 | `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | Spend ceilings per deployment, stage and lane ([Operating](https://remember.dev/docs/self-hosting/operating#spend-budgets)). |
 | `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | Chunks per embedding request. |
 | `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | Claims or facts per embedding request. |

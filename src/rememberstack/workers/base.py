@@ -9,6 +9,7 @@ either retried with backoff or dead-lettered — it never disappears.
 from datetime import datetime
 from datetime import UTC
 import logging
+import threading
 import time
 import traceback
 from typing import Protocol
@@ -21,6 +22,7 @@ from pydantic import ConfigDict
 from rememberstack.model import BudgetParked
 from rememberstack.model import ClaimedWork
 from rememberstack.model import EnqueueWork
+from rememberstack.model import ExpiredLease
 from rememberstack.model import HandlerAlreadyRegisteredError
 from rememberstack.model import NonRetryableHandlerError
 from rememberstack.model import PipelineStage
@@ -34,6 +36,7 @@ from rememberstack.model import RunResultOutcome
 from rememberstack.model import TelemetryAttribute
 from rememberstack.model import TelemetryEvent
 from rememberstack.model import UnknownStageHandlerError
+from rememberstack.model import WorkNotRunningError
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.queue import TaskQueuePort
 from rememberstack.ports.telemetry import TelemetryPort
@@ -211,6 +214,55 @@ class _LedgerCostMeter:
         )
 
 
+class _LeaseRenewal:
+    """Renew one claimed attempt's lease from a background thread while it runs.
+
+    A failed renewal is logged and retried at the next interval; a refused one
+    (the reaper already took the row back) stops renewing, and the attempt's
+    complete or fail is refused later for the same reason.
+    """
+
+    def __init__(self, *, ledger: WorkLedger, work: ClaimedWork) -> None:
+        """Bind the renewal to one attempt; nothing runs until entered."""
+        self._ledger = ledger
+        self._work = work
+        self._stopped = threading.Event()
+        self._thread = threading.Thread(
+            target=self._renew, name=f"lease-{work.processing_id}", daemon=True
+        )
+
+    def __enter__(self) -> None:
+        """Start renewing."""
+        self._thread.start()
+
+    def __exit__(self, *_: object) -> None:
+        """Stop renewing and wait for an in-progress renewal to finish."""
+        self._stopped.set()
+        self._thread.join()
+
+    def _renew(self) -> None:
+        while not self._stopped.wait(self._ledger.lease_renewal_interval_s):
+            try:
+                renewed = self._ledger.renew_lease(
+                    processing_id=self._work.processing_id, attempt=self._work.attempt
+                )
+            except Exception:  # noqa: BLE001 — retry at the next interval
+                _logger.exception(
+                    "lease renewal failed for %s attempt %s",
+                    self._work.processing_id,
+                    self._work.attempt,
+                )
+                continue
+            if not renewed:
+                _logger.warning(
+                    "lease lost for %s attempt %s in stage %s",
+                    self._work.processing_id,
+                    self._work.attempt,
+                    self._work.stage,
+                )
+                return
+
+
 class RunResult(BaseModel):
     """What one runner pass did: which row it ran and how the attempt ended."""
 
@@ -234,6 +286,11 @@ class HandlerRegistry:
                 f"stage {stage} already has a registered handler"
             )
         self._handlers[stage] = handler
+
+    @property
+    def stages(self) -> tuple[PipelineStage, ...]:
+        """The stages with a registered handler, in registration order."""
+        return tuple(self._handlers)
 
     def handler_for(self, *, stage: PipelineStage) -> StageHandler:
         """Return the stage's handler; an unregistered stage is a typed error."""
@@ -320,13 +377,17 @@ class Worker:
             ledger=self._ledger, processing_id=claimed.processing_id
         )
         try:
-            outcome = handler.handle(work=claimed, meter=meter)
+            with _LeaseRenewal(ledger=self._ledger, work=claimed):
+                outcome = handler.handle(work=claimed, meter=meter)
         except NoRouteHandlerError as no_route:
-            self._ledger.park_no_route(
-                processing_id=claimed.processing_id,
-                attempt=claimed.attempt,
-                mime=no_route.mime,
-            )
+            try:
+                self._ledger.park_no_route(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    mime=no_route.mime,
+                )
+            except WorkNotRunningError:
+                return self._lease_lost(claimed=claimed, started_ns=started_ns)
             self._export_event(
                 event=_worker_event(
                     deployment_id=claimed.deployment_id,
@@ -348,11 +409,15 @@ class Worker:
                 claimed.stage,
                 claimed.processing_id,
             )
-            self._ledger.fail(
-                processing_id=claimed.processing_id,
-                error=traceback.format_exc(),
-                retryable=False,
-            )
+            try:
+                self._ledger.fail(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    error=traceback.format_exc(),
+                    retryable=False,
+                )
+            except WorkNotRunningError:
+                return self._lease_lost(claimed=claimed, started_ns=started_ns)
             self._finalize_terminal_failure(
                 handler=handler, claimed=claimed, exception=exception
             )
@@ -379,11 +444,15 @@ class Worker:
                 claimed.stage,
                 claimed.processing_id,
             )
-            retry_at = self._ledger.fail(
-                processing_id=claimed.processing_id,
-                error=traceback.format_exc(),
-                retryable=True,
-            )
+            try:
+                retry_at = self._ledger.fail(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    error=traceback.format_exc(),
+                    retryable=True,
+                )
+            except WorkNotRunningError:
+                return self._lease_lost(claimed=claimed, started_ns=started_ns)
             result_outcome = (
                 RunResultOutcome.RETRY_SCHEDULED
                 if retry_at is not None
@@ -416,47 +485,58 @@ class Worker:
             return RunResult(
                 processing_id=claimed.processing_id, outcome=result_outcome
             )
-        if outcome.claims_boundary is not None:
-            self._ledger.complete_at_claims_boundary(
-                processing_id=claimed.processing_id,
-                boundary=outcome.claims_boundary,
-                follow_up=outcome.follow_up,
-                empty=outcome.empty_obs_flush,
-            )
-        elif outcome.selection_chunk_barrier is not None:
-            self._ledger.complete_chunk_selection(
-                processing_id=claimed.processing_id,
-                barrier=outcome.selection_chunk_barrier,
-                follow_up=outcome.follow_up,
-            )
-        elif outcome.extract_chunk_barrier is not None:
-            self._ledger.complete_chunk_extract(
-                processing_id=claimed.processing_id,
-                barrier=outcome.extract_chunk_barrier,
-                follow_up=outcome.follow_up,
-            )
-        elif outcome.claim_normalize_barrier is not None:
-            self._ledger.complete_claim_normalize(
-                processing_id=claimed.processing_id,
-                barrier=outcome.claim_normalize_barrier,
-                follow_up=outcome.follow_up,
-            )
-        elif outcome.entity_obs_flush_barrier is not None:
-            self._ledger.complete_entity_obs_flush(
-                processing_id=claimed.processing_id,
-                barrier=outcome.entity_obs_flush_barrier,
-                follow_up=outcome.follow_up,
-            )
-        elif outcome.empty_obs_flush is not None:
-            self._ledger.complete_empty_obs_flush(
-                processing_id=claimed.processing_id,
-                empty=outcome.empty_obs_flush,
-                follow_up=outcome.follow_up,
-            )
-        else:
-            self._ledger.complete(
-                processing_id=claimed.processing_id, follow_up=outcome.follow_up
-            )
+        try:
+            if outcome.claims_boundary is not None:
+                self._ledger.complete_at_claims_boundary(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    boundary=outcome.claims_boundary,
+                    follow_up=outcome.follow_up,
+                    empty=outcome.empty_obs_flush,
+                )
+            elif outcome.selection_chunk_barrier is not None:
+                self._ledger.complete_chunk_selection(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    barrier=outcome.selection_chunk_barrier,
+                    follow_up=outcome.follow_up,
+                )
+            elif outcome.extract_chunk_barrier is not None:
+                self._ledger.complete_chunk_extract(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    barrier=outcome.extract_chunk_barrier,
+                    follow_up=outcome.follow_up,
+                )
+            elif outcome.claim_normalize_barrier is not None:
+                self._ledger.complete_claim_normalize(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    barrier=outcome.claim_normalize_barrier,
+                    follow_up=outcome.follow_up,
+                )
+            elif outcome.entity_obs_flush_barrier is not None:
+                self._ledger.complete_entity_obs_flush(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    barrier=outcome.entity_obs_flush_barrier,
+                    follow_up=outcome.follow_up,
+                )
+            elif outcome.empty_obs_flush is not None:
+                self._ledger.complete_empty_obs_flush(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    empty=outcome.empty_obs_flush,
+                    follow_up=outcome.follow_up,
+                )
+            else:
+                self._ledger.complete(
+                    processing_id=claimed.processing_id,
+                    attempt=claimed.attempt,
+                    follow_up=outcome.follow_up,
+                )
+        except WorkNotRunningError:
+            return self._lease_lost(claimed=claimed, started_ns=started_ns)
         self._export_event(
             event=_worker_event(
                 deployment_id=claimed.deployment_id,
@@ -470,6 +550,67 @@ class Worker:
         )
         return RunResult(
             processing_id=claimed.processing_id, outcome=RunResultOutcome.SUCCEEDED
+        )
+
+    def reap_expired_leases(self, *, deployment_id: UUID) -> tuple[ExpiredLease, ...]:
+        """Take back expired claims on this worker's stages and act on each.
+
+        A requeued row is announced like a scheduled retry; a dead-lettered one
+        gets its handler's terminal-failure finalizer, like any other attempt
+        that ended the work.
+        """
+        expired = self._ledger.reap_expired_leases(
+            deployment_id=deployment_id, stages=self._registry.stages
+        )
+        for lease in expired:
+            work = lease.work
+            _logger.warning(
+                "lease expired for %s attempt %s in stage %s; %s",
+                work.processing_id,
+                work.attempt,
+                work.stage,
+                "requeued" if lease.requeued else "dead-lettered",
+            )
+            if not lease.requeued:
+                self._finalize_terminal_failure(
+                    handler=self._registry.handler_for(stage=work.stage),
+                    claimed=work,
+                    exception=TimeoutError("lease expired on the last attempt"),
+                )
+            elif self._queue is not None:
+                self._queue.announce(
+                    processing_id=work.processing_id,
+                    route_snapshot=QueueRoute(
+                        deployment_id=work.deployment_id,
+                        stage=work.stage,
+                        lane=work.lane,
+                    ),
+                    not_before_snapshot=datetime.now(UTC),
+                )
+        return expired
+
+    def _lease_lost(self, *, claimed: ClaimedWork, started_ns: int) -> RunResult:
+        """The attempt's claim was taken back while it ran; record nothing."""
+        _logger.warning(
+            "attempt %s of %s in stage %s finished after losing its lease;"
+            " its result is discarded",
+            claimed.attempt,
+            claimed.processing_id,
+            claimed.stage,
+        )
+        self._export_event(
+            event=_worker_event(
+                deployment_id=claimed.deployment_id,
+                processing_id=claimed.processing_id,
+                stage=claimed.stage,
+                lane=claimed.lane,
+                attempt=claimed.attempt,
+                outcome=RunResultOutcome.LEASE_LOST,
+                started_ns=started_ns,
+            )
+        )
+        return RunResult(
+            processing_id=claimed.processing_id, outcome=RunResultOutcome.LEASE_LOST
         )
 
     def _finalize_terminal_failure(

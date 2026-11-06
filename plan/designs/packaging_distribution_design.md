@@ -183,6 +183,7 @@ This is the implementation map; each row has one canonical owner and a delivery-
 | Budget parking | orchestration §4: pending until window roll, no attempt consumed | `status='pending'`, `defer_reason='budget'`, future `not_before` | re-announce for that time; never a failure delivery |
 | Cost attribution | orchestration §4: one row per processing/attempt/logical call; a batched call bills the claiming row; sum by deployment/stage/lane/window | `cost_ledger.processing_id/attempt/call_key/lane` + unique key + budget-window index | no adapter-owned accounting |
 | Due claim | D67: only due pending/failed work is runnable | `ix_procstate_due` + schema §2 `SKIP LOCKED` query | self-host polls/claims; GCP dispatch claims its named row |
+| Claim ownership | orchestration §6 (D144): a claim is a renewable lease; an expired one is reaped back to pending or the DLQ | `lease_until`; renew/complete/fail match the claimed `attempts` | the claiming worker renews while its handler runs; a provider's shutdown or kill only ends renewal |
 
 ## 4. Code architecture — hexagonal, with the arrows enforced in CI
 

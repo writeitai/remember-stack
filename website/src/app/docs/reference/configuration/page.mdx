@@ -178,6 +178,7 @@ default; see [Processing layers](/docs/concepts/pipeline#processing-layers).
 | `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
+| `REMEMBERSTACK_WORK_LEASE_S` | `60.0` | float | How long a worker's hold on an item lasts without renewal. A running worker renews it every third of this; an item whose worker died is retried once it runs out ([Operating](/docs/self-hosting/operating#retries-and-dead-letters)). |
 | `REMEMBERSTACK_WORK_BUDGETS` | `[]` | JSON list | Spend ceilings per deployment, stage and lane ([Operating](/docs/self-hosting/operating#spend-budgets)). |
 | `REMEMBERSTACK_E1_EMBED_BATCH_SIZE` | `64` | int 1–512 | Chunks per embedding request. |
 | `REMEMBERSTACK_P1_EMBED_BATCH_SIZE` | `64` | int 1–1024 | Claims or facts per embedding request. |

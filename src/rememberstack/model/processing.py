@@ -127,6 +127,19 @@ class ClaimedWork(BaseModel):
     payload: dict[str, object] | None
 
 
+class ExpiredLease(BaseModel):
+    """A running attempt whose lease ran out, as the reaper left it.
+
+    ``requeued`` rows went back to ``pending`` for another attempt; the others
+    had used their last attempt and were dead-lettered.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    work: ClaimedWork
+    requeued: bool
+
+
 class CostBudget(BaseModel):
     """One explicit spend ceiling for a deployment, stage, lane, and fixed window."""
 
@@ -179,6 +192,7 @@ class RunResultOutcome(StrEnum):
     SUCCEEDED = "succeeded"
     RETRY_SCHEDULED = "retry_scheduled"
     DEAD_LETTERED = "dead_lettered"
+    LEASE_LOST = "lease_lost"
 
 
 class WorkLedgerError(Exception):

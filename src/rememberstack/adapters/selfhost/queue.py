@@ -111,9 +111,17 @@ class SelfHostWorkerLoop:
         self._database_url = database_url
         self._fallback_poll_s = fallback_poll_s
         self._serve_backfill = serve_backfill and lane is ProcessingLane.STEADY
+        self._reaped_at = float("-inf")
 
     def drain_due(self) -> tuple[RunResult, ...]:
-        """Claim and run due work on the route until none remains or tokens run out."""
+        """Claim and run due work on the route until none remains or tokens run out.
+
+        At most once per fallback-poll interval it first takes back expired
+        claims on its stage, so work a killed worker held runs again.
+        """
+        if time.monotonic() - self._reaped_at >= self._fallback_poll_s:
+            self._reaped_at = time.monotonic()
+            self._worker.reap_expired_leases(deployment_id=self._deployment_id)
         results: list[RunResult] = []
         while self._bucket.try_acquire():
             result = self._worker.run_one(

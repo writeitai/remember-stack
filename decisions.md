@@ -2528,6 +2528,11 @@ being hand-maintained.
 
 ## D67. Queue routing and retry state have one normalized home in Postgres
 
+> **Refined by [D144](#d144-a-claim-is-a-renewable-lease-a-reaper-takes-back-the-claims-of-dead-workers).**
+> A `running` claim carries a renewable lease (`lease_until`); renewal, complete and fail are
+> conditional on the claimed attempt, and a reaper returns expired claims to `pending` or the
+> DLQ. Everything below stays binding.
+
 **Decision.** `processing_state` is the authoritative work ledger and also owns the fields that
 govern delivery: `lane`, `not_before`, `defer_reason`, `attempts`, and `max_attempts`. A plane-E
 row has `lane='steady'` or `lane='backfill'`; a K- or P-plane job has `lane IS NULL` because those
@@ -7397,3 +7402,39 @@ profile, so a host may hold several profiles in one process.
 deployment's context, built explicitly); packaging design §3 and §5.
 
 **Authority:** [packaging design §5](plan/designs/packaging_distribution_design.md#5-deployment-profiles).
+
+## D144. A claim is a renewable lease; a reaper takes back the claims of dead workers
+
+**Status:** accepted. **Date:** 2026-11-06.
+
+**Context.** A claim moved a `processing_state` row to `running` and only the worker's own
+complete or fail moved it on. A worker killed mid-task (out of memory, a restarted container, a
+preempted cloud instance with seconds of shutdown notice) left its row `running` forever: it was
+never retried, the stages after it waited, and a hard forget, which waits for running work to
+drain, could not start. Complete checked only the row and `running`, so a worker that resumed
+after a long stall could also finish a row that had since been handed to someone else. This
+blocked running workers anywhere they can be stopped at short notice, and any autoscaling.
+
+**Decision.**
+
+- Claiming sets `processing_state.lease_until = now() + lease` (default 60 s,
+  `REMEMBERSTACK_WORK_LEASE_S`). The claimed attempt number identifies the claim.
+- The worker renews the lease every third of the lease while the handler runs.
+- Renewal, complete and fail succeed only for the row's current `running` attempt. A worker
+  whose attempt no longer matches discards its result and reports `lease_lost`.
+- Each worker periodically sweeps the stages it serves: an expired `running` row with attempts
+  left returns to `pending`, due now, and is announced; a row whose `attempts` reached
+  `max_attempts` is dead-lettered (claiming requires `attempts < max_attempts`, so requeueing it
+  would strand it) and its handler's terminal-failure finalizer runs.
+
+**Alternatives.** A heartbeat table separate from the ledger was rejected: the lease is claim
+state and belongs on the row D67 already made the single home of delivery state. Returning
+expired rows as `failed` with a retry backoff was rejected: a dead worker is not evidence that
+the input is bad, and the attempt count already bounds a task that kills its worker every time.
+
+**Consequences.** Migration `p9_42_0063` adds the column, a `running ⇒ lease_until IS NOT NULL`
+check and the reaper's partial index, and gives rows already `running` an expired lease so the
+first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design.md#claim-leases-and-the-reaper-d144)
+holds the contract; [schema §2](plan/designs/postgres_schema_design.md) the column, index and
+queries.
+

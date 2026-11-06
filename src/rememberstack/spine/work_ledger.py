@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 from uuid import uuid4
 
+from pydantic import Field
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
@@ -37,6 +38,7 @@ from rememberstack.model import CostBudget
 from rememberstack.model import DeadLetterReplayResult
 from rememberstack.model import EnqueueOutcome
 from rememberstack.model import EnqueueWork
+from rememberstack.model import ExpiredLease
 from rememberstack.model import ForgetInProgressError
 from rememberstack.model import LaneRouteError
 from rememberstack.model import PipelineStage
@@ -62,12 +64,18 @@ if TYPE_CHECKING:
 
 
 class WorkLedgerSettings(BaseSettings):
-    """Retry backoff plus explicit route budgets for one worker deployment."""
+    """Retry backoff, claim leases and explicit route budgets for one deployment.
+
+    ``lease_s`` is how long a claim stays valid without renewal. A worker renews
+    its claims every third of it; a claim nobody renewed for that long belongs
+    to a worker that died or stalled, and the reaper takes the row back.
+    """
 
     model_config = SettingsConfigDict(env_prefix="REMEMBERSTACK_WORK_", extra="ignore")
 
     retry_backoff_base_s: float = 2.0
     retry_backoff_max_s: float = 60.0
+    lease_s: float = Field(default=60.0, gt=0)
     budgets: tuple[CostBudget, ...] = ()
 
     @model_validator(mode="after")
@@ -137,8 +145,9 @@ class WorkLedger:
         The due row is locked before the current route-window spend is checked.
         Exhaustion durably parks it until the aligned window rolls, without
         consuming an attempt or touching its last error. Otherwise claiming
-        clears any defer reason, moves it to running, and increments attempts
-        exactly once immediately before the handler begins.
+        clears any defer reason, moves it to running, increments attempts
+        exactly once immediately before the handler begins, and grants the
+        attempt a lease of ``lease_s`` seconds.
         """
         from rememberstack.spine.processing_layers import hold_window_reviews_on
 
@@ -193,7 +202,11 @@ class WorkLedger:
                     )
             started = (
                 connection.execute(
-                    _CLAIM_START, {"processing_id": row["processing_id"]}
+                    _CLAIM_START,
+                    {
+                        "processing_id": row["processing_id"],
+                        "lease_s": self._settings.lease_s,
+                    },
                 )
                 .mappings()
                 .one()
@@ -217,7 +230,11 @@ class WorkLedger:
         )
 
     def complete(
-        self, *, processing_id: UUID, follow_up: tuple[EnqueueWork, ...] = ()
+        self,
+        *,
+        processing_id: UUID,
+        attempt: int,
+        follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
         """Mark a running attempt succeeded and enqueue its chain follow-ups atomically.
 
@@ -232,7 +249,7 @@ class WorkLedger:
                 connection=connection, processing_id=processing_id
             )
             updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
+                _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
             ).rowcount
             if updated == 0:
                 raise WorkNotRunningError(
@@ -251,6 +268,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         boundary: object,
         follow_up: tuple[EnqueueWork, ...] = (),
         empty: object | None = None,
@@ -285,11 +303,14 @@ class WorkLedger:
                 return _complete_empty_obs_flush_on(
                     connection=connection,
                     processing_id=processing_id,
+                    attempt=attempt,
                     empty=empty,
                     follow_up=follow_up,
                 )
             if (
-                connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+                connection.execute(
+                    _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
+                ).rowcount
                 == 0
             ):
                 raise WorkNotRunningError(
@@ -312,6 +333,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         barrier: object,
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
@@ -338,7 +360,9 @@ class WorkLedger:
                 {"representation_id": barrier.representation_id},
             )
             if (
-                connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+                connection.execute(
+                    _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
+                ).rowcount
                 == 0
             ):
                 raise WorkNotRunningError("Selection work is no longer running")
@@ -389,6 +413,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         barrier: object,
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
@@ -422,7 +447,7 @@ class WorkLedger:
                 {"representation_id": barrier.representation_id},
             )
             updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
+                _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
             ).rowcount
             if updated == 0:
                 raise WorkNotRunningError(
@@ -472,6 +497,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         barrier: object,
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
@@ -535,7 +561,7 @@ class WorkLedger:
                     {"representation_id": UUID(rep_key)},
                 )
             updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
+                _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
             ).rowcount
             if updated == 0:
                 raise WorkNotRunningError(
@@ -605,6 +631,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         barrier: object,
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
@@ -624,7 +651,7 @@ class WorkLedger:
                 {"representation_id": barrier.representation_id},
             )
             updated = connection.execute(
-                _COMPLETE, {"processing_id": processing_id}
+                _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
             ).rowcount
             if updated == 0:
                 raise WorkNotRunningError(
@@ -714,6 +741,7 @@ class WorkLedger:
         self,
         *,
         processing_id: UUID,
+        attempt: int,
         empty: object,
         follow_up: tuple[EnqueueWork, ...] = (),
     ) -> tuple[EnqueueOutcome, ...]:
@@ -728,12 +756,13 @@ class WorkLedger:
             return _complete_empty_obs_flush_on(
                 connection=connection,
                 processing_id=processing_id,
+                attempt=attempt,
                 empty=empty,
                 follow_up=follow_up,
             )
 
     def fail(
-        self, *, processing_id: UUID, error: str, retryable: bool
+        self, *, processing_id: UUID, attempt: int, error: str, retryable: bool
     ) -> datetime | None:
         """Record a failed attempt with its full traceback; never bury it (core value 6).
 
@@ -742,7 +771,8 @@ class WorkLedger:
         returns the scheduled time — the caller re-announces it through the
         queue port (packaging §3: retry paths call the port in both profiles). A
         failure at the attempt limit, or a non-retryable one, dead-letters the
-        row and returns None.
+        row and returns None. Only the running ``attempt`` can fail: an attempt
+        whose lease the reaper took back has nothing left to record.
         """
         with self._engine.begin() as connection:
             row = (
@@ -754,9 +784,10 @@ class WorkLedger:
                 raise WorkNotFoundError(
                     f"processing row {processing_id} does not exist"
                 )
-            if row["status"] != "running":
+            if row["status"] != "running" or int(row["attempts"]) != attempt:
                 raise WorkNotRunningError(
-                    f"processing row {processing_id} is not running; cannot fail it"
+                    f"processing row {processing_id} is not running attempt"
+                    f" {attempt}; cannot fail it"
                 )
             attempts, max_attempts = int(row["attempts"]), int(row["max_attempts"])
             if retryable and attempts < max_attempts:
@@ -777,6 +808,57 @@ class WorkLedger:
                 _FAIL_DEAD_LETTER, {"processing_id": processing_id, "error": error}
             )
             return None
+
+    @property
+    def lease_renewal_interval_s(self) -> float:
+        """How often a worker renews its claims: a third of the lease."""
+        return self._settings.lease_s / 3
+
+    def renew_lease(self, *, processing_id: UUID, attempt: int) -> bool:
+        """Extend the lease of a running attempt; False when the attempt lost it.
+
+        A False answer means the reaper already took the row back (and another
+        attempt may be running it); the caller's later complete or fail will be
+        refused for the same reason.
+        """
+        with self._engine.begin() as connection:
+            return (
+                connection.execute(
+                    _RENEW_LEASE,
+                    {
+                        "processing_id": processing_id,
+                        "attempt": attempt,
+                        "lease_s": self._settings.lease_s,
+                    },
+                ).rowcount
+                == 1
+            )
+
+    def reap_expired_leases(
+        self, *, deployment_id: UUID, stages: Collection[PipelineStage]
+    ) -> tuple[ExpiredLease, ...]:
+        """Take back running attempts on ``stages`` whose lease expired.
+
+        Such an attempt's worker was killed or stalled. A row with attempts
+        left returns to ``pending``, due now, so the next claim retries it; a
+        row that used its last attempt is dead-lettered, because claiming
+        requires ``attempts < max_attempts`` and requeueing it would strand it.
+        A task that kills its worker every time therefore dead-letters after
+        ``max_attempts`` instead of looping. Rows another reaper is taking are
+        skipped. The caller announces the requeued rows.
+        """
+        with self._engine.begin() as connection:
+            rows = connection.execute(
+                _REAP_EXPIRED_LEASES,
+                {
+                    "deployment_id": deployment_id,
+                    "stages": [stage.value for stage in stages],
+                },
+            ).mappings()
+            return tuple(
+                ExpiredLease(work=_claimed_work(row=row), requeued=row["requeued"])
+                for row in rows
+            )
 
     def park_for_budget(self, *, processing_id: UUID, resume_at: datetime) -> None:
         """Park queued work until its budget window rolls (D67).
@@ -1130,6 +1212,7 @@ def _complete_empty_obs_flush_on(
     *,
     connection: Connection,
     processing_id: UUID,
+    attempt: int,
     empty: "EmptyObsFlushComplete",
     follow_up: tuple[EnqueueWork, ...],
 ) -> tuple[EnqueueOutcome, ...]:
@@ -1141,7 +1224,9 @@ def _complete_empty_obs_flush_on(
     connection.execute(
         _ADVISORY_LOCK_NORMALIZE_BARRIER, {"representation_id": empty.representation_id}
     )
-    updated = connection.execute(_COMPLETE, {"processing_id": processing_id}).rowcount
+    updated = connection.execute(
+        _COMPLETE, {"processing_id": processing_id, "attempt": attempt}
+    ).rowcount
     if updated == 0:
         raise WorkNotRunningError(
             f"processing row {processing_id} is not running; cannot complete"
@@ -1928,7 +2013,8 @@ _CLAIM_START = text(
     SET status = 'running',
         defer_reason = NULL,
         attempts = attempts + 1,
-        started_at = now()
+        started_at = now(),
+        lease_until = now() + make_interval(secs => :lease_s)
     WHERE processing_id = :processing_id
     RETURNING processing_id, deployment_id, target_kind, target_id, stage,
               component_version, content_hash, lane, attempts, payload
@@ -1968,6 +2054,48 @@ _COMPLETE = text(
     UPDATE processing_state
     SET status = 'succeeded', finished_at = now()
     WHERE processing_id = :processing_id AND status = 'running'
+      AND attempts = :attempt
+    """
+)
+
+_RENEW_LEASE = text(
+    """
+    UPDATE processing_state
+    SET lease_until = now() + make_interval(secs => :lease_s)
+    WHERE processing_id = :processing_id AND status = 'running'
+      AND attempts = :attempt
+    """
+)
+
+_REAP_EXPIRED_LEASES = text(
+    """
+    WITH expired AS (
+        SELECT processing_id
+        FROM processing_state
+        WHERE deployment_id = :deployment_id
+          AND stage = ANY(CAST(:stages AS pipeline_stage[]))
+          AND status = 'running'
+          AND lease_until < now()
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE processing_state p
+    SET status = CASE WHEN p.attempts < p.max_attempts
+                      THEN 'pending'::processing_status
+                      ELSE 'dead_letter'::processing_status END,
+        not_before = CASE WHEN p.attempts < p.max_attempts THEN now()
+                          ELSE p.not_before END,
+        finished_at = CASE WHEN p.attempts < p.max_attempts THEN NULL
+                           ELSE now() END,
+        last_error = format(
+            'lease expired: attempt %s of %s stopped renewing its claim at %s'
+            ' (worker killed or stalled)',
+            p.attempts, p.max_attempts, p.lease_until
+        )
+    FROM expired
+    WHERE p.processing_id = expired.processing_id
+    RETURNING p.processing_id, p.deployment_id, p.target_kind, p.target_id,
+              p.stage, p.component_version, p.content_hash, p.lane, p.attempts,
+              p.payload, p.status = 'pending' AS requeued
     """
 )
 
