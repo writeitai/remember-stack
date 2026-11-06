@@ -98,3 +98,18 @@ Frozen older v39 profiles remain readable as recorded runs, but current-pin
 validation correctly refuses to execute them under different query settings.
 Prepare a new identity to run the changed policy on a restored store. Do not
 rewrite an old fingerprint or trigger re-ingestion.
+
+## Public surface identity
+
+The view rewrite changes its canonical SQL AST even though row semantics are
+preserved. Register the new migration's authored DDL in query-space source
+definitions and regenerate the manifest. A dedicated regression compares the
+migration's definition with the published definition. Roll the current LoCoMo
+surface pin and SDK metadata; old recorded runs retain their existing hashes.
+
+On ordinary setup, publishing the new manifest atomically moves active saved
+query versions to pending_revalidation. Shipped examples are reseeded through
+the existing setup policy, and customer-authored queries require revalidation.
+That is the existing surface-change contract, not ingestion or paid-product
+reprocessing. The direct copied-store query timings above precede this metadata
+integration correction; the retrieval SQL and view body remain identical.

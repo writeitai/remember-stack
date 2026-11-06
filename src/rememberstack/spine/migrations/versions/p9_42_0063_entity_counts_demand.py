@@ -14,7 +14,7 @@ down_revision: str | None = "p9_41_0062"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_ENTITIES_CURRENT_DDL = r"""
+ENTITIES_DEMAND_COUNTS_DDL = r"""
 CREATE OR REPLACE VIEW memory_v1.entities_current (
   deployment_id,
   entity_id,
@@ -101,13 +101,13 @@ COMMENT ON VIEW memory_v1.entities_current IS
 
 def upgrade() -> None:
     """Preserve entity membership/counts while pruning unused count work."""
-    apply_view_ddl(sql=_ENTITIES_CURRENT_DDL)
+    apply_view_ddl(sql=ENTITIES_DEMAND_COUNTS_DDL)
 
 
 def downgrade() -> None:
     """Restore the preceding view definition without modifying stored data."""
     apply_view_ddl(
-        sql=_ENTITIES_CURRENT_DDL.replace(
+        sql=ENTITIES_DEMAND_COUNTS_DDL.replace(
             "LEFT JOIN LATERAL (", "CROSS JOIN LATERAL (", 1
         ).replace(") AS live ON true", ") AS live", 1)
     )

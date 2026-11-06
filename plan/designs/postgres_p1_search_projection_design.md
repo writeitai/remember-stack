@@ -310,7 +310,10 @@ aggregate with `LEFT JOIN LATERAL ... ON true`, allowing the planner to remove
 it when neither count column is selected. The aggregate has no grouping or
 HAVING and always produces one row, so this preserves count values and all
 provenance/merge/forgetting membership checks. No counts are cached and no
-stored ingestion products are rewritten.
+stored ingestion products are rewritten. This SQL AST change is included in
+the query-space manifest identity, so ordinary setup atomically suspends active
+saved queries for revalidation before publishing the new hash. It also rolls
+the current benchmark surface pin; recorded run identities remain unchanged.
 
 ### 8.3 Nominate, confirm, continue (D142)
 
