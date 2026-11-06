@@ -2783,8 +2783,6 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
     parts = normalized.split("/")[1:]
     if method == "POST" and len(parts) == 2 and parts[0] == "operations" and parts[1]:
         return ("recipe", parts[1])
-    if not all(parts):
-        return None
     if (
         method == "GET"
         and len(parts) >= 5
@@ -2792,8 +2790,14 @@ def _spend_gated_route(*, method: str, path: str) -> tuple[str, str | None] | No
         and parts[2] == "sections"
         and parts[-1] == "history"
     ):
-        # /documents/{doc_id}/sections/{section_key}/history (keys may hold '/')
+        # /documents/{doc_id}/sections/{section_key}/history. The key is a
+        # path parameter, so it may hold '/' and empty segments ('a//b')
+        # and still route: it is matched before empty segments are refused.
         return ("search", None)
+    if not all(parts):
+        # Every other route's parameters are single non-empty segments, so a
+        # path with an empty segment matches no route (404) and spends nothing.
+        return None
     if (
         method == "GET"
         and len(parts) == 5

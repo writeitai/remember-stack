@@ -17,6 +17,7 @@ import sys
 import time
 from typing import Annotated
 from typing import Any
+from typing import Literal
 from typing import Self
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -226,6 +227,13 @@ class SelfHostSettings(BaseSettings):
     #: points at a pooler the query role must bypass.
     query_role_host: str | None = Field(default=None, min_length=1)
     query_role_port: int | None = Field(default=None, ge=1, le=65_535)
+    #: libpq ``sslmode`` and ``sslrootcert`` (a CA file) for that connection,
+    #: for example ``verify-full`` with the server's CA. Unset: libpq defaults.
+    query_role_sslmode: (
+        Literal["disable", "allow", "prefer", "require", "verify-ca", "verify-full"]
+        | None
+    ) = None
+    query_role_sslrootcert: Path | None = None
     migration_config: Path = Path("alembic.ini")
     api_host: str = "0.0.0.0"
     api_port: int = Field(default=8000, ge=1, le=65_535)
@@ -773,14 +781,20 @@ def _migration_config(*, path: Path, database_url: str) -> Config:
 
 
 def _query_role_connect_factory(
-    *, engine: Engine, host: str | None = None, port: int | None = None
+    *,
+    engine: Engine,
+    host: str | None = None,
+    port: int | None = None,
+    sslmode: str | None = None,
+    sslrootcert: Path | None = None,
 ):
     """Bind a query-role connection factory to one profile engine URL.
 
     Uses psycopg keyword arguments so passwords containing ``@``, ``:``, or
     ``/`` cannot corrupt a reconstructed DSN. Derives database/password, and
     host/port unless given, from the injected profile engine rather than
-    reloading settings.
+    reloading settings. ``sslmode`` and ``sslrootcert`` reach libpq only when
+    set, so unset keeps libpq's defaults.
     """
     from rememberstack.spine.migrations.versions.p9_02_0023_query_space_roles import (  # noqa: PLC0415
         query_role_name,
@@ -792,11 +806,16 @@ def _query_role_connect_factory(
     password = url.password or ""
     host = host or url.host or "localhost"
     port = port or int(url.port or 5432)
+    tls: dict[str, Any] = {}
+    if sslmode is not None:
+        tls["sslmode"] = sslmode
+    if sslrootcert is not None:
+        tls["sslrootcert"] = str(sslrootcert)
 
     def connect() -> psycopg.Connection:
         """Open as the deployment query role with keyword connection args."""
         return psycopg.connect(
-            host=host, port=port, dbname=database, user=role, password=password
+            host=host, port=port, dbname=database, user=role, password=password, **tls
         )
 
     return connect
@@ -1336,6 +1355,8 @@ class SelfHostProfile:
             engine=self._engine,
             host=self._settings.query_role_host,
             port=self._settings.query_role_port,
+            sslmode=self._settings.query_role_sslmode,
+            sslrootcert=self._settings.query_role_sslrootcert,
         )
         surface_cost = SqlSurfaceCostRecorder(
             engine=self._engine, deployment_id=self._settings.deployment_id

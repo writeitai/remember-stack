@@ -19221,6 +19221,8 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | `REMEMBERSTACK_SELFHOST_GRAPH_WORK_MEM_KIB` | `16384` | int 64–65536 | PostgreSQL `work_mem` per graph query. |
 | `REMEMBERSTACK_SELFHOST_QUERY_ROLE_HOST` | unset (the database URL's host) | hostname | Where `query_sql` connects as the deployment's query role, for example PostgreSQL itself when the database URL points at a connection pooler. |
 | `REMEMBERSTACK_SELFHOST_QUERY_ROLE_PORT` | unset (the database URL's port) | int 1–65535 | Port for that connection. |
+| `REMEMBERSTACK_SELFHOST_QUERY_ROLE_SSLMODE` | unset (libpq default) | `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full` | TLS mode for that connection. |
+| `REMEMBERSTACK_SELFHOST_QUERY_ROLE_SSLROOTCERT` | unset (libpq default) | path | CA certificate file that verifies the server for that connection. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_BASE_S` | `2.0` | float | First retry delay; doubles per attempt. |
 | `REMEMBERSTACK_WORK_RETRY_BACKOFF_MAX_S` | `60.0` | float | Longest retry delay. |
 | `REMEMBERSTACK_WORK_LEASE_S` | `60.0` | float | How long a worker's hold on an item lasts without renewal. A running worker renews it every third of this; an item whose worker died is retried once it runs out ([Operating](https://remember.dev/docs/self-hosting/operating#retries-and-dead-letters)). |

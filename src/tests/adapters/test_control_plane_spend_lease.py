@@ -778,6 +778,10 @@ def test_parked_deployment_refuses_the_document_list() -> None:
         ("PUT", f"/documents/{_DEPLOYMENT}/versions/{_DEPLOYMENT}/references", None),
         ("GET", "/connectors", None),
         ("GET", "/query/saved//x", None),
+        # A section key is a path parameter: empty segments still route.
+        ("GET", "/documents/x/sections/a//b/history", ("search", None)),
+        ("GET", "/documents/x/sections//history", ("search", None)),
+        ("GET", "/documents/x/sections/a//history/", ("search", None)),
     ],
 )
 def test_memory_reads_are_spend_gated(

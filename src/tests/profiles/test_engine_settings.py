@@ -93,6 +93,37 @@ def test_customer_sql_can_bypass_the_pooler(monkeypatch) -> None:  # noqa: ANN00
         ("postgres.invalid", 5432, "project_a"),
     ]
     assert seen[1]["user"] == "rememberstack_query_project_a"
+    # Unset TLS settings leave libpq's defaults alone.
+    assert "sslmode" not in seen[0] and "sslrootcert" not in seen[0]
+
+
+def test_customer_sql_tls_settings_reach_libpq(monkeypatch) -> None:  # noqa: ANN001
+    """``query_role_sslmode``/``sslrootcert`` are passed to the connection."""
+    from pathlib import Path
+
+    import sqlalchemy
+
+    from rememberstack.profiles import selfhost
+
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        selfhost.psycopg, "connect", lambda **kwargs: seen.append(kwargs)
+    )
+    engine = sqlalchemy.create_engine("postgresql+psycopg://u:p@pg.invalid/project_a")
+    try:
+        selfhost._query_role_connect_factory(  # noqa: SLF001
+            engine=engine, sslmode="verify-full", sslrootcert=Path("/etc/umc/pg-ca.pem")
+        )()
+    finally:
+        engine.dispose()
+    assert seen[0]["sslmode"] == "verify-full"
+    assert seen[0]["sslrootcert"] == "/etc/umc/pg-ca.pem"
+    settings = SelfHostSettings(
+        deployment_id=UUID(int=1),
+        query_role_sslmode="verify-full",
+        query_role_sslrootcert=Path("/etc/umc/pg-ca.pem"),
+    )
+    assert settings.query_role_sslmode == "verify-full"
 
 
 def test_setup_hands_alembic_a_url_encoded_password_verbatim() -> None:

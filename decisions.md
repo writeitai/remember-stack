@@ -7426,7 +7426,8 @@ deployment's values into another's work.
    is built held so per-request admission keeps its slot accounting.
    `install_browser_origins(app=…, origins=…)` is public for a host composing its own app.
    `SelfHostSettings.query_role_host` / `query_role_port` send customer SQL straight to
-   PostgreSQL when the database URL points at a pooler.
+   PostgreSQL when the database URL points at a pooler, and `query_role_sslmode` /
+   `query_role_sslrootcert` set that connection's TLS (unset: libpq defaults).
 
 No module-level variable holds a deployment's values. Per-deployment state lives on the
 profile, so a host may hold several profiles in one process.
