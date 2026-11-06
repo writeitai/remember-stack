@@ -973,5 +973,5 @@ def test_reverse_scope_matches_forward_authority(corpus: _Corpus) -> None:
             ).all()
         )
     assert actual == expected
-    assert (_MERGED, _ACME) in actual
+    assert (_MERGED, _ALICE) in actual
     assert all(entity != _OTHER_ALICE for entity, _ in actual)
