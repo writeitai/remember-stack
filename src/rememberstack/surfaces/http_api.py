@@ -13,7 +13,7 @@ is open (the self-host default). The surface itself never touches adapters.
 Every route reads its deployment and capabilities from one FastAPI dependency,
 :func:`deployment_context`, which by default returns the deployment `build_api`
 was composed with. A host that serves several deployments from one process
-overrides that dependency and returns the request's deployment (D144); each
+overrides that dependency and returns the request's deployment (D147); each
 request is still served by exactly one deployment.
 """
 
@@ -501,7 +501,7 @@ class RunSavedQueryRequest(BaseModel):
 
 @dataclass(frozen=True, kw_only=True)
 class ApiDeployment:
-    """The deployment a request is served from: its id and capabilities (D144).
+    """The deployment a request is served from: its id and capabilities (D147).
 
     `build_api` mounts the routes for the capabilities its own deployment
     has, and every route reads them from the request's deployment through
@@ -544,7 +544,7 @@ class ApiDeployment:
 
 
 def deployment_context(request: Request) -> ApiDeployment:
-    """The deployment this request is served from (D144).
+    """The deployment this request is served from (D147).
 
     The default is the deployment `build_api` was composed with. A host that
     serves several deployments replaces it per app, for example

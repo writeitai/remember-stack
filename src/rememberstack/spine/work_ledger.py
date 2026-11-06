@@ -128,7 +128,7 @@ class WorkLedger:
     ) -> ClaimedWork | BudgetParked | None:
         """Claim, budget-park, or find no due row on one route.
 
-        With ``processing_id`` only that row is considered (D144: a host that
+        With ``processing_id`` only that row is considered (D147: a host that
         delivers one task at a time names it); it must be due on the route,
         exactly as an unnamed claim would require.
 

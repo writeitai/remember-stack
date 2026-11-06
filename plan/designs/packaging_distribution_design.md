@@ -238,7 +238,7 @@ ports and published extension points, keeping it portable off GCP too.
   `ultimate-memory-cloud`, not in this library.
 - Profile choice is configuration consumed by `profiles/`; no code path branches on "am I on
   GCP" outside adapters.
-- **One profile is one deployment's context, built from explicit settings (D144).**
+- **One profile is one deployment's context, built from explicit settings (D147).**
   `EngineSettings` carries everything that differs between deployments (identity and
   buckets, database, object store, model-provider account); `SelfHostProfile.from_settings`
   builds the context from it and nothing else, and `EngineSettings.from_env()` is merely the

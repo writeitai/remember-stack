@@ -274,7 +274,7 @@ class Worker:
     ) -> RunResult:
         """Claim and run at most one due unit of work on the route.
 
-        ``processing_id`` restricts the claim to that one row (D144).
+        ``processing_id`` restricts the claim to that one row (D147).
 
         This is the worker's single catch-to-log boundary (core value 6): the
         full traceback is logged and recorded on the row; a
