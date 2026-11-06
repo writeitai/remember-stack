@@ -32,7 +32,11 @@ Separately, accounting failures must retain bounded generation identifiers,
 the original inline parsing reason, metadata lookup count and final HTTP status
 in the worker's durable error. Provider messages and completion content stay
 out of ordinary logs. That diagnostic change helps reconcile a future genuine
-accounting failure without regenerating an already-paid response. A durable
+accounting failure without regenerating an already-paid response. The existing
+opt-in invalid-completion capture also retains the complete unaccounted response
+as a private mode-0600 artifact; its default remains off. This preserves the
+evidence needed to investigate an uncommon failure without guessing its cost.
+A durable
 paid-response replay subsystem is not needed to classify a known pre-generation
 Flex rejection; it would require a separate contract if later evidence calls
 for it.

@@ -67,7 +67,10 @@ rotation, a split throttle budget, and per-call host recording.
   `ProviderAccountingError`. Its durable worker error retains the bounded
   generation ID, original inline reason, lookup count and final metadata HTTP
   status, without copying provider messages or completion text. Unknown cost
-  remains unknown. See the
+  remains unknown. When the existing private invalid-completion capture is
+  explicitly enabled, retain the original unaccounted response there with
+  mode 0600, never a fabricated usage record. This is diagnostic customer data,
+  disabled by default, and does not authorize automatic paid replay. See the
   [accounting-failure analysis](../analysis/openrouter-accounting-failure-525-20261106.md)
   for the November 6 evidence and upstream contracts.
 - Exact settings on `OpenRouterSettings`, alongside the existing

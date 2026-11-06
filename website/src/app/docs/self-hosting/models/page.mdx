@@ -159,8 +159,10 @@ REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP={"z-ai/glm-4.7-flash":"none","open
 For debugging, `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR`
 (an absolute path, for example
 `/var/lib/rememberstack/openrouter-invalid-completions`) keeps every model
-answer that failed schema validation, one file each, readable only by the
-engine user. Those files can repeat text from your documents; treat the
+answer that failed schema validation and each response whose accounting could
+not be recovered, one file each, readable only by the engine user. Accounting
+captures keep the original provider response for reconciliation and do not
+authorize replay. These files can repeat text from your documents; treat the
 directory as customer data and leave the setting off otherwise.
 
 ## Cost

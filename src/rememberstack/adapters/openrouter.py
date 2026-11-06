@@ -175,7 +175,7 @@ class OpenRouterSettings(BaseSettings):
     global pin is also unset). Values must be one of the allowed effort
     literals."""
     invalid_completion_capture_dir: Path | None = None
-    """Private opt-in directory for raw schema-invalid chat completions.
+    """Private opt-in directory for schema-invalid or unaccounted chat responses.
 
     Disabled by default because a completion can repeat source material. Files
     are created mode 0600 and contain no prompt, but operators must still treat
@@ -396,7 +396,7 @@ class OpenRouterModelProvider:
                 request=request,
                 response_type_name=response_type.__name__,
                 raw_content=None,
-                outcome="transport_error",
+                outcome="invalid",
                 error=str(error),
                 usage=None,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
@@ -560,6 +560,41 @@ class OpenRouterModelProvider:
             "content_sha256": digest,
             "content": content,
         }
+        self._write_invalid_capture(
+            artifact=artifact, captured_at_ns=captured_at_ns, digest=digest
+        )
+
+    def _capture_accounting_failure(
+        self, *, body: dict[str, Any], error: ProviderAccountingError
+    ) -> None:
+        """Keep an unaccounted response privately without inventing usage or retrying."""
+        if self._settings.invalid_completion_capture_dir is None:
+            return
+        try:
+            captured_at_ns = time.time_ns()
+            digest = _content_sha256(content=json.dumps(body, ensure_ascii=True))
+            self._write_invalid_capture(
+                artifact={
+                    "captured_at_unix_ns": captured_at_ns,
+                    "failure_kind": "usage_accounting",
+                    "accounting_error": str(error),
+                    "provider_response": body,
+                },
+                captured_at_ns=captured_at_ns,
+                digest=digest,
+            )
+        except (TypeError, ValueError):
+            _logger.warning(
+                "could not serialize invalid OpenRouter accounting response"
+            )
+
+    def _write_invalid_capture(
+        self, *, artifact: dict[str, Any], captured_at_ns: int, digest: str
+    ) -> None:
+        """Write one explicitly enabled private artifact without replacing its error."""
+        capture_dir = self._settings.invalid_completion_capture_dir
+        if capture_dir is None:
+            return
         target: Path | None = None
         created = False
         try:
@@ -795,9 +830,13 @@ class OpenRouterModelProvider:
         self, *, body: dict[str, Any], started_ns: int
     ) -> ProviderCallUsage:
         """Use inline accounting, or recover it by the existing generation id."""
-        return recover_completion_usage(
-            body=body, started_ns=started_ns, fetch_generation=self._get_generation
-        )
+        try:
+            return recover_completion_usage(
+                body=body, started_ns=started_ns, fetch_generation=self._get_generation
+            )
+        except ProviderAccountingError as error:
+            self._capture_accounting_failure(body=body, error=error)
+            raise
 
     def _chat_provider_payload(self) -> dict[str, object] | None:
         """Build the chat provider routing from settings, or leave it alone.
@@ -1031,6 +1070,8 @@ def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
     if not isinstance(error, dict):
         return False
     code = error.get("code")
+    if str(code).isdecimal() and 400 <= int(str(code)) < 500 and str(code) != "429":
+        return False
     if (
         response.status_code in (200, 429, 503)
         and (code is None or str(code) in ("429", "503"))
@@ -1061,6 +1102,10 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
         key in body for key in ("usage", "choices", "id")
     ):
         return False
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        code = str(body["error"].get("code", ""))
+        if code.isdecimal() and 400 <= int(code) < 500 and code != "429":
+            return False
     if response.status_code in transient_codes:
         return True
     if response.status_code != 200 or not isinstance(body, dict):
@@ -1384,7 +1429,9 @@ def _completion_accounting_error(
     raw_code = raw_error.get("code") if isinstance(raw_error, dict) else None
     error_code = (
         raw_code
-        if isinstance(raw_code, int) and not isinstance(raw_code, bool)
+        if isinstance(raw_code, int)
+        and not isinstance(raw_code, bool)
+        and 100 <= raw_code <= 599
         else None
     )
     return ProviderAccountingError(

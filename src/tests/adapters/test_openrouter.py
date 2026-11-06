@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 import json
+from pathlib import Path
 import stat
 from typing import Annotated
 
@@ -2023,7 +2024,7 @@ def test_unbilled_http_200_flex_capacity_error_is_retried(
     calls: list[dict[str, object]] = []
 
     def post(*, path: str, payload: dict[str, object]) -> httpx.Response:
-        """Return the observed Flex envelope followed by one billed completion."""
+        """Return a documented Flex envelope followed by one billed completion."""
         calls.append(payload.copy())
         if len(calls) == 1:
             return httpx.Response(
@@ -2153,11 +2154,34 @@ def test_generic_error_with_generation_id_is_not_assumed_unbilled() -> None:
     assert not _unbilled_capacity_rejection(response=response)
 
 
+@pytest.mark.parametrize("routed", [False, True])
+@pytest.mark.parametrize("capture", [False, True])
 def test_accounting_failure_retains_identifiers_without_provider_content(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, routed: bool, capture: bool
 ) -> None:
     """Keep the existing generation and lookup proof while making one paid POST."""
-    provider = OpenRouterModelProvider(settings=OpenRouterSettings(api_key="offline"))
+
+    class Recorder:
+        """Retain the optional generation diagnostic for this one invocation."""
+
+        def __init__(self) -> None:
+            """Start with no generation records."""
+            self.records: list[GenerationRecord] = []
+
+        def record(self, *, record: GenerationRecord) -> None:
+            """Keep the adapter's typed diagnostic without interpreting it."""
+            self.records.append(record)
+
+    recorder = Recorder()
+    capture_dir = tmp_path / "private-captures"
+    provider = OpenRouterModelProvider(
+        settings=OpenRouterSettings(
+            api_key="offline",
+            chat_provider_only=["openai/flex"] if routed else None,
+            invalid_completion_capture_dir=capture_dir if capture else None,
+        ),
+        recorder=recorder,
+    )
     posts: list[str] = []
     lookups: list[str] = []
 
@@ -2203,6 +2227,43 @@ def test_accounting_failure_retains_identifiers_without_provider_content(
     assert "private" not in message
     assert posts == ["/chat/completions"]
     assert lookups == ["gen-reconcile-me"] * 5
+    assert len(recorder.records) == 1
+    assert recorder.records[0].outcome == "invalid"
+    assert recorder.records[0].usage is None
+    assert recorder.records[0].raw_content is None
+    if capture:
+        (artifact_path,) = capture_dir.glob("*.json")
+        assert stat.S_IMODE(artifact_path.stat().st_mode) == 0o600
+        artifact = json.loads(artifact_path.read_text())
+        assert artifact["failure_kind"] == "usage_accounting"
+        assert artifact["provider_response"]["id"] == "gen-reconcile-me"
+        assert "private completion text" in artifact_path.read_text()
+        assert "private prompt" not in artifact_path.read_text()
+        assert "cost_usd" not in artifact
+    else:
+        assert not capture_dir.exists()
+
+
+@pytest.mark.parametrize("status", [200, 429, 503])
+@pytest.mark.parametrize("code", [400, 401, 402, 403])
+def test_flex_phrase_cannot_override_terminal_client_error(
+    status: int, code: int
+) -> None:
+    """Even a contradictory status cannot turn a client rejection into overload."""
+    from rememberstack.adapters.openrouter import _retryable_upstream_error
+    from rememberstack.adapters.openrouter import _unbilled_capacity_rejection
+
+    response = httpx.Response(
+        status,
+        json={
+            "error": {
+                "code": code,
+                "message": "Flex processing is temporarily unavailable.",
+            }
+        },
+    )
+    assert not _retryable_upstream_error(response=response)
+    assert not _unbilled_capacity_rejection(response=response)
 
 
 def test_accounting_diagnostic_does_not_echo_invalid_generation_id() -> None:
