@@ -1879,8 +1879,6 @@ def _model_bindings() -> dict[str, str]:
     p1 = P1Settings.model_validate({})
     openrouter = OpenRouterSettings.model_validate({})
     if facts.engine == "jev":
-        from rememberstack.adapters.typesafe import TypeSafeSettings
-
         fact_adjudication_model = TypeSafeSettings.model_validate({}).model
     else:
         fact_adjudication_model = facts.model
