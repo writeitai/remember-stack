@@ -103,7 +103,7 @@ def _build_in_scratch_database(*, database_url: str, name: str) -> dict[str, Any
         scratch_url = make_url(database_url).set(database=name)
         rendered = scratch_url.render_as_string(hide_password=False)
         config = Config(str(_ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", rendered)
+        config.set_main_option("sqlalchemy.url", rendered.replace("%", "%%"))
         command.upgrade(config=config, revision="head")
         engine = create_engine(rendered)
         try:
@@ -3752,7 +3752,7 @@ def test_deployed_definition_drift_is_detected(
             .render_as_string(hide_password=False)
         )
         config = Config(str(_ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", rendered)
+        config.set_main_option("sqlalchemy.url", rendered.replace("%", "%%"))
         command.upgrade(config=config, revision="head")
         reference = create_engine(rendered)
         try:
