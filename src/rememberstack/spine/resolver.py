@@ -36,6 +36,7 @@ from rememberstack.model import ResolutionCandidate
 from rememberstack.model import ResolvedEntity
 from rememberstack.model import ResolverConfig
 from rememberstack.model import T4Selection
+from rememberstack.model.resolution import t4_selection_for_candidates
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
@@ -847,7 +848,9 @@ class CascadeResolver:
             request=ModelRequest(
                 model=self._small_model, prompt=prompt, temperature=0.0
             ),
-            response_type=T4Selection,
+            response_type=t4_selection_for_candidates(
+                candidate_ids=tuple(item.candidate.entity_id for item in scored)
+            ),
         )
         if meter is not None:
             meter.record(

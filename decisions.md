@@ -4652,6 +4652,13 @@ D97's explicit ambiguity and zero-LLM engine query path, and D98's live graph.
 
 ## D100. T4 is one binary, match-biased candidate-selection call
 
+**Contract enforcement, 2026-11-06:** the provider response schema enumerates
+the exact supplied candidate IDs plus null, and local parsing validates the
+same set. `new` still requires null. Invalid matches never implicitly create
+an entity. This enforces the existing closed-choice contract without changing
+accepted decision semantics or paid reuse keys. See the
+[analysis](plan/analysis/closed-decisions-and-availability-backup-20261106.md).
+
 > **D102 amendment (2026-08-31).** A T4 match may establish the bounded
 > same-document exact-name binding used by later T0 replays. Global T0 and the
 > binary T4 contract below remain unchanged; D102 owns the exception.
@@ -6130,6 +6137,15 @@ building a managed mount/download service were also rejected. Full contract:
 [retrieval-access ablations](plan/analysis/locomo_retrieval_access_ablations.md).
 
 ## D126. Configurable System One Jev fact adjudication engine
+
+**Availability-backup amendment, 2026-11-06:** Jev remains primary. An explicit
+`openai_decisions` backup can implement the same System One port using native
+GPT-6 Luna choice/predicate/score requests, after classified unavailability.
+The default is `none`; uncertainty, invalid results and accounting gaps never
+trigger it. Serving-model usage and non-secret backup bindings are retained.
+Current LoCoMo freezes the option off. The current
+[binding contract](plan/designs/jev_adjudication_design.md#optional-native-decisions-backup)
+defines supported errors, costs, configuration and unchanged paid reuse keys.
 
 **Status:** accepted 2026-09-17, binding when merged. Provide a dedicated,
 alternate fact adjudication engine powered by TypeSafe AI's System One model

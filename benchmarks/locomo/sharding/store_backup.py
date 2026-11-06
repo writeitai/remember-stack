@@ -66,6 +66,16 @@ MODEL_BINDING_ENVIRONMENT = {
     "section_summary": "REMEMBERSTACK_SUMMARY_MODEL",
     "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
     "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
+    "systemone_backup": "REMEMBERSTACK_TYPESAFE_BACKUP",
+    "systemone_backup_model": "REMEMBERSTACK_OPENAI_DECISIONS_MODEL",
+    "systemone_backup_base_url": "REMEMBERSTACK_OPENAI_DECISIONS_BASE_URL",
+    "systemone_backup_timeout_s": "REMEMBERSTACK_OPENAI_DECISIONS_TIMEOUT_S",
+    "systemone_backup_input_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_INPUT_USD_PER_MILLION",
+    "systemone_backup_cached_input_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_CACHED_INPUT_USD_PER_MILLION",
+    "systemone_backup_cache_write_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_CACHE_WRITE_USD_PER_MILLION",
+    "systemone_backup_long_context_threshold": "REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_THRESHOLD",
+    "systemone_backup_long_context_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER",
+    "systemone_backup_pricing_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER",
 }
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",
@@ -73,6 +83,15 @@ UNSET_MODEL_BINDINGS = {
     "openrouter_max_completion_tokens": "unset",
     "openrouter_reasoning_effort": "auto",
     "openrouter_reasoning_effort_map": "unset",
+    "systemone_backup": "none",
+    **dict.fromkeys(
+        (
+            name
+            for name in MODEL_BINDING_ENVIRONMENT
+            if name.startswith("systemone_backup_")
+        ),
+        "unset",
+    ),
 }
 
 NonEmpty = Annotated[str, Field(min_length=1)]
@@ -461,6 +480,7 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
     if not isinstance(bindings, dict):
         raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
 
+    backup_environment = _saved_backup_environment(bindings=bindings)
     profile_data = _load_object(run_dir / "run.json").get("execution_profile")
     if profile_data is not None:
         profile = _RuntimeExecutionProfile.model_validate(profile_data)
@@ -471,10 +491,29 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
                 c in value for c in "\r\n\x00"
             ):
                 raise StoreBackupError("execution profile contains unsafe environment")
-        return dict(profile.ingest_environment)
+        environment = dict(profile.ingest_environment)
+        for name, value in backup_environment.items():
+            recorded = environment.get(name)
+            historical_disabled = (
+                recorded is None
+                and name == "REMEMBERSTACK_TYPESAFE_BACKUP"
+                and "systemone_backup" not in bindings
+            )
+            if not historical_disabled and recorded != value:
+                raise StoreBackupError(
+                    "execution profile differs from the saved backup policy"
+                )
+        # Disabled native settings are not part of this runtime's identity.
+        for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+            if binding.startswith("systemone_backup"):
+                environment.pop(variable, None)
+        environment.update(backup_environment)
+        return environment
 
-    environment: dict[str, str] = {}
+    environment: dict[str, str] = dict(backup_environment)
     for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+        if binding.startswith("systemone_backup"):
+            continue
         value = bindings.get(binding)
         if not isinstance(value, str) or not value:
             raise StoreBackupError(f"saved readiness has no valid {binding} binding")
@@ -482,6 +521,34 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
         if "\n" in normalized or "\r" in normalized or "\x00" in normalized:
             raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
         environment[variable] = normalized
+    return environment
+
+
+def _saved_backup_environment(*, bindings: dict[str, object]) -> dict[str, str]:
+    """Restore the recorded provider policy; inactive native defaults are irrelevant."""
+    backup = bindings.get("systemone_backup")
+    fields = {
+        name
+        for name in MODEL_BINDING_ENVIRONMENT
+        if name.startswith("systemone_backup_")
+    }
+    if backup is None:
+        if "systemone_backup" in bindings or fields & set(bindings):
+            raise StoreBackupError("saved readiness has an incomplete backup policy")
+        # The entire absent dimension predates this optional feature.
+        backup = "none"
+    if not isinstance(backup, str) or backup not in ("none", "openai_decisions"):
+        raise StoreBackupError("saved readiness has an unknown backup policy")
+    environment = {"REMEMBERSTACK_TYPESAFE_BACKUP": backup}
+    if backup == "none":
+        return environment
+    for binding in fields:
+        value = bindings.get(binding)
+        if not isinstance(value, str) or not value or value == "unset":
+            raise StoreBackupError(f"saved readiness has no valid {binding} binding")
+        if any(c in value for c in "\r\n\x00"):
+            raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
+        environment[MODEL_BINDING_ENVIRONMENT[binding]] = value
     return environment
 
 
@@ -524,6 +591,7 @@ def _compose_runtime_command(
             "REMEMBERSTACK_FACT_CONFIDENCE_FLOOR",
             "REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT",
             "REMEMBERSTACK_TYPESAFE_MODEL",
+            "REMEMBERSTACK_TYPESAFE_BACKUP",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT",
             "REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY",

@@ -136,6 +136,9 @@ nine model calls per question, with no hard answer length cap.
 
 The saved run records its non-secret ingestion environment, component/model
 bindings, approved provider order and 180-second API transport budget. CI checks
+the native System One backup remains disabled (`REMEMBERSTACK_TYPESAFE_BACKUP=none`),
+so adding an optional product adapter cannot silently change benchmark providers.
+CI also checks
 all component generations against the current engine. The shard runner
 attests workers against the profile, and backups preserve it. Superseded
 protocols are read-only historical records; they cannot be selected for

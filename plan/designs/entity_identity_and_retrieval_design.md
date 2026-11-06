@@ -265,6 +265,11 @@ replace name equality for that case without expanding D102.
 
 T4 receives every member of the bounded snapshot together. It returns
 `match(candidate_id)` only for an id present in that snapshot, or `new`.
+The provider response schema enumerates those exact IDs plus null, and local
+validation enforces the same set. A `new` result requires null; the engine mints
+its ID. Keep the post-response membership guard as defense against providers
+that ignore their schema. This closes an existing response contract without
+re-keying accepted resolution decisions, extracted claims or embeddings.
 Compatible but topically different facts are not positive distinction. When
 several candidates remain compatible, the first candidate in deterministic
 T3-relevance order wins. This makes the tie policy explicit and prevents model

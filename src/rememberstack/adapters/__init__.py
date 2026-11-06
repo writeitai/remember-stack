@@ -20,6 +20,8 @@ from rememberstack.adapters.generation_recorder import GenerationRecord
 from rememberstack.adapters.generation_recorder import GenerationRecorder
 from rememberstack.adapters.generation_recorder import LangfuseRecorderSettings
 from rememberstack.adapters.generation_recorder import OtelSpanRecorder
+from rememberstack.adapters.openai_decisions import OpenAIDecisionsClient
+from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
 from rememberstack.adapters.openrouter import OpenRouterModelProvider
 from rememberstack.adapters.openrouter import OpenRouterProviderError
 from rememberstack.adapters.openrouter import OpenRouterSettings
@@ -81,6 +83,8 @@ __all__ = (
     "OpenRouterModelProvider",
     "OpenRouterProviderError",
     "OpenRouterSettings",
+    "OpenAIDecisionsClient",
+    "OpenAIDecisionsSettings",
     "PostgresP1Index",
     "ConfigurationError",
     "TypeSafeConfigurationError",

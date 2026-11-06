@@ -112,7 +112,40 @@ refuse the new model.
 To use a different embedding model, start a new deployment and send the
 documents again.
 
+## Optional OpenAI Decisions backup for Jev
+
+With `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`, Jev stays primary. Set
+`REMEMBERSTACK_TYPESAFE_BACKUP=openai_decisions` and
+`REMEMBERSTACK_OPENAI_DECISIONS_API_KEY` to permit one native Decisions request
+after exhausted connection-establishment, rate-limit (429), or overload (529)
+failures. The default is `none`. The backup uses `gpt-6-luna` on OpenAI's native
+API; OpenRouter credit does not pay for it.
+Outside Compose, `OPENAI_API_KEY` is also accepted. Compose forwards only the
+prefixed credential, so set that variable for container deployments.
+Native response handling has only been validated with offline mock transports.
+Run a small live API check with your native credential before enabling the backup.
+
+Valid low confidence, invalid credentials, malformed answers, ambiguous read
+timeouts, generic gateway errors and missing usage do not trigger the backup.
+The adapter supports choice, yes/no and score questions and retains the full
+option set. Decisions cannot silently invent an option or replace an uncertain
+answer with one from another provider. Evaluate both providers on your own
+labeled cases before sharing a confidence threshold between them.
+
+Usage records identify `openai-decisions/<served-model>`. Costs include ordinary
+input, cache reads, 30-minute cache writes, long-context rates and regional
+multipliers; output tokens are free on this endpoint. The initial verified
+global short-context rates are $0.10/$0.01/$0.125 per million tokens for ordinary,
+cached and cache-write input, respectively. Price settings are configurable;
+keep them current with [OpenAI's pricing](https://developers.openai.com/api/docs/pricing).
+The current LoCoMo profile explicitly disables this backup.
+
 ## OpenRouter routing and limits
+
+Entity resolution gives the model a closed list of existing candidate IDs and
+an explicit new-entity outcome. Both the provider schema and local validation
+reject IDs outside that list. Choosing a new entity uses a null ID; the engine
+creates the ID. Invalid matches never implicitly create entities.
 
 These settings apply to every call through OpenRouter.
 
