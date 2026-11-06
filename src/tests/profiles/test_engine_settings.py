@@ -93,3 +93,28 @@ def test_customer_sql_can_bypass_the_pooler(monkeypatch) -> None:  # noqa: ANN00
         ("postgres.invalid", 5432, "project_a"),
     ]
     assert seen[1]["user"] == "rememberstack_query_project_a"
+
+
+def test_setup_hands_alembic_a_url_encoded_password_verbatim() -> None:
+    """A password with ``@`` and ``%`` reaches Alembic intact and is never parsed."""
+    from pathlib import Path
+
+    from sqlalchemy.engine import URL
+
+    from rememberstack.profiles.selfhost import _migration_config
+
+    url = URL.create(
+        "postgresql+psycopg",
+        username="admin",
+        password="p@ss%25w0rd%",
+        host="db.invalid",
+        database="project_a",
+    ).render_as_string(hide_password=False)
+    assert "%40" in url and "%25" in url  # the encoding that used to break
+
+    config = _migration_config(path=Path("alembic.ini"), database_url=url)
+
+    # What setup's env.py reads: the option and the interpolated section.
+    assert config.get_main_option("sqlalchemy.url") == url
+    section = config.get_section(config.config_ini_section) or {}
+    assert section["sqlalchemy.url"] == url
