@@ -338,6 +338,11 @@ the result schemas in the manifest are unchanged. With facts unserved, `facts_co
 `resolve_entity` are not listed. The per-read table and the rules are in the
 [processing layers design §7](processing_layers_design.md#7-retrieval).
 
+Within one request, identical query text uses one embedding across claims,
+chunks, facts and coverage probes. The cache is scoped by engine, deployment,
+model and dimensions and disappears when the request ends. Cost receipts
+count actual provider calls; reuse does not produce another charge (D91).
+
 ## 5. The response envelope — the contract is the answer's self-account (D49)
 
 Most systems return rows. This one returns rows **plus machine-readable claims about the

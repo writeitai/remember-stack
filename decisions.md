@@ -7547,3 +7547,23 @@ compression is not part of this decision; these numbers are what would justify i
 **Consequences.** [Orchestration §7](plan/designs/orchestration_design.md#7-observable-state-and-telemetry--no-dashboard-subsystem)
 lists the attributes; the observability docs describe them.
 
+
+## D149. Reuse query embeddings within a request; prune unrequested fact statistics
+
+**Status:** accepted. **Date:** 2026-11-06.
+
+Fact-ID nomination must not compute unrequested evidence counts. Its one-row
+aggregate uses a left lateral join so PostgreSQL can remove it without
+changing membership or returned counts. Eligibility predicates remain before
+the relevance cut; this does not remove source or temporal correctness.
+
+An operation embeds identical query text once per engine, deployment, model
+and dimensions. Its D91 scope owns the vector and synchronized call ordinal;
+nested channels share it, separate requests do not. Only actual provider
+calls create cost receipts. This amends D91's repeated-embedding/ordinal
+implementation; the ledger and fail-closed accounting contract stay intact.
+No ingestion or paid-product reuse identity changes.
+
+See [analysis](plan/analysis/retrieval_work_amplification_20261106.md),
+[D91 §4.2](plan/designs/request_path_metering_and_cost_export_design.md#42-request-scope-exact-interface)
+and [D142 §8.2](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract).

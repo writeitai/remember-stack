@@ -13356,9 +13356,9 @@
     }
   ],
   "query_surface_manifest": {
-    "built_manifest_sha256": "c4c7830013f0e12e57acffceaa0e5640dd3540c8cfd045d68f6cac75503881e4",
-    "checked_in_manifest_sha256": "c4c7830013f0e12e57acffceaa0e5640dd3540c8cfd045d68f6cac75503881e4",
-    "surface_manifest_hash": "9f02973aa7ccf1484b4e4c50cf5318a1065f1a2efe7bccdc0c1776949ae6440f"
+    "built_manifest_sha256": "61550b824f9d8fa8114fb851b592eeddfebb69c5be0200927f533d1f03f110e9",
+    "checked_in_manifest_sha256": "61550b824f9d8fa8114fb851b592eeddfebb69c5be0200927f533d1f03f110e9",
+    "surface_manifest_hash": "77cc8d6650b3e617704615f52904c673deb2c85bde2263953ad9aa703d409644"
   },
   "readiness_expected_components": [
     [

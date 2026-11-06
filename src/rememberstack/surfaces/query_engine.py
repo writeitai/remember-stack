@@ -132,6 +132,7 @@ from rememberstack.ports.p1_index import search_account
 from rememberstack.ports.postgres_read import PostgresReadPoolPort
 from rememberstack.spine.entity_registry import normalized_lemma
 from rememberstack.spine.processing_layers import admit_layers_on
+from rememberstack.spine.surface_cost import current_surface_scope
 from rememberstack.spine.surface_cost import open_surface_scope
 from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
@@ -676,9 +677,7 @@ class QueryEngine:
                 arguments["policy_generation"] = self._policy_generation
                 arguments["embedder_generation"] = self._embedder_generation
             if channel == "semantic":
-                arguments["vector"] = self._reuse_embedding(
-                    deployment_id=deployment_id, query=query
-                ) or self._embed(
+                arguments["vector"] = self._embed(
                     query=query,
                     call_site=(
                         SurfaceCallSite.SEARCH_CLAIMS
@@ -756,9 +755,7 @@ class QueryEngine:
                 "pending_doc_ids": pending,
             }
             if channel == "semantic":
-                arguments["vector"] = self._reuse_embedding(
-                    deployment_id=deployment_id, query=query
-                ) or self._embed(
+                arguments["vector"] = self._embed(
                     query=query,
                     call_site=(
                         SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS
@@ -4234,7 +4231,24 @@ class QueryEngine:
     def _embed(
         self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
     ) -> tuple[float, ...]:
-        """One query-string embedding through the configured port (D63)."""
+        """Embed identical text once per engine/deployment in this request."""
+        scope = current_surface_scope()
+        if scope is None:
+            return self._embed_uncached(
+                query=query, call_site=call_site, deployment_id=deployment_id
+            )
+        key = (self, deployment_id, self._embedding_model, query, P1_VECTOR_DIMENSIONS)
+        with scope.work.embedding_lock:
+            if key not in scope.work.embedding_vectors:
+                scope.work.embedding_vectors[key] = self._embed_uncached(
+                    query=query, call_site=call_site, deployment_id=deployment_id
+                )
+            return scope.work.embedding_vectors[key]
+
+    def _embed_uncached(
+        self, *, query: str, call_site: SurfaceCallSite, deployment_id: UUID
+    ) -> tuple[float, ...]:
+        """Make and meter one provider call; failures never enter the cache."""
         try:
             response = self._model_provider.embed(
                 request=EmbeddingRequest(
@@ -4259,21 +4273,7 @@ class QueryEngine:
                 call_site=call_site,
                 deployment_id=deployment_id,
             )
-        self._last_embedding = ((deployment_id, query), response.vectors[0])
         return response.vectors[0]
-
-    def _reuse_embedding(
-        self, *, deployment_id: UUID, query: str
-    ) -> tuple[float, ...] | None:
-        """The vector this request already embedded for ``query``, if any.
-
-        Keyed by deployment and query text, so a concurrent request on another
-        thread can only ever supply the identical vector.
-        """
-        cached = getattr(self, "_last_embedding", None)
-        if cached is not None and cached[0] == (deployment_id, query):
-            return cached[1]
-        return None
 
 
 def _lookup_scope(*, valid_at: datetime | None, evaluated_at: datetime) -> TextScope:

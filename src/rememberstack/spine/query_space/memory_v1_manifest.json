@@ -35821,7 +35821,7 @@
                   "isNatural": false,
                   "jointype": {
                     "#": "JoinType",
-                    "name": "JOIN_INNER"
+                    "name": "JOIN_LEFT"
                   },
                   "larg": {
                     "@": "RangeSubselect",
@@ -36213,6 +36213,14 @@
                           }
                         }
                       ]
+                    }
+                  },
+                  "quals": {
+                    "@": "A_Const",
+                    "isnull": false,
+                    "val": {
+                      "@": "Boolean",
+                      "boolval": true
                     }
                   },
                   "rarg": {
@@ -45325,5 +45333,5 @@
     }
   },
   "manifest_contract": "memory_v1.manifest/2",
-  "surface_manifest_hash": "9f02973aa7ccf1484b4e4c50cf5318a1065f1a2efe7bccdc0c1776949ae6440f"
+  "surface_manifest_hash": "77cc8d6650b3e617704615f52904c673deb2c85bde2263953ad9aa703d409644"
 }
