@@ -68,6 +68,45 @@ The tag workflow mechanically publishes the two-platform manifest and attaches
 digests, to the GitHub release. The release-contract checker fails if that job,
 either required platform, or the digest evidence artifact disappears.
 
+### 0.18.0 (PostgreSQL 19 RC 1), 2026-11-06
+
+These pins were re-verified for this release, and none changed:
+- **Base image.** The pinned index `sha256:f6bab621…` lists the same children as the
+  `19rc1-trixie` tag's current index, `sha256:4b3e4b2e…`. Both have amd64
+  `sha256:2683c85306de152af6475f669cec1b172a3bfb77f7928cfe46b8c6dd338aa7a5` and
+  arm64 `sha256:40ec4717d7f11d1456c7ced89d4bcdb7a7b8727ddadf652b09765b4440cbbc4b`.
+  Only the riscv64 child was rebuilt. The server package is `19~rc1-1.pgdg13+1`.
+- **PGDG packages.** The pgvector and pg_partman versions pinned above resolve from the
+  archive.
+- **pg_textsearch.** The source archive, LICENSE and NOTICE checksums match. The pinned
+  revision is tag `v1.5.1`.
+
+Each architecture was built locally from this Dockerfile with no build cache:
+- arm64 was built natively.
+- amd64 was built under Rosetta emulation on an Apple Silicon host.
+
+| | linux/amd64 | linux/arm64 |
+|---|---|---|
+| Local image ID (not pushed) | `sha256:0a99756fdb833ec133ee75ae2458b3da9f95c15b23976931b227667fb96e2a3d` | `sha256:8affa2dd4a8ae6724f1aa085591aa5f73ec00c8c31d51c417b3c6edd9d5d5441` |
+| `artifacts.sha256` (file SHA-256) | `67e0e0b3bb6cdb5239f1a9b6abaf7ae55980499100beaa05be4da476baf6e0d9` | `6c2e3491af7c05daaf602f5d57d11a9a39b27ff91981f9ca7241f0c8605e21a5` |
+| `pg_textsearch.so` | `302e2123c5cb464dccd744bd520cf0980e48e4aacc0179184e6bcf9540b7fd7a` | `b3c183a5741815d142d339240d426ff48ad7f7822f88e04f5628c62e70ab5e16` |
+| pg_textsearch regression suite | 82/82 | 82/82 |
+
+The control and SQL files are byte-identical on both architectures. The `.so` lines differ.
+The arm64 `.so` checksum also came out the same in an earlier cached build.
+
+The published registry digests are a separate record. The tag workflow writes them to
+`postgres-image-digests.json` on the GitHub release.
+
+Tests run against these images:
+- **amd64 (Rosetta).** The migration, pgvector/HNSW, pg_textsearch/BM25, pg_partman,
+  one-hop, traversal, readiness, ops, query-space and restore suites: 277 passed.
+- **amd64 (native).** Main CI run 42303684449 at `0de5d1506` ran the workers, surfaces
+  and adapters integration suites against this Dockerfile on Linux amd64, and they passed.
+- **arm64.** The complete suite: 4479 passed, 6 skipped, 2 xfailed. One test failed
+  only because it pinned the old `info.version` (`test_d143_openapi_additive`). The
+  release PR fixes it, and it now passes.
+
 The local 2026-08-26 arm64 experiment passed 71/71 upstream pg_textsearch SQL
 regression tests. It is evidence for this patch, not a substitute for the
 two-architecture release matrix. A broken local Docker daemon is likewise an

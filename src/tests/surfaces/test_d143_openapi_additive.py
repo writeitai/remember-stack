@@ -24,6 +24,9 @@ _PRE_D143_SHA256: Final = (
 )
 """Canonical hash of ``openapi.json`` at fbcd489bd (main just before D143's code)."""
 
+_PRE_D143_VERSION: Final = "0.17.2"
+"""``info.version`` in that document; a release bump is not a D143 change."""
+
 _ADDED_ROUTES: Final = frozenset({"/processing-layers"})
 _ADDED_SCHEMAS: Final = frozenset(
     {"ProcessingLayer", "ProcessingLayerStates", "OutputProcessingLayerStates"}
@@ -31,8 +34,13 @@ _ADDED_SCHEMAS: Final = frozenset(
 
 
 def without_d143_additions(document: dict[str, Any]) -> dict[str, Any]:
-    """The document with the D143 route, ``layers`` parameters and schemas removed."""
+    """The document with the D143 route, ``layers`` parameters and schemas removed.
+
+    ``info.version`` is reset to the pre-D143 release, so the pinned hash
+    survives version bumps.
+    """
     stripped = json.loads(json.dumps(document))
+    stripped["info"]["version"] = _PRE_D143_VERSION
     for path in _ADDED_ROUTES:
         stripped["paths"].pop(path, None)
     for operations in stripped["paths"].values():
