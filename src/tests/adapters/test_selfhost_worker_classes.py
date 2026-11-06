@@ -1,4 +1,4 @@
-"""Real-PostgreSQL proofs for stage-class workers (D145).
+"""Real-PostgreSQL proofs for stage-class workers (D146).
 
 One worker process serves every stage of its class with several tasks in
 flight. Downstream stages drain first, steady lanes before backfill lanes, and

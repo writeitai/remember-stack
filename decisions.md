@@ -7455,7 +7455,7 @@ first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design
 holds the contract; [schema §2](plan/designs/postgres_schema_design.md) the column, index and
 queries.
 
-## D145. One worker process serves a class of stages, with a fixed number of tasks in flight
+## D146. One worker process serves a class of stages, with a fixed number of tasks in flight
 
 **Status:** accepted. **Date:** 2026-11-06.
 
@@ -7479,7 +7479,7 @@ conversion's memory grows with the input.
   drains before new uploads take the slots. One probe query finds the routes with due work.
 - **Delivery is unchanged:** `LISTEN/NOTIFY` wake-ups and `SELECT … FOR UPDATE SKIP LOCKED`
   claims (D67). A wake-up rouses one idle slot; a slot that finds work rouses one more. Claim
-  leases (D144) make it safe for a class process to die with many tasks in flight.
+  leases (D145) make it safe for a class process to die with many tasks in flight.
 - A process's database pool is sized from its concurrency.
 
 **Alternatives.** One process per stage with in-process concurrency keeps fourteen idle

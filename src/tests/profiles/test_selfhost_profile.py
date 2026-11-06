@@ -92,7 +92,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
 
 
 def test_worker_classes_split_convert_from_the_rest_downstream_first() -> None:
-    """D145: convert alone; every other stage in one class, downstream first."""
+    """D146: convert alone; every other stage in one class, downstream first."""
     assert WORKER_CLASSES["convert"] == (PipelineStage.CONVERT,)
     assert WORKER_CLASSES["llm"] == tuple(reversed(_SUPPORTED_WORKER_STAGES[1:]))
     assert DEFAULT_WORKER_CONCURRENCY == {"convert": 1, "llm": 20}

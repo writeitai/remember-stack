@@ -96,7 +96,7 @@ class SelfHostWorkerLoop:
     in their own thread. The calling thread sleeps on LISTEN with a slow
     fallback poll; every wake-up, and every successful claim, wakes one
     idle slot, so idle slots look for work one at a time instead of all at
-    once. The calling thread also sweeps expired claims (D144) at most once
+    once. The calling thread also sweeps expired claims (D145) at most once
     per fallback-poll interval.
     """
 
