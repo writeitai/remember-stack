@@ -59,6 +59,10 @@ jobs:
           uv run pytest src/tests/surfaces/test_client_connection.py -v
 
       - name: Start PostgreSQL 19 with required extensions
+        # Releases up to 0.17.2 create SQL/PGQ property graphs, which only
+        # PostgreSQL 19 Beta 3 supports, so each runs its own released image.
+        env:
+          POSTGRES_IMAGE: ${{ matrix.engine-version != 'candidate' && format('ghcr.io/writeitai/remember-stack-postgres:19beta3-{0}', matrix.engine-version) || '' }}
         run: .github/ci/start-postgres.sh
 
       - name: Start SeaweedFS object store

@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image_name="rememberstack-postgres:ci"
 container_name="rememberstack-postgres-ci"
 
-docker build --file Dockerfile.postgres --tag "${image_name}" .
+# POSTGRES_IMAGE runs a published image instead of building Dockerfile.postgres
+# (a released engine needs the PostgreSQL it was released with).
+if [ -n "${POSTGRES_IMAGE:-}" ]; then
+  image_name="${POSTGRES_IMAGE}"
+  docker pull "${image_name}"
+else
+  image_name="rememberstack-postgres:ci"
+  docker build --file Dockerfile.postgres --tag "${image_name}" .
+fi
 docker rm --force "${container_name}" >/dev/null 2>&1 || true
 docker run --detach --name "${container_name}" \
   --env POSTGRES_USER=rememberstack \
