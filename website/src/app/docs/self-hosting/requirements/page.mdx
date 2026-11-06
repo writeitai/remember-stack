@@ -42,28 +42,33 @@ Graviton, Ampere) runs them natively, without emulation:
 | Image | Used by |
 |---|---|
 | `ghcr.io/writeitai/remember-stack:0.17.2` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.17.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
-when you pass `--build`. Building PostgreSQL compiles one extension and
-takes a few minutes. The third image, SeaweedFS, is also published for both
+when you pass `--build`. The `19rc1` PostgreSQL image is published by the
+next release. Until then, start a checkout of `main` with
+`docker compose up --build`: without it Compose pulls the published 0.17.2
+engine, whose migrations create SQL/PGQ property graphs that release
+candidate 1 rejects. The `v0.17.2` tag that [Install](/docs/self-hosting/install)
+checks out pairs that engine with its Beta 3 image and needs no build.
+Building PostgreSQL compiles one extension and takes a few minutes. The third image, SeaweedFS, is also published for both
 architectures.
 
-## PostgreSQL 19 (beta)
+## PostgreSQL 19 (release candidate)
 
-RememberStack requires **PostgreSQL 19, which is a beta release**. The
-Compose file pins `postgres:19beta3`.
+RememberStack requires **PostgreSQL 19, which is not yet a final release**.
+The Compose file pins release candidate 1 (`postgres:19rc1`).
 
-It needs 19 because the memory's graph is a SQL/PGQ property graph
-(`CREATE PROPERTY GRAPH`, queried with `GRAPH_TABLE`). PostgreSQL 19 is the
-first release with SQL/PGQ, so entity neighbourhoods and paths run live
-inside the same database that holds the facts, with no separate graph store
-to build or keep in sync.
+It needs 19 because the engine is built and tested only against
+PostgreSQL 19, and the graph's readiness check refuses any other major
+version. Entity neighbourhoods and paths run live, as ordinary SQL over the
+same database that holds the facts, with no separate graph store to build or
+keep in sync.
 
-Running a beta has a consequence you should plan for: there is no promise
-that a data directory created by one PostgreSQL 19 prerelease opens under a
-later one. See [Upgrades and migrations](/docs/self-hosting/upgrades).
+Running a prerelease has a consequence you should plan for: there is no
+promise that a data directory created by one PostgreSQL 19 prerelease opens
+under a later one or under the final release. See [Upgrades and migrations](/docs/self-hosting/upgrades).
 
 ### Extensions
 

@@ -843,7 +843,7 @@ Schema: drop `entities.type` NOT NULL (column dropped or unused). Drop
 or stop writing `mentions.emitted_type`. `predicate_signatures` unused.
 `entity_types` unused for identity (may remain as dead registry until
 migration removes it). Migrations amend `postgres_schema_design.md` in
-the same implementation PR. Re-ensure the live property-graph catalog and
+the same implementation PR. Re-ensure the live graph catalog and
 rebuild P3. Existing type values are
 **not** migrated into hats; they are discarded as identity. If a fact
 “X is a bank” exists, it is already an observation.

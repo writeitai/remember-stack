@@ -1,10 +1,10 @@
-"""Static PostgreSQL 19 SQL/PGQ statements used by the typed graph API.
+"""Static one-hop graph statements used by the typed graph API (D98).
 
-PostgreSQL 19 supports fixed graph patterns but not quantified or shortest
-paths, so the one-hop neighborhood shape lives here. A separate
-bounded relational guard runs first in the same repeatable-read transaction.
-Application code executes ``GRAPH_TABLE`` only when that guard admits the
-request; refusal therefore cannot rely on planner short-circuit behavior.
+The one-hop neighborhood is plain relational SQL over the live graph's edge
+views. A separate bounded relational guard runs first in the same
+repeatable-read transaction. Application code executes the one-hop read only
+when that guard admits the request; refusal therefore cannot rely on planner
+short-circuit behavior.
 
 Every edge scan also applies the D140 §8.1 evidence gate
 (``rememberstack_graph_internal.relation_evidence_in_scope``) in the same
@@ -20,14 +20,14 @@ def _replace_exact(*, statement: str, old: str, new: str, count: int = 1) -> str
     observed = statement.count(old)
     if observed != count:
         raise RuntimeError(
-            f"SQL/PGQ template marker expected {count} occurrence(s), observed "
+            f"graph SQL template marker expected {count} occurrence(s), observed "
             f"{observed}: {old!r}"
         )
     return statement.replace(old, new)
 
 
 # This guard selects only identifiers and counts. Both endpoint lookups start
-# with deployment_id and the anchor; budget + 1 proves refusal without PGQ.
+# with deployment_id and the anchor; budget + 1 proves refusal before the read.
 CURRENT_NEIGHBORHOOD_GUARD: Final = r"""
 WITH
 bounds AS (
@@ -147,49 +147,59 @@ HISTORY_NEIGHBORHOOD_GUARD: Final = _history_statement(
 )
 
 
-# PostgreSQL 19 Beta 3 produces an unbounded two-hop view-backed plan, so the
-# request path uses PGQ here and the bounded frontier helper for depth two up.
-CURRENT_NEIGHBORHOOD_PGQ: Final = r"""
+# The one-hop read joins the live edge views directly. Both endpoints of every
+# edge row are already live entity vertices (the views join entities_live), so
+# no vertex join is needed. One branch per edge direction keeps each scan
+# anchored on an indexed endpoint; a self-loop is never a neighbor. The D140
+# evidence gate runs above an OFFSET 0 fence, as in the guard. Depth two and
+# above use the bounded frontier helpers.
+_ONE_HOP = r"""
 WITH bounds AS (
   SELECT CAST(:deployment_id AS uuid) AS deployment_id,
          CAST(:anchor_id AS uuid) AS anchor_id
 )
-SELECT 1 AS hops, ARRAY[g.relation_id] AS relation_ids,
-       ARRAY[b.anchor_id, g.neighbor_id] AS node_ids
-FROM bounds AS b,
-     GRAPH_TABLE (
-       memory_v1.memory_current
-       MATCH (x IS entity)-[r IS relates]-(y IS entity)
-       WHERE x.deployment_id = b.deployment_id
-         AND r.deployment_id = b.deployment_id
-         AND y.deployment_id = b.deployment_id
-         AND x.entity_id = b.anchor_id
-         AND y.entity_id <> x.entity_id
-         AND (CAST(:predicates AS text[]) IS NULL
-              OR r.predicate = ANY(CAST(:predicates AS text[])))
-         AND rememberstack_graph_internal.relation_evidence_in_scope(
-               b.deployment_id, r.relation_id,
-               statement_timestamp(), statement_timestamp(), statement_timestamp())
-       COLUMNS (r.relation_id AS relation_id, y.entity_id AS neighbor_id)
-     ) AS g
+SELECT 1 AS hops, ARRAY[edge.relation_id] AS relation_ids,
+       ARRAY[b.anchor_id, edge.neighbor_id] AS node_ids
+FROM bounds AS b
+CROSS JOIN LATERAL (
+  SELECT r.relation_id, r.object_entity_id AS neighbor_id
+  FROM {edges} AS r
+  WHERE r.deployment_id = b.deployment_id
+    AND r.subject_entity_id = b.anchor_id
+    AND r.object_entity_id <> b.anchor_id{clock}
+    AND (CAST(:predicates AS text[]) IS NULL
+         OR r.predicate = ANY(CAST(:predicates AS text[])))
+  UNION ALL
+  SELECT r.relation_id, r.subject_entity_id AS neighbor_id
+  FROM {edges} AS r
+  WHERE r.deployment_id = b.deployment_id
+    AND r.object_entity_id = b.anchor_id
+    AND r.subject_entity_id <> b.anchor_id{clock}
+    AND (CAST(:predicates AS text[]) IS NULL
+         OR r.predicate = ANY(CAST(:predicates AS text[])))
+  -- fence: the gate must run on the anchored edges only, never be pushed
+  -- down to every relation row of the deployment inside the edge view
+  OFFSET 0
+) AS edge
+WHERE rememberstack_graph_internal.relation_evidence_in_scope(
+      b.deployment_id, edge.relation_id,
+      {gate}
 """
 
+_HISTORY_CLOCK = """
+    AND (r.ingested_at IS NULL OR r.ingested_at <= CAST(:believed_at AS timestamptz))
+    AND (r.invalidated_at IS NULL OR r.invalidated_at > CAST(:believed_at AS timestamptz))
+    AND r.valid_from <= CAST(:valid_at AS timestamptz)
+    AND (r.valid_precision='open' OR r.valid_until > CAST(:valid_at AS timestamptz))"""
 
-HISTORY_NEIGHBORHOOD_PGQ: Final = _replace_exact(
-    statement=_replace_exact(
-        statement=_replace_exact(
-            statement=CURRENT_NEIGHBORHOOD_PGQ, old=_GATE_NOW, new=_GATE_HISTORY
-        ),
-        old="memory_v1.memory_current",
-        new="memory_v1.memory_history",
-    ),
-    old="AND (CAST(:predicates AS text[]) IS NULL\n              OR r.predicate",
-    new=(
-        "AND (r.ingested_at IS NULL OR r.ingested_at <= CAST(:believed_at AS timestamptz))\n"
-        "         AND (r.invalidated_at IS NULL OR r.invalidated_at > CAST(:believed_at AS timestamptz))\n"
-        "         AND r.valid_from <= CAST(:valid_at AS timestamptz)\n"
-        "         AND (r.valid_precision='open' OR r.valid_until > CAST(:valid_at AS timestamptz))\n"
-        "         AND (CAST(:predicates AS text[]) IS NULL\n"
-        "              OR r.predicate"
-    ),
+
+CURRENT_NEIGHBORHOOD_ONE_HOP: Final = _ONE_HOP.format(
+    edges="rememberstack_graph_internal.relations_current", clock="", gate=_GATE_NOW
+)
+
+
+HISTORY_NEIGHBORHOOD_ONE_HOP: Final = _ONE_HOP.format(
+    edges="rememberstack_graph_internal.relations_history",
+    clock=_HISTORY_CLOCK,
+    gate=_GATE_HISTORY,
 )

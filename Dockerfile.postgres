@@ -1,4 +1,4 @@
-FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572 AS pg_textsearch_builder
+FROM postgres:19rc1-trixie@sha256:f6bab6213c486e940e310a88490935cbc71b88f6c19fee3cd2ab14b3b02ff65b AS pg_textsearch_builder
 
 ARG PG_TEXTSEARCH_REVISION=fa142d049d08eac45a263f5abc250c8877ae076e
 ARG PG_TEXTSEARCH_SOURCE_SHA256=445a546810cbc17e15d05ff8a391f1b693eab382a2ef6efbf72e1c37fa0c48d0
@@ -45,9 +45,14 @@ RUN set -eux; \
     echo "${PG_TEXTSEARCH_NOTICE_SHA256}  /src/pg_textsearch/NOTICE" | sha256sum --check --strict; \
     rm -rf /var/lib/apt/lists/*
 
+# PostgreSQL 19 RC 1 headers no longer pull in <limits.h>, and v1.5.1's
+# src/planner/hooks.c uses INT_MAX without including it (upstream issue
+# timescale/pg_textsearch#586). Force-include the standard header on top of
+# the server's own preprocessor flags, which reach both the shared object and
+# the JIT bitcode compiles; the pinned source stays unmodified.
 RUN set -eux; \
     cd /src/pg_textsearch; \
-    make -j"$(nproc)"; \
+    make -j"$(nproc)" CPPFLAGS="$(pg_config --cppflags) -include limits.h"; \
     make install; \
     { \
       sha256sum /usr/lib/postgresql/19/lib/pg_textsearch.so; \
@@ -70,7 +75,7 @@ RUN set -eux; \
     su postgres -c "/usr/lib/postgresql/19/bin/pg_ctl -D /tmp/pg_regress_data -w stop"; \
     rm -rf /tmp/pg_regress_data /tmp/pg_regress.log
 
-FROM postgres:19beta3-trixie@sha256:a48b19841e04b35b72a25e9a94314ac80546d32b5e2e3cd9279390cbd8a99572
+FROM postgres:19rc1-trixie@sha256:f6bab6213c486e940e310a88490935cbc71b88f6c19fee3cd2ab14b3b02ff65b
 
 # pg_textsearch uses the PostgreSQL License at the source revision pinned above
 # (v1.5.1, which supports PostgreSQL 19 upstream; no local patch, D142).
@@ -102,5 +107,5 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       postgresql-19-partman=5.5.0-1.pgdg13+1 \
-      postgresql-19-pgvector=0.8.6-1.pgdg13+1; \
+      postgresql-19-pgvector=0.8.6-1.pgdg13+2; \
     rm -rf /var/lib/apt/lists/*

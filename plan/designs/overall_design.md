@@ -1,9 +1,11 @@
 # Overall System Design
 
 > **Binding D98 amendment (2026-08-27).** The architecture has no LadybugDB or
-> physical P2 graph projection. PostgreSQL 19 serves a live property graph over
-> authority views: SQL/PGQ handles fixed one-hop patterns and bounded recursive
-> SQL handles depth-two, variable, and shortest traversal. P1 remains PostgreSQL
+> physical P2 graph projection. PostgreSQL 19 serves a live graph over
+> authority views: a fixed relational join handles one-hop neighborhoods and
+> bounded recursive SQL handles depth-two, variable, and shortest traversal
+> (SQL/PGQ served the one-hop read until PostgreSQL 19 Beta 4 removed it; D98
+> RC 1 amendment). P1 remains PostgreSQL
 > search and P3 remains the corpus filesystem projection. The implementation
 > contract is [`p2_graph_design.md`](p2_graph_design.md). The three **product planes** E/K/P
 > remain; “P2” is no longer a physical store within plane P.
@@ -34,7 +36,7 @@ rules — trigger model, source of truth, mutability, rebuild semantics.
             ┌─────────────────────────────────────┐  (no authority)
             │ P1 search indexes (Postgres:        │
             │    pgvector + pg_textsearch BM25)   │
-            │ live graph (Postgres SQL/PGQ +      │
+            │ live graph (Postgres one-hop join + │
             │    bounded frontier traversal)      │
             │ P3 corpus filesystem (GCS tree,     │
             │    mounted read-only to agents)     │
@@ -60,7 +62,7 @@ projection — D40 refined; `e0_files_design.md` §6.)*
 
 | Store | Role | Authority | Rebuildable from |
 |---|---|---|---|
-| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94); live graph views, SQL/PGQ catalog, and bounded traversal (D98) | **source of truth** for plane E; P1/graph query structures remain derived | authority is PITR-backed; P1 rebuilds from authority + artifacts; graph metadata/functions replay from migrations |
+| **Postgres** (Hetzner) | spine: inputs, document/section metadata, chunk metadata, claims, entities, predicates, relations, evidence, validity, processing state and costs; rebuildable **P1** vectors/BM25 indexes plus the sole `chunk_search` sidecar (D94); live graph views and bounded traversal (D98) | **source of truth** for plane E; P1/graph query structures remain derived | authority is PITR-backed; P1 rebuilds from authority + artifacts; graph metadata/functions replay from migrations |
 | **GCS — raw** | immutable original files | source of truth for file bytes | — |
 | **GCS — artifacts** | per-document markdown + `pageindex.json` + conversion sidecars, one immutable **representation** per conversion run (E0, D37/D65: `…/<content_hash>/<representation_id>/…`) | source of truth for converted bodies (nondeterministic converter output is **replayed from storage**, D7 — a toolchain bump creates a new representation beside the old, never regenerates in place) | — (like raw: backed up, not regenerated) |
 | **GCS — corpus fs** | **P3**: corpus organized as a mounted directory tree (D40) | derived | Postgres + artifacts (every cycle) |
@@ -165,8 +167,9 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
   supported by compiled cross-project pattern summaries. Only an accountable author promotes
   or changes a principle; citations, watches, review flags, and dispatch keep it connected to
   changing evidence without rewriting it. E3 remains the system's current fact state.
-- **Live graph**: PostgreSQL 19 property graphs over normalized authority views
-  serve fixed one-hop SQL/PGQ; deployment-scoped, work-bounded frontier
+- **Live graph**: private live PostgreSQL 19 views over normalized authority
+  tables are the graph's nodes and edges; a fixed relational join serves the
+  one-hop neighborhood; deployment-scoped, work-bounded frontier
   traversal serves depth-two, variable, and shortest paths. There is no copied graph data,
   generation, build, or reader swap (D98). Full design: `p2_graph_design.md`.
 - **P1**: written inline by plane E (see §4); batch rebuild path exercised for embedding
@@ -183,7 +186,7 @@ minutes"), P rebuilds on schedule; both summarize/project across the corpus.
 ```
 entry                          expand                     hydrate
 PostgreSQL P1: fact-label      PostgreSQL live graph:     Postgres authority:
-  semantics; claim/chunk        fixed PGQ + bounded       relation → evidence
+  semantics; claim/chunk        one-hop join + bounded    relation → evidence
   semantic + BM25; scalars      frontier/as-of paths      claims → documents
 PG entity registry             (D98)                      → GCS bytes
         └──── RRF fusion ──── graph-distance + evidence-count rerank ────┘
@@ -258,7 +261,7 @@ PG entity registry             (D98)                      → GCS bytes
 | `entity_identity_and_retrieval_design.md` | referent identity, no entity types, profile from observations, default retrieval (D95–D97) | **current** |
 | `k_layers_design.md` | plane K: planner/writer/driver compile system, compiled + authored pages, K1 plus K2 purpose scopes (D45–D47, D73) | **current** |
 | `k3_beliefs_design.md` | *(withdrawn — D73; principles are authored K2 content)* | — |
-| `p2_graph_design.md` | PostgreSQL 19 live graph, SQL/PGQ, bounded traversal, limits, recovery | **current** |
+| `p2_graph_design.md` | PostgreSQL 19 live graph, one-hop join, bounded traversal, limits, recovery | **current** |
 | `retrieval_design.md` | the query machine: primitives, assured operations, envelope, mounts, skill (D48–D51, D87) | **current** |
 | `postgres_schema_design.md` | spine schema, tables, indexes, partitioning, deletion cascade | **current** |
 | `postgres_p1_search_projection_design.md` | PostgreSQL-native P1 storage, retrieval indexes, readiness, rebuild, and Lance removal (D94) | **current** |

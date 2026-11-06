@@ -1,9 +1,27 @@
 # PostgreSQL image release evidence
 
 `Dockerfile.postgres` is the only supported database image definition. It pins
-the PostgreSQL 19 beta base by digest, pins PGDG extension package versions, and
-builds pg_textsearch from a checksum-verified source archive (no local patch:
-v1.5.1 supports PostgreSQL 19 upstream, D142).
+the PostgreSQL 19 prerelease base (release candidate 1, `19rc1-trixie`) by
+digest, pins PGDG extension package versions, and builds pg_textsearch from a
+checksum-verified source archive (no local patch: v1.5.1 supports PostgreSQL 19
+upstream, D142).
+
+The RC 1 headers no longer include `<limits.h>` indirectly, and pg_textsearch
+v1.5.1 uses `INT_MAX` without including it (upstream issue
+[timescale/pg_textsearch#586](https://github.com/timescale/pg_textsearch/issues/586),
+open on 2026-11-06). The build adds `-include limits.h` to the server's own
+preprocessor flags instead of changing the source; drop the flag once a pinned
+release includes the header itself.
+
+pgvector is pinned to the PGDG build `0.8.6-1.pgdg13+2`, which PGDG rebuilt
+against the Beta 4 headers; that is the tested pin (PGDG also publishes
+`0.8.7-1.pgdg13+1`). Between Beta 4 and RC 1 the
+index access-method interface (`access/amapi.h`) is unchanged, and the one
+changed index-vacuum struct (`IndexVacuumInfo`, a new `is_autovacuum` flag)
+moves only fields pgvector 0.8.6 does not read (checked against the
+`postgresql-server-dev-19` 19~beta4 and 19~rc1 packages and the v0.8.6 source,
+2026-11-06). pg_partman's background worker uses only interfaces whose headers
+are unchanged between Beta 3 and RC 1.
 
 Exact pgvector and pg_partman Debian versions resolve from PGDG's all-versions
 `trixie-pgdg-archive` repository, not the rotating current-version index. PGDG

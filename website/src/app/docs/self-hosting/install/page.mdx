@@ -88,7 +88,7 @@ RememberStack image, and starts everything in dependency order:
 
 | Service | Command | Role |
 |---|---|---|
-| `postgres` | `postgres` | PostgreSQL 19 beta with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
+| `postgres` | `postgres` | PostgreSQL 19 prerelease with the extensions RememberStack needs. It holds every document, version, claim, fact and entity, and the work queue. |
 | `object-store` | `server -s3` | [SeaweedFS](https://github.com/seaweedfs/seaweedfs), S3-compatible storage for original files, converted Markdown and snapshots. Reachable only by the other containers; no host port is published. |
 | `setup` | `setup` | One-shot: migrations, buckets, the deployment row, seed data. Runs again, harmlessly, on every `up`. |
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |

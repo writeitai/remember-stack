@@ -1,4 +1,4 @@
-"""Static guardrails for the fixed PostgreSQL 19 SQL/PGQ statements."""
+"""Static guardrails for the fixed one-hop graph statements."""
 
 import re
 from typing import cast
@@ -18,16 +18,16 @@ from rememberstack.spine.migrations.versions import (
 )
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.query_space import build_manifest
 from rememberstack.surfaces import graph_queries
 from rememberstack.surfaces.query_sandbox.grammar import validate_sql
 
 
-def test_shallow_pgq_uses_bounded_canonical_guard_and_excludes_self_loops() -> None:
-    """A transparent bounded relational guard is separate from GRAPH_TABLE."""
+def test_shallow_read_uses_bounded_canonical_guard_and_excludes_self_loops() -> None:
+    """A transparent bounded relational guard is separate from the one-hop read."""
     assert "JOIN public.relations AS c" in CURRENT_NEIGHBORHOOD_GUARD
     assert "FROM public.v_memory_entity_survivor AS anchor" in (
         CURRENT_NEIGHBORHOOD_GUARD
@@ -35,14 +35,17 @@ def test_shallow_pgq_uses_bounded_canonical_guard_and_excludes_self_loops() -> N
     assert "LIMIT b.budget + 1" in CURRENT_NEIGHBORHOOD_GUARD
     assert "graph_neighborhood(" not in CURRENT_NEIGHBORHOOD_GUARD
     assert "GRAPH_TABLE" not in CURRENT_NEIGHBORHOOD_GUARD
-    assert "admitted" not in CURRENT_NEIGHBORHOOD_PGQ
-    assert "AND y.entity_id <> x.entity_id" in CURRENT_NEIGHBORHOOD_PGQ
-    assert "ranked AS" not in CURRENT_NEIGHBORHOOD_PGQ
-    assert "UNION" not in CURRENT_NEIGHBORHOOD_PGQ
+    assert "admitted" not in CURRENT_NEIGHBORHOOD_ONE_HOP
+    assert "AND r.object_entity_id <> b.anchor_id" in CURRENT_NEIGHBORHOOD_ONE_HOP
+    assert "AND r.subject_entity_id <> b.anchor_id" in CURRENT_NEIGHBORHOOD_ONE_HOP
+    assert "ranked AS" not in CURRENT_NEIGHBORHOOD_ONE_HOP
+    assert (
+        "GRAPH_TABLE" not in CURRENT_NEIGHBORHOOD_ONE_HOP + HISTORY_NEIGHBORHOOD_ONE_HOP
+    )
 
 
-def test_relational_guards_parse_as_static_postgresql_sql() -> None:
-    """Both guards stay parseable independently of PGQ grammar support."""
+def test_relational_statements_parse_as_static_postgresql_sql() -> None:
+    """Both guards and both one-hop reads parse as plain PostgreSQL SQL."""
     values = {
         "deployment_id": "'43000000-0000-0000-0000-000000000001'",
         "anchor_id": "'43000000-0000-0000-0000-000000000002'",
@@ -53,17 +56,22 @@ def test_relational_guards_parse_as_static_postgresql_sql() -> None:
         "valid_at": "'2026-01-01T00:00:00Z'",
         "believed_at": "'2026-01-01T00:00:00Z'",
     }
-    for guard in (CURRENT_NEIGHBORHOOD_GUARD, HISTORY_NEIGHBORHOOD_GUARD):
+    for guard in (
+        CURRENT_NEIGHBORHOOD_GUARD,
+        HISTORY_NEIGHBORHOOD_GUARD,
+        CURRENT_NEIGHBORHOOD_ONE_HOP,
+        HISTORY_NEIGHBORHOOD_ONE_HOP,
+    ):
         rendered = re.sub(
             r"(?<!:):([a-z_]+)", lambda match: values[match.group(1)], guard
         )
         assert parse_sql(rendered)
 
 
-def test_guard_refusal_never_executes_the_pgq_statement(
+def test_guard_refusal_never_executes_the_one_hop_statement(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Application sequencing, not planner short-circuiting, blocks PGQ work."""
+    """Application sequencing, not planner short-circuiting, blocks the read."""
     statements: list[str] = []
 
     def fake_rows(
@@ -94,16 +102,28 @@ def test_guard_refusal_never_executes_the_pgq_statement(
     assert rows[0]["truncation_reason"] == "expansion_budget"
 
 
-def test_history_pgq_has_both_half_open_clocks_on_its_pattern_edge() -> None:
-    """The one-hop PGQ edge carries both bitemporal axes."""
+def test_history_one_hop_has_both_half_open_clocks_on_each_edge_scan() -> None:
+    """Both directions of the one-hop edge scan carry both bitemporal axes."""
     for clock_column in ("ingested_at", "invalidated_at"):
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"r.{clock_column}") == 2
+        assert HISTORY_NEIGHBORHOOD_ONE_HOP.count(f"r.{clock_column}") == 4
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 4
     for clock_column in ("valid_from", "valid_until", "valid_precision"):
-        assert HISTORY_NEIGHBORHOOD_PGQ.count(f"r.{clock_column}") == 1
+        assert HISTORY_NEIGHBORHOOD_ONE_HOP.count(f"r.{clock_column}") == 2
         assert HISTORY_NEIGHBORHOOD_GUARD.count(f"c.{clock_column}") == 2
-    assert "valid_from IS NULL" not in HISTORY_NEIGHBORHOOD_PGQ
-    assert HISTORY_NEIGHBORHOOD_PGQ.count("memory_v1.memory_history") == 1
+    assert "valid_from IS NULL" not in HISTORY_NEIGHBORHOOD_ONE_HOP
+    assert (
+        HISTORY_NEIGHBORHOOD_ONE_HOP.count(
+            "FROM rememberstack_graph_internal.relations_history AS r"
+        )
+        == 2
+    )
+    assert "relations_current" not in HISTORY_NEIGHBORHOOD_ONE_HOP
+    assert (
+        CURRENT_NEIGHBORHOOD_ONE_HOP.count(
+            "FROM rememberstack_graph_internal.relations_current AS r"
+        )
+        == 2
+    )
 
 
 def test_temporal_template_marker_drift_fails_loudly() -> None:
@@ -195,7 +215,7 @@ def test_manifest_graph_examples_project_only_truthful_data_fields() -> None:
 
 
 def test_private_relation_source_requires_live_evidence_documents() -> None:
-    """Tombstoned provenance cannot remain traversable in either property graph."""
+    """Tombstoned provenance cannot remain traversable in either edge view."""
     ddl = p9_17_0038_postgres19_live_graph._GRAPH_SOURCES
     relation_source = ddl.split(
         "CREATE VIEW rememberstack_graph_internal.relations_history AS", maxsplit=1
@@ -208,7 +228,7 @@ def test_private_relation_source_requires_live_evidence_documents() -> None:
 
 
 def test_private_entity_source_materializes_provenance_once() -> None:
-    """The PGQ vertex source scopes survivor/provenance work before its fence."""
+    """The entity node source scopes survivor/provenance work before its fence."""
     ddl = p9_17_0038_postgres19_live_graph._GRAPH_SOURCES
     fresh_source = ddl.split(
         "CREATE VIEW rememberstack_graph_internal.entities_live AS", maxsplit=1

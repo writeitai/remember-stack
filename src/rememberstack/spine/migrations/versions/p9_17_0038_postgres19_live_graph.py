@@ -1,13 +1,18 @@
-"""Replace P2 snapshots with PostgreSQL 19 live property graphs (D98).
+"""Replace P2 snapshots with the PostgreSQL 19 live graph (D98).
 
 revision: p9_17_0038
 
-The property graphs are catalog metadata over private live relational views;
-public result hydration remains on the evidence-rich ``memory_v1`` authority
-views.  The graph views copy no tenant rows and therefore need neither a
-generation nor a publication pointer.  Variable-length traversal remains in
-bounded SQL helpers because PostgreSQL 19 deliberately ships fixed graph
-patterns before quantified and shortest-path patterns.
+The live graph is a set of private relational views (entity and document
+nodes; relation, mention and citation edges); public result hydration remains
+on the evidence-rich ``memory_v1`` authority views.  The graph views copy no
+tenant rows and therefore need neither a generation nor a publication pointer.
+Variable-length traversal lives in bounded SQL helpers.
+
+As shipped, this revision also created two SQL/PGQ property graphs
+(``memory_v1.memory_current`` and ``memory_v1.memory_history``) over these
+views. PostgreSQL 19 Beta 4 removed SQL/PGQ, so a later server cannot parse
+that DDL; under the D98 RC 1 amendment the property graphs are no longer
+created here, and p9_44_0065 drops them from Beta 3 stores that have them.
 
 The development-only downgrade restores legacy graph objects but does not
 widen ``memory_v1.document_crossrefs_live`` back to unresolved or tombstoned
@@ -22,6 +27,7 @@ from alembic import op
 from rememberstack.spine.graph_catalog import GRAPH_HELPER_CONTRACT_VERSION
 from rememberstack.spine.migrations._helpers import _split_sql
 from rememberstack.spine.migrations._helpers import apply_ddl
+from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 
 revision: str = "p9_17_0038"
 down_revision: str | None = "p9_16_0037"
@@ -163,67 +169,6 @@ JOIN documents AS target
  AND target.doc_id = x.to_doc_id
  AND target.deleted_at IS NULL
 WHERE x.resolved AND x.to_doc_id IS NOT NULL;
-"""
-
-_CURRENT_GRAPH = r"""
-CREATE PROPERTY GRAPH memory_v1.memory_current
-  VERTEX TABLES (
-    rememberstack_graph_internal.entities_live AS entity
-      KEY (deployment_id, entity_id)
-      LABEL entity PROPERTIES
-        (deployment_id, entity_id, canonical_name, profile_summary),
-    rememberstack_graph_internal.documents_live AS document
-      KEY (deployment_id, doc_id)
-      LABEL document PROPERTIES
-        (deployment_id, doc_id, title, source_uri, published_at)
-  )
-  EDGE TABLES (
-    rememberstack_graph_internal.relations_current AS relates
-      KEY (deployment_id, relation_id)
-      SOURCE KEY (deployment_id, subject_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      DESTINATION KEY (deployment_id, object_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      LABEL relates PROPERTIES
-        (deployment_id, relation_id, predicate),
-    memory_v1.entity_document_mentions AS mentioned_in
-      KEY (deployment_id, entity_id, doc_id)
-      SOURCE KEY (deployment_id, entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      DESTINATION KEY (deployment_id, doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      LABEL mentioned_in PROPERTIES
-        (deployment_id, mention_count, first_mentioned_at, last_mentioned_at),
-    rememberstack_graph_internal.crossrefs_live AS document_crossref
-      KEY (deployment_id, crossref_id)
-      SOURCE KEY (deployment_id, from_doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      DESTINATION KEY (deployment_id, to_doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      LABEL document_crossref PROPERTIES
-        (deployment_id, crossref_id, kind, context, created_at)
-  )
-"""
-
-_HISTORY_GRAPH = r"""
-CREATE PROPERTY GRAPH memory_v1.memory_history
-  VERTEX TABLES (
-    rememberstack_graph_internal.entities_live AS entity
-      KEY (deployment_id, entity_id)
-      LABEL entity PROPERTIES
-        (deployment_id, entity_id, canonical_name, profile_summary)
-  )
-  EDGE TABLES (
-    rememberstack_graph_internal.relations_history AS relates
-      KEY (deployment_id, relation_id)
-      SOURCE KEY (deployment_id, subject_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      DESTINATION KEY (deployment_id, object_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      LABEL relates PROPERTIES
-        (deployment_id, relation_id, predicate, valid_from,
-         valid_until, ingested_at, invalidated_at)
-  )
 """
 
 _DROP_OLD_GRAPH_STATE = r"""
@@ -1087,12 +1032,6 @@ BEGIN
     query_role
   );
   EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I', query_role
-  );
-  EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_history TO %I', query_role
-  );
-  EXECUTE format(
     'GRANT EXECUTE ON FUNCTION memory_v1.graph_neighborhood(uuid, uuid, integer, text[], timestamptz, timestamptz, integer, integer, integer, integer) TO %I',
     query_role
   );
@@ -1124,12 +1063,6 @@ BEGIN
   EXECUTE format(
     'GRANT SELECT (deployment_id, entity_id, survivor_entity_id) ON public.v_memory_entity_survivor TO %I',
     graph_role
-  );
-  EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I', graph_role
-  );
-  EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_history TO %I', graph_role
   );
   EXECUTE format(
     'GRANT EXECUTE ON FUNCTION memory_v1.graph_neighborhood(uuid, uuid, integer, text[], timestamptz, timestamptz, integer, integer, integer, integer) TO %I',
@@ -1277,8 +1210,6 @@ def upgrade() -> None:
     apply_ddl(sql=_DROP_LEGACY_GRAPH_EXPORTS)
     apply_ddl(sql=_ALIGN_PUBLIC_CROSSREF_VIEW)
     apply_ddl(sql=_GRAPH_SOURCES)
-    op.execute(_CURRENT_GRAPH)
-    op.execute(_HISTORY_GRAPH)
     op.execute("REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA memory_v1 FROM PUBLIC")
     op.execute(_NEIGHBORHOOD_HELPER)
     op.execute(_PATH_HELPER)
@@ -1311,8 +1242,7 @@ def downgrade() -> None:
         _V_GRAPH_ENTITIES_TYPE_CUT as type_cut_graph_entities,
     )
 
-    op.execute("DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history")
-    op.execute("DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current")
+    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute(_REVOKE_GRAPH_GUARD_GRANTS)
     op.execute(
         "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid, uuid, uuid, integer, integer, integer, integer, integer)"

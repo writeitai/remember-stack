@@ -814,7 +814,7 @@ Expected failures are:
 Every P1 statement carries the authenticated deployment predicate and the D68
 transaction binding. Private search state is absent from the public
 `memory_v1`, open SQL, and raw-primitives schemas. Public Cypher is absent; server-owned
-SQL/PGQ sees P1 data only through invariant views. RLS remains forbidden
+graph statements see P1 data only through invariant views. RLS remains forbidden
 because it would add a second implicit authorization system and undermine the
 explicit, reviewable deployment-predicate contract.
 

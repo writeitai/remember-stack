@@ -1,8 +1,9 @@
 """Acceptance proofs for live PostgreSQL 19 graph queries.
 
 The corpus is authority data only: there is no graph export, rebuild, snapshot,
-or cache. One- and two-hop reads exercise SQL/PGQ; deeper shortest-tier entity
-and directed citation paths exercise the bounded recursive helpers.
+or cache. One-hop reads exercise the relational one-hop statement; deeper
+neighborhoods, shortest-tier entity and directed citation paths exercise the
+bounded recursive helpers.
 """
 
 from collections.abc import Iterable
@@ -33,7 +34,7 @@ from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import NegativeKind
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.surfaces import GraphQueries
 import rememberstack.surfaces.graph_queries as graph_queries_module
@@ -545,8 +546,8 @@ def _path_rows(rows: Iterable[RowMapping]) -> list[tuple[object, object, object]
     ]
 
 
-def test_sql_pgq_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None:
-    """A one-hop PGQ read sees authority immediately and discloses paging."""
+def test_one_hop_neighborhood_is_live_and_paginates(graph: GraphQueries) -> None:
+    """A one-hop read sees authority immediately and discloses paging."""
     ids = graph.ids  # type: ignore[attr-defined]
     full = graph.neighborhood(entity_id=ids["Acme"], hops=1)
     assert {"Alice", "Bob"} <= _names(full)
@@ -730,10 +731,10 @@ def test_tombstoned_crossref_endpoint_disappears_and_restores_live(
     assert restored.negative is None and restored.paths[0].length == 2
 
 
-def test_property_graph_element_keys_are_unique(
+def test_graph_view_keys_are_unique(
     graph: GraphQueries, database_engine: Engine
 ) -> None:
-    """Every declared property-graph KEY is unique on its source relation."""
+    """Every graph node and edge view is unique on its key columns."""
     del graph
     key_contracts = (
         ("rememberstack_graph_internal.entities_live", "deployment_id, entity_id"),
@@ -758,10 +759,10 @@ def test_property_graph_element_keys_are_unique(
             assert duplicates == 0, relation
 
 
-def test_property_graph_owner_cannot_bypass_invoker_source_acl(
+def test_view_owner_cannot_bypass_invoker_source_acl(
     graph: GraphQueries, database_engine: Engine
 ) -> None:
-    """Revoking one source grant makes PGQ fail even though the graph owner can read."""
+    """Revoking one edge-view grant makes the one-hop read fail for the graph role."""
     del graph
     parameters = {
         "deployment_id": _DEPLOYMENT_ID,
@@ -787,15 +788,15 @@ def test_property_graph_owner_cannot_bypass_invoker_source_acl(
             )
             connection.exec_driver_sql(f"SET LOCAL ROLE {role}")
             with pytest.raises(DBAPIError):
-                connection.execute(text(HISTORY_NEIGHBORHOOD_PGQ), parameters).all()
+                connection.execute(text(HISTORY_NEIGHBORHOOD_ONE_HOP), parameters).all()
         finally:
             transaction.rollback()
 
 
-def test_sql_pgq_matches_canonical_helper_under_budget(
+def test_one_hop_read_matches_canonical_helper_under_budget(
     graph: GraphQueries, database_engine: Engine
 ) -> None:
-    """One-hop PGQ and the canonical frontier return identical paths."""
+    """The one-hop read and the canonical frontier return identical paths."""
     anchor_id = graph.ids["Acme"]  # type: ignore[attr-defined]
     with database_engine.connect().execution_options(
         isolation_level="REPEATABLE READ"
@@ -817,7 +818,7 @@ def test_sql_pgq_matches_canonical_helper_under_budget(
             "time_budget_ms": 1000,
             "result_offset": 0,
         }
-        pgq = graph_queries_module._shallow_neighborhood_rows(  # noqa: SLF001
+        one_hop = graph_queries_module._shallow_neighborhood_rows(  # noqa: SLF001
             connection=connection, parameters=parameters
         )
         helper = (
@@ -834,11 +835,11 @@ def test_sql_pgq_matches_canonical_helper_under_budget(
             .all()
         )
         connection.rollback()
-    assert _path_rows(pgq) == _path_rows(helper)
-    pgq_status = next(row for row in pgq if row["row_kind"] == "status")
+    assert _path_rows(one_hop) == _path_rows(helper)
+    one_hop_status = next(row for row in one_hop if row["row_kind"] == "status")
     helper_status = next(row for row in helper if row["row_kind"] == "status")
-    assert pgq_status["examined_edges"] == helper_status["examined_edges"]
-    assert pgq_status["truncated"] == helper_status["truncated"] is False
+    assert one_hop_status["examined_edges"] == helper_status["examined_edges"]
+    assert one_hop_status["truncated"] == helper_status["truncated"] is False
 
 
 def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
@@ -876,10 +877,10 @@ def test_recursive_helper_null_depth_uses_default_and_truthful_data_status(
     assert all(row["truncation_reason"] == status["truncation_reason"] for row in data)
 
 
-def test_dense_hub_refuses_pgq_over_budget_and_helper_returns_whole_prefix(
+def test_dense_hub_refuses_one_hop_over_budget_and_helper_returns_whole_prefix(
     graph: GraphQueries, database_engine: Engine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """PGQ returns zero data after guard refusal; helper keeps a whole-path prefix."""
+    """One-hop returns zero data after guard refusal; helper keeps a whole-path prefix."""
     anchor_id = graph.ids["Acme"]  # type: ignore[attr-defined]
     with database_engine.connect() as connection:
         operation_at = connection.execute(
@@ -965,6 +966,34 @@ def test_shallow_guard_plan_is_endpoint_anchored(
         "'Node Type': 'Seq Scan'" in plan_text
         and "'Relation Name': 'relations'" in plan_text
     )
+
+
+def test_one_hop_plan_gates_only_anchored_edges(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """The evidence gate runs once, above the fenced edge scan.
+
+    Pushed into the edge view, the planner may evaluate it on every relation
+    of the deployment before the anchor filter applies.
+    """
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "anchor_id": graph.ids["Acme"],  # type: ignore[attr-defined]
+        "predicates": None,
+        "valid_at": _JAN_2027,
+        "believed_at": _JAN_2027,
+    }
+    with database_engine.connect() as connection:
+        connection.exec_driver_sql("SET LOCAL enable_seqscan = off")
+        plan = connection.execute(
+            text("EXPLAIN (FORMAT JSON) " + HISTORY_NEIGHBORHOOD_ONE_HOP), parameters
+        ).scalar_one()
+
+    root = plan[0]["Plan"]
+    plan_text = str(plan)
+    assert root["Node Type"] == "Subquery Scan"
+    assert "relation_evidence_in_scope" in root["Filter"]
+    assert plan_text.count("relation_evidence_in_scope") == 1
 
 
 def test_entity_vertex_plan_does_not_scan_an_unrelated_deployment(

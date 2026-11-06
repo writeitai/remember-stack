@@ -41,7 +41,7 @@ Pipe it through `python3 -m json.tool` to read it.
 | `remember ops inspect --deployment ID` | Report pipeline, dead-letter, projection and consistency state |
 | `remember ops replay PROCESSING_ID --deployment ID` | Give one dead-lettered item more attempts |
 | `remember ops resume-no-route --deployment ID` | Release conversions parked for lack of a route |
-| `remember ops graph-catalog ensure` | Check and repair the PostgreSQL graph definitions |
+| `remember ops graph-catalog ensure` | Check and repair the PostgreSQL graph views and functions |
 | `remember ops cost-export --deployment ID` | Print one page of the cost ledger ([Observability](/docs/self-hosting/observability#cost-export)) |
 
 ## Inspect the pipeline
@@ -151,19 +151,20 @@ cost-export` ([Observability](/docs/self-hosting/observability#cost-export)).
 
 ## The graph catalog
 
-The memory's graph is a set of PostgreSQL property-graph definitions over
-the stored relations. Migrations create them. If a manual database change
-or a restore leaves them missing or different,
-`remember ops graph-catalog ensure` compares them with what this release
-expects, replays the definitions if needed, and reports the result:
+The memory's graph is a set of PostgreSQL views over the stored relations,
+plus the functions that walk them and the database roles and grants they
+use. Migrations create them. If a manual database change or a restore leaves
+them missing or different, `remember ops graph-catalog ensure` compares them
+with what this release expects, recreates them if needed, and reports the
+result:
 
 ```bash
 docker compose exec -T api \
   remember ops graph-catalog ensure
 ```
 
-The output has `ready`, `changed`, `problems_before`, `problems_after` and
-the list of `definitions`. It also checks the versions of `pgvector`,
+The output has `ready`, `changed`, `problems_before` and `problems_after`.
+It also checks the versions of `pgvector`,
 `pg_textsearch` and `pg_partman`.
 
 ## When a hard forget is in progress

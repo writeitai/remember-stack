@@ -8,9 +8,11 @@
 > and hard-forget lifecycle are part of the schema contract.
 
 > **Binding D98 amendment (2026-08-27).** PostgreSQL 19 is also the live graph
-> execution host. SQL/PGQ property graphs are catalog metadata over normalized
-> `memory_v1` views; bounded recursive functions perform variable/shortest
-> traversal. `projection_plane.P1_search`/`P2_graph`, P1/P2 projection-snapshot rows,
+> execution host. Private live views over normalized authority data are the
+> graph's nodes and edges; a fixed relational join reads one hop and bounded
+> recursive functions perform variable/shortest traversal (the SQL/PGQ
+> property graphs over those views were removed by the D98 RC 1 amendment,
+> 2026-11-06). `projection_plane.P1_search`/`P2_graph`, P1/P2 projection-snapshot rows,
 > `communities`, `entity_graph_metrics`, the `v_graph_*` Ladybug COPY boundary,
 > and latest-P2 analytics writeback are removed by the D98 migration. Current
 > graph degree is derived from PostgreSQL relation adjacency. Section 10 below
@@ -2214,8 +2216,8 @@ CREATE INDEX ix_obsadjud_live        ON observation_adjudications (observation_i
 ## 10. P3 snapshot registry and live graph catalog (D40, D94, D98)
 
 P1 search is live derived state in PostgreSQL under D94 and has no immutable
-snapshot-registry row. The live graph is a read-only property-graph definition
-over authority views under D98 and likewise has no data snapshot, generation,
+snapshot-registry row. The live graph is a set of read-only views over
+authority data under D98 and likewise has no data snapshot, generation,
 object URI, or analytics writeback. P3 is therefore the only remaining
 immutable projection generation registered here.
 
@@ -2244,12 +2246,14 @@ CREATE UNIQUE INDEX ux_snapshot_latest
   WHERE is_latest;
 ```
 
-The graph schema consists of normalized `memory_v1` current/history views, two
-non-materialized property graphs (`memory_current`, `memory_history`), and
-deployment-scoped work-bounded traversal functions. Composite graph keys and
-all source/destination references include `deployment_id`. Current views capture
+The graph schema consists of private current/history node and edge views
+(`rememberstack_graph_internal`), the normalized `memory_v1` hydration views,
+and deployment-scoped work-bounded traversal functions. There are no property
+graphs: PostgreSQL 19 RC 1 has no SQL/PGQ, and migration `p9_44_0065` drops
+the two a Beta 3 store held. Composite graph keys and all source/destination
+references include `deployment_id`. Current views capture
 one `statement_timestamp()` per statement; history views expose both half-open
-time windows for explicit as-of filtering. The complete view shapes, graph DDL,
+time windows for explicit as-of filtering. The complete view shapes,
 privileges, indexes, function signatures, limits, failure behavior, and catalog
 repair contract are binding in
 [`p2_graph_design.md`](p2_graph_design.md) §§3–9.

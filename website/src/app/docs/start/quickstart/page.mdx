@@ -48,12 +48,13 @@ printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nR
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
   "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
-docker compose up -d
+docker compose up -d --build
 ```
 
 The `printf` line generates the database password, the object-store
-credentials and the deployment id; Compose refuses to start without them. The first start builds the PostgreSQL image and runs
-migrations. When `docker compose ps` shows `api` as healthy, the endpoint
+credentials and the deployment id; Compose refuses to start without them. `--build` builds the engine and
+PostgreSQL images from this checkout, so they match each other, and the
+first start runs migrations. When `docker compose ps` shows `api` as healthy, the endpoint
 is `http://localhost:8000`. No token is needed by default, because the API
 is reachable from this machine only. To open it to others, see
 [Before you expose it](/docs/self-hosting/install#before-you-expose-it).

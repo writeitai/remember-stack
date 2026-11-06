@@ -62,7 +62,7 @@ pg_textsearch source revision plus source, compatibility-patch, license, and
 notice checksums. Build the Dockerfile for both architectures, record each
 embedded artifact manifest and immutable image digest, and run the extension
 and graph release matrix before tagging. The tag workflow then rebuilds and
-publishes `ghcr.io/writeitai/remember-stack-postgres:19beta3-VERSION` for both
+publishes `ghcr.io/writeitai/remember-stack-postgres:19rc1-VERSION` for both
 architectures and attaches `postgres-image-digests.json` to the GitHub release;
 UMC consumes the recorded manifest digest, never that human-readable tag.
 Updating the foundation pins remains a manual, reviewable patch cadence;

@@ -6,7 +6,7 @@ from rememberstack.spine.postgres_graph_sql import _replace_exact
 
 
 def rebuild_fact_graphs(*, connection: Connection) -> None:
-    """Recreate derived graph metadata with the same strict chosen-date predicates."""
+    """Recreate the live graph's views, helpers and grants with chosen-date predicates."""
     from rememberstack.spine.migrations.versions import (
         p9_17_0038_postgres19_live_graph as graph,
     )
@@ -27,11 +27,6 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
         ),
     ):
         sources = _replace_exact(statement=sources, old=old, new=new)
-    history = _replace_exact(
-        statement=graph._HISTORY_GRAPH,
-        old="valid_until, ingested_at, invalidated_at)",
-        new="valid_until, ingested_at, invalidated_at, valid_precision)",
-    )
     helpers = chosen_window_helpers()
     grants = _replace_exact(
         statement=graph._GRANTS,
@@ -56,7 +51,6 @@ def rebuild_fact_graphs(*, connection: Connection) -> None:
     _rebuild(
         connection=connection,
         sources=sources,
-        history=history,
         helpers=helpers,
         grants=grants,
         d140=d140,
@@ -90,13 +84,13 @@ def _rebuild(
     *,
     connection: Connection,
     sources: str,
-    history: str,
     helpers: tuple[str, ...],
     grants: str,
     d140: bool,
 ) -> None:
     """Execute the drop-and-recreate sequence."""
     from rememberstack.spine.migrations._helpers import _split_sql
+    from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
     from rememberstack.spine.migrations.versions import (
         p9_17_0038_postgres19_live_graph as graph,
     )
@@ -108,16 +102,13 @@ def _rebuild(
     )
 
     statements = (
-        "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_history",
-        "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current",
+        DROP_PROPERTY_GRAPHS,
         "DROP FUNCTION IF EXISTS memory_v1.graph_citation_path(uuid,uuid,uuid,integer,integer,integer,integer,integer)",
         "DROP FUNCTION IF EXISTS memory_v1.graph_path(uuid,uuid,uuid,integer,text[],timestamptz,timestamptz,integer,integer,integer,integer)",
         "DROP FUNCTION IF EXISTS memory_v1.graph_neighborhood(uuid,uuid,integer,text[],timestamptz,timestamptz,integer,integer,integer,integer)",
         "DROP SCHEMA IF EXISTS rememberstack_graph_internal CASCADE",
         sources,
         _MATERIALIZED_ENTITY_VIEW,
-        graph._CURRENT_GRAPH,
-        history,
         *helpers,
         graph._CITATION_PATH_HELPER,
         "REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA memory_v1 FROM PUBLIC",

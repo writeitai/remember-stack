@@ -43,7 +43,8 @@ The schema change is additive except in the places below, each handled explicitl
 4. **`document_crossrefs` replacement.** On `main` no code writes the table (only tests insert
    rows), so the migration refuses to run if it holds rows and otherwise recreates it with the
    new columns, enums and foreign keys, then recreates the dependent views and property graph in
-   the same transaction (the live-graph migration rule).
+   the same transaction (the live-graph migration rule). (The property graph was later removed by
+   the D98 RC 1 amendment; the migration now recreates only the views.)
 
 `chunks.text_origin_at` and `reuse_identity_hash` are nullable; chunks created before D140 keep
 `NULL` and are never matched by the text-origin lookup, so the first dated version after

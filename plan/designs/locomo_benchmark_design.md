@@ -345,7 +345,7 @@ compatibility form. The response contains:
 - exact `pipeline`, `p1`, `live_graph`, and `p3` capability members, each with
   `required`, `ready`, `checked_at`, and a typed non-secret reason;
 - P3 version/publication evidence when P3 is required, plus PostgreSQL 19
-  property-graph catalog, grant, helper-version, role-limit, and
+  live-graph view, grant, helper-version, role-limit, and
   same-snapshot proven-absent-anchor execution checks when live graph is required;
 - an overall `ready` that is the conjunction of the requested capabilities;
 - every non-secret ingestion/query model binding; and

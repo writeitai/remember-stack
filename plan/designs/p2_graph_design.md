@@ -6,6 +6,10 @@
 
 **Supersedes:** the LadybugDB P2 design under D13/D44/D82
 
+**Amended:** 2026-11-06 (D98 PostgreSQL 19 RC 1 amendment): PostgreSQL 19
+Beta 4 removed SQL/PGQ, so the one-hop read is a plain relational join and
+the property graphs are gone. The graph itself is unchanged.
+
 **Analysis:**
 [`postgres19_sqlpgq_live_graph_analysis.md`](../analysis/postgres19_sqlpgq_live_graph_analysis.md)
 
@@ -20,25 +24,33 @@ generations and added an export/build/publish/download/open lifecycle.
 There are no compatibility consumers. The graph is therefore served directly
 from PostgreSQL 19:
 
-- PostgreSQL authority views are the graph element tables. Graph rows are not
-  copied into another store.
-- PostgreSQL 19 SQL/PGQ property graphs and `GRAPH_TABLE` implement fixed
-  one-hop graph patterns in the cutover architecture.
+- Private live PostgreSQL views over the authority tables are the graph's
+  nodes and edges. Graph rows are not copied into another store.
+- A static relational join over those edge views implements the fixed one-hop
+  neighborhood.
 - Work-bounded PostgreSQL frontier functions implement variable-depth
   neighborhoods and shortest paths, including temporal filtering during
   expansion.
 - LadybugDB, public Cypher, P2 data snapshots, generations, manifests, graph
   files, reader swaps, and graph-specific backup/restore state are removed.
 
-This is one storage model with two query syntaxes, not two graph engines:
+This is one storage model with two query shapes, not two graph engines:
 
 ```text
 PostgreSQL authority tables
         |
-        +-- memory_v1 live/history views -- SQL/PGQ fixed patterns
+        +-- private live/history node and edge views -- fixed one-hop join
         |
-        +-- memory_v1 live/history views -- recursive SQL bounded traversal
+        +-- private live/history node and edge views -- bounded frontier traversal
 ```
+
+The cutover originally used PostgreSQL 19's SQL/PGQ (`CREATE PROPERTY GRAPH`
+and `GRAPH_TABLE`, the SQL standard's graph-pattern syntax) for the one-hop
+read. PostgreSQL 19 Beta 4 reverted SQL/PGQ, so release candidate 1 and the
+final release cannot parse it. PG19's SQL/PGQ was only a query rewrite: a
+`GRAPH_TABLE` pattern was turned into ordinary joins over the views a property
+graph named. The engine now writes those joins itself, over the same views, so
+results are the same and nothing about the graph's data or semantics changed.
 
 The supported capability is the **live graph**. The legacy filename is retained
 only to keep established corpus links stable; it is not a current plane name.
@@ -51,10 +63,9 @@ The live graph provides:
 
 | Operation | Default | Engine | Hard database clamp |
 | --- | ---: | --- | ---: |
-| Current/as-of entity neighborhood | 2 hops | SQL/PGQ at 1 hop; work-bounded frontier BFS at 2–4 hops | 4 hops, 500 returned edges and a 2,000-edge expansion budget |
+| Current/as-of entity neighborhood | 2 hops | fixed relational join at 1 hop; work-bounded frontier BFS at 2–4 hops | 4 hops, 500 returned edges and a 2,000-edge expansion budget |
 | Entity-to-entity path | 4 hops | work-bounded frontier BFS | 6 hops, 10 complete paths, 500 returned edges and a 2,000-edge expansion budget |
 | Citation/document path | 6 hops | directed work-bounded frontier BFS | 6 hops and the same complete-path/result/expansion budgets |
-| Fixed relationship shape | explicit pattern | SQL/PGQ | 1 hop in shipped statements |
 
 These are product bounds, not suggested client values. Server code and the SQL
 functions clamp them even if a caller asks for more. Any tier limit may be
@@ -64,17 +75,17 @@ The graph query path is read-only and makes zero LLM calls. A graph hop always
 starts from a resolved id. Name resolution and semantic/BM25 entry-point search
 remain retrieval responsibilities, not graph behavior.
 
-## 3. Authority and element model
+## 3. Authority and graph model
 
 ### 3.1 Sources
 
-The property-graph element tables are private live relational views chosen to
-keep PostgreSQL 19's current SQL/PGQ rewriter from flattening the full
-evidence-rich public authority graph into pathological plans. They contain no
-stored rows. Public result hydration and audit authority remain the normalized
+The graph's nodes and edges are private live relational views. They are
+narrower than the evidence-rich public authority views so that graph reads
+plan as small, endpoint-anchored joins instead of expanding the full public
+authority graph. They contain no stored rows. Public result hydration and audit authority remain the normalized
 `memory_v1` views:
 
-| Graph element | Source view | Key |
+| Node or edge | Source view | Key |
 | --- | --- | --- |
 | `entity` vertex | `rememberstack_graph_internal.entities_live` | `(deployment_id, entity_id)` |
 | `document` vertex | `rememberstack_graph_internal.documents_live` | `(deployment_id, doc_id)` |
@@ -86,80 +97,40 @@ stored rows. Public result hydration and audit authority remain the normalized
 The private views contain active survivor entities only and require surviving
 relation provenance. They resolve original endpoints through survivor
 membership, so a merge is a redirect rather than an edge rewrite or
-disappearance. Retired or forgotten endpoints do not appear. The server uses
-SQL/PGQ only to select bounded relation/node identifiers, then hydrates them
+disappearance. Retired or forgotten endpoints do not appear. Every relation
+row in the edge views already has two live entity endpoints (the views join
+`entities_live` for both), so a one-hop read needs no separate node join. The
+server uses the graph views only to select bounded relation/node identifiers,
+then hydrates them
 from `memory_v1.graph_edges_current` or
 `memory_v1.graph_edges_visible_history` in the same repeatable-read,
 read-only transaction. Facts, evidence, claims, and observations remain
 ordinary PostgreSQL records; only normalized binary relations become semantic
 edges.
 
-All keys contain `deployment_id`, and every SQL/PGQ or frontier-BFS operation
+All keys contain `deployment_id`, and every one-hop or frontier-BFS operation
 takes it as an explicit first argument and joins on it. A source or destination
 reference therefore cannot cross a deployment even if UUID generation or a
-fixture is faulty. Property-graph `KEY` clauses over views are declarations,
-not backing unique constraints; acceptance tests independently assert key
-uniqueness on every source view.
+fixture is faulty. A view has no unique constraint, so acceptance tests
+independently assert key uniqueness on every source view.
 
-### 3.2 Property graphs
+### 3.2 The current and history graphs
 
-Migrations create two catalog objects:
+Two edge views carry the semantic `relates` edges:
 
-- `memory_v1.memory_current`: current entity/document vertices, semantic
-  edges, mentions, and document cross-references;
-- `memory_v1.memory_history`: current survivor entity vertices and all
-  historically visible semantic edges, including their two time windows.
+- `relations_current`: edges current at the statement's clock (both clocks
+  open now);
+- `relations_history`: every historically visible edge with its four clock
+  columns (`valid_from`, `valid_until`, `ingested_at`, `invalidated_at`) plus
+  `valid_precision`, so an as-of read filters both time windows itself.
 
-The executable core of the semantic declarations is:
-
-```sql
-CREATE PROPERTY GRAPH memory_v1.memory_current
-  VERTEX TABLES (
-    rememberstack_graph_internal.entities_live AS entity
-      KEY (deployment_id, entity_id)
-      LABEL entity PROPERTIES
-        (deployment_id, entity_id, canonical_name, profile_summary),
-    rememberstack_graph_internal.documents_live AS document
-      KEY (deployment_id, doc_id)
-      LABEL document PROPERTIES
-        (deployment_id, doc_id, title, source_uri, published_at)
-  )
-  EDGE TABLES (
-    rememberstack_graph_internal.relations_current AS relates
-      KEY (deployment_id, relation_id)
-      SOURCE KEY (deployment_id, subject_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      DESTINATION KEY (deployment_id, object_entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      LABEL relates PROPERTIES
-        (deployment_id, relation_id, predicate),
-    memory_v1.entity_document_mentions AS mentioned_in
-      KEY (deployment_id, entity_id, doc_id)
-      SOURCE KEY (deployment_id, entity_id)
-        REFERENCES entity (deployment_id, entity_id)
-      DESTINATION KEY (deployment_id, doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      LABEL mentioned_in PROPERTIES
-        (deployment_id, mention_count, first_mentioned_at, last_mentioned_at),
-    rememberstack_graph_internal.crossrefs_live AS document_crossref
-      KEY (deployment_id, crossref_id)
-      SOURCE KEY (deployment_id, from_doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      DESTINATION KEY (deployment_id, to_doc_id)
-        REFERENCES document (deployment_id, doc_id)
-      LABEL document_crossref PROPERTIES
-        (deployment_id, crossref_id, kind, context, created_at)
-  );
-```
-
-The history graph uses the same composite entity vertex and maps the private
-`relations_history` view as `relates`, exposing only deployment/relation ids,
-predicate, and the four clock columns required to filter expansion. Migrations
-own the complete DDL. A source-view shape migration drops and recreates
-dependent property graphs in the same transaction. The public authority views
-remain the contract for returned labels, confidence, evidence/support counts,
-contradiction state, and provenance; private element properties are planning
-inputs, not a second public truth surface.
+Entity nodes (`entities_live`) are shared by both. Document nodes, mentions,
+and document cross-references are current only. A source-view shape migration
+replaces the views and their grants in the same transaction. The public
+authority views remain the contract for returned labels, confidence,
+evidence/support counts, contradiction state, and provenance; the private
+views carry only identities and traversal filters, not a second public truth
+surface.
 
 D98 drops the six legacy `v_graph_entities`, `v_graph_documents`,
 `v_graph_relates`, `v_graph_mentioned_in`, `v_graph_crossref`, and
@@ -168,19 +139,16 @@ the pre-existing private merge-resolution authority behind the
 deployment-labelled `v_memory_entity_survivor`; neither is a graph copy or a
 public query-space surface.
 
-Property graphs are schema metadata. They contain no copied rows and have no
-data generation id. Migrations create them after restore. If catalog metadata
-is missing at schema head, readiness fails closed; the operator-only
-`remember ops graph-catalog ensure` command compares the expected semantic
-contract through PostgreSQL 19's `property_graphs`, `pg_element_tables`,
-`pg_element_table_key_columns`, `pg_edge_table_components`,
-`pg_element_table_labels`, `pg_element_table_properties`, `pg_labels`,
-`pg_label_properties`, `pg_property_data_types`, and
-`pg_property_graph_privileges` information-schema views. It may use
-`pg_get_propgraphdef()` as diagnostic output, but does not make a brittle raw
-DDL-string comparison its authority. It transactionally recreates only the
-catalog objects and their explicit grants. It never repairs or writes
-authority rows.
+The graph views, the traversal helpers, and their grants are schema objects.
+They contain no copied rows and have no data generation id. Migrations create
+them after restore. If any of them is missing or wrong at schema head,
+readiness fails closed; the operator-only `remember ops graph-catalog ensure`
+command checks that every node and edge view exists, that the three helpers
+have the expected signatures, attributes, version comments, planner settings,
+and grants, that the citation helper traverses the current reference
+projection, and that the query and graph roles have their exact limits and
+privileges. It transactionally recreates only those objects and their explicit
+grants. It never repairs or writes authority rows.
 
 ### 3.3 No entity types
 
@@ -191,74 +159,65 @@ facts live in observations and profile prose.
 
 ## 4. Query execution
 
-### 4.1 SQL/PGQ from day one
+### 4.1 Fixed one-hop read
 
-Server-owned fixed patterns use PostgreSQL 19 SQL/PGQ. For example, a directed
-one-hop shape has this form:
+The one-hop neighborhood is one static, parameterized SQL statement over an
+edge view: `relations_current` for a current read and `relations_history` for
+an as-of read. It has one branch per stored edge direction, joined with
+`UNION ALL`: edges whose subject is the anchor (the neighbor is the object)
+and edges whose object is the anchor (the neighbor is the subject). Each
+branch filters `deployment_id` and the anchor on an indexed endpoint, drops
+self-loops, applies the optional predicate filter and, for history, both
+half-open clock windows, and every candidate edge passes the D140 §8.1
+evidence gate (`rememberstack_graph_internal.relation_evidence_in_scope`) in
+the same statement. Its core shape:
 
 ```sql
-SELECT *
-FROM GRAPH_TABLE (
-  memory_v1.memory_current
-  MATCH (a IS entity)-[r IS relates]->(b IS entity)
-  WHERE a.deployment_id = $1
-    AND a.entity_id = $2
-  COLUMNS (
-    r.relation_id AS relation_id,
-    r.predicate AS predicate,
-    b.entity_id AS neighbor_entity_id
-  )
-) AS g;
+SELECT r.relation_id, r.object_entity_id AS neighbor_id
+FROM rememberstack_graph_internal.relations_current AS r
+WHERE r.deployment_id = :deployment_id
+  AND r.subject_entity_id = :anchor_id
+  AND r.object_entity_id <> :anchor_id
+UNION ALL
+SELECT r.relation_id, r.subject_entity_id
+FROM rememberstack_graph_internal.relations_current AS r
+WHERE r.deployment_id = :deployment_id
+  AND r.object_entity_id = :anchor_id
+  AND r.subject_entity_id <> :anchor_id
 ```
 
-The admitted PG19 subset is deliberately explicit: fixed path concatenation;
-vertex and full-edge patterns; directed or either-direction matching; element
-variables; element-local and graph-pattern predicates; individual labels or
-label disjunction; property references; and a mandatory `COLUMNS` result.
-Named views, composite keys and references, explicit labels, and explicit
-column/expression properties are allowed in graph DDL. `GRAPH_TABLE` remains
-an ordinary relational `FROM` item, so server-owned statements may alias,
-join, filter, order, and implicitly correlate it to an earlier `FROM` item.
-PostgreSQL 19 does **not** accept an explicit `LATERAL` keyword before
-`GRAPH_TABLE`; shipped SQL uses the working comma-join form.
+For example, if Acme has edges `Acme -employs-> Alice` and
+`Bob -invests_in-> Acme`, the first branch returns Alice and the second Bob,
+each with its own relation id and with the stored direction kept on the edge.
 
-No production query assumes support for path variables, different-edge,
-TRAIL/SIMPLE/ACYCLIC modes, quantified paths or edges, shortest/any-path
-search, path alternation/union, non-local element predicates, label
-conjunction/negation/wildcards, graph-element identity/topology predicates,
-within-match aggregates, path functions, optional/export result modes, or
-inline view element tables. Those features are explicitly absent from the
-PostgreSQL 19 conformance table. The application exposes ordinary UUID
-properties when it needs element identity.
+These are exactly the joins PostgreSQL 19 Beta 3 generated from the former
+SQL/PGQ pattern `(x IS entity)-[r IS relates]-(y IS entity)` with
+`y.entity_id <> x.entity_id`, so the result set is unchanged.
 
-Shipped PGQ statements are static application SQL, parameterized, deployment
-scoped, and limited to one explicit hop. Current shapes use `memory_current`;
-fixed as-of shapes use `memory_history` and put both
-half-open clock predicates on every matched edge. The result is relational and
-may join authority tables for hydration in the same statement.
+The evidence gate sits above an `OFFSET 0` fence around the two branches.
+Without the fence, PostgreSQL pushes the gate down into the edge view, where
+it can run once for every relation of the deployment before the anchor filter
+(applied on the view's survivor-resolved endpoint columns) has removed any of
+them. That is a full evaluation of an expensive function per tenant relation
+and exceeds the graph role's statement timeout on ordinary corpora. Fenced,
+the gate runs only on the anchor's own edges, as it does in the guard.
 
 The one-hop neighborhood is the deliberate dual-implementation seam. The
-recursive/frontier result contract is canonical. The PGQ statement and its
+recursive/frontier result contract is canonical. The one-hop statement and its
 bounded server-side result fold together must:
 
-1. match only semantic `relates` edges, exactly like the frontier helper; the
-   mention and document-cross-reference labels in the same property graph are
-   not neighborhood edges;
+1. match only semantic `relates` edges, exactly like the frontier helper;
+   mentions and document cross-references are not neighborhood edges;
 2. treat semantic discovery as undirected while retaining stored edge
    direction;
 3. exclude the anchor as a returned neighbor;
-4. have PGQ return the admitted one-hop edge set with predicate/time filters;
+4. return the admitted one-hop edge set with predicate/time filters;
 5. have the server choose the lexicographically smallest relation-id
    representative per endpoint, then order and page those identifiers;
 6. disclose the same returned-edge cap, expansion budget, and truncation state
    as the canonical helper.
 
-PostgreSQL 19's default is repeatable-elements matching. The one-hop statement
-therefore keeps anchor exclusion (`y.entity_id <> x.entity_id`) in the
-graph-pattern `WHERE` after the complete `MATCH`, where cross-element
-comparisons are valid.
-
-The private entity element view starts with one indexed `deployments` row and
+The private entity node view starts with one indexed `deployments` row and
 enters a deployment-correlated lateral subquery. Inside that bound it computes
 the recursive survivor closure and materializes the
 `(entity_id, survivor_entity_id)` map and survivor provenance once per view
@@ -269,50 +228,43 @@ planner-shape requirement, not a projection: the CTE copies no durable rows and
 the view retains exactly the D48 surviving-provenance membership rule. Both a
 correlated provenance `EXISTS` at each entity row and a corpus-wide
 `(deployment_id, survivor_entity_id)` materialization are forbidden. The first
-is duplicated by the PG19 Beta 3 graph rewrite; the second makes one customer's
-query pay for every other deployment before its tenant filter applies.
+repeats the provenance check for every candidate edge endpoint; the second
+makes one customer's query pay for every other deployment before its tenant
+filter applies.
 
-Because PG19 has no inside-match work counter, each fixed PGQ operation begins
-with a separate static, indexed, tenant-and-anchor-first relational guard in
+The one-hop read cannot stop itself after a work budget, so it begins with a
+separate static, indexed, tenant-and-anchor-first relational guard in
 the same read-only repeatable-read transaction. The guard expands the anchor's
 merge membership, probes both raw relation endpoint indexes, counts temporal-
 and-predicate-eligible candidate rows, and uses a `budget + 1` limit. Counting
 before the graph views remove missing provenance is deliberately conservative:
 those rows are still possible rewrite work. The graph role receives only the
 columns needed for this guard. Application control flow inspects its one
-decision row and does not send the `GRAPH_TABLE` statement to PostgreSQL unless
-the guard admits it. Refusal therefore cannot depend on planner short-circuit
+decision row and does not send the one-hop statement to PostgreSQL unless the
+guard admits it. Refusal therefore cannot depend on planner short-circuit
 behavior: it returns zero graph data plus the disclosed truncation reason and
-effective-budget metadata without planning or evaluating the graph pattern.
-The admitted PGQ remains static and uses PG19's implicit comma-join correlation
-from its deployment/anchor bounds into `GRAPH_TABLE`; it never spells an
-explicit `LATERAL`. `EXPLAIN (ANALYZE, BUFFERS)` acceptance proves both the
-standalone guard and graph rewrite use endpoint indexes and do not scan a
-deployment-wide eligible edge relation. `statement_timeout` remains a final
+effective-budget metadata without planning or evaluating the one-hop read.
+`EXPLAIN (ANALYZE, BUFFERS)` acceptance proves the guard uses both endpoint
+indexes and does not scan a deployment-wide eligible edge relation. `statement_timeout` remains a final
 safety boundary, not the work-budget implementation.
 
-Byte-identical PGQ/frontier parity is required at depth one whenever
+Byte-identical one-hop/frontier parity is required at depth one whenever
 the guard proves the request is within `expansion_budget`; fixtures include
 skew, parallel edges, and temporal filtering below that budget. The
 over-budget contracts are deliberately different and separately tested:
-server-owned PGQ returns zero data rows plus
-`truncation_reason = 'expansion_budget'` without evaluating the graph pattern,
-while a direct recursive-helper call may return its deterministic partial
-prefix plus the same reason. The typed depth-one operation always uses the PGQ
-rule; depth two and above always use the frontier helper, so routing is fixed
+the server-owned one-hop read returns zero data rows plus
+`truncation_reason = 'expansion_budget'` without evaluating the read, while a
+direct recursive-helper call may return its deterministic partial prefix plus
+the same reason. The typed depth-one operation always uses the one-hop rule;
+depth two and above always use the frontier helper, so routing is fixed
 before execution and there is no runtime fallback that could hide a mismatch.
-PostgreSQL 19 Beta 3's view-backed two-hop rewrite exceeded the binding
-transaction bound and did not retain endpoint-anchored access. It is therefore
-not on the request path until a later PostgreSQL release passes both gates.
-Dense-hub fixtures assert each disclosed contract; they are not part of the
-byte-parity set. This deliberate one-hop implementation satisfies the operator
-requirement to use the standard graph surface from the cutover without making
-SQL/PGQ the traversal engine.
+A fixed two-hop join over the views did not keep endpoint-anchored access in
+the Beta 3 measurement, so it is not on the request path. Dense-hub fixtures
+assert each disclosed contract; they are not part of the byte-parity set.
 
-PostgreSQL 19 does not implement element-pattern quantifiers or shortest-path
-modes. No implementation may emulate runtime depth by generating an unbounded
-number of joins. When the operation is variable-length or asks for shortest,
-it uses the frontier functions.
+No implementation may emulate runtime depth by generating an unbounded number
+of joins. When the operation is variable-length or asks for shortest, it uses
+the frontier functions.
 
 ### 4.2 Work-bounded frontier traversal
 
@@ -465,16 +417,17 @@ decision; it must not infer history from current rows.
 ### 4.4 Transaction snapshot
 
 A statement sees one PostgreSQL MVCC snapshot. A relation committed before a
-later statement becomes graph-visible without a rebuild. `memory_current`,
-`graph_edges_current`, and a graph helper called with neither explicit instant
+later statement becomes graph-visible without a rebuild.
+`relations_current`, `graph_edges_current`, and a graph helper called with
+neither explicit instant
 capture one `statement_timestamp()` value and use it for every current predicate
 and emitted `evaluated_at` in that statement, preserving D41.
 
 A compound typed operation that searches, traverses, and hydrates across
 multiple statements uses a `REPEATABLE READ, READ ONLY` transaction, captures
 one `evaluation_at` at operation entry, and passes that value explicitly as
-both graph instants. Its PGQ step uses `memory_history` with the same explicit
-predicates rather than `memory_current`. Thus all stages see one MVCC snapshot
+both graph instants. Its one-hop step reads `relations_history` with the same
+explicit predicates rather than `relations_current`. Thus all stages see one MVCC snapshot
 and one temporal instant without changing the public current-view definition.
 Long read transactions remain bounded by statement/transaction timeouts so
 they do not pin vacuum indefinitely.
@@ -513,10 +466,10 @@ It does not make graph expansion the universal first stage. Unanchored
 questions still need semantic/BM25 entry points. Observations still are not
 graph neighbors. Predicate is optional narrowing, not the default recall key.
 
-The implementation records channel provenance such as `graph_pgq` or
+The implementation records channel provenance such as `graph_one_hop` or
 `graph_recursive`, effective bounds, truncation, and query duration. That is
-execution provenance; it must not change ranking solely because one syntax was
-used.
+execution provenance; it must not change ranking solely because one execution
+mode was used.
 
 ## 6. Global graph analytics
 
@@ -543,32 +496,27 @@ its artifacts do not become graph authority.
 
 ## 7. Security and admission boundary
 
-- Database roles are least privilege. The migration owner owns property
-  graphs; the internal read role receives explicit `SELECT ON PROPERTY GRAPH`
-  for only the graphs it needs plus explicit access to the element views and
-  traversal functions. Property-graph ownership does not lend base-relation
-  privileges to a caller, and PG19 documents no `ALL PROPERTY GRAPHS IN
-  SCHEMA` or default-privilege shortcut.
+- Database roles are least privilege. The migration owner owns the graph
+  views; the internal graph role receives explicit `SELECT` on the node and
+  edge views, the guard's columns, the hydration views, and `EXECUTE` on the
+  traversal functions and the evidence gate. Revoking its `SELECT` on an edge
+  view makes the one-hop read fail for that role, even though the view owner
+  could read it.
 - Every application statement contains a deployment predicate. Composite
-  element keys are defense in depth, not a substitute for the predicate.
+  view keys are defense in depth, not a substitute for the predicate.
 - Typed graph endpoints call only fixed SQL or the bounded functions. They do
   not interpolate identifiers, labels, properties, predicates, or depth.
 - Public Cypher is removed.
-- Public arbitrary SQL/PGQ is not admitted while the exhaustive `pglast` gate
-  embeds PostgreSQL 18 grammar. `pglast` 8.4 rejects PGQ syntax, so bypassing
-  the parser or maintaining a second lexical allowlist is forbidden.
-- A future PG19-capable AST parser may admit SQL/PGQ only after the existing
-  default-deny query-space review is extended for property graphs,
-  `GRAPH_TABLE`, functions, cost checks, and result limits.
+- The reference server (PostgreSQL 19 RC 1 and later) has no SQL/PGQ, so
+  public SQL/PGQ is not part of the surface. The exhaustive `pglast` gate also
+  rejects that syntax; bypassing the parser or maintaining a second lexical
+  allowlist is forbidden.
 - The PostgreSQL-18 grammar gate in front of a PostgreSQL-19 server is itself
   an explicit compatibility boundary. Release tests diff reserved/unreserved
   keywords, admitted statement/node shapes, and callable built-ins between
   majors and prove that new PG19 syntax/functions are rejected by default.
   An AST accepted under the PG18 grammar may execute only through the existing
   function/view allowlists; no name-resolution semantic drift is assumed safe.
-
-SQL/PGQ starts immediately in server-owned statements; public SQL/PGQ syntax
-is a separate admission feature.
 
 ### Surface and transport contract
 
@@ -578,11 +526,11 @@ graph tools are intentionally outside this cut. CLI and MCP retain their
 general ingest and assured-recall contracts; where the OSS open-query
 capability is enabled, their existing SQL query tools can call only the
 allowlisted bounded graph helpers under the same parser, role, timeout, and
-result limits. That helper access is not public arbitrary SQL/PGQ syntax and is
-not an excuse to synthesize query text.
+result limits. That helper access is not public graph syntax and is not an
+excuse to synthesize query text.
 
 Any later dedicated CLI/MCP graph verb must delegate to the typed operation
-rather than generate Cypher, SQL/PGQ, or a divergent traversal. Its adoption
+rather than generate Cypher, graph-pattern SQL, or a divergent traversal. Its adoption
 trigger is demonstrated need for graph topology as a first-class agent/shell
 result; transport expansion does not block removal of the snapshot system.
 
@@ -611,7 +559,7 @@ representative fixtures is an implementation gate.
 The scale contract is bounded work at every supported cardinality: no operation
 may examine more than its expansion budget or retain more than its frontier,
 returned-result, temp-space, and time budgets. At representative target-scale
-fixtures, fixed one-hop PGQ, default two-hop neighborhood, and four-hop path
+fixtures, the fixed one-hop read, default two-hop neighborhood, and four-hop path
 queries must complete inside the configured statement timeout without spills
 or an unanchored scan of the tenant relation set. The one-hop fixture includes
 enough entity provenance, resolution partitions, evidence, and documents to
@@ -636,16 +584,17 @@ weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture
 
-The reference image moves directly to the latest PostgreSQL 19 prerelease,
-initially the exact PostgreSQL 19 Beta 3 image digest proven in the analysis.
-There are no user databases to preserve. Until GA:
+The reference image tracks the latest PostgreSQL 19 prerelease by exact image
+digest: first the Beta 3 image proven in the analysis, release candidate 1
+since 2026-11-06, and the final release when it ships. There are no user
+databases to preserve. Until GA:
 
 - no prerelease database contains irreplaceable production data;
 - migrations and representative fixtures must replay from empty storage;
 - every beta/RC bump rebuilds the image and runs the full migration,
-  pgvector/HNSW, pg_textsearch/BM25, pg_partman, PGQ, traversal, backup, and
-  restore gates;
-- the complete extension/PGQ/traversal matrix passes on both `linux/amd64` and
+  pgvector/HNSW, pg_textsearch/BM25, pg_partman, one-hop, traversal, backup,
+  and restore gates;
+- the complete extension/one-hop/traversal matrix passes on both `linux/amd64` and
   `linux/arm64`, with per-architecture image/artifact digests recorded;
 - prerelease-to-prerelease data-directory compatibility is not assumed;
 - GA is another tested image replacement, after which ordinary supported
@@ -676,8 +625,8 @@ discloses it.
 ### Recovery
 
 Database recovery restores authority, P1, graph source views, functions, and
-property-graph catalog definitions together. Property graph DDL is replayable
-metadata. At schema head, missing/mismatched catalog metadata fails readiness
+their grants together; all of them are replayable schema. At schema head,
+missing/mismatched graph objects fail readiness
 and is repaired only by the reviewed operator `graph-catalog ensure` command or
 fresh restore/replay—not silently by a no-op Alembic invocation. There is no
 graph object-store inventory, download, validation, pointer reconciliation, or
@@ -693,11 +642,18 @@ snapshot only until the bounded transaction ends.
 
 ### Schema and version upgrades
 
-Migrations create/drop property graphs transactionally around incompatible
-view changes. Rollback means deploying the preceding application and replaying
+Migrations replace the graph views and their grants transactionally around
+incompatible view changes. Rollback means deploying the preceding application and replaying
 its schema on a compatible PostgreSQL image; it never means reviving Ladybug.
 During PostgreSQL 19 prereleases, rollback is rebuild-and-restore from a
 logical/known-compatible source, not reusing an unverified data directory.
+
+A store created on PostgreSQL 19 Beta 3 still holds the two former SQL/PGQ
+property graphs. `pg_upgrade` and `pg_restore` replay their DDL, which RC 1
+cannot parse, so the store first runs migration `p9_44_0065` on Beta 3, which
+drops them, and then moves to RC 1. The catalog version also changed between
+Beta 3 and RC 1, so the data directory moves by `pg_upgrade` or
+`pg_dump`/`pg_restore`, never by opening it directly.
 
 ## 11. Observability and readiness
 
@@ -706,9 +662,10 @@ Per-deployment readiness is data-independent and therefore also succeeds for a
 new empty deployment. It checks:
 
 1. PostgreSQL is reachable at the required schema revision;
-2. both property graphs exist with the expected element aliases;
-3. graph catalogs, exact grants, and helper definitions/versions match;
-4. fixed one-hop PGQ and each helper execute under the deployment-bound role
+2. every graph node and edge view exists;
+3. exact grants and helper definitions/versions match;
+4. the fixed one-hop guard and read, and each helper, execute under the
+   deployment-bound role
    against a UUID proven absent in the same read-only repeatable-read snapshot,
    returning an empty data result (and the helper terminal status) without
    crossing deployment scope; and
@@ -725,7 +682,7 @@ transaction/deployment and never enter customer retrieval, P3/K, forget, or
 storage-meter state.
 
 The absence probe generates a candidate UUID, verifies `NOT EXISTS` across the
-entity and document element views for the authenticated deployment, and only
+entity and document node views for the authenticated deployment, and only
 then uses it as the anchor in that same snapshot. A collision causes another
 bounded attempt and then a typed readiness failure; it never turns a
 probabilistic guess into the contract and never writes a reservation row.
@@ -751,13 +708,13 @@ graph path, or rebuild-ready signal.
 
 Implementation is accepted only when all of these pass:
 
-1. fresh PostgreSQL 19 migration creates both property graphs over views and
-   each declared element `KEY` query proves unique;
-2. one-hop SQL/PGQ tests prove tenant isolation, direction, labels,
+1. fresh PostgreSQL 19 migration creates the graph views and each view's key
+   query proves unique;
+2. one-hop tests prove tenant isolation, direction,
    current/as-of visibility, anchor exclusion, deduplication, deterministic
    truncation, and byte-identical parity with the canonical traversal at depth
    one for under-budget inputs; separate
-   dense-hub tests prove PGQ's zero-data refusal and the helper's deterministic
+   dense-hub tests prove the one-hop read's zero-data refusal and the helper's deterministic
    partial-prefix over-budget contracts;
 3. frontier tests prove required `deployment_id`, current/history source
    selection, both half-open clocks, invalid-short/valid-longer shortest path,
@@ -778,10 +735,8 @@ Implementation is accepted only when all of these pass:
    access; an unrelated-tenant scale fixture proves survivor/provenance
    materialization is deployment-scoped before its fence; and the configured
    concurrency test does not starve authority writes/search;
-10. `SELECT ON PROPERTY GRAPH` DDL is proven; the ten graph information-schema
-    views and `pg_get_propgraphdef()` report the expected semantic contract;
-    and least-privilege tests determine and enforce invoker ACL behavior on
-    every underlying view (no owner-based privilege escalation);
+10. least-privilege tests determine and enforce invoker ACL behavior on every
+    graph view (no owner-based privilege escalation);
 11. cold-start, backup/restore, missing-catalog fail-closed, and operator
     `graph-catalog ensure` drills pass;
 12. K tests and repository searches prove no community scope/rule/event/page
@@ -802,9 +757,10 @@ Rejected by this design:
   predicate;
 - pgGraph, because its CSR artifacts reintroduce generations and its inspected
   release lacks PostgreSQL 19 and the required per-edge temporal predicate;
-- SQL/PGQ alone, because PostgreSQL 19 lacks quantified and shortest paths;
-- recursive SQL alone, because the operator explicitly requires SQL/PGQ as the
-  standard one-hop fixed-pattern surface from the cutover;
+- SQL/PGQ as the traversal engine, because PostgreSQL 19 Beta 3 lacked
+  quantified and shortest paths. SQL/PGQ served the one-hop read from the
+  cutover until PostgreSQL 19 Beta 4 removed it; the relational join over the
+  same views replaced it (D98 RC 1 amendment);
 - closure tables, unbounded generated joins, parser bypasses, and a permanent
   dual-run migration.
 

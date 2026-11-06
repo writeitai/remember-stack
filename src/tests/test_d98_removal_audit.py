@@ -120,7 +120,7 @@ def test_postgres_image_verifies_extension_source_and_license() -> None:
         == 2
     )
     assert dockerfile.count("update-ca-certificates") == 2
-    runtime_stage = dockerfile.split("FROM postgres:19beta3-trixie@", maxsplit=2)[2]
+    runtime_stage = dockerfile.split("FROM postgres:19rc1-trixie@", maxsplit=2)[2]
     assert "apt-archive.postgresql.org/pub/repos/apt" in runtime_stage
     assert runtime_stage.index("update-ca-certificates") < runtime_stage.rindex(
         "apt-get update"

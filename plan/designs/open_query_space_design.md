@@ -3,13 +3,13 @@
 > **Binding D98 amendment (2026-08-27).** Public Cypher and the immutable P2
 > graph surface are removed. `query_cypher` and `explain_cypher`, Cypher
 > grammar/limits/errors, `snapshot_graph`, `p2_snapshot`, generation discovery,
-> and P2 confirmation are not public or internal contracts. Server-owned,
-> parameterized PostgreSQL 19 SQL/PGQ serves fixed one-hop shapes, while the
+> and P2 confirmation are not public or internal contracts. A server-owned,
+> parameterized relational join serves the fixed one-hop neighborhood, while the
 > replacement public bounded `graph_neighborhood`/`graph_path`/
 > `graph_citation_path` SQL functions and
 > typed graph operations use recursive SQL for variable/shortest traversal.
-> Public arbitrary SQL/PGQ is outside the current surface until the
-> default-deny AST gate can parse PostgreSQL 19. All plain-SQL, invariant
+> PostgreSQL 19 RC 1 has no SQL/PGQ (Beta 4 removed it; D98 RC 1 amendment),
+> so SQL/PGQ is not part of any surface. All plain-SQL, invariant
 > compilation, tenancy, saved-query,
 > discovery, result-cap, audit, and assured-operation rules below remain binding.
 > The current graph contract is [`p2_graph_design.md`](p2_graph_design.md).
@@ -48,7 +48,7 @@ D54, D80, and D87 remain controlling.*
 1. **PostgreSQL authorizes every live result.** The live public data language IS
    PostgreSQL 19 SQL over the versioned `memory_v1` schema. Physical tables,
    raw projection tables, and operator schemas are never public. PostgreSQL
-   views compile row-level invariants; P1 ranked scans, SQL/PGQ fixed patterns,
+   views compile row-level invariants; P1 ranked scans, the fixed one-hop read,
    and recursive graph helpers apply those authorities in the same transaction.
 2. **The assured surface mirrors the authority layers.** `resolve_entity`,
    `claims_and_sources_context`, `facts_context`, and `combined_context` are the complete
@@ -70,7 +70,7 @@ D54, D80, and D87 remain controlling.*
 5. **D48 is fail-closed at each stated time boundary.** Each live
    lineage-derived row has a surviving live-document provenance path. P1
    nominations receive authority confirmation in the request's snapshot
-   (D142 ranked-read context); SQL/PGQ patterns and
+   (D142 ranked-read context); the one-hop read and
    recursive traversal expand only invariant-bearing live edge views; graph
    paths fail as units; chunk bodies confirm their current coordinate and hashes.
    Missing, orphaned, mismatched, or incompletely forgotten state is absent from
@@ -80,13 +80,13 @@ D54, D80, and D87 remain controlling.*
    `supports` or `contradicts` stance. `support_state` is exactly `current` or
    `withdrawn`; `withdrawn` comes only from the open processing-driven
    `support_withdrawn` review state. A zero count MUST NOT manufacture it.
-7. **The graph is first-class and live.** A PostgreSQL property graph over
-   deployment-keyed invariant views is the fixed-pattern substrate. Server-owned
-   SQL/PGQ implements the admitted one-hop shape. Public bounded
+7. **The graph is first-class and live.** Deployment-keyed invariant node and
+   edge views are the graph. A server-owned relational join over the edge views
+   implements the one-hop neighborhood. Public bounded
    `graph_path` and `graph_neighborhood` functions, plus typed graph operations,
    use work-bounded recursive SQL from depth two and for shortest traversal.
-   There is no copied graph, snapshot generation, public Cypher, or public
-   arbitrary SQL/PGQ on the accepted surface.
+   There is no copied graph, snapshot generation, public Cypher, or SQL/PGQ
+   on the accepted surface.
 8. **PostgreSQL-native P1 SQL preserves D80 and D48.** `semantic_claims`,
    `semantic_chunks`, `semantic_facts`, `semantic_entities`,
    `lexical_claims`, `lexical_chunks`, and `fetch_chunk_bodies` validate the one
@@ -106,8 +106,8 @@ D54, D80, and D87 remain controlling.*
 11. **The schema is discoverable before use.** The same checked-in manifest
     owns SQL view/function comments, grains, keys, examples, graph-helper
     contracts, and `surface_manifest_hash`. Raw `pg_catalog` discovery is not
-    exposed. The internal property-graph definition is verified separately from
-    PostgreSQL's semantic catalogs and is not an open query surface.
+    exposed. The internal graph views and helpers are verified separately by the
+    graph catalog check and are not an open query surface.
 12. **No benchmark-specific product behavior exists.** The separately
     fingerprinted v15 protocol consumes the customer surface unchanged.
     Dataset names, question classes,
@@ -133,7 +133,7 @@ D54, D80, and D87 remain controlling.*
     - invariant, security, resource, and non-benchmark reviews pass. Passing
       these gates authorizes a separate binding design; it does not add the
       operation automatically.
-14. **The caller owns planning.** There is no product NL-to-SQL/PGQ planner
+14. **The caller owns planning.** There is no product NL-to-SQL planner
     or LLM on the query path. Raw-table SQL, DuckDB/exports as a live
     correctness path, and content-level ACL emulation inside one deployment are
     non-goals.
@@ -559,7 +559,7 @@ and MUST NOT reintroduce the legacy LEFT JOIN orphan branch.
 | Public views | Apply the full live lineage/version/representation chain before projection or aggregation |
 | SQL helpers | Read only invariant-bearing public views or equivalent private subqueries covered by the same tests |
 | PostgreSQL P1 SRFs | Nominate from the `chunk_search` or in-row embedding index and confirm with target-specific authority joins/predicates in one transaction snapshot, continuing until `k` eligible rows or a disclosed stop (D142), before exposing rows |
-| SQL/PGQ fixed patterns | Match only invariant-bearing deployment-keyed graph views at the caller's statement clock; explicitly reject repeated element UUIDs when simple-path semantics are required |
+| Fixed one-hop read | Join only invariant-bearing deployment-keyed graph edge views at the caller's statement clock; exclude the anchor as its own neighbor |
 | Recursive graph helpers | Apply authority predicates during expansion and drop a path as one unit when any member fails |
 | Saved queries and assured operations | Execute through the same role/views/helpers; no cached result rows bypass confirmation |
 | Counts | Aggregate from `evidence_lineage` after liveness/current-testimony filtering, never from cached claim counts |
@@ -826,19 +826,15 @@ EXECUTE privilege for subsequent functions in this schema.
 
 ### 3.5 Graph query boundary
 
-Public Cypher is removed. Public arbitrary SQL/PGQ is not admitted while the
-default-deny `pglast` gate embeds PostgreSQL 18 grammar. The typed graph API and
+Public Cypher is removed. The reference server (PostgreSQL 19 RC 1 and later)
+has no SQL/PGQ, so there is no graph-pattern syntax to admit, and the
+default-deny `pglast` gate rejects it as well. The typed graph API and
 server-owned SQL use the live-graph contract in
-[`p2_graph_design.md`](p2_graph_design.md): fixed one-hop SQL/PGQ plus
-deployment-scoped work-bounded traversal functions. Public `query_sql` may call
-only the allowlisted traversal functions described in §3.4; it cannot submit
-`GRAPH_TABLE`, property-graph DDL, generated joins, or arbitrary graph labels,
-properties, identifiers, functions, or patterns.
-
-A later public SQL/PGQ proposal requires a PG19-capable AST parser, a separate
-default-deny admission design, exact supported-feature allowlist, plan/work
-gates, result limits, security review, and a new manifest identity. It is not
-a compatibility promise.
+[`p2_graph_design.md`](p2_graph_design.md): a fixed one-hop relational join
+plus deployment-scoped work-bounded traversal functions. Public `query_sql` may
+call only the allowlisted traversal functions described in §3.4; it cannot
+read the private graph views, submit generated joins, or choose arbitrary graph
+labels, properties, identifiers, functions, or patterns.
 
 
 ## 4. Query sandbox, tenancy, limits, and result contract
@@ -962,8 +958,8 @@ deployment-bound login role. SQL text and parameters never choose deployment.
 
 The typed graph surface uses the same deployment-bound PostgreSQL connection.
 Every traversal takes `deployment_id` as its required first argument and every
-property-graph key/reference includes it, but caller SQL cannot choose another
-deployment or invoke arbitrary PGQ. There is no graph file, reader cache,
+graph view key/reference includes it, but caller SQL cannot choose another
+deployment or read the private graph views. There is no graph file, reader cache,
 snapshot path, attachment, or URI to select.
 
 The AST binder requires that first argument to be the reserved authenticated
@@ -1241,10 +1237,9 @@ Every public view, column, and SQL function has manifest-owned comments stating
 its grain/type, key or identity meaning, current/history meaning, null-clock
 convention, deletion boundary, count exactness, orientation/evidence status,
 limits, and failure behavior. Comments are complete sentences and avoid private
-PostgreSQL table names. Each SQL function has a valid example. Internal
-property-graph labels, properties, keys, endpoint mappings, and grants are
-verified through PostgreSQL's semantic graph catalogs and readiness contract,
-not presented as a customer-authored query language.
+PostgreSQL table names. Each SQL function has a valid example. The internal
+graph views, helpers, and grants are verified through the graph catalog check
+and readiness contract, not presented as a customer-authored query language.
 
 The compact first-call discovery resource, the consumption skill, and the OSS
 retrieval docs each open with the exact **Bound two-layer retrieval headline
@@ -1353,9 +1348,9 @@ set, ordered columns/types, and comments with the manifest; interface drift
 disables that request with `schema_version_mismatch`. Exact view-definition
 parity is a deploy/CI gate using the same-server reference comparator, where
 printer output is comparable without becoming a runtime hash input. Graph
-readiness separately validates the exact property-graph aliases, element views,
-composite keys, endpoints, labels, properties, property types, and effective
-graph/element-view privileges through PostgreSQL's semantic catalogs. A mismatch
+readiness separately validates that every graph node and edge view exists, the
+exact helper contracts, and the effective graph-view privileges and role
+limits. A mismatch
 disables typed graph operations and graph helpers with `graph_unavailable`.
 Discovery publishes every named field of each tier's authoritative limit
 record; it does not maintain a shorter hand-selected presentation that can
@@ -1398,8 +1393,8 @@ canonical JSON with exactly these top-level members:
    and this manifest atomically;
 4. `limits`: the exact public SQL grammar/operator/function allowlists and all
    default, interactive, analytical, semantic/lexical/body, graph traversal,
-   concurrency, and quota limits. The internal SQL/PGQ template set and property
-   graph catalog identity are deployment artifacts governed by the graph design,
+   concurrency, and quota limits. The internal one-hop statements and graph
+   catalog contract are deployment artifacts governed by the graph design,
    not public open-query grammar.
 
 The canonical AST serializer and version are pinned in the manifest generator;
@@ -1411,11 +1406,11 @@ the canonical names returned by `pg_catalog.format_type` before comparison and
 serialization. Formatting and comments outside manifest fields cannot change
 the hash. The resulting hash is independent of PostgreSQL minor version (the
 declared PostgreSQL major remains a manifest field). Physical indexes, plans,
-statistics, data, property-graph contents, saved queries, and registry rows are
+statistics, data, private graph views, saved queries, and registry rows are
 excluded. Any semantic view change, even with unchanged columns, changes the
 definition AST and the hash. Any semantic function change requires a contract-
 version/signature change and therefore changes the hash. A graph-helper signature
-or cap change changes the hash. An internal property-graph catalog change rolls
+or cap change changes the hash. An internal graph catalog change rolls
 the separate graph contract/version and must pass graph readiness and parity
 tests before deployment.
 
@@ -1463,7 +1458,7 @@ never grants raw tables or bypasses deployment/time/provenance predicates.
 | P1 extension/index unavailable | Plain relational SQL and graph reads remain available while PostgreSQL is healthy; affected semantic/lexical/body operations fail `p1_unavailable`; a core operation can return only a descriptor-permitted non-P1 channel with a D49 `boundary`, otherwise it fails |
 | One `combined_context` child returns a typed D49 negative | The request succeeds with both complete child envelopes; the other child is neither suppressed nor relabeled |
 | One `combined_context` child has a schema, timeout, cancellation, or store/execution failure | The entire request fails with that typed transport error and returns no `ContextBundle/v2`; half-bundles are forbidden |
-| Property-graph catalog or grants disagree with the graph contract | Typed graph operations and graph helpers fail `graph_unavailable`; unrelated relational SQL and assured operations remain available |
+| Graph catalog (views, helpers) or grants disagree with the graph contract | Typed graph operations and graph helpers fail `graph_unavailable`; unrelated relational SQL and assured operations remain available |
 | Traversal reaches a declared work/result/depth cap | The closed graph result reports the reached boundary and `truncated=true`; it makes no absence or shortest-path claim beyond the explored boundary |
 | Artifact/chunk body unavailable | Metadata SQL remains available; body-bearing candidates drop and are counted; a body-required invocation with no valid body fails `corpus_body_unavailable` |
 | P1 state and authority disagree | For chunks, authority confirmation in the request's snapshot (D142) rejects an ineligible `chunk_search` row; the rejection is counted in the invocation's drop disclosure. For in-row targets, null/stale embedding attestation makes the semantic row unready. Authorization uncertainty always fails the invocation. |
@@ -1526,7 +1521,7 @@ for the shipping surface pass before release.
    corpus body yields zero leaked rows/bytes across every live view, helper,
    semantic/lexical target, entity nomination, ID-addressed chunk-body fetch,
    core operation, shipped example, saved query, count, and artifact fetch. A
-   path with one invalid edge returns no partial live path. Fixed-pattern SQL/PGQ
+   path with one invalid edge returns no partial live path. Fixed one-hop
    and recursive-helper cells observe the deletion in the next statement; there
    is no copied graph or generation to purge separately. The targets × surfaces
    coverage-matrix artifact is generated, reviewed, versioned, and checked into
@@ -1550,7 +1545,7 @@ for the shipping surface pass before release.
    zero cross-deployment/operator/base-object disclosures, zero state changes,
    and zero pool contamination under production roles. The suite proves that
    the login role can reference no other deployment's objects and no base
-   table under any grant path, that server-owned SQL/PGQ and graph helpers derive
+   table under any grant path, that the server-owned one-hop read and graph helpers derive
    the deployment only from the authenticated binding (a missing or mismatched
    binding performs no graph access), and that all properties survive A→B→A pool reuse. The
    SRF fuzz corpus also proves that post-rewrite invocation count equals exactly
@@ -1585,12 +1580,11 @@ for the shipping surface pass before release.
    Across 10,000 injected stale/mismatched candidates, zero unconfirmed rows or
    bytes return, every drop category is counted exactly, and no invocation
    mixes configured policy or embedder attestation.
-8. **Graph authority and work bounds.** Server-owned fixed one-hop SQL/PGQ
+8. **Graph authority and work bounds.** The server-owned fixed one-hop read
    and recursive helpers equal exhaustive ground truth on generated graphs
    through their declared caps, use deterministic ordering, obey both clocks,
-   and never cross deployments. Simple-path shapes explicitly exclude repeated
-   element UUIDs because PostgreSQL's supported fixed patterns otherwise use
-   repeatable-element semantics. The recursive implementation expands one
+   and never cross deployments. The one-hop read excludes the anchor as its own
+   neighbor. The recursive implementation expands one
    frontier level at a time, stops after the first target-bearing level for
    shortest-hop results, filters authority in the recursive term, and enforces
    hard depth, frontier, examined-edge, result-row, temp, and statement-time
@@ -1598,25 +1592,16 @@ for the shipping surface pass before release.
    dense hubs, direct/helper empty results, caller filters/joins/aggregates that
    remove every data row, the reserved status-only right-join carrier, alias
    collisions, no GUC/session state across A→B→A pool reuse, truncation honesty,
-   exact PGQ/recursive parity for the under-budget overlapping one-hop shape,
-   and separately disclosed zero-data PGQ versus deterministic-prefix helper
+   exact one-hop/recursive parity for the under-budget overlapping one-hop shape,
+   and separately disclosed zero-data one-hop versus deterministic-prefix helper
    results on over-budget hubs. A forced hash-join fixture proves that the
    rewrite preserves top-level `ORDER BY`, `LIMIT`, and `OFFSET`, including the
-   status-only carrier and `LIMIT 0`. `EXPLAIN` acceptance proves every admitted PGQ template is
+   status-only carrier and `LIMIT 0`. `EXPLAIN` acceptance proves the one-hop guard is
    deployment/anchor selective and uses indexed endpoint access rather than an
    unbounded full-graph materialization.
-9. **SQL/PGQ catalog and conformance.** Fresh migration and repair are
-   idempotent and converge to one exact graph definition. Tests cover every
-   admitted PostgreSQL 19 construct: fixed concatenation, directed/either-
-   direction edges, element and graph-pattern predicates, individual/disjoined
-   labels, property references, expression properties, composite keys/endpoints,
-   views as element tables, aliasing, and implicit outer-reference correlation
-   by comma-joined `GRAPH_TABLE` (with explicit `LATERAL GRAPH_TABLE` tested as
-   rejected). Negative tests
-   pin the unsupported surface: path variables, TRAIL/SIMPLE/ACYCLIC, shortest
-   paths, alternation, quantified paths/edges, non-local predicates, richer label
-   expressions, element/path functions and aggregates, richer row/export modes,
-   and inline-view element tables. Graph and underlying element-view privileges
+9. **Graph catalog.** Fresh migration and repair are idempotent and converge
+   to one exact graph definition: every node and edge view exists, and the
+   helpers, their grants, and the role limits match. Graph-view privileges
    are tested independently under the production role.
 10. **Result contracts.** Every success, empty, truncation, rejection, timeout,
    cancellation, and store failure contains the complete QueryResult header and
@@ -1696,7 +1681,7 @@ for the shipping surface pass before release.
 |---|---|---|
 | `lexical_facts(query, k, filters)` | D94 stores fact embeddings on natural relation/observation rows but deliberately does not expand the admitted facts lexical surface. The binding P1 contract exposes semantic facts only. | Trigger: **a pg_textsearch BM25 index and scored fact-label lexical method are designed together**. Adoption requires frozen exact-term fixtures, the same analyzer/rank/score and D142 ranked-read nomination/confirmation contract as claims/chunks, current/at/overlap/history equivalence, the facts-filter allowlist, manifest enumeration, a `facts_context` descriptor/version roll adding lexical fusion, and same-change OSS docs. |
 | Complete removal of the assured-operation layer | One-call typed defaults remain product value; this design does not decide their deletion | An open-only evaluation shows no material loss from removing the one-call fallback: overall success lower 95% bound ≥ -2 points versus hybrid, every critical category ≥ -5 points, zero added D41/D48/D54/security violations, median calls increase ≤1, and p95 latency/cost increase ≤20%. Removal requires a separate binding decision and, if consumers exist by then, a migration plan proportional to actual usage. |
-| Public arbitrary SQL/PGQ | The pinned default-deny public SQL parser does not understand PostgreSQL 19 property-graph grammar, and string/token allowlisting would not be an acceptable isolation boundary. The current release therefore exposes only server-owned parameterized PGQ templates and typed/bounded graph functions. | Adopt only after the public AST gate parses the complete admitted PG19 grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
+| Public arbitrary SQL/PGQ | PostgreSQL 19 Beta 4 removed SQL/PGQ, so the reference server (RC 1 and later) cannot run it. The release exposes only the server-owned one-hop read and typed/bounded graph functions. | Adopt only if a supported PostgreSQL release ships SQL/PGQ again and the public AST gate parses its complete admitted grammar and rejects every unsupported/mutating form by structure. A separate binding proposal must define the admitted subset, tenancy rewrite, budgets, result contract, fuzz corpus, and manifest representation. |
 | Pgvectorscale StreamingDiskANN as the default ANN index | D94 binds pgvector HNSW first; installing an additional index extension without a present need violates YAGNI | The open proposal may inform a later binding decision. D94 does not install, test, benchmark, or pre-authorize it; a future promotion changes only the private vector index, never the public query contract or storage boundary. |
 | Media-segment public views/SRF | The binding media row/embedding contract is not yet part of this schema | First production corpus requiring SQL composition over D65 media segments; a separate design adds typed locators/derivation and rolls the schema/hash. |
 | Saved-query marketplace and shared dependencies | Signing, supply-chain review, publisher liability, and fleet recall are outside customer-local registry v1 | First operator-approved cross-deployment sharing requirement, followed by a signing/install/revocation design and adversarial supply-chain suite. |

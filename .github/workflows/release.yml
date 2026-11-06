@@ -353,12 +353,12 @@ jobs:
         with:
           images: ghcr.io/writeitai/remember-stack-postgres
           flavor: latest=false
-          tags: type=raw,value=19beta3-${{ needs.prepare.outputs.version }}
+          tags: type=raw,value=19rc1-${{ needs.prepare.outputs.version }}
 
       - name: Preserve an existing immutable foundation tag on recovery
         id: existing
         env:
-          IMAGE: ghcr.io/writeitai/remember-stack-postgres:19beta3-${{ needs.prepare.outputs.version }}
+          IMAGE: ghcr.io/writeitai/remember-stack-postgres:19rc1-${{ needs.prepare.outputs.version }}
         run: |
           if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
             docker pull --platform linux/amd64 "$IMAGE" >/dev/null

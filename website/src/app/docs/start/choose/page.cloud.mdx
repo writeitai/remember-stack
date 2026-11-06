@@ -30,9 +30,8 @@ about who operates it, not about how well it remembers.
 ## What self-hosting takes
 
 Self-hosting is a real option, and the full engine is yours to run. It is
-also real work. The engine uses PostgreSQL 19, which is still in beta,
-because it relies on the property-graph queries that version introduces. It
-needs the pgvector, pg_textsearch, pg_partman, pg_trgm, fuzzystrmatch,
+also real work. The engine uses PostgreSQL 19, which is still a release
+candidate, not a final release. It needs the pgvector, pg_textsearch, pg_partman, pg_trgm, fuzzystrmatch,
 unaccent, btree_gist and pgcrypto extensions. The Compose file builds that
 database for you.
 
@@ -54,7 +53,7 @@ piece.
 ## Choose remember.dev if
 
 - you want to send your first document today, not after a day of setup;
-- you do not want to run a beta release of PostgreSQL;
+- you do not want to run a prerelease of PostgreSQL;
 - you want your coding agent connected with one URL and a browser sign-in;
 - you would rather pay for processed text than run thirteen workers.
 

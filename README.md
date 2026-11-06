@@ -103,7 +103,7 @@ printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nR
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
   "$(openssl rand -hex 16 | sed -E 's/^(.{8})(.{4}).(.{3}).(.{3})(.{12})$/\1-\2-4\3-8\4-\5/')" >> .env
 # edit .env: set REMEMBERSTACK_OPENROUTER_API_KEY
-docker compose up -d
+docker compose up -d --build
 
 uvx remember setup --self-hosted   # connect your coding agent
 ```

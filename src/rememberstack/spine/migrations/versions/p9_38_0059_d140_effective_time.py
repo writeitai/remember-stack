@@ -39,9 +39,11 @@ lands in this one revision:
   a version and generation for them. The enum is recreated rather than
   extended because the new table's CHECK constraints compare with ``amends``,
   and PostgreSQL forbids using an enum value added in the same transaction.
-  The public view, the private graph source view (now one edge per lineage
-  pair and kind among the references of the versions in force now) and the
-  live property graph are recreated in the same transaction, with their grants.
+  The public view and the private graph source view (now one edge per lineage
+  pair and kind among the references of the versions in force now) are
+  recreated in the same transaction, with their grants. (As shipped, the
+  SQL/PGQ property graph over that view was recreated too; the D98 RC 1
+  amendment removed it, see p9_44_0065.)
 
 The downgrade refuses when any D140 data exists — a declaration or mode event
 (live or retracted), a version key, or a reference generation — because none
@@ -55,10 +57,8 @@ from sqlalchemy import text
 
 from rememberstack.spine.migrations._helpers import apply_ddl
 from rememberstack.spine.migrations._helpers import apply_view_ddl
+from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 from rememberstack.spine.migrations._helpers import view_column_comments
-from rememberstack.spine.migrations.versions.p9_17_0038_postgres19_live_graph import (
-    _CURRENT_GRAPH,
-)
 
 revision: str = "p9_38_0059"
 down_revision: str | None = "p9_37_0058"
@@ -1482,22 +1482,16 @@ BEGIN
     'GRANT SELECT ON rememberstack_graph_internal.crossrefs_live TO %I', query_role
   );
   EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I', query_role
-  );
-  EXECUTE format(
     'GRANT SELECT ON rememberstack_graph_internal.crossrefs_live TO %I', graph_role
   );
   EXECUTE format(
     'GRANT SELECT ON memory_v1.document_crossrefs_live TO %I', graph_role
   );
-  EXECUTE format(
-    'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I', graph_role
-  );
 END
 $do$;
 """
 """Grants the recreated and new objects need; dropping an object drops its
-grants, so the recreated crossref views and graph are granted again exactly as
+grants, so the recreated crossref views are granted again exactly as
 p9_17_0038 granted them."""
 
 _D140_DATA_EXISTS = """
@@ -1543,7 +1537,7 @@ def upgrade() -> None:
     op.execute(_FILL_VERSION_SCOPE)
     apply_ddl(sql=_SECTION_CHUNK_DDL)
 
-    op.execute("DROP PROPERTY GRAPH memory_v1.memory_current")
+    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_crossrefs_live")
     op.execute("DROP TABLE document_crossrefs")
@@ -1566,7 +1560,6 @@ def upgrade() -> None:
     apply_view_ddl(sql=MEMORY_V1_D140_VIEW_DDL)
     for view in ("document_crossrefs_live", *_NEW_PUBLIC_VIEWS):
         op.execute(f"ALTER VIEW memory_v1.{view} OWNER TO {_VIEW_OWNER}")
-    op.execute(_CURRENT_GRAPH)
 
     apply_ddl(sql=MEMORY_V1_D140_FUNCTION_DDL)
     for signature in _FUNCTION_SIGNATURES:
@@ -1637,7 +1630,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[1])
     op.execute("DROP FUNCTION " + _FUNCTION_SIGNATURES[0])
 
-    op.execute("DROP PROPERTY GRAPH memory_v1.memory_current")
+    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_crossrefs_live")
     op.execute("DROP VIEW memory_v1.document_effective_periods_live")
@@ -1673,7 +1666,6 @@ def downgrade() -> None:
         first="CREATE VIEW rememberstack_graph_internal.crossrefs_live AS",
     ):
         op.execute(statement)
-    op.execute(_CURRENT_GRAPH)
     op.execute(
         r"""
         DO $do$
@@ -1689,19 +1681,11 @@ def downgrade() -> None:
             query_role
           );
           EXECUTE format(
-            'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I',
-            query_role
-          );
-          EXECUTE format(
             'GRANT SELECT ON rememberstack_graph_internal.crossrefs_live TO %I',
             graph_role
           );
           EXECUTE format(
             'GRANT SELECT ON memory_v1.document_crossrefs_live TO %I', graph_role
-          );
-          EXECUTE format(
-            'GRANT SELECT ON PROPERTY GRAPH memory_v1.memory_current TO %I',
-            graph_role
           );
         END
         $do$;
