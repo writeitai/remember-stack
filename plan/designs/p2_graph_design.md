@@ -636,9 +636,10 @@ weakening correctness to a small-fixture promise.
 
 ## 9. PostgreSQL 19 and extension posture
 
-The reference image moves directly to the latest PostgreSQL 19 prerelease,
-initially the exact PostgreSQL 19 Beta 3 image digest proven in the analysis.
-There are no user databases to preserve. Until GA:
+The reference image tracks the latest PostgreSQL 19 prerelease by exact image
+digest: first the Beta 3 image proven in the analysis, release candidate 1
+since 2026-11-06, and the final release when it ships. There are no user
+databases to preserve. Until GA:
 
 - no prerelease database contains irreplaceable production data;
 - migrations and representative fixtures must replay from empty storage;

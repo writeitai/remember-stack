@@ -136,7 +136,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2
+    image: ghcr.io/writeitai/remember-stack-postgres:19rc1-0.17.2
     command:
       - postgres
       - -c

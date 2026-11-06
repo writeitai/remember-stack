@@ -6752,7 +6752,7 @@ Graviton, Ampere) runs them natively, without emulation:
 | Image | Used by |
 |---|---|
 | `ghcr.io/writeitai/remember-stack:0.17.2` | The API, the workers and `setup` |
-| `ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2` | PostgreSQL |
+| `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.17.2` | PostgreSQL |
 
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
@@ -6760,10 +6760,10 @@ when you pass `--build`. Building PostgreSQL compiles one extension and
 takes a few minutes. The third image, SeaweedFS, is also published for both
 architectures.
 
-## PostgreSQL 19 (beta)
+## PostgreSQL 19 (release candidate)
 
-RememberStack requires **PostgreSQL 19, which is a beta release**. The
-Compose file pins `postgres:19beta3`.
+RememberStack requires **PostgreSQL 19, which is not yet a final release**.
+The Compose file pins release candidate 1 (`postgres:19rc1`).
 
 It needs 19 because the memory's graph is a SQL/PGQ property graph
 (`CREATE PROPERTY GRAPH`, queried with `GRAPH_TABLE`). PostgreSQL 19 is the
@@ -6771,9 +6771,9 @@ first release with SQL/PGQ, so entity neighbourhoods and paths run live
 inside the same database that holds the facts, with no separate graph store
 to build or keep in sync.
 
-Running a beta has a consequence you should plan for: there is no promise
-that a data directory created by one PostgreSQL 19 prerelease opens under a
-later one. See [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades).
+Running a prerelease has a consequence you should plan for: there is no
+promise that a data directory created by one PostgreSQL 19 prerelease opens
+under a later one or under the final release. See [Upgrades and migrations](https://remember.dev/docs/self-hosting/upgrades).
 
 ### Extensions
 
@@ -9363,10 +9363,13 @@ Three things are shared across the server, so keep them in mind:
 
 ## PostgreSQL prerelease versions
 
-RememberStack runs on a PostgreSQL 19 beta (`19beta3` at v0.17.0). A
-PostgreSQL prerelease does not promise that its data directory opens under
-the next prerelease or the final release. The project has not published a
-procedure for moving a deployment's data across such a change.
+RememberStack runs on a PostgreSQL 19 prerelease, release candidate 1
+(`19rc1`); releases up to v0.17.2 ran Beta 3 (`19beta3`). A PostgreSQL
+prerelease does not promise that its data directory opens under the next
+prerelease or the final release. The Beta 3 to RC 1 step changes the
+catalog version, so a Beta 3 data directory does not open under RC 1. The
+project has not published a procedure for moving a deployment's data across
+such a change.
 
 If a release changes the PostgreSQL image, its release notes are the place
 to look. Without instructions there, move the data with a logical dump and

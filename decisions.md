@@ -4414,6 +4414,15 @@ query path, envelope grain, or hydration (D48–D49).
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
 > which supports PostgreSQL 19 and fills post-filtered top-k scans; no local
 > patch is carried. The rest of D98 stands.
+>
+> **PostgreSQL 19 RC 1 amendment (2026-11-06, owner).** The reference image
+> moves from Beta 3 to release candidate 1 (`postgres:19rc1-trixie`, pinned by
+> digest), and to the final release when it ships. RC 1 changes the catalog
+> version, so a Beta 3 data directory does not open under it; pre-GA storage
+> stays disposable and replayable, as below. pg_textsearch v1.5.1 builds
+> against the RC 1 headers only with `<limits.h>` force-included, a compiler
+> flag rather than a source patch (`docker/README.md`). The rest of D98
+> stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98

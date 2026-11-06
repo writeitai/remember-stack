@@ -160,10 +160,13 @@ Three things are shared across the server, so keep them in mind:
 
 ## PostgreSQL prerelease versions
 
-RememberStack runs on a PostgreSQL 19 beta (`19beta3` at v0.17.0). A
-PostgreSQL prerelease does not promise that its data directory opens under
-the next prerelease or the final release. The project has not published a
-procedure for moving a deployment's data across such a change.
+RememberStack runs on a PostgreSQL 19 prerelease, release candidate 1
+(`19rc1`); releases up to v0.17.2 ran Beta 3 (`19beta3`). A PostgreSQL
+prerelease does not promise that its data directory opens under the next
+prerelease or the final release. The Beta 3 to RC 1 step changes the
+catalog version, so a Beta 3 data directory does not open under RC 1. The
+project has not published a procedure for moving a deployment's data across
+such a change.
 
 If a release changes the PostgreSQL image, its release notes are the place
 to look. Without instructions there, move the data with a logical dump and
