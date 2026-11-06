@@ -238,6 +238,19 @@ ports and published extension points, keeping it portable off GCP too.
   `ultimate-memory-cloud`, not in this library.
 - Profile choice is configuration consumed by `profiles/`; no code path branches on "am I on
   GCP" outside adapters.
+- **One profile is one deployment's context, built from explicit settings (D144).**
+  `EngineSettings` carries everything that differs between deployments (identity and
+  buckets, database, object store, model-provider account); `SelfHostProfile.from_settings`
+  builds the context from it and nothing else, and `EngineSettings.from_env()` is merely the
+  default source. Several contexts may live in one process: `run_task(context, processing_id)`
+  claims and runs one named, due row of that context's deployment through the ordinary
+  worker boundary (attempts, retries through the context's queue port, dead-lettering and
+  chain follow-ups unchanged), and the HTTP API reads each request's deployment from the
+  overridable `deployment_context` dependency. Example: a host keeping deployments A and B in
+  two databases builds two profiles; a request carrying B's credential is answered from B's
+  `api_deployment()`, and a push delivery naming B's `processing_id` runs `run_task(profile_B,
+  processing_id)`. Choosing the deployment for a request or task is the host's job, not the
+  library's (D60).
 
 ## 6. Releases, upgrades, portability
 

@@ -5,6 +5,7 @@ src/tests/adapters/test_selfhost_queue.py
 src/tests/eval/test_harness_skeleton.py
 src/tests/eval/test_s58_consumption.py
 src/tests/profiles/test_selfhost_profile.py
+src/tests/profiles/test_two_deployment_contexts_pg.py
 src/tests/spikes/test_operational_scale.py
 src/tests/spine/test_backfill.py
 src/tests/spine/test_canonical_bounds_sql.py
