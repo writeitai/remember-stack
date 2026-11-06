@@ -155,7 +155,7 @@ class OpenRouterSettings(BaseSettings):
     chat_upstream_overload_max_retry_after_s: float = Field(default=30.0, gt=0)
     """Per-wait cap for upstream-overload backoff.
 
-    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_OVERLOAD_MAX_WAIT_S``. An explicit
+    Env: ``REMEMBERSTACK_OPENROUTER_CHAT_UPSTREAM_OVERLOAD_MAX_RETRY_AFTER_S``. An explicit
     Retry-After below the cap wins; anything larger is clamped to the cap.
     """
     zdr: bool = False

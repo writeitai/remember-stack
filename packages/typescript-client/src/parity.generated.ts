@@ -35,11 +35,6 @@ export default {
         "property": false,
         "returns": "Self"
       },
-      "ingest": {
-        "arguments": "self, source: bytes | Path | str | None=None, *, content: bytes | None=None, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
-        "property": false,
-        "returns": "IngestedVersion"
-      },
       "ingest_file": {
         "arguments": "self, file_path: str | Path, *, filename: str | None=None, mime: str | None=None, title: str | None=None, source_kind: str | None=None, source_ref: str | None=None, source_modified_at: datetime | None=None, versioning_mode: Literal['snapshot', 'living']='snapshot', source_version_ref: str | None=None, source_path: str | None=None, version_key: str | None=None, effective_from: datetime | None=None, effective_until: datetime | None=None",
         "property": false,
@@ -312,6 +307,7 @@ export default {
     "ConnectorNotFoundError",
     "ContextBundleV2",
     "DeclaredEffectivePeriod",
+    "DeploymentBuildInfo",
     "DocumentDeletion",
     "DocumentPage",
     "DocumentReference",
@@ -337,6 +333,7 @@ export default {
     "MemoryApiError",
     "MemoryClient",
     "NamedReferenceTarget",
+    "NegativeKind",
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",

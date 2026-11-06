@@ -55,6 +55,7 @@ The client is synchronous. There is no async client yet
 | `ConnectorDescriptor` | model | [Models](#models) |
 | `ContextBundleV2` | model | [Models](#models) |
 | `DeclaredEffectivePeriod` | model | [Models](#models) |
+| `DeploymentBuildInfo` | model | [`deployment_build_info`](#deployment_build_info) |
 | `DocumentDeletion` | model | [Models](#models) |
 | `DocumentPage` | model | [Models](#models) |
 | `DocumentReference` | model | [Models](#models) |
@@ -77,6 +78,7 @@ The client is synchronous. There is no async client yet
 | `IngestedVersion` | model | [Models](#models) |
 | `MatchingEdition` | model | [Models](#models) |
 | `NamedReferenceTarget` | model | [Models](#models) |
+| `NegativeKind` | enum | [Result types](/docs/reference/result-types#negativekind) |
 | `PipelineReadinessReport` | model | [Models](#models) |
 | `PipelineStageReadiness` | model | [Models](#models) |
 | `ProcessingLayer` | enum | [Models](#models) |
@@ -269,10 +271,7 @@ me = remember.Client(api_key="rmb_…").account.whoami()
 
 ### `Client.ingest`
 
-Same signature and behaviour as [`MemoryClient.ingest`](#ingest), with one
-difference: a `str` `source` is always treated as a file path. A path that
-does not exist raises `FileNotFoundError` (on `MemoryClient` it raises
-`ValueError`).
+Inherited unchanged from [`MemoryClient.ingest`](#ingest).
 
 ### `Client.ingest_file`
 
@@ -411,7 +410,7 @@ results.
 | Parameter | Meaning |
 |---|---|
 | `source` | A `Path` or `str` file path (read from disk), or `bytes`. |
-| `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the filename. |
+| `content` | Raw bytes. Wins over `source` when both are given; `source` then only supplies the fallback filename. For a string path this is `str(Path(source))`, which normalizes redundant separators and `./`. Set `filename` explicitly to control the name. |
 | `filename` | Required for bytes. Defaults to the file's name for a path. |
 | `mime` | Media type; an explicit value always wins. Defaults to the type of the extension of the file's real name (for a path) or of `filename` (for bytes): `.md` is `text/markdown`, `.pdf` is `application/pdf`, on every Python installation; the full table is in [Ingest files](/docs/guides/ingest-files#the-mime-type). An extension outside that table takes the type your Python installation's MIME database gives it, or `application/octet-stream` if it has none. The engine converts only media types it has a converter for; see [File formats and converters](/docs/self-hosting/converters). |
 | `title` | A human title for the document. |
@@ -434,11 +433,11 @@ Raises `ValueError` when:
   UTC;
 - `effective_until` is given without `effective_from`, or is not later than
   it, or a period is given with `versioning_mode="living"`;
-- a `str` path is not a file (`MemoryClient` only);
 - neither `source` nor `content` is given;
 - bytes are given without `filename`.
 
-Reading a path can raise `OSError`.
+Reading a path can raise `OSError`: `FileNotFoundError` when it does not
+exist, whether given as `Path` or `str`.
 
 Returns [`IngestedVersion`](#models). `created` is `False` when these exact
 bytes were already stored for this document; no new processing starts. A
@@ -532,7 +531,7 @@ Returns which engine build and which model bindings the deployment is
 serving: `build_revision` (str), `model_bindings` (dict of str to str),
 `document_binding_generation` (str or `None`), and `tools` (dict of MCP
 memory tool name to tool version). The class is
-`remember.models.DeploymentBuildInfo`; it is not in `__all__`.
+`remember.DeploymentBuildInfo`.
 
 ```python
 info = memory.deployment_build_info()

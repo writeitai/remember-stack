@@ -63,10 +63,9 @@ Performance tracing is off.
 
 ## Model-call tracing
 
-RememberStack does not trace model calls from a self-hosted deployment yet.
-`compose.yaml` passes `LANGFUSE_*` and `REMEMBERSTACK_LANGFUSE_*` variables,
-but only the project's benchmark harness reads them; the API and workers
-ignore them. Setting them changes nothing.
+A self-hosted deployment does not trace model calls. The `LANGFUSE_*` and
+`REMEMBERSTACK_LANGFUSE_*` variables are read only by the project's
+benchmark harness; setting them for the API and workers changes nothing.
 
 What you can see of each model call is its cost receipt, below.
 

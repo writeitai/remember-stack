@@ -77,11 +77,13 @@ class _IngestRecorder:
 
     def __init__(self, *, parked: str | None = None) -> None:
         self.params: list[dict[str, str]] = []
+        self.bodies: list[bytes] = []
         self.parked = parked
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/ingest"
         self.params.append(dict(request.url.params))
+        self.bodies.append(request.content)
         return httpx.Response(
             200,
             json={
@@ -184,6 +186,101 @@ def test_cli_ingest_sends_markdown_without_mime_flag(
     code = main(["ingest", str(source), "--api-url", "http://127.0.0.1:8000"])
     assert code == 0, capsys.readouterr().err
     assert recorder.params[0]["mime"] == "text/markdown"
+
+
+def test_cli_ingest_filename_names_the_document_and_keeps_the_mime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--filename` changes the stored name; the type still follows the file."""
+    from remember.cli import main
+
+    recorder = _IngestRecorder()
+    real_client = httpx.Client
+
+    def mock_client(*args: object, **kwargs: object) -> httpx.Client:
+        kwargs["transport"] = httpx.MockTransport(recorder)
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(httpx, "Client", mock_client)
+    monkeypatch.setenv("REMEMBER_CONFIG_DIR", str(tmp_path / "config"))
+    source = tmp_path / "tmp-export-01.md"
+    source.write_text("# Standup", encoding="utf-8")
+    code = main(
+        [
+            "ingest",
+            str(source),
+            "--filename",
+            "standup-2026-09-25.pdf",
+            "--api-url",
+            "http://127.0.0.1:8000",
+        ]
+    )
+    assert code == 0, capsys.readouterr().err
+    assert recorder.params[0]["filename"] == "standup-2026-09-25.pdf"
+    assert recorder.params[0]["mime"] == "text/markdown"
+
+
+def test_both_clients_report_a_missing_path_as_file_not_found(tmp_path: Path) -> None:
+    """`Client` and `MemoryClient` fail the same way before any request."""
+    from remember import Client
+    from remember import MemoryClient
+
+    missing = tmp_path / "missing.md"
+    recorder = _IngestRecorder()
+    for client_type in (Client, MemoryClient):
+        with httpx.Client(
+            base_url="http://engine.test", transport=httpx.MockTransport(recorder)
+        ) as raw:
+            with client_type(client=raw) as client:
+                for source in (missing, str(missing)):
+                    with pytest.raises(FileNotFoundError):
+                        client.ingest(source)
+    assert recorder.params == []
+
+
+def test_shared_ingest_preserves_lineage_periods_and_bytes(tmp_path: Path) -> None:
+    """Both client classes forward the full current ingest contract identically."""
+    from remember import Client
+
+    source = tmp_path / "source.md"
+    payload = b"# Policy\nThe policy applies to all deployments.\n"
+    source.write_bytes(payload)
+    recorder = _IngestRecorder()
+    for client_type in (Client, MemoryClient):
+        with httpx.Client(
+            base_url="http://engine.test", transport=httpx.MockTransport(recorder)
+        ) as raw:
+            with client_type(client=raw) as client:
+                for path in (source, str(source)):
+                    client.ingest(
+                        path,
+                        filename="policy.pdf",
+                        title="Deployment policy",
+                        source_kind="synthetic",
+                        source_ref="policies/deployment",
+                        source_modified_at=datetime(2026, 11, 6, tzinfo=UTC),
+                        source_version_ref="revision-2",
+                        source_path="policies/deployment.md",
+                        version_key="revision-2",
+                        effective_from=datetime(2026, 11, 1, tzinfo=UTC),
+                        effective_until=datetime(2026, 12, 1, tzinfo=UTC),
+                    )
+    expected = {
+        "filename": "policy.pdf",
+        "mime": "text/markdown",
+        "versioning_mode": "snapshot",
+        "title": "Deployment policy",
+        "source_kind": "synthetic",
+        "source_ref": "policies/deployment",
+        "source_modified_at": "2026-11-06T00:00:00+00:00",
+        "source_version_ref": "revision-2",
+        "source_path": "policies/deployment.md",
+        "version_key": "revision-2",
+        "effective_from": "2026-11-01T00:00:00+00:00",
+        "effective_until": "2026-12-01T00:00:00+00:00",
+    }
+    assert recorder.params == [expected] * 4
+    assert recorder.bodies == [payload] * 4
 
 
 def test_cli_ingest_warns_when_the_engine_parks_the_file(

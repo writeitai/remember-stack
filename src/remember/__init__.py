@@ -29,6 +29,7 @@ from remember.models import ConnectorCreate
 from remember.models import ConnectorDescriptor
 from remember.models import ContextBundleV2
 from remember.models import DeclaredEffectivePeriod
+from remember.models import DeploymentBuildInfo
 from remember.models import DocumentDeletion
 from remember.models import DocumentPage
 from remember.models import DocumentReference
@@ -51,6 +52,7 @@ from remember.models import Envelope
 from remember.models import IngestedVersion
 from remember.models import MatchingEdition
 from remember.models import NamedReferenceTarget
+from remember.models import NegativeKind
 from remember.models import PipelineReadinessReport
 from remember.models import PipelineStageReadiness
 from remember.models import ProcessingLayer
@@ -94,6 +96,7 @@ __all__ = (
     "ConnectorNotFoundError",
     "ContextBundleV2",
     "DeclaredEffectivePeriod",
+    "DeploymentBuildInfo",
     "DocumentDeletion",
     "DocumentPage",
     "DocumentSearchFilters",
@@ -134,6 +137,7 @@ __all__ = (
     "LayerUnavailable",
     "MemoryApiError",
     "MemoryClient",
+    "NegativeKind",
     "PipelineDeadLettered",
     "PipelineReadinessReport",
     "PipelineStageReadiness",
