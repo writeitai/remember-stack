@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import random
+import re
 import time
 from typing import Any
 from typing import Final
@@ -174,7 +175,7 @@ class OpenRouterSettings(BaseSettings):
     global pin is also unset). Values must be one of the allowed effort
     literals."""
     invalid_completion_capture_dir: Path | None = None
-    """Private opt-in directory for raw schema-invalid chat completions.
+    """Private opt-in directory for schema-invalid or unaccounted chat responses.
 
     Disabled by default because a completion can repeat source material. Files
     are created mode 0600 and contain no prompt, but operators must still treat
@@ -294,11 +295,13 @@ class OpenRouterProviderError(ProviderCallError):
         usage: ProviderCallUsage | None = None,
         provider_host: str | None = None,
         retryable_unbilled: bool = False,
+        status_code: int | None = None,
     ) -> None:
         """Keep usage for the meter and the serving host for diagnosis."""
         super().__init__(message, usage=usage)
         self.provider_host = provider_host
         self.retryable_unbilled = retryable_unbilled
+        self.status_code = status_code
 
 
 class OpenRouterInvalidResponseError(
@@ -386,6 +389,17 @@ class OpenRouterModelProvider:
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
                 provider_host=error.provider_host,
+            )
+            raise
+        except ProviderAccountingError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="invalid",
+                error=str(error),
+                usage=None,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
             )
             raise
 
@@ -546,6 +560,41 @@ class OpenRouterModelProvider:
             "content_sha256": digest,
             "content": content,
         }
+        self._write_invalid_capture(
+            artifact=artifact, captured_at_ns=captured_at_ns, digest=digest
+        )
+
+    def _capture_accounting_failure(
+        self, *, body: dict[str, Any], error: ProviderAccountingError
+    ) -> None:
+        """Keep an unaccounted response privately without inventing usage or retrying."""
+        if self._settings.invalid_completion_capture_dir is None:
+            return
+        try:
+            captured_at_ns = time.time_ns()
+            digest = _content_sha256(content=json.dumps(body, ensure_ascii=True))
+            self._write_invalid_capture(
+                artifact={
+                    "captured_at_unix_ns": captured_at_ns,
+                    "failure_kind": "usage_accounting",
+                    "accounting_error": str(error),
+                    "provider_response": body,
+                },
+                captured_at_ns=captured_at_ns,
+                digest=digest,
+            )
+        except (TypeError, ValueError):
+            _logger.warning(
+                "could not serialize invalid OpenRouter accounting response"
+            )
+
+    def _write_invalid_capture(
+        self, *, artifact: dict[str, Any], captured_at_ns: int, digest: str
+    ) -> None:
+        """Write one explicitly enabled private artifact without replacing its error."""
+        capture_dir = self._settings.invalid_completion_capture_dir
+        if capture_dir is None:
+            return
         target: Path | None = None
         created = False
         try:
@@ -781,9 +830,13 @@ class OpenRouterModelProvider:
         self, *, body: dict[str, Any], started_ns: int
     ) -> ProviderCallUsage:
         """Use inline accounting, or recover it by the existing generation id."""
-        return recover_completion_usage(
-            body=body, started_ns=started_ns, fetch_generation=self._get_generation
-        )
+        try:
+            return recover_completion_usage(
+                body=body, started_ns=started_ns, fetch_generation=self._get_generation
+            )
+        except ProviderAccountingError as error:
+            self._capture_accounting_failure(body=body, error=error)
+            raise
 
     def _chat_provider_payload(self) -> dict[str, object] | None:
         """Build the chat provider routing from settings, or leave it alone.
@@ -1011,18 +1064,24 @@ def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
         body = response.json()
     except ValueError:
         return False
-    if not isinstance(body, dict) or any(
-        key in body for key in ("usage", "choices", "id")
-    ):
+    if not isinstance(body, dict) or any(key in body for key in ("usage", "choices")):
         return False
     error = body.get("error")
     if not isinstance(error, dict):
         return False
-    return response.status_code in (429, 503) or (
-        response.status_code == 200
+    code = error.get("code")
+    if str(code).isdecimal() and 400 <= int(str(code)) < 500 and str(code) != "429":
+        return False
+    if (
+        response.status_code in (200, 429, 503)
+        and (code is None or str(code) in ("429", "503"))
         and "flex processing is temporarily unavailable"
         in str(error.get("message", "")).lower()
-    )
+    ):
+        # OpenRouter can allocate an id before OpenAI rejects uncharged Flex
+        # admission. Preserve choices/usage as a strict no-replay boundary.
+        return True
+    return "id" not in body and response.status_code in (429, 503)
 
 
 def _retryable_upstream_error(*, response: httpx.Response) -> bool:
@@ -1033,6 +1092,8 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
     retries. This applies equally to Flex and standard providers.
     """
     transient_codes = {429, 500, 502, 503, 504, 529}
+    if _unbilled_capacity_rejection(response=response):
+        return True
     try:
         body = response.json()
     except ValueError:
@@ -1041,6 +1102,10 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
         key in body for key in ("usage", "choices", "id")
     ):
         return False
+    if isinstance(body, dict) and isinstance(body.get("error"), dict):
+        code = str(body["error"].get("code", ""))
+        if code.isdecimal() and 400 <= int(code) < 500 and code != "429":
+            return False
     if response.status_code in transient_codes:
         return True
     if response.status_code != 200 or not isinstance(body, dict):
@@ -1299,9 +1364,15 @@ def recover_completion_usage(
             require_output_tokens=True,
         )
     except ProviderAccountingError as inline_error:
+        inline_reason = str(inline_error)
         generation_id = body.get("id")
         if not isinstance(generation_id, str) or not generation_id.strip():
-            raise inline_error
+            raise _completion_accounting_error(
+                body=body,
+                inline_reason=inline_reason,
+                metadata_attempts=0,
+                metadata_error=inline_error,
+            ) from inline_error
         last_error: Exception = inline_error
 
     for delay_s in _GENERATION_USAGE_POLL_DELAYS_S:
@@ -1321,10 +1392,56 @@ def recover_completion_usage(
             ProviderAccountingError,
         ) as error:
             last_error = error
-    raise ProviderAccountingError(
+    raise _completion_accounting_error(
+        body=body,
+        inline_reason=inline_reason,
+        metadata_attempts=len(_GENERATION_USAGE_POLL_DELAYS_S),
+        metadata_error=last_error,
+    ) from last_error
+
+
+def _completion_accounting_error(
+    *,
+    body: dict[str, Any],
+    inline_reason: str,
+    metadata_attempts: int,
+    metadata_error: Exception,
+) -> ProviderAccountingError:
+    """Retain bounded reconciliation identifiers without copying provider content."""
+    raw_id = body.get("id")
+    generation_id = (
+        raw_id
+        if isinstance(raw_id, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,200}", raw_id)
+        else None
+    )
+    known_reasons = {
+        "OpenRouter response carries no usage accounting": "missing_usage",
+        "OpenRouter response carries no resolved model identity": "missing_model",
+        "OpenRouter response carries incomplete completion usage accounting": "missing_output_tokens",
+        "OpenRouter response carries invalid usage accounting": "invalid_usage",
+    }
+    status = (
+        metadata_error.status_code
+        if isinstance(metadata_error, OpenRouterProviderError)
+        else None
+    )
+    raw_error = body.get("error")
+    raw_code = raw_error.get("code") if isinstance(raw_error, dict) else None
+    error_code = (
+        raw_code
+        if isinstance(raw_code, int)
+        and not isinstance(raw_code, bool)
+        and 100 <= raw_code <= 599
+        else None
+    )
+    return ProviderAccountingError(
         "OpenRouter response carries unusable usage accounting and generation"
         " metadata did not recover it"
-    ) from last_error
+        f" (generation_id={generation_id!r}; inline_reason={known_reasons.get(inline_reason, 'other')};"
+        f" metadata_attempts={metadata_attempts}; metadata_status={status};"
+        f" response_error_code={error_code}; has_choices={'choices' in body};"
+        f" has_usage={'usage' in body})"
+    )
 
 
 def read_generation_metadata(
@@ -1338,7 +1455,8 @@ def read_generation_metadata(
     )
     if response.status_code >= 400:
         raise OpenRouterProviderError(
-            f"OpenRouter /generation returned {response.status_code}"
+            f"OpenRouter /generation returned {response.status_code}",
+            status_code=response.status_code,
         )
     try:
         body = response.json()

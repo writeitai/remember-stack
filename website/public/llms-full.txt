@@ -7367,6 +7367,18 @@ When you set a provider list or ZDR, each chat call also tells OpenRouter
 not to route to providers that collect data (`data_collection: deny`). With
 none of them set, OpenRouter applies your account's own routing settings.
 
+An explicit Flex capacity rejection can arrive inside HTTP 200 and include
+an ID even though processing did not start. When that error carries neither
+choices nor usage, the adapter applies its bounded capacity retries while
+keeping your provider restriction. It does not switch to standard pricing.
+
+If a completed response has unusable token or cost accounting, the adapter
+looks up that existing generation's metadata. If recovery fails, the work item
+stops with an accounting error containing the generation ID and lookup status.
+Use those identifiers to reconcile the request with the provider before
+retrying paid work. The adapter does not invent a zero cost or automatically
+generate the same potentially paid response again.
+
 Lowering reasoning effort makes extraction faster and cheaper; the comment
 in `.env.example` notes that `none` can reduce adjudication quality and
 that some models reject it. A map lets you turn it off for the small models
@@ -7379,8 +7391,10 @@ REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP={"z-ai/glm-4.7-flash":"none","open
 For debugging, `REMEMBERSTACK_OPENROUTER_INVALID_COMPLETION_CAPTURE_DIR`
 (an absolute path, for example
 `/var/lib/rememberstack/openrouter-invalid-completions`) keeps every model
-answer that failed schema validation, one file each, readable only by the
-engine user. Those files can repeat text from your documents; treat the
+answer that failed schema validation and each response whose accounting could
+not be recovered, one file each, readable only by the engine user. Accounting
+captures keep the original provider response for reconciliation and do not
+authorize replay. These files can repeat text from your documents; treat the
 directory as customer data and leave the setting off otherwise.
 
 ## Cost
