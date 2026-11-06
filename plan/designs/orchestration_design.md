@@ -252,7 +252,7 @@ backoff-derived `not_before`; at the total-attempt limit the row becomes `dead_l
 Non-retryable errors may dead-letter earlier. Delivery retries that never claim the row consume no
 application attempt, and budget parking can never take either failure transition.
 
-### Claim leases and the reaper (D144)
+### Claim leases and the reaper (D145)
 
 A claim is only valid while the worker that made it is alive. Without a time limit, a worker that
 is killed mid-task (out of memory, a container restart, a preempted instance) would leave its row
@@ -323,7 +323,7 @@ authority for pipeline truth (D60/D61).
 ## References
 
 Inventory: `../analysis/workers.md`. Decisions: D4, D6, D7, D12, D16, D23, D25,
-**D52–D53, D67 and D144**
+**D52–D53, D67 and D145**
 (`decisions.md`). Review findings: `../analysis/design_review_2026_07.md` (F8, F9).
 Requirements: operational properties + imposed constraints (`../requirements/requirements_v3.md`).
 Worker semantics live in their layer designs: `e0_files_design.md`,

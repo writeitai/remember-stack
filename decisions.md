@@ -2528,7 +2528,7 @@ being hand-maintained.
 
 ## D67. Queue routing and retry state have one normalized home in Postgres
 
-> **Refined by [D144](#d144-a-claim-is-a-renewable-lease-a-reaper-takes-back-the-claims-of-dead-workers).**
+> **Refined by [D145](#d145-a-claim-is-a-renewable-lease-a-reaper-takes-back-the-claims-of-dead-workers).**
 > A `running` claim carries a renewable lease (`lease_until`); renewal, complete and fail are
 > conditional on the claimed attempt, and a reaper returns expired claims to `pending` or the
 > DLQ. Everything below stays binding.
@@ -7403,7 +7403,7 @@ deployment's context, built explicitly); packaging design §3 and §5.
 
 **Authority:** [packaging design §5](plan/designs/packaging_distribution_design.md#5-deployment-profiles).
 
-## D144. A claim is a renewable lease; a reaper takes back the claims of dead workers
+## D145. A claim is a renewable lease; a reaper takes back the claims of dead workers
 
 **Status:** accepted. **Date:** 2026-11-06.
 
@@ -7435,7 +7435,7 @@ the input is bad, and the attempt count already bounds a task that kills its wor
 
 **Consequences.** Migration `p9_42_0063` adds the column, a `running ⇒ lease_until IS NOT NULL`
 check and the reaper's partial index, and gives rows already `running` an expired lease so the
-first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design.md#claim-leases-and-the-reaper-d144)
+first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design.md#claim-leases-and-the-reaper-d145)
 holds the contract; [schema §2](plan/designs/postgres_schema_design.md) the column, index and
 queries.
 

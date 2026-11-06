@@ -1028,7 +1028,7 @@ class WorkLedger:
 
         Stage, lane, attempt, and target attribution are copied from the locked
         running row (D67) — a caller or delivery envelope can never choose them.
-        The call must come from the attempt that holds the row (D144): a call
+        The call must come from the attempt that holds the row (D145): a call
         finished by an attempt whose claim was taken back is refused, so it can
         never land on (and deduplicate) a newer attempt's calls. Returns False
         when the (processing, attempt, call_key) row already exists, so an
