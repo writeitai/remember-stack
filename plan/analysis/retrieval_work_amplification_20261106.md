@@ -67,3 +67,29 @@ embedding model or paid-product reuse boundary changes (D56).
 The subsequent conv-47 answer/judge run uses a separate run identity and
 the existing ingested store. Preserve old state and GCS archives and archive
 the new answers and store independently. The full benchmark stays paused.
+
+## Candidate entity membership and merge expansion
+
+After count pruning, the relation confirmation plan still rescanned survivor
+and mention provenance 33,171 times for 72 candidate relations. Reorient
+`entities_current` membership from the candidate terminal entity: walk its
+absorbed members through `entities.merged_into`, then look up only their
+unsuperseded resolution decisions using the entity index. A lateral subquery
+with `OFFSET 0` keeps that lookup before joining mentions and source coordinates;
+without the fence PostgreSQL chose source-first joins and regressed badly.
+The latest unsuperseded decision per mention is still checked by timestamp
+and decision-ID order. Deleted lineages, unready representations, merge
+redirects and document-entity bridges keep their previous meaning.
+
+The forward survivor view also starts its recursion at the input source row,
+so a by-ID lookup does not enumerate all entities. Reverse scoped nomination
+starts at requested terminal IDs and follows the existing redirect index.
+There is no maximum chain depth; `UNION` terminates forward cycles without
+inventing a terminal, and a reverse walk from a terminal cannot reach a cycle
+in this one-parent redirect graph. The standalone all-entity export still
+returns all terminal resolutions, so it necessarily visits all input rows.
+
+On the Beta 3 copy, all stored rows and complete entity/fact view values
+matched the prior definitions. Relation checks fell from 3.69 seconds to
+0.30 seconds with indexed provenance. RC1 measurements and a growing unrelated
+entity set are still required before making a scale claim.

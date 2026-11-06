@@ -304,7 +304,7 @@ Persist algorithm:
 **Request lifetime.** A `ContextVar` holds a frozen
 
 ```text
-SurfaceRequestScope(request_id: UUID, surface: SurfaceCostKind)
+SurfaceRequestScope(request_id: UUID, surface: SurfaceCostKind, work: SurfaceRequestWork)
 ```
 
 or `None`. The identity owns request-local work: a synchronized embedding

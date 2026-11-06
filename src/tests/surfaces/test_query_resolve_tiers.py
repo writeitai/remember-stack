@@ -923,3 +923,55 @@ def _cosine(left: tuple[float, ...], right: tuple[float, ...]) -> float:
     left_norm = math.sqrt(sum(a * a for a in left))
     right_norm = math.sqrt(sum(b * b for b in right))
     return dot / (left_norm * right_norm)
+
+
+def test_candidate_provenance_matches_prior_authority(corpus: _Corpus) -> None:
+    """Merged, forgotten and other-deployment entities keep identical view values."""
+    from rememberstack.spine.migrations.versions.p9_42_0063_entity_counts_demand import (
+        ENTITIES_DEMAND_COUNTS_DDL,
+    )
+
+    with corpus.engine.connect() as connection:
+        connection.exec_driver_sql("SET LOCAL jit = off")
+        current = connection.exec_driver_sql(
+            "SELECT * FROM memory_v1.entities_current ORDER BY deployment_id, entity_id"
+        ).all()
+        connection.exec_driver_sql(ENTITIES_DEMAND_COUNTS_DDL)
+        prior = connection.exec_driver_sql(
+            "SELECT * FROM memory_v1.entities_current ORDER BY deployment_id, entity_id"
+        ).all()
+        assert current == prior
+        # The connection context rolls back this temporary oracle definition.
+
+
+def test_reverse_scope_matches_forward_authority(corpus: _Corpus) -> None:
+    """A requested terminal includes absorbed IDs and never another deployment."""
+    from rememberstack.adapters.postgres_p1 import _SURVIVOR_SCOPE_CTE
+
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "entity_ids": [_ALICE, _ACME, _MERGED, _FORGOTTEN, _OTHER_ALICE],
+    }
+    with corpus.engine.connect() as connection:
+        expected = set(
+            connection.execute(
+                text(
+                    "SELECT entity_id, survivor_entity_id FROM v_memory_entity_survivor"
+                    " WHERE deployment_id = :deployment_id"
+                    " AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))"
+                ),
+                parameters,
+            ).all()
+        )
+        actual = set(
+            connection.execute(
+                text(
+                    _SURVIVOR_SCOPE_CTE
+                    + " SELECT entity_id, survivor_entity_id FROM scoped_entities"
+                ),
+                parameters,
+            ).all()
+        )
+    assert actual == expected
+    assert (_MERGED, _ACME) in actual
+    assert all(entity != _OTHER_ALICE for entity, _ in actual)

@@ -316,6 +316,17 @@ the query-space manifest identity, so ordinary setup atomically suspends active
 saved queries for revalidation before publishing the new hash. It also rolls
 the current benchmark surface pin; recorded run identities remain unchanged.
 
+Entity membership checks start at the candidate terminal ID and walk its
+absorbed members through the indexed `merged_into` links. Each member's
+unsuperseded decisions are selected by the entity index inside a lateral
+`OFFSET 0` fence before joining mentions and visible source coordinates.
+The latest unsuperseded decision still wins by `(decided_at, decision_id)`;
+a non-latest row cannot establish provenance. The forward survivor view
+starts its recursive walk at the requested source row. Reverse scoped
+retrieval starts at requested terminal IDs and follows indexed redirects,
+rather than building an all-entity closure and filtering afterwards. Cycles
+and dangling chains emit no terminal, and no arbitrary depth cap is added.
+
 ### 8.3 Nominate, confirm, continue (D142)
 
 Ranking and eligibility are separate statements inside the context, so that

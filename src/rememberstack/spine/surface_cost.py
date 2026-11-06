@@ -104,6 +104,8 @@ def bind_surface_scope(
     try:
         yield scope
     finally:
+        with scope.work.embedding_lock:
+            scope.work.embedding_vectors.clear()
         _SCOPE.reset(scope_token)
 
 
@@ -119,6 +121,8 @@ def open_surface_scope(*, surface: SurfaceCostKind) -> Iterator[SurfaceRequestSc
     try:
         yield scope
     finally:
+        with scope.work.embedding_lock:
+            scope.work.embedding_vectors.clear()
         _SCOPE.reset(scope_token)
 
 

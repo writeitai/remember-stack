@@ -78,7 +78,13 @@ from rememberstack.spine.migrations.versions.p9_42_0063_entity_counts_demand imp
     ENTITIES_DEMAND_COUNTS_DDL,
 )
 from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
+    ENTITIES_BOUNDED_PROVENANCE_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
     FACTS_DEMAND_COUNTS_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
+    SURVIVOR_DEMAND_DDL,
 )
 from rememberstack.spine.query_space.ast_serializer import serialize_definition
 from rememberstack.spine.query_space.canonical import CanonicalValue
@@ -184,6 +190,8 @@ def _authored_parts() -> tuple[
         CLAIM_OCCURRENCES_LIVE_DDL,
         MEMORY_V1_D140_VIEW_DDL,
         ENTITIES_DEMAND_COUNTS_DDL,
+        SURVIVOR_DEMAND_DDL,
+        ENTITIES_BOUNDED_PROVENANCE_DDL,
         FACTS_DEMAND_COUNTS_DDL,
     ):
         statements.extend(_statements(sql=block))

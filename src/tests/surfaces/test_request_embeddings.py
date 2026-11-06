@@ -60,6 +60,7 @@ def test_nested_channels_share_one_provider_call_and_receipt() -> None:
         is SurfaceCallSite.CLAIMS_AND_SOURCES_CLAIMS
     )
     assert current_surface_scope() is None
+    assert parent.work.embedding_vectors == {}
     with open_surface_scope(surface=SurfaceCostKind.OPERATION):
         engine._embed(
             query="same question",

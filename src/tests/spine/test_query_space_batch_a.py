@@ -3924,3 +3924,25 @@ def test_identity_reads_skip_unrequested_entity_count_aggregates(
             plans[name] = json.dumps(plan).lower()
     assert "sum(" not in plans["identity"]
     assert "sum(" in plans["counts"]
+
+
+def test_fact_identity_reads_skip_unrequested_evidence_counts(corpus: _Corpus) -> None:
+    """ID-only fact checks prune statistics while requested counts still run."""
+    plans: dict[str, str] = {}
+    with corpus.engine.connect() as connection:
+        for name, columns in (
+            ("identity", "fact_id"),
+            ("counts", "fact_id, evidence_count_current, contradict_count_current"),
+        ):
+            plan = connection.execute(
+                text(
+                    "EXPLAIN (VERBOSE, FORMAT JSON) SELECT "
+                    + columns
+                    + " FROM memory_v1.facts_visible_history"
+                    + " WHERE deployment_id = :deployment AND fact_id = :fact"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "fact": corpus.fact["current"]},
+            ).scalar_one()
+            plans[name] = json.dumps(plan).lower()
+    assert "count(*) filter" not in plans["identity"]
+    assert "count(*) filter" in plans["counts"]
