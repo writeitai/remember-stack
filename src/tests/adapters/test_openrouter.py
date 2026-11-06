@@ -2172,6 +2172,9 @@ def test_accounting_failure_retains_identifiers_without_provider_content(
             """Keep the adapter's typed diagnostic without interpreting it."""
             self.records.append(record)
 
+        def flush(self) -> None:
+            """The in-memory recorder has no buffered work to flush."""
+
     recorder = Recorder()
     capture_dir = tmp_path / "private-captures"
     provider = OpenRouterModelProvider(
