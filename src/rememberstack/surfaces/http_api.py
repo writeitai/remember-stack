@@ -584,12 +584,12 @@ async def _resolve_deployment(scope: Scope) -> ApiDeployment:
     app = scope["app"]
     overrides = app.dependency_overrides
     registered = overrides.get(deployment_context)
-    if registered is not None and registered is not _request_deployment:
+    if registered is None:
+        return app.state.api_deployment
+    if registered is not _request_deployment:
         app.state.deployment_resolver = registered
         overrides[deployment_context] = _request_deployment
-    resolve = getattr(app.state, "deployment_resolver", None)
-    if resolve is None:
-        return app.state.api_deployment
+    resolve = app.state.deployment_resolver
     request = Request(scope)
     if inspect.iscoroutinefunction(resolve):
         return await resolve(request)
@@ -2647,11 +2647,14 @@ class _HeldRoute(APIRoute):
     :class:`RequestHold` sees the thread start and end, and the slot is
     released only when the work really stops. Coroutines are cancelled with
     their request, and generator dependencies are left as they are, so both
-    need nothing.
+    need nothing. FastAPI finds dependency overrides by the original callable;
+    :class:`_HeldOverrides` keeps them found (and held) after wrapping.
     """
 
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
         """Build the route, then hold every synchronous callable it runs."""
+        overrides = _HeldOverrides(provider=kwargs.get("dependency_overrides_provider"))
+        kwargs["dependency_overrides_provider"] = overrides
         super().__init__(path, endpoint, **kwargs)
         # One wrapper per callable, so a dependency used twice keeps one
         # identity and FastAPI's per-request dependency cache still applies.
@@ -2672,9 +2675,55 @@ class _HeldRoute(APIRoute):
             wrapper = wrappers.get(id(call))
             if wrapper is None:
                 wrapper = wrappers[id(call)] = _held_handler(call)
+                overrides.originals[wrapper] = call
             # The wrapper is sync like the original (and FastAPI inspects the
             # unwrapped callable), so it is still run on a worker thread.
             dependant.call = wrapper
+
+
+class _HeldOverrides:
+    """The app's dependency overrides, also keyed by a held route's wrappers.
+
+    FastAPI looks an override up by the dependency's current callable, which a
+    held route has replaced with its wrapper. This provider answers that
+    lookup with the override registered for the original callable, itself
+    held when it is synchronous, so an override is never silently skipped.
+    """
+
+    def __init__(self, *, provider: Any | None) -> None:
+        """Wrap the app (or router) that owns ``dependency_overrides``."""
+        self._provider = provider
+        self.originals: dict[Callable[..., Any], Callable[..., Any]] = {}
+        self._held: dict[int, Callable[..., Any]] = {}
+
+    @property
+    def dependency_overrides(self) -> dict[Callable[..., Any], Callable[..., Any]]:
+        """The overrides, plus the same overrides under each wrapper."""
+        overrides: dict[Callable[..., Any], Callable[..., Any]] = getattr(
+            self._provider, "dependency_overrides", {}
+        )
+        if not overrides:
+            return overrides
+        result = dict(overrides)
+        for wrapper, original in self.originals.items():
+            override = overrides.get(original)
+            if override is not None:
+                result[wrapper] = self._held_override(override)
+        return result
+
+    def _held_override(self, override: Callable[..., Any]) -> Callable[..., Any]:
+        """Hold a synchronous plain-function override like the callable it replaces."""
+        if (
+            inspect.isclass(override)
+            or inspect.iscoroutinefunction(override)
+            or inspect.isgeneratorfunction(override)
+            or inspect.isasyncgenfunction(override)
+        ):
+            return override
+        held = self._held.get(id(override))
+        if held is None:
+            held = self._held[id(override)] = _held_handler(override)
+        return held
 
 
 def _held_handler(call: Callable[..., Any]) -> Callable[..., Any]:

@@ -218,3 +218,47 @@ def test_included_routers_reuse_the_one_resolution() -> None:
     assert served.status_code == 200, served.text
     assert served.json() == {"served": str(_B), "authenticated": str(_B)}
     assert calls == [1]
+
+
+def _allowed() -> bool:
+    return True
+
+
+def _refuse() -> bool:
+    raise HTTPException(status_code=403, detail="host says no")
+
+
+def test_a_hosts_dependency_override_still_applies_on_held_routes() -> None:
+    """Holding routes must not hide an override keyed by the original callable."""
+    app = build_api(
+        engine=cast(QueryEngine, object()),
+        deployment_id=_A,
+        admission=_Open(),
+        readiness=_Ready(),
+    )
+
+    @app.get("/guarded")
+    def guarded(ok: Annotated[bool, Depends(_allowed)]) -> dict[str, bool]:
+        return {"ok": ok}
+
+    client = TestClient(app)
+    assert client.get("/guarded").status_code == 200
+    app.dependency_overrides[_allowed] = _refuse
+    assert client.get("/guarded").status_code == 403
+
+
+def test_removing_the_override_returns_to_the_composed_deployment() -> None:
+    client, _, _ = _client()
+    app = client.app
+
+    @app.get("/whoami")  # type: ignore[union-attr]
+    def whoami(
+        deployment: Annotated[ApiDeployment, Depends(deployment_context)],
+    ) -> dict[str, str]:
+        return {"deployment": str(deployment.deployment_id)}
+
+    served = client.get("/whoami", headers=_headers("b", "b-key"))
+    assert served.json() == {"deployment": str(_B)}
+    app.dependency_overrides.clear()  # type: ignore[union-attr]
+    # No resolver any more: the composed deployment (no perimeter) serves it.
+    assert client.get("/whoami").json() == {"deployment": str(_A)}
