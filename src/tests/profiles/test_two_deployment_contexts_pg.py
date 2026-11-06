@@ -8,6 +8,7 @@ This proves the three seams together keep every row in its own database.
 
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
@@ -26,8 +27,11 @@ from sqlalchemy.engine import make_url
 from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from rememberstack.adapters import OpenRouterSettings
 from rememberstack.adapters.selfhost import LocalFSObjectStore
+from rememberstack.core import MarkdownPassthroughConverter
+from rememberstack.model import ConversionResult
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import PipelineStage
+from rememberstack.model import QueueRoute
 from rememberstack.model import RunResultOutcome
 from rememberstack.profiles import run_task
 from rememberstack.profiles import SelfHostProfile
@@ -40,6 +44,43 @@ from rememberstack.surfaces.http_api import deployment_context
 _ROOT = Path(__file__).resolve().parents[3]
 _DEPLOYMENT_A = UUID("d1440000-0000-0000-0000-00000000000a")
 _DEPLOYMENT_B = UUID("d1440000-0000-0000-0000-00000000000b")
+
+
+class _RecordingQueue:
+    """A push queue: remembers every announcement, delivers nothing."""
+
+    def __init__(self) -> None:
+        self.announced: list[tuple[UUID, QueueRoute]] = []
+
+    def announce(
+        self,
+        *,
+        processing_id: UUID,
+        route_snapshot: QueueRoute,
+        not_before_snapshot: datetime,
+    ) -> None:
+        del not_before_snapshot
+        self.announced.append((processing_id, route_snapshot))
+
+
+class _DelegatingConverter:
+    """Stands in for a host's remote conversion call (D147)."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._inner = MarkdownPassthroughConverter()
+
+    @property
+    def name(self) -> str:
+        return self._inner.name
+
+    @property
+    def version(self) -> str:
+        return self._inner.version
+
+    def convert(self, *, content: bytes, mime: str) -> ConversionResult:
+        self.calls.append(mime)
+        return self._inner.convert(content=content, mime=mime)
 
 
 class _NoModels:
@@ -109,8 +150,23 @@ def engines(database_url: str) -> Iterator[dict[UUID, Engine]]:
 
 
 @pytest.fixture
+def queues() -> dict[UUID, _RecordingQueue]:
+    """Each deployment's push queue."""
+    return {_DEPLOYMENT_A: _RecordingQueue(), _DEPLOYMENT_B: _RecordingQueue()}
+
+
+@pytest.fixture
+def converter() -> _DelegatingConverter:
+    """B's replaced Markdown route; A keeps the in-process default."""
+    return _DelegatingConverter()
+
+
+@pytest.fixture
 def profiles(
-    engines: dict[UUID, Engine], tmp_path: Path
+    engines: dict[UUID, Engine],
+    tmp_path: Path,
+    queues: dict[UUID, _RecordingQueue],
+    converter: _DelegatingConverter,
 ) -> Iterator[dict[UUID, SelfHostProfile]]:
     """One context per deployment, each with its own database and stores."""
     built: dict[UUID, SelfHostProfile] = {}
@@ -130,6 +186,10 @@ def profiles(
             model_provider=_NoModels(),  # type: ignore[arg-type]
             # Each deployment's own provider account; nothing from the env.
             model_provider_settings=OpenRouterSettings(api_key=f"key-{deployment_id}"),
+            task_queue=queues[deployment_id],
+            conversion_routes=(
+                {"text/markdown": converter} if deployment_id == _DEPLOYMENT_B else None
+            ),
         )
     yield built
     # The engines belong to the module fixture and outlive these profiles.
@@ -141,7 +201,10 @@ def _rows(engine: Engine, sql: str) -> list[tuple[object, ...]]:
 
 
 def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
-    engines: dict[UUID, Engine], profiles: dict[UUID, SelfHostProfile]
+    engines: dict[UUID, Engine],
+    profiles: dict[UUID, SelfHostProfile],
+    queues: dict[UUID, _RecordingQueue],
+    converter: _DelegatingConverter,
 ) -> None:
     """Requests and tasks for A and B, interleaved, never touch the other's rows."""
     contexts: dict[str, ApiDeployment] = {
@@ -223,6 +286,12 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
     task_b = pending[_DEPLOYMENT_B][0][0]
     assert isinstance(task_a, UUID)
     assert isinstance(task_b, UUID)
+    # Each upload's new work was announced through its own deployment's queue.
+    for deployment_id, task in ((_DEPLOYMENT_A, task_a), (_DEPLOYMENT_B, task_b)):
+        assert [
+            (processing_id, route.deployment_id, route.stage)
+            for processing_id, route in queues[deployment_id].announced
+        ] == [(task, deployment_id, PipelineStage.CONVERT)]
 
     # A context cannot see, let alone run, another database's task.
     missing = run_task(profiles[_DEPLOYMENT_A], task_b)
@@ -233,6 +302,19 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
         result = run_task(profiles[deployment_id], task)
         assert result.processing_id == task
         assert result.outcome is RunResultOutcome.SUCCEEDED
+    # B converted through its replaced route; A through the in-process one.
+    assert converter.calls == ["text/markdown"]
+    # Each task's successor was announced through its own deployment's queue.
+    for deployment_id, engine in engines.items():
+        structure = _rows(
+            engine,
+            "SELECT processing_id FROM processing_state"
+            f" WHERE stage = '{PipelineStage.STRUCTURE.value}'",
+        )
+        announced = queues[deployment_id].announced
+        assert announced[-1][0] == structure[0][0]
+        assert announced[-1][1].stage is PipelineStage.STRUCTURE
+        assert len(announced) == 2
     # Running a finished task again finds nothing due.
     assert run_task(profiles[_DEPLOYMENT_A], task_a).outcome is (
         RunResultOutcome.NO_WORK

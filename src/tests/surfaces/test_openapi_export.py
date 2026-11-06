@@ -185,7 +185,11 @@ _CAPABILITY_PORTS = frozenset(
 #: A body-size cap changes how a request is handled, not what the deployment
 #: can do. Keeping the two lists apart is what lets the signature check be
 #: exhaustive: every optional parameter must be one or the other, deliberately.
-_POLICY_PARAMETERS = frozenset({"ingest_body_max_bytes", "direct_admission"})
+#: A task queue only announces the work a request created (D147); it mounts
+#: no route.
+_POLICY_PARAMETERS = frozenset(
+    {"ingest_body_max_bytes", "direct_admission", "task_queue"}
+)
 
 
 def test_every_optional_capability_is_classified() -> None:

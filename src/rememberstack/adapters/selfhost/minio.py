@@ -227,6 +227,10 @@ class MinIOObjectStore:
                 f"object purge verification found: {sorted(remaining)!r}"
             )
 
+    def keys_under(self, *, prefix: ObjectKey) -> tuple[str, ...]:
+        """Every key at or below ``prefix`` (prefix-boundary safe)."""
+        return self._keys_under(prefix=_validated_key(key=prefix))
+
     def _exists(self, *, normalized: str) -> bool:
         """Return whether one exact object exists, propagating non-absence errors."""
         try:

@@ -7343,6 +7343,34 @@ deployment's values into another's work.
    uses the same per-request deployment. The perimeter gate, direct admission, the spend
    lease and the startup readiness check stay composed per app.
 
+4. **What a push-delivery host needs on top (2026-11-06, relaunch designs).**
+   - *New work is announced through the context's queue.* Every work row is inserted by
+     `enqueue_on`, which records it while a collector is active
+     (`rememberstack.spine.new_work`). `run_task` collects during the task and, once it has
+     finished, announces each created row (its stage's successors) through the context's
+     `TaskQueuePort`. An `ApiDeployment` with a `task_queue` does the same for the rows a
+     request creates (an upload's `convert` row). Without a `task_queue` the API leaves the
+     insert trigger's `pg_notify` as the only wake, as before. Collection is best effort and
+     a failed announcement is only logged: the host's janitor, which re-announces due rows,
+     is what makes a lost announcement harmless.
+   - *Replaceable conversion.* `conversion_routes` (MIME type to `Converter`) on the
+     profile and `from_settings` replace the routes `SelfHostSettings.conversion_routes`
+     names, in both the `convert` stage and the upload admission check. Example: a host
+     whose converter forwards the bytes to an isolated conversion service, while claim,
+     lease, artifacts and completion stay with the trusted worker.
+   - *No deployment state on local disk.* `SelfHostSettings.forget_manifest_bucket_name`
+     keeps D74 hard-forget manifests as immutable objects in that dedicated bucket
+     (`ObjectStoreForgetManifestStore`, same contract as the local root) instead of
+     `forget_manifest_root`. The bucket must not be one of the ordinary data buckets, so
+     restoring those never rolls forget intent back.
+   - *Per-bucket credentials.* `EngineSettings.object_store_by_bucket` gives a credential
+     per bucket name, for stores that issue one key per bucket; other buckets use
+     `object_store`.
+   - *Pool control.* `from_settings(engine_options=…)` passes extra `create_engine`
+     keywords to the main engine (for example `NullPool` for a worker that must hold no
+     connection between tasks, or a pool sized to a worker's concurrency);
+     `SelfHostProfile.close()` disposes every engine.
+
 No module-level variable holds a deployment's values. Per-deployment state lives on the
 profile, so a host may hold several profiles in one process.
 

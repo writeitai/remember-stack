@@ -1,12 +1,16 @@
-"""Dedicated append-only local store for portable D74 forget intent."""
+"""Dedicated append-only stores for portable D74 forget intent."""
 
 import os
 from pathlib import Path
 from uuid import UUID
 from uuid import uuid4
 
+from rememberstack.adapters.selfhost.minio import MinIOObjectStore
+from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ForgetManifest
 from rememberstack.model import ForgetManifestConflictError
+from rememberstack.model import ObjectAlreadyExistsError
+from rememberstack.model import ObjectKey
 
 
 class LocalFSForgetManifestStore:
@@ -64,3 +68,47 @@ class LocalFSForgetManifestStore:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+_MANIFEST_PREFIX = "forget-manifests"
+
+
+class ObjectStoreForgetManifestStore:
+    """Persist manifests as immutable objects in a dedicated bucket (D147).
+
+    The same contract as :class:`LocalFSForgetManifestStore`, for a process
+    that must keep no deployment state on local disk. The bucket is the
+    separately durable manifest root: it must not be one of the deployment's
+    ordinary data buckets, so restoring those never rolls forget intent back.
+    """
+
+    def __init__(self, *, store: MinIOObjectStore) -> None:
+        """Bind the provisioned manifest bucket."""
+        self._store = store
+
+    def append(self, *, manifest: ForgetManifest) -> None:
+        """Create exact canonical bytes once, idempotent by ``forget_id``."""
+        content = manifest.canonical_bytes()
+        key = ObjectKey(f"{_MANIFEST_PREFIX}/{manifest.forget_id}.json")
+        try:
+            self._store.write_bytes(key=key, content=content, storage_class=HOT)
+        except ObjectAlreadyExistsError:
+            if self._store.read_bytes(key=key) != content:
+                raise ForgetManifestConflictError(
+                    f"forget_id {manifest.forget_id} already has different bytes"
+                ) from None
+
+    def manifests(self, *, deployment_id: UUID) -> tuple[ForgetManifest, ...]:
+        """Enumerate and validate this deployment's manifests by forget identity."""
+        result: list[ForgetManifest] = []
+        for key in sorted(self._store.keys_under(prefix=ObjectKey(_MANIFEST_PREFIX))):
+            manifest = ForgetManifest.model_validate_json(
+                self._store.read_bytes(key=ObjectKey(key))
+            )
+            if key != f"{_MANIFEST_PREFIX}/{manifest.forget_id}.json":
+                raise ForgetManifestConflictError(
+                    f"manifest key {key!r} disagrees with its forget_id"
+                )
+            if manifest.deployment_id == deployment_id:
+                result.append(manifest)
+        return tuple(result)

@@ -54,6 +54,8 @@ from rememberstack.spine.fact_adjudication import FACT_NORMALIZER_VERSION
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_applications import register_version_applications_on
 from rememberstack.spine.fact_applications import version_applications_ready_on
+from rememberstack.spine.new_work import NewWork
+from rememberstack.spine.new_work import record_new_work
 
 if TYPE_CHECKING:
     from rememberstack.workers.base import EmptyObsFlushComplete
@@ -1713,6 +1715,15 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
         .first()
     )
     if inserted is not None:
+        record_new_work(
+            work=NewWork(
+                processing_id=inserted["processing_id"],
+                route=QueueRoute(
+                    deployment_id=work.deployment_id, stage=work.stage, lane=work.lane
+                ),
+                not_before=work.not_before,
+            )
+        )
         return EnqueueOutcome(
             processing_id=inserted["processing_id"],
             created=True,
@@ -1748,6 +1759,17 @@ def enqueue_on(*, connection: Connection, work: EnqueueWork) -> EnqueueOutcome:
             # Promotion re-routes live work: wake steady listeners on commit
             # (a backfill row parked under the backfill budget also became due).
             connection.execute(_WAKE, {"processing_id": str(existing["processing_id"])})
+            record_new_work(
+                work=NewWork(
+                    processing_id=existing["processing_id"],
+                    route=QueueRoute(
+                        deployment_id=work.deployment_id,
+                        stage=work.stage,
+                        lane=ProcessingLane.STEADY,
+                    ),
+                    not_before=None,
+                )
+            )
     return EnqueueOutcome(
         processing_id=existing["processing_id"],
         created=False,
