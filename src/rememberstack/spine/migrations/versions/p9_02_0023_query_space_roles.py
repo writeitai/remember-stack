@@ -16,7 +16,8 @@ binds the role split:
   other databases entirely). Its password is set at deploy time, never here.
 
 Roles are cluster-global while migrations are per-database, so creation is
-idempotent (guarded on ``pg_roles``) and the downgrade revokes grants and
+idempotent (guarded on ``pg_roles``, and tolerant of another database's
+migration creating the same shared role concurrently) and the downgrade revokes grants and
 returns view ownership but deliberately leaves the roles in place — another
 database on the same cluster may still bind them; dropping them is an
 operator action, recorded in the implementation note.
@@ -80,17 +81,30 @@ _PRIVATE_HELPERS = (
 )
 
 
-def _create_role_if_absent(name: str, options: str) -> None:
-    op.execute(
-        f"""
+def create_role_if_absent_sql(name: str, options: str) -> str:
+    """Create a cluster-global role unless it exists, safe under concurrency.
+
+    Two databases migrated at the same time both see the shared view-owner
+    role missing; the second ``CREATE ROLE`` then waits for the first and
+    fails with a duplicate. That failure means the role exists, which is
+    the goal, so it is swallowed.
+    """
+    return f"""
         DO $$
         BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{name}') THEN
-                CREATE ROLE {name} {options};
+                BEGIN
+                    CREATE ROLE {name} {options};
+                EXCEPTION WHEN duplicate_object OR unique_violation THEN
+                    NULL;
+                END;
             END IF;
         END $$;
         """
-    )
+
+
+def _create_role_if_absent(name: str, options: str) -> None:
+    op.execute(create_role_if_absent_sql(name, options))
 
 
 def upgrade() -> None:

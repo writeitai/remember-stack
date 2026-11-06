@@ -1,6 +1,7 @@
 """Alembic runtime configured through the typed spine settings boundary."""
 
 from logging.config import fileConfig
+import re
 
 from alembic import context
 from sqlalchemy import engine_from_config
@@ -14,6 +15,15 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = None
+
+# Each database gets its own roles, ``rememberstack_query_<database>`` and
+# ``rememberstack_graph_<database>`` (roles are cluster-global), created with
+# unquoted names. PostgreSQL folds unquoted names to lower case and silently
+# truncates them to 63 bytes, so two databases whose names differ only in
+# case or beyond the limit would share one role and its grants on both. Only
+# names that map to themselves are accepted.
+_MAX_DATABASE_NAME_BYTES = 63 - len("rememberstack_query_")
+_DATABASE_NAME = re.compile(r"[a-z_][a-z0-9_]*")
 
 
 def _database_url() -> str:
@@ -46,6 +56,19 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        database = connection.exec_driver_sql("SELECT current_database()").scalar_one()
+        # End the read's implicit transaction so Alembic owns the next one.
+        connection.rollback()
+        if (
+            len(str(database)) > _MAX_DATABASE_NAME_BYTES
+            or _DATABASE_NAME.fullmatch(str(database)) is None
+        ):
+            raise RuntimeError(
+                f"database name {database!r} must be at most"
+                f" {_MAX_DATABASE_NAME_BYTES} characters of a-z, 0-9 and _"
+                " (not starting with a digit); otherwise its per-database roles"
+                " could be shared with another database"
+            )
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

@@ -9289,6 +9289,54 @@ documents again. Keep your source files for this reason. See
     `build_revision` in `/deployment` names the source commit of the image
     now serving.
 
+## Several deployments on one PostgreSQL server
+
+The Compose file runs one deployment with its own PostgreSQL. If you run
+several deployments against one PostgreSQL server instead, each keeps
+everything in its own database. Upgrade them one database at a time, or
+several at once: the migrations of one database never change another's, and
+wait for another only while the shared role below is first created.
+
+Run `setup` once per deployment, each with that deployment's own settings:
+its `REMEMBERSTACK_DATABASE_URL`, deployment id, slug, name, buckets and
+keys. For example, with one env file per deployment and the release's
+engine image (replace `VERSION`):
+
+```bash
+pids=()
+for env_file in deployments/*.env; do
+  docker run --rm --env-file "$env_file" \
+    ghcr.io/writeitai/remember-stack:VERSION setup &
+  pids+=("$!")
+done
+failed=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || failed=1
+done
+exit "$failed"
+```
+
+Start each deployment's API and workers only after its own `setup` has
+succeeded. RememberStack does not coordinate the loop for you: if one run
+fails, rerun it for that database. Running a release's migrations again on a
+database that already has them changes nothing.
+
+Three things are shared across the server, so keep them in mind:
+
+- **Database names are at most 43 characters of `a`–`z`, `0`–`9` and `_`,
+  not starting with a digit.** Each database gets its own roles,
+  `rememberstack_query_<database>` and `rememberstack_graph_<database>`.
+  PostgreSQL lowercases those role names and cuts them at 63 bytes, so a
+  longer or mixed-case database name could share a role with another
+  database. Migrations refuse such a name.
+- **One role is shared by every database:** `rememberstack_view_owner`, which
+  owns the public query views. The first migration on a server creates it.
+  If several first migrations run at once, the later ones wait for the first
+  one to finish and then continue.
+- **Partition maintenance names its databases.** The `pg_partman_bgw.dbname`
+  server setting lists the databases whose partitions the background worker
+  maintains, separated by commas. Add each deployment's database to it.
+
 ## PostgreSQL prerelease versions
 
 RememberStack runs on a PostgreSQL 19 beta (`19beta3` at v0.17.0). A
