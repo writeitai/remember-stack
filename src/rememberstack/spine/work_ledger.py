@@ -9,6 +9,7 @@ running row and callers can never supply it.
 """
 
 from collections.abc import Collection
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import timedelta
@@ -808,6 +809,34 @@ class WorkLedger:
                 _FAIL_DEAD_LETTER, {"processing_id": processing_id, "error": error}
             )
             return None
+
+    def due_routes(
+        self,
+        *,
+        deployment_id: UUID,
+        routes: Sequence[tuple[PipelineStage, ProcessingLane]],
+    ) -> tuple[tuple[PipelineStage, ProcessingLane], ...]:
+        """Return, in the given order, the laned routes that have claimable work now.
+
+        One round trip probes every route with the claim's own due predicate,
+        so a worker serving many routes does not open a claim transaction per
+        empty route. The answer is a hint: a claim on a listed route can still
+        find nothing (another worker took it, or a hold applies).
+        """
+        if not routes:
+            return ()
+        with self._engine.connect() as connection:
+            due = set(
+                connection.execute(
+                    _DUE_ROUTES,
+                    {
+                        "deployment_id": deployment_id,
+                        "stages": [stage.value for stage, _ in routes],
+                        "lanes": [lane.value for _, lane in routes],
+                    },
+                ).scalars()
+            )
+        return tuple(route for index, route in enumerate(routes, 1) if index in due)
 
     @property
     def lease_renewal_interval_s(self) -> float:
@@ -1967,11 +1996,9 @@ _RESUME_NO_ROUTE = text(
     """
 )
 
-_CLAIM_DUE_ON_ROUTE = """
-    deployment_id = :deployment_id
-      AND stage = :stage
-      AND lane IS NOT DISTINCT FROM :lane
-      AND status IN ('pending', 'failed')
+# The claimable-now predicate shared by the claims and the due-route probe.
+_CLAIMABLE = """
+      status IN ('pending', 'failed')
       AND not_before <= now()
       AND attempts < max_attempts
       -- D117: no_route work is parked on a CONFIGURATION fact, not a clock.
@@ -1979,6 +2006,13 @@ _CLAIM_DUE_ON_ROUTE = """
       -- its reason rather than by a sentinel timestamp; registering the
       -- converter and resuming is what releases it.
       AND (defer_reason IS NULL OR defer_reason::text <> 'no_route')
+"""
+
+_CLAIM_DUE_ON_ROUTE = f"""
+    deployment_id = :deployment_id
+      AND stage = :stage
+      AND lane IS NOT DISTINCT FROM :lane
+      AND {_CLAIMABLE}
 """
 
 _CLAIM_SELECT = text(
@@ -1999,6 +2033,23 @@ _CLAIM_SELECT_NAMED = text(
     WHERE processing_id = :processing_id
       AND {_CLAIM_DUE_ON_ROUTE}
     FOR UPDATE SKIP LOCKED
+    """
+)
+
+_DUE_ROUTES = text(
+    f"""
+    SELECT r.ordinal
+    FROM unnest(
+        CAST(:stages AS pipeline_stage[]), CAST(:lanes AS processing_lane[])
+    ) WITH ORDINALITY AS r(stage, lane, ordinal)
+    WHERE EXISTS (
+        SELECT 1
+        FROM processing_state
+        WHERE deployment_id = :deployment_id
+          AND stage = r.stage
+          AND lane = r.lane
+          AND {_CLAIMABLE}
+    )
     """
 )
 

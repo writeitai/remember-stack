@@ -193,11 +193,7 @@ as source-derived data.
 | `LOCOMO_BACKUP_TOOL` | `benchmarks/locomo/sharding/store_backup.py` | backup tool path; use an absolute path only when operating a pinned clean campaign checkout with a newer compatible safety runner |
 | `LOCOMO_COMPOSE_PROJECT` | `rememberstack` | Compose label used to resolve exactly four volumes |
 | `LOCOMO_RUNNER_LOCK` | `/var/lock/rememberstack-locomo-shard.lock` | host-wide exclusive runner lock |
-| `LOCOMO_EXTRACT_CLAIM_WORKERS` | `8` | chunk-level Selection worker replicas |
-| `LOCOMO_GROUND_CLAIM_WORKERS` | `8` | chunk-level Claimify worker replicas |
-| `LOCOMO_NORMALIZE_RELATION_WORKERS` | `6` | claim-level E3 normalize worker replicas |
-| `LOCOMO_ADJUDICATE_OBSERVATION_WORKERS` | `4` | post-barrier observation-flush worker replicas |
-| `LOCOMO_EMBED_CLAIM_WORKERS` | `2` | P1 claim/fact embedding worker replicas |
+| `LOCOMO_LLM_CONCURRENCY` | `40` | tasks in flight in the `worker-llm` process, which serves every stage except `convert` |
 | `LOCOMO_GCP_CREDENTIALS_FILE` | `/etc/rememberstack/locomo-gcs/credentials.json` | public external-account configuration |
 | `LOCOMO_GCP_CERTIFICATE_CONFIG_FILE` | `/etc/rememberstack/locomo-gcs/certificate-config.json` | public client-certificate path configuration |
 | `LOCOMO_VERTEX_GCP_CREDENTIALS_FILE` | unset | optional process-wide generation credential configuration; backups continue to use `LOCOMO_GCP_CREDENTIALS_FILE` |

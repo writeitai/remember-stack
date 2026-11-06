@@ -3,12 +3,13 @@
 Work is Postgres rows; this shell only delivers wake-ups. The schema-owned
 insert trigger provides the transactional initial wake; `announce` re-announces
 existing rows through the spine's notification primitive; the worker loop
-sleeps on LISTEN with a slow fallback poll and claims only its configured
-route, consulting a token bucket around each claim.
+sleeps on LISTEN with a slow fallback poll and claims only the routes of its
+worker class, consulting a token bucket around each claim.
 """
 
 from collections.abc import Callable
 import logging
+import threading
 import time
 from uuid import UUID
 
@@ -68,98 +69,173 @@ class TokenBucket:
         self._clock = clock
         self._tokens = capacity
         self._refilled_at = clock()
+        self._lock = threading.Lock()
 
     def try_acquire(self) -> bool:
-        """Take one token if available; never blocks."""
-        now = self._clock()
-        self._tokens = min(
-            self._capacity, self._tokens + (now - self._refilled_at) * self._rate_per_s
-        )
-        self._refilled_at = now
-        if self._tokens < 1.0:
-            return False
-        self._tokens -= 1.0
-        return True
+        """Take one token if available; never blocks. Safe across threads."""
+        with self._lock:
+            now = self._clock()
+            self._tokens = min(
+                self._capacity,
+                self._tokens + (now - self._refilled_at) * self._rate_per_s,
+            )
+            self._refilled_at = now
+            if self._tokens < 1.0:
+                return False
+            self._tokens -= 1.0
+            return True
 
 
 class SelfHostWorkerLoop:
-    """One route's worker loop: sleep on LISTEN, drain due work, fall back to polling."""
+    """One worker class's loop: concurrent slots drain due work across its stages.
+
+    The loop serves every route of its stages, steady lanes before backfill
+    lanes, and within a lane the stages in the order given (callers list
+    downstream stages first, so work already in the pipeline drains before new
+    uploads take the slots). ``concurrency`` slots each run one task at a time
+    in their own thread. The calling thread sleeps on LISTEN with a slow
+    fallback poll; every wake-up, and every claim that found work, wakes one
+    idle slot, so idle slots look for work one at a time instead of all at
+    once. The calling thread also sweeps expired claims (D144) at most once
+    per fallback-poll interval.
+    """
 
     def __init__(
         self,
         *,
         worker: Worker,
+        ledger: WorkLedger,
         deployment_id: UUID,
-        stage: PipelineStage,
-        lane: ProcessingLane | None,
+        stages: tuple[PipelineStage, ...],
         bucket: TokenBucket,
         database_url: str,
         fallback_poll_s: float = 30.0,
-        serve_backfill: bool = False,
+        concurrency: int = 1,
     ) -> None:
-        """Bind the loop to its route, rate limit, and LISTEN connection source.
-
-        ``serve_backfill`` lets a steady-route loop also claim its stage's
-        backfill route whenever the steady route has no due row (D143 §5.5),
-        so priority stays structural: steady first, every time.
-        """
+        """Bind the loop to its stages, rate limit, slots and LISTEN connection."""
+        if concurrency < 1:
+            raise ValueError("a worker loop needs at least one slot")
         self._worker = worker
+        self._ledger = ledger
         self._deployment_id = deployment_id
-        self._stage = stage
-        self._lane = lane
+        self._routes = tuple(
+            (stage, lane)
+            for lane in (ProcessingLane.STEADY, ProcessingLane.BACKFILL)
+            for stage in stages
+        )
         self._bucket = bucket
         self._database_url = database_url
         self._fallback_poll_s = fallback_poll_s
-        self._serve_backfill = serve_backfill and lane is ProcessingLane.STEADY
+        self._concurrency = concurrency
         self._reaped_at = float("-inf")
+        self._wake = threading.Condition()
+        self._wake_pending = False
 
     def drain_due(self) -> tuple[RunResult, ...]:
-        """Claim and run due work on the route until none remains or tokens run out.
-
-        At most once per fallback-poll interval, also between tasks of a long
-        drain, it takes back expired claims on its stage, so work a killed
-        worker held runs again.
-        """
+        """Run due work in the calling thread until none remains or tokens run out."""
         results: list[RunResult] = []
-        while True:
-            self._reap_if_due()
-            if not self._bucket.try_acquire():
-                break
-            result = self._worker.run_one(
-                deployment_id=self._deployment_id, stage=self._stage, lane=self._lane
-            )
-            if result.outcome is RunResultOutcome.NO_WORK and self._serve_backfill:
-                result = self._worker.run_one(
-                    deployment_id=self._deployment_id,
-                    stage=self._stage,
-                    lane=ProcessingLane.BACKFILL,
-                )
-            if result.outcome is RunResultOutcome.NO_WORK:
-                break
+        while (result := self._run_next()) is not None:
             results.append(result)
         return tuple(results)
+
+    def run_for(self, *, duration_s: float) -> tuple[RunResult, ...]:
+        """Listen and run the slots for a bounded time, then let in-flight tasks finish.
+
+        The production loop is this method called with a large duration under a
+        supervisor; tests call it with a short one. Missed notifications are
+        covered by the fallback poll, per the packaging design. A slot that
+        raises stops the loop, and the error is re-raised here.
+        """
+        stop = threading.Event()
+        results: list[RunResult] = []
+        errors: list[BaseException] = []
+        slots = [
+            threading.Thread(
+                target=self._slot,
+                kwargs={"stop": stop, "results": results, "errors": errors},
+                name=f"worker-slot-{index}",
+                daemon=True,
+            )
+            for index in range(self._concurrency)
+        ]
+        started: list[threading.Thread] = []
+        deadline = time.monotonic() + duration_s
+        try:
+            with psycopg.connect(self._database_url, autocommit=True) as connection:
+                connection.execute(f"LISTEN {_WAKE_CHANNEL}")
+                for slot in slots:
+                    slot.start()
+                    started.append(slot)
+                self._reap_if_due()
+                self._signal()
+                while not stop.is_set() and (
+                    (remaining := deadline - time.monotonic()) > 0
+                ):
+                    timeout = min(remaining, self._fallback_poll_s)
+                    woken = list(connection.notifies(timeout=timeout, stop_after=1))
+                    if woken:
+                        _logger.debug("wake received: %s", woken[0].payload)
+                    self._reap_if_due()
+                    self._signal()
+        finally:
+            stop.set()
+            with self._wake:
+                self._wake.notify_all()
+            for slot in started:
+                slot.join()
+        if errors:
+            raise errors[0]
+        return tuple(results)
+
+    def _slot(
+        self,
+        *,
+        stop: threading.Event,
+        results: list[RunResult],
+        errors: list[BaseException],
+    ) -> None:
+        """Run due work until stopped; sleep until signalled when none is due."""
+        try:
+            while not stop.is_set():
+                result = self._run_next()
+                if result is not None:
+                    results.append(result)
+                    continue
+                with self._wake:
+                    while not self._wake_pending and not stop.is_set():
+                        self._wake.wait()
+                    self._wake_pending = False
+        except BaseException as error:  # re-raised by run_for
+            errors.append(error)
+            stop.set()
+            with self._wake:
+                self._wake.notify_all()
+
+    def _run_next(self) -> RunResult | None:
+        """Claim and run the first due unit of work in route order, if any."""
+        if not self._bucket.try_acquire():
+            return None
+        due = self._ledger.due_routes(
+            deployment_id=self._deployment_id, routes=self._routes
+        )
+        if due:
+            self._signal()  # there may be more: let one idle slot look too
+        for stage, lane in due:
+            result = self._worker.run_one(
+                deployment_id=self._deployment_id, stage=stage, lane=lane
+            )
+            if result.outcome is not RunResultOutcome.NO_WORK:
+                return result
+        return None
+
+    def _signal(self) -> None:
+        """Wake one idle slot (or the next slot to go idle) to look for work."""
+        with self._wake:
+            self._wake_pending = True
+            self._wake.notify()
 
     def _reap_if_due(self) -> None:
         """Sweep expired claims when a fallback-poll interval has passed."""
         if time.monotonic() - self._reaped_at >= self._fallback_poll_s:
             self._reaped_at = time.monotonic()
             self._worker.reap_expired_leases(deployment_id=self._deployment_id)
-
-    def run_for(self, *, duration_s: float) -> tuple[RunResult, ...]:
-        """Listen, drain on every wake, and fall back to polling, for a bounded time.
-
-        The production loop is this method called with a large duration under a
-        supervisor; tests call it with a short one. Missed notifications are
-        covered by the fallback poll, per the packaging design.
-        """
-        results: list[RunResult] = list(self.drain_due())
-        deadline = time.monotonic() + duration_s
-        with psycopg.connect(self._database_url, autocommit=True) as connection:
-            connection.execute(f"LISTEN {_WAKE_CHANNEL}")
-            while (remaining := deadline - time.monotonic()) > 0:
-                timeout = min(remaining, self._fallback_poll_s)
-                woken = list(connection.notifies(timeout=timeout, stop_after=1))
-                if woken:
-                    _logger.debug("wake received: %s", woken[0].payload)
-                results.extend(self.drain_due())
-        return tuple(results)

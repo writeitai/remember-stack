@@ -16,7 +16,9 @@ from rememberstack.profiles.selfhost import _expected_components
 from rememberstack.profiles.selfhost import _initialize_error_tracking
 from rememberstack.profiles.selfhost import _model_bindings
 from rememberstack.profiles.selfhost import _SUPPORTED_WORKER_STAGES
+from rememberstack.profiles.selfhost import DEFAULT_WORKER_CONCURRENCY
 from rememberstack.profiles.selfhost import SelfHostSettings
+from rememberstack.profiles.selfhost import WORKER_CLASSES
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -89,6 +91,32 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
     )
 
 
+def test_worker_classes_split_convert_from_the_rest_downstream_first() -> None:
+    """D145: convert alone; every other stage in one class, downstream first."""
+    assert WORKER_CLASSES["convert"] == (PipelineStage.CONVERT,)
+    assert WORKER_CLASSES["llm"] == tuple(reversed(_SUPPORTED_WORKER_STAGES[1:]))
+    assert DEFAULT_WORKER_CONCURRENCY == {"convert": 1, "llm": 20}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ["worker", "--stage", "convert"],
+        ["worker", "--class", "embed"],
+        ["worker", "--class", "llm", "--concurrency", "0"],
+    ),
+)
+def test_worker_command_takes_a_class_and_a_positive_concurrency(
+    argv: list[str],
+) -> None:
+    """The per-stage form is gone; bad classes and concurrency are refused."""
+    from rememberstack.profiles.selfhost import main
+
+    with pytest.raises(SystemExit) as exit_info:
+        main(argv)
+    assert exit_info.value.code == 2
+
+
 def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
     """A stage enum is not proof that an independently runnable handler exists."""
     assert {
@@ -103,12 +131,16 @@ def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
 def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> None:
     """Keep deployable Compose wiring in lockstep with the executable profile."""
     compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
-    composed_stages = tuple(
-        PipelineStage(value)
-        for value in re.findall(r'command: \["worker", "--stage", "([^"]+)"\]', compose)
+    composed_classes = tuple(
+        re.findall(
+            r'command: \["worker", "--class", "([^"]+)", "--concurrency"', compose
+        )
     )
 
-    assert composed_stages == _SUPPORTED_WORKER_STAGES
+    assert composed_classes == tuple(WORKER_CLASSES) == ("convert", "llm")
+    served = [stage for stages in WORKER_CLASSES.values() for stage in stages]
+    assert sorted(served) == sorted(_SUPPORTED_WORKER_STAGES)
+    assert len(served) == len(set(served))
     assert 'profiles: ["operations"]' in compose
     assert 'command: ["project", "--plane", "p3"]' in compose
     for name in (
@@ -165,17 +197,25 @@ def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
 
 
 def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
-    """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
+    """API pools plus each worker class's pool and LISTEN connection fit, with headroom."""
     compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
     limits = re.findall(
         r"- max_connections=\$\{REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-(\d+)\}\n",
         compose,
     )
     assert len(limits) == 1
-    workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
+    concurrency = [
+        int(value)
+        for value in re.findall(
+            r'"--concurrency", "\$\{REMEMBERSTACK_SELFHOST_[A-Z]+_CONCURRENCY:-(\d+)\}"',
+            compose,
+        )
+    ]
+    assert concurrency == [DEFAULT_WORKER_CONCURRENCY[c] for c in WORKER_CLASSES]
     api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
-    ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
-    assert ceiling == 247
+    # A worker's pool is (concurrency + 2) + concurrency overflow, plus LISTEN.
+    ceiling = api + sum(2 * n + 2 + 1 for n in concurrency)
+    assert ceiling == 71
     assert int(limits[0]) >= ceiling + 50
 
 
@@ -455,7 +495,7 @@ def test_compose_hands_the_whole_env_file_to_every_engine_service() -> None:
     assert "  env_file:\n    - path: .env\n      required: false\n" in anchor
     engine_services = re.findall(r"\n  ([a-z0-9-]+):\n    <<: \*app\n", services)
     assert {"setup", "api", "projections", "meter-receipts"} <= set(engine_services)
-    assert len(engine_services) == len(_SUPPORTED_WORKER_STAGES) + 4
+    assert len(engine_services) == len(WORKER_CLASSES) + 4
 
 
 def test_no_shared_deployment_id_ships() -> None:

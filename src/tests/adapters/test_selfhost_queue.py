@@ -197,9 +197,9 @@ def test_demo_chain_runs_on_selfhost_shell_with_zero_gcp_deps(
     registry.register(stage=PipelineStage.EXTRACT_CLAIMS, handler=_NoOpHandler())
     loop = SelfHostWorkerLoop(
         worker=Worker(ledger=ledger, registry=registry),
+        ledger=ledger,
         deployment_id=_DEPLOYMENT_ID,
-        stage=PipelineStage.EXTRACT_CLAIMS,
-        lane=ProcessingLane.STEADY,
+        stages=(PipelineStage.EXTRACT_CLAIMS,),
         bucket=TokenBucket(rate_per_s=100.0, capacity=10.0),
         database_url=_psycopg_url(database_url),
         fallback_poll_s=0.2,

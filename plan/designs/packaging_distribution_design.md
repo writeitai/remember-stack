@@ -131,12 +131,41 @@ are hints, never inputs to a state transition.
   construction. The self-host adapter's `announce` method never inserts: for retry, replay, or
   janitor re-announcement it invokes the injected `spine/` notification primitive for the
   existing row (SQL remains exclusively in `spine/`). Worker processes sleep
-  on `LISTEN`; a notify wakes them in milliseconds; the woken worker claims only rows on its
-  configured `(deployment, stage, lane)` route whose `not_before <= now()`, using
+  on `LISTEN`; a notify wakes them in milliseconds; the woken worker claims only rows on the
+  routes of its **worker class** whose `not_before <= now()`, using
   `SELECT … FOR UPDATE SKIP LOCKED LIMIT n` and the schema §2 due-work index. A **slow fallback
-  poll (~30 s)** exists only as a safety net for missed notifications, scheduled work becoming
-  due, and crash recovery. Application attempts/backoff remain row state; per-route rate limits
-  are a token bucket consulted around the claim. Scaling = `docker compose up --scale worker=N`.
+  poll (~30 s)** exists only as a safety net for missed notifications and scheduled work becoming
+  due; crash recovery is the lease reaper (orchestration §6, D144). Application attempts/backoff
+  remain row state; a per-process rate limit is a token bucket consulted around the claim.
+  Scaling = raise a class's concurrency, or `docker compose up --scale worker-llm=N`.
+
+  **Worker classes (D145).** One worker process serves every stage of one class, with a fixed
+  number of tasks in flight (its *concurrency*), each in its own thread:
+
+  | Class | Stages | Tasks in flight (starting point) | Why |
+  |---|---|---|---|
+  | `convert` | `convert` | 1 | Conversion runs LibreOffice and PDF rendering in-process; its memory grows with the input, so one at a time bounds a process by the largest allowed input, and a conversion that kills its process takes only itself down. |
+  | `llm` | every other stage | 20 | These stages spend almost all their time waiting on model, embedding or database calls; many in flight per process is cheap. |
+
+  Memory is safe by construction rather than by accounting: a class's process is sized as peak
+  memory per task × concurrency + headroom, measured once per class. A process that still runs
+  out of memory loses only its own in-flight tasks; their leases expire and they are retried,
+  and a task that kills its worker every time dead-letters after `max_attempts` (D144).
+
+  **Fair order.** A class process lists its routes as every stage's steady lane, then every
+  stage's backfill lane, each in pipeline order **downstream first** (e.g. `label_relation`
+  before `extract_claims` before `structure`). A free slot claims from the first route with due
+  work. Work already inside the pipeline therefore finishes before a large new upload takes the
+  slots, and steady work keeps priority over backfill exactly as with one process per stage.
+  Finding that route is one probe query over all routes (the claim's own due predicate per
+  route), not one claim attempt per route.
+
+  **Slots and wake-ups.** The process's main thread holds the `LISTEN` connection and runs the
+  lease reaper. A notification or the fallback poll wakes **one** idle slot; a slot that finds
+  due work wakes one more before running it. Idle slots therefore look for work one at a time,
+  and a burst ramps up to full concurrency within a few claims. A process's database pool is
+  sized from its concurrency (two connections per task, since one code path nests a read inside a
+  transaction, plus a few for lease renewal and the reaper).
 - **GCP reference shell — Cloud Tasks push.** Announcement = create a Cloud Task; delivery = an
   HTTP push to a thin Cloud Run handler-dispatch server. The task carries `processing_id` plus a
   snapshot of route and `not_before`; Cloud Tasks scheduling and per-route rate limits reduce

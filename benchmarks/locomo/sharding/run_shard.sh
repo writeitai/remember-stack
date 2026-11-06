@@ -39,11 +39,7 @@ backup_project=${LOCOMO_GCP_PROJECT:-}
 backup_staging_root=${LOCOMO_BACKUP_STAGING_ROOT:-/var/lib/rememberstack-locomo-backups}
 compose_project=${LOCOMO_COMPOSE_PROJECT:-rememberstack}
 runner_lock=${LOCOMO_RUNNER_LOCK:-/var/lock/rememberstack-locomo-shard.lock}
-extract_claim_workers=${LOCOMO_EXTRACT_CLAIM_WORKERS:-8}
-ground_claim_workers=${LOCOMO_GROUND_CLAIM_WORKERS:-8}
-normalize_relation_workers=${LOCOMO_NORMALIZE_RELATION_WORKERS:-6}
-adjudicate_observation_workers=${LOCOMO_ADJUDICATE_OBSERVATION_WORKERS:-4}
-embed_claim_workers=${LOCOMO_EMBED_CLAIM_WORKERS:-2}
+llm_concurrency=${LOCOMO_LLM_CONCURRENCY:-40}
 backup_tool=${LOCOMO_BACKUP_TOOL:-benchmarks/locomo/sharding/store_backup.py}
 compose=(docker compose --project-name "$compose_project")
 
@@ -104,11 +100,7 @@ for value in \
   "$max_judge_calls" \
   "$drain_timeout_seconds" \
   "$drain_poll_seconds" \
-  "$extract_claim_workers" \
-  "$ground_claim_workers" \
-  "$normalize_relation_workers" \
-  "$adjudicate_observation_workers" \
-  "$embed_claim_workers"; do
+  "$llm_concurrency"; do
   [[ "$value" =~ ^[1-9][0-9]*$ ]] || die "integer caps must be positive"
 done
 
@@ -330,12 +322,8 @@ require_verified_final_backup() {
 }
 
 start_existing_store() {
-  "${compose[@]}" up --detach --wait --no-recreate \
-    --scale "worker-extract-claims=$extract_claim_workers" \
-    --scale "worker-ground-claims=$ground_claim_workers" \
-    --scale "worker-normalize-relations=$normalize_relation_workers" \
-    --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
-    --scale "worker-embed-claim=$embed_claim_workers"
+  REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY="$llm_concurrency" \
+    "${compose[@]}" up --detach --wait --no-recreate
   bind_benchmark_api
   attest_worker_environment
 }
@@ -464,12 +452,8 @@ for sample_id in "${pending_samples[@]}"; do
     "${compose[@]}" down --volumes --remove-orphans
     backup_python "$backup_tool" clear-live --run-dir "$run_dir" --lock-fd 9
     log "sample=$sample_id stage=stack status=starting"
-    "${compose[@]}" up --detach --wait \
-      --scale "worker-extract-claims=$extract_claim_workers" \
-      --scale "worker-ground-claims=$ground_claim_workers" \
-      --scale "worker-normalize-relations=$normalize_relation_workers" \
-      --scale "worker-adjudicate-observations=$adjudicate_observation_workers" \
-      --scale "worker-embed-claim=$embed_claim_workers"
+    REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY="$llm_concurrency" \
+      "${compose[@]}" up --detach --wait
     bind_benchmark_api
     attest_worker_environment
     backup_python "$backup_tool" record-live \

@@ -303,14 +303,14 @@ stage before. Check where work is piling up:
 ```bash
 docker compose exec -T api \
   remember ops inspect --deployment "$DEPLOYMENT_ID" | python3 -m json.tool
-docker compose logs -f --since 10m worker-extract-claims worker-normalize-relations
+docker compose logs -f --since 10m worker-llm
 ```
 
 | Sign | Cause | Fix |
 |---|---|---|
-| A large `pending` count on one stage in `routes` | That stage is the bottleneck. | Add replicas: `docker compose up -d --scale worker-extract-claims=3`. See [Scaling](/docs/self-hosting/scaling#more-replicas-of-a-stage). |
-| Log lines with `overloaded (429)` | OpenRouter or a provider behind it is rate-limiting you. More replicas make it worse. | Lower the worker rate, or set a provider order; see [Scaling](/docs/self-hosting/scaling) and [Models and providers](/docs/self-hosting/models#openrouter-routing-and-limits). |
-| `pending` counts that do not move, no log activity | The worker for that stage is not running, or a budget parked the work. | `docker compose ps -a`; [Work parked by a spend budget](#work-parked-by-a-spend-budget). |
+| A large `pending` count on one stage in `routes` | That stage is the bottleneck. | Raise `REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY` (or `REMEMBERSTACK_SELFHOST_CONVERT_CONCURRENCY` for `convert`). See [Scaling](/docs/self-hosting/scaling#more-items-in-flight). |
+| Log lines with `overloaded (429)` | OpenRouter or a provider behind it is rate-limiting you. More items in flight make it worse. | Lower the worker rate, or set a provider order; see [Scaling](/docs/self-hosting/scaling) and [Models and providers](/docs/self-hosting/models#openrouter-routing-and-limits). |
+| `pending` counts that do not move, no log activity | The worker for that stage (`worker-convert` for `convert`, `worker-llm` for the rest) is not running, or a budget parked the work. | `docker compose ps -a`; [Work parked by a spend budget](#work-parked-by-a-spend-budget). |
 | Every call slow | Reasoning models spend time and tokens thinking. | Lower `REMEMBERSTACK_OPENROUTER_REASONING_EFFORT_MAP` for the small models; see [Models and providers](/docs/self-hosting/models#openrouter-routing-and-limits). |
 
 ## Model key and provider errors
@@ -326,7 +326,7 @@ out of credit) in the traceback. After three attempts, a few seconds apart,
 the items dead-letter.
 
 ```bash
-docker compose logs --since 30m worker-structure worker-extract-claims | grep -i openrouter
+docker compose logs --since 30m worker-llm | grep -i openrouter
 ```
 
 Fix: put a valid key in `.env`, apply it with `docker compose up -d`, then

@@ -664,7 +664,7 @@ orchestration.
 |---|---|
 | `setup` | Applies database migrations and prepares the deployment. Runs once; the other services start after it succeeds. |
 | `api` | The HTTP API. Listens on `REMEMBERSTACK_SELFHOST_API_HOST` (default `0.0.0.0`) and `REMEMBERSTACK_SELFHOST_API_PORT` (default `8000`). This is the image's default command. |
-| `worker --stage STAGE` | One pipeline worker. `STAGE` is one of `convert`, `structure`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `embed_claim`, `reconcile`, `label_relation`. Run one process per stage. |
+| `worker --class CLASS [--concurrency N]` | One pipeline worker for a class of stages. `convert` runs the `convert` stage; `llm` runs every other stage (`structure`, `crossref`, `chunk`, `embed_chunk`, `extract_claims`, `ground_claims`, `normalize_relations`, `adjudicate_observations`, `adjudicate_supersession`, `embed_claim`, `reconcile`, `label_relation`, `review_fact_windows`). `N` is how many items it runs at once (default `1` for `convert`, `20` for `llm`). Run one process per class; add processes to add capacity. |
 | `project --plane p3` | Builds the filesystem view snapshot once. In `compose.yaml` it belongs to the `operations` profile. |
 | `mounts --root PATH [--raw-root PATH] [--artifacts-root PATH]` | Publishes the latest snapshot under a local directory. |
 

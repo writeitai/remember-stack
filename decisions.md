@@ -7455,3 +7455,40 @@ first sweep recovers them. [Orchestration §6](plan/designs/orchestration_design
 holds the contract; [schema §2](plan/designs/postgres_schema_design.md) the column, index and
 queries.
 
+## D145. One worker process serves a class of stages, with a fixed number of tasks in flight
+
+**Status:** accepted. **Date:** 2026-11-06.
+
+**Context.** Each pipeline stage ran in its own worker process (fourteen in the stock Compose),
+each importing the full dependency set, holding its own database pool and `LISTEN` connection,
+being woken by every notification, and running one task at a time. Almost every stage spends
+its time waiting on a model, embedding or database call, so this was the most memory for the
+least concurrency: about two thirds of an idle deployment's memory, and one task per stage in
+flight even during a large upload. A combined worker must still never run out of memory, and
+conversion's memory grows with the input.
+
+**Decision.**
+
+- Two **worker classes**: `convert` (the `convert` stage) and `llm` (every other stage).
+  `worker --class convert|llm [--concurrency N]` serves every stage of its class from one
+  process with N tasks in flight, each in its own thread. Starting points to be measured:
+  `convert` 1, `llm` 20. No dynamic memory accounting: a class's process is sized as peak memory
+  per task × concurrency + headroom.
+- **Fair order:** a free slot claims from the first route with due work in the order steady
+  lanes, then backfill lanes, each with stages downstream first, so work already in the pipeline
+  drains before new uploads take the slots. One probe query finds the routes with due work.
+- **Delivery is unchanged:** `LISTEN/NOTIFY` wake-ups and `SELECT … FOR UPDATE SKIP LOCKED`
+  claims (D67). A wake-up rouses one idle slot; a slot that finds work rouses one more. Claim
+  leases (D144) make it safe for a class process to die with many tasks in flight.
+- A process's database pool is sized from its concurrency.
+
+**Alternatives.** One process per stage with in-process concurrency keeps fourteen idle
+interpreters. A single class for everything lets one large conversion share a process, and its
+memory, with twenty LLM tasks. Asynchronous handlers would need every handler and adapter
+rewritten; threads reuse the synchronous handlers, which share no mutable state.
+
+**Consequences.** The stock Compose runs `worker-convert` and `worker-llm`
+(`REMEMBERSTACK_SELFHOST_CONVERT_CONCURRENCY`, `REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY`) instead
+of fourteen stage workers; `worker --stage` is gone. Contract in
+[packaging §3, worker classes](plan/designs/packaging_distribution_design.md#3-task-execution--one-model-two-delivery-shells).
+
