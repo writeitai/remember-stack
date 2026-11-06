@@ -353,3 +353,54 @@ def test_backup_is_opt_in_and_requires_its_own_key(
         build_systemone_provider(
             settings=TypeSafeSettings(api_key="primary", backup="openai_decisions")
         )
+
+
+def test_connection_failure_can_use_backup_but_not_a_read_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Connection establishment fails before admission, unlike a lost response."""
+    monkeypatch.setattr("rememberstack.adapters.typesafe.time.sleep", lambda _: None)
+    calls: list[str] = []
+
+    def disconnected(request: httpx.Request) -> httpx.Response:
+        """Primary never establishes a connection or receives an answer."""
+        calls.append("primary")
+        raise httpx.ConnectError("connection refused", request=request)
+
+    def backup_request(request: httpx.Request) -> httpx.Response:
+        """The one explicit backup call succeeds."""
+        del request
+        calls.append("backup")
+        return httpx.Response(200, json=_body())
+
+    primary = TypeSafeSystemOneClient(
+        settings=TypeSafeSettings(api_key="primary-test"),
+        client=httpx.Client(transport=httpx.MockTransport(disconnected)),
+    )
+    backup = _native(transport=httpx.MockTransport(backup_request))
+    provider = AvailabilityFallbackSystemOne(
+        primary=primary, backup=backup, backup_model="gpt-6-luna"
+    )
+    try:
+        provider.evaluate(state={}, questions=_QUESTIONS)
+    finally:
+        primary.close()
+        backup.close()
+    assert calls == ["primary"] * 4 + ["backup"]
+
+
+def test_readiness_records_backup_binding_without_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider/pricing policy is visible, while the native key stays secret."""
+    from rememberstack.profiles.selfhost import _model_bindings
+
+    monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "openai_decisions")
+    monkeypatch.setenv("REMEMBERSTACK_OPENAI_DECISIONS_API_KEY", "do-not-disclose")
+    bindings = _model_bindings()
+    assert bindings["systemone_backup"] == "openai_decisions"
+    configuration = json.loads(bindings["systemone_backup_config"])
+    assert configuration["model"] == "gpt-6-luna"
+    assert "api_key" not in configuration
+    assert "do-not-disclose" not in json.dumps(bindings)
