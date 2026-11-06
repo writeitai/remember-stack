@@ -2249,7 +2249,7 @@ CREATE UNIQUE INDEX ux_snapshot_latest
 The graph schema consists of private current/history node and edge views
 (`rememberstack_graph_internal`), the normalized `memory_v1` hydration views,
 and deployment-scoped work-bounded traversal functions. There are no property
-graphs: PostgreSQL 19 RC 1 has no SQL/PGQ, and migration `p9_42_0063` drops
+graphs: PostgreSQL 19 RC 1 has no SQL/PGQ, and migration `p9_43_0064` drops
 the two a Beta 3 store held. Composite graph keys and all source/destination
 references include `deployment_id`. Current views capture
 one `statement_timestamp()` per statement; history views expose both half-open

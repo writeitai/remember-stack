@@ -1,8 +1,8 @@
 # Packaging & Distribution — Artifacts, Task Execution, Code Architecture (Design)
 
 > **Binding D98 amendment (2026-08-27).** The shipped database is the pinned
-> PostgreSQL 19 image with pgvector, pg_textsearch, pg_partman, and native
-> SQL/PGQ. Packaging contains no Ladybug wheel, graph snapshot volume, graph
+> PostgreSQL 19 image with pgvector, pg_textsearch, and pg_partman (the
+> server has no SQL/PGQ since the D98 RC 1 amendment). Packaging contains no Ladybug wheel, graph snapshot volume, graph
 > builder/reader, or public Cypher API/CLI/MCP surface. Typed live graph
 > operations and public bounded SQL helpers remain. Pre-D98 references to open
 > Cypher or P2 packaging are removed requirements.
@@ -326,8 +326,8 @@ The portable restore order is deliberately small and fail-closed:
    normal schema migrations.
 4. Run the ordinary hard-forget readiness pass before any serving surface opens. It rematerializes
    missing local intent and re-honors every manifest against every restored store.
-5. Rebuild P1 and P3 through their normal production builders, ensure the property-graph catalog
-   and bounded traversal helpers, run the S55/control canaries, and
+5. Rebuild P1 and P3 through their normal production builders, ensure the live graph catalog
+   (node and edge views, roles) and bounded traversal helpers, run the S55/control canaries, and
    only then admit traffic.
 
 Credentials, provider configuration, backup retention, transfer progress, retries, manifest-root

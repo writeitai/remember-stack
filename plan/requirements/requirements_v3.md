@@ -103,8 +103,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   their transcript/description happened to mention — D65; the media embedding model is
   per-deployment configuration, and its absence is reported as a stated capability boundary);
   fully rebuildable from the spine plus immutable artifacts.
-- **Live graph** *(formerly physical P2/L6)*: PostgreSQL 19 property-graph
-  metadata over normalized authority views plus bounded recursive traversal;
+- **Live graph** *(formerly physical P2/L6)*: private PostgreSQL 19 node and
+  edge views over normalized authority views plus bounded recursive traversal;
   relationships are bi-temporal and support as-of queries. It copies no graph
   rows, has no projection generation, and becomes visible by ordinary MVCC.
 - **P3 — Corpus filesystem**: the corpus organized as a navigable **directory tree**, materialized
@@ -223,7 +223,8 @@ on** (citations), so staleness, deletion reach, and audit are mechanical, never 
   **pgvector** (semantic indexes; reference Qwen profile fixed at 1,536
   dimensions) and **pg_textsearch** (BM25). Pgvectorscale
   remains an unchosen future proposal, not a baseline dependency or automatic
-  default (D94). Fixed one-hop graph patterns use SQL/PGQ; bounded recursive SQL
+  default (D94). Fixed one-hop graph reads are relational joins over live edge
+  views (SQL/PGQ until the D98 RC 1 amendment); bounded recursive SQL
   supplies depth-two, variable, and shortest traversal. There is no Ladybug/P2 graph
   data snapshot (D98).
 - Document structure: **PageIndex**. Chunking: **semchunk**. Claim extraction: **Claimify**

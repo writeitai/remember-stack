@@ -1305,7 +1305,7 @@ def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
             assert graph_catalog_problems(connection=connection) == ()
     finally:
         engine.dispose()
-    assert _head_revision(database_url=database_url) == "p9_42_0063"
+    assert _head_revision(database_url=database_url) == "p9_43_0064"
 
 
 def test_citation_projection_migration_round_trips_graph_metadata() -> None:

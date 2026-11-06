@@ -4437,11 +4437,11 @@ read is relational SQL over the same views (see the RC 1 amendment below).
 > same results (PG19's SQL/PGQ was a rewrite to those joins). The two property
 > graphs, their DDL, grants, and catalog/ACL readiness checks are removed; the
 > graph catalog check now verifies that the node and edge views exist, plus the
-> helpers and roles as before. Migration `p9_42_0063` drops the property graphs
+> helpers and roles as before. Migration `p9_43_0064` drops the property graphs
 > from Beta 3 stores, and the earlier migrations no longer create them: RC 1
 > cannot parse that DDL, and pre-GA storage is disposable and replayable, as
 > below. RC 1 also changes the catalog version, so a Beta 3 store upgrades the
-> engine on Beta 3 first (running `p9_42_0063`) and then moves its data to
+> engine on Beta 3 first (running `p9_43_0064`) and then moves its data to
 > RC 1 with `pg_upgrade` or `pg_dump`/`pg_restore`. Public SQL/PGQ is no
 > longer a deferred path: the reference server has no SQL/PGQ. The sentences
 > below that make SQL/PGQ the one-hop mechanism or describe property graphs,

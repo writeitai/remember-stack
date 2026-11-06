@@ -619,7 +619,7 @@ checks.
 gate, and every result stay the same; existing graph tests pass with only
 renames. The property graphs, their grants and their catalog checks are
 removed; the catalog check now verifies that the views exist. Migration
-`p9_42_0063` drops the property graphs from Beta 3 stores, which must run it
+`p9_43_0064` drops the property graphs from Beta 3 stores, which must run it
 before their data moves to RC 1 (`pg_upgrade` and `pg_restore` would
 otherwise replay DDL that RC 1 cannot parse). Public SQL/PGQ, which this
 analysis deferred to a PG19-capable parser, has no server to run on and is no

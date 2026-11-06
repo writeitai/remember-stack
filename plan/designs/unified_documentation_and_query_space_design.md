@@ -103,9 +103,9 @@ The site navigation on `https://remember.dev/docs` is organized into five focuse
 - **Open Query Space (`open_query`)**: Full guide to querying the bitemporal relational graph schema (`memory_v1` views: `facts_current`, `graph_edges_current`, `contradiction_members_current`) via SQL.
 
 ### 3.4 Section 4: Self-Hosting & Operations (Open Source)
-- **Docker Compose Quickstart**: Complete guide to launching the engine, PostgreSQL 19 with SQL/PGQ and `pgvector`, and SeaweedFS object storage locally.
+- **Docker Compose Quickstart**: Complete guide to launching the engine, PostgreSQL 19 with `pgvector`, and SeaweedFS object storage locally.
 - **Production Kubernetes / Helm**: Cluster deployment blueprints, persistent volume configurations, worker scaling (E0–E3), and environment variables.
-- **Database Architecture**: PostgreSQL 19 schema spine, SQL/PGQ graph queries, Lance/pgvector index maintenance, and Alembic migrations.
+- **Database Architecture**: PostgreSQL 19 schema spine, live graph queries, Lance/pgvector index maintenance, and Alembic migrations.
 - **Backup, Restore & Disaster Recovery**: Cold storage snapshots, S3-compatible replication, and point-in-time recovery.
 
 ### 3.5 Section 5: Remember Cloud Platform (Managed Services)

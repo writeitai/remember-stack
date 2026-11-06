@@ -26,7 +26,7 @@ Two changes:
 The downgrade restores the p9_17 helper body and the p9_38 projection, which
 drops the two columns, and grants the recreated view again. (As shipped, the
 SQL/PGQ property graph over the view was dropped and recreated around it; the
-D98 RC 1 amendment removed it, see p9_42_0063.)
+D98 RC 1 amendment removed it, see p9_43_0064.)
 """
 
 from collections.abc import Sequence

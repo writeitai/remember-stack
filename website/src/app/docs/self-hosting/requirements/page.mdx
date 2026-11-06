@@ -47,9 +47,12 @@ Graviton, Ampere) runs them natively, without emulation:
 Compose pulls both from GitHub Container Registry. It builds an image from
 source (`Dockerfile` or `Dockerfile.postgres`) only when the pull fails, or
 when you pass `--build`. The `19rc1` PostgreSQL image is published by the
-next release; until then the pull fails and Compose builds
-`Dockerfile.postgres` locally. Building PostgreSQL compiles one extension and
-takes a few minutes. The third image, SeaweedFS, is also published for both
+next release. Until then, start a checkout of `main` with
+`docker compose up --build`: without it Compose pulls the published 0.17.2
+engine, whose migrations create SQL/PGQ property graphs that release
+candidate 1 rejects. The `v0.17.2` tag that [Install](/docs/self-hosting/install)
+checks out pairs that engine with its Beta 3 image and needs no build.
+Building PostgreSQL compiles one extension and takes a few minutes. The third image, SeaweedFS, is also published for both
 architectures.
 
 ## PostgreSQL 19 (release candidate)
