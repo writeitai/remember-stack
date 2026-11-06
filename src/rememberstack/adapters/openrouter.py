@@ -8,6 +8,7 @@ import logging
 import os
 from pathlib import Path
 import random
+import re
 import time
 from typing import Any
 from typing import Final
@@ -294,11 +295,13 @@ class OpenRouterProviderError(ProviderCallError):
         usage: ProviderCallUsage | None = None,
         provider_host: str | None = None,
         retryable_unbilled: bool = False,
+        status_code: int | None = None,
     ) -> None:
         """Keep usage for the meter and the serving host for diagnosis."""
         super().__init__(message, usage=usage)
         self.provider_host = provider_host
         self.retryable_unbilled = retryable_unbilled
+        self.status_code = status_code
 
 
 class OpenRouterInvalidResponseError(
@@ -386,6 +389,17 @@ class OpenRouterModelProvider:
                 usage=error.usage,
                 latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
                 provider_host=error.provider_host,
+            )
+            raise
+        except ProviderAccountingError as error:
+            self._record_generation(
+                request=request,
+                response_type_name=response_type.__name__,
+                raw_content=None,
+                outcome="transport_error",
+                error=str(error),
+                usage=None,
+                latency_ms=(time.monotonic_ns() - started_ns) // 1_000_000,
             )
             raise
 
@@ -1299,9 +1313,15 @@ def recover_completion_usage(
             require_output_tokens=True,
         )
     except ProviderAccountingError as inline_error:
+        inline_reason = str(inline_error)
         generation_id = body.get("id")
         if not isinstance(generation_id, str) or not generation_id.strip():
-            raise inline_error
+            raise _completion_accounting_error(
+                body=body,
+                inline_reason=inline_reason,
+                metadata_attempts=0,
+                metadata_error=inline_error,
+            ) from inline_error
         last_error: Exception = inline_error
 
     for delay_s in _GENERATION_USAGE_POLL_DELAYS_S:
@@ -1321,10 +1341,54 @@ def recover_completion_usage(
             ProviderAccountingError,
         ) as error:
             last_error = error
-    raise ProviderAccountingError(
+    raise _completion_accounting_error(
+        body=body,
+        inline_reason=inline_reason,
+        metadata_attempts=len(_GENERATION_USAGE_POLL_DELAYS_S),
+        metadata_error=last_error,
+    ) from last_error
+
+
+def _completion_accounting_error(
+    *,
+    body: dict[str, Any],
+    inline_reason: str,
+    metadata_attempts: int,
+    metadata_error: Exception,
+) -> ProviderAccountingError:
+    """Retain bounded reconciliation identifiers without copying provider content."""
+    raw_id = body.get("id")
+    generation_id = (
+        raw_id
+        if isinstance(raw_id, str) and re.fullmatch(r"[A-Za-z0-9_.:-]{1,200}", raw_id)
+        else None
+    )
+    known_reasons = {
+        "OpenRouter response carries no usage accounting": "missing_usage",
+        "OpenRouter response carries no resolved model identity": "missing_model",
+        "OpenRouter response carries incomplete completion usage accounting": "missing_output_tokens",
+        "OpenRouter response carries invalid usage accounting": "invalid_usage",
+    }
+    status = (
+        metadata_error.status_code
+        if isinstance(metadata_error, OpenRouterProviderError)
+        else None
+    )
+    raw_error = body.get("error")
+    raw_code = raw_error.get("code") if isinstance(raw_error, dict) else None
+    error_code = (
+        raw_code
+        if isinstance(raw_code, int) and not isinstance(raw_code, bool)
+        else None
+    )
+    return ProviderAccountingError(
         "OpenRouter response carries unusable usage accounting and generation"
         " metadata did not recover it"
-    ) from last_error
+        f" (generation_id={generation_id!r}; inline_reason={known_reasons.get(inline_reason, 'other')};"
+        f" metadata_attempts={metadata_attempts}; metadata_status={status};"
+        f" response_error_code={error_code}; has_choices={'choices' in body};"
+        f" has_usage={'usage' in body})"
+    )
 
 
 def read_generation_metadata(
@@ -1338,7 +1402,8 @@ def read_generation_metadata(
     )
     if response.status_code >= 400:
         raise OpenRouterProviderError(
-            f"OpenRouter /generation returned {response.status_code}"
+            f"OpenRouter /generation returned {response.status_code}",
+            status_code=response.status_code,
         )
     try:
         body = response.json()
