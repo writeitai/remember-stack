@@ -1082,3 +1082,47 @@ def test_restore_runtime_command_unsets_parent_overrides(tmp_path: Path) -> None
     assert "REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID" in command
     assert "REMEMBERSTACK_BUILD_REVISION" in command
     assert command[-2:] == ("up", "api")
+
+
+def test_prefeature_backup_restores_with_optional_provider_disabled(
+    tmp_path: Path,
+) -> None:
+    """Historical artifacts without this dimension cannot inherit an ambient backup."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+        if not name.startswith("systemone_backup")
+    }
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+    original = state_path.read_bytes()
+    environment = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    assert environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == ""
+    assert environment["REMEMBERSTACK_OPENAI_DECISIONS_MODEL"] == ""
+    assert state_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("selector", [None, "openai_decisions"])
+def test_partial_backup_binding_cannot_restore_an_implicit_policy(
+    tmp_path: Path, selector: str | None
+) -> None:
+    """Incomplete active policies fail rather than inventing missing configuration."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+        if not name.startswith("systemone_backup")
+    }
+    bindings["systemone_backup_model"] = "gpt-6-luna"
+    if selector is not None:
+        bindings["systemone_backup"] = selector
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+    with pytest.raises(store_backup.StoreBackupError, match="incomplete|no valid"):
+        store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")

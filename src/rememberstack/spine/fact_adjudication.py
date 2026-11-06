@@ -362,22 +362,12 @@ class FactAdjudicator:
             if rejection_note is not None:
                 prompt = f"{prompt}\n\n{rejection_note}"
                 receipt_key = f"{receipt_key}:translator-retry1"
-            try:
-                call = self._provider.generate(
-                    request=ModelRequest(
-                        model=self._settings.model, prompt=prompt, temperature=0.0
-                    ),
-                    response_type=PromptFactDecision,
-                )
-            except ProviderCallError as error:
-                if error.usage is not None:
-                    meter.record(
-                        call_key=f"{base_receipt_key}:failure",
-                        tier="fact_adjudication",
-                        usage=error.usage,
-                        outcome="provider_error",
-                    )
-                raise
+            call = self._provider.generate(
+                request=ModelRequest(
+                    model=self._settings.model, prompt=prompt, temperature=0.0
+                ),
+                response_type=PromptFactDecision,
+            )
             meter.record(
                 call_key=receipt_key, tier="fact_adjudication", usage=call.usage
             )
@@ -509,14 +499,16 @@ class FactAdjudicator:
         except ProviderInvalidResponseError:
             raise
         except ProviderCallError as error:
-            if error.usage is not None:
-                meter.record(
-                    call_key=f"{jev_receipt_key}:failure",
-                    tier="fact_adjudication_jev",
-                    usage=error.usage,
-                    outcome="provider_error",
-                )
             if self._settings.fallback_to_prompt:
+                # This layer owns usage only when it consumes the failure.
+                # Propagated errors are metered once by the worker boundary.
+                if error.usage is not None:
+                    meter.record(
+                        call_key=f"{jev_receipt_key}:failure",
+                        tier="fact_adjudication_jev",
+                        usage=error.usage,
+                        outcome="provider_error",
+                    )
                 _logger.warning(
                     "Jev evaluation failed (%s); falling back to prompt adjudication",
                     error,

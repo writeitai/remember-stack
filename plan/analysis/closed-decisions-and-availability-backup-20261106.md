@@ -42,7 +42,8 @@ unknown; do not mask an accounting failure with a second paid call. The selected
 policy permits connection-establishment failures and documented TypeSafe 429/529
 rejections after bounded retries, excluding any response with answers or usage.
 Read timeouts and generic gateway errors remain ambiguous and do not authorize
-the backup. This narrower policy is chosen over falling back on every error:
+the backup, even when a later attempt ends with a clean connection failure or
+overload rejection. Eligibility covers the full bounded attempt history. This narrower policy is chosen over falling back on every error:
 it preserves configuration failures and potentially billed responses for repair.
 No direct OpenAI key is required for offline
 mock-transport tests; live execution needs the native API credential, separate
@@ -64,3 +65,10 @@ Sources retrieved 2026-11-06:
 - [TypeSafe confidence](https://docs.typesafe.ai/confidence): concentration is not an overall correctness guarantee; thresholds depend on the task.
 - [TypeSafe errors](https://docs.typesafe.ai/api/errors): request errors and explicit rate/overload responses.
 - [OpenAI pricing](https://developers.openai.com/api/docs/pricing): short/long input, cache read/write rates and regional multipliers.
+
+Offline review also found a shared accounting defect: the adjudicator could
+record a usage-bearing error and rethrow it to the worker, which records it
+again under a different key. Keep one owner: the worker meters propagated
+errors; the adjudicator meters only failures it consumes for an explicitly
+enabled prompt fallback. Historical backup metadata without this new optional
+provider dimension means disabled, rather than inheriting ambient settings.

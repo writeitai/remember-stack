@@ -94,6 +94,7 @@ class TypeSafeSystemOneClient(SystemOnePort):
         timeout = timeout_s if timeout_s is not None else self._settings.timeout_s
         retry_delays = (0.5, 1.0, 2.0)
         last_error: Exception | None = None
+        backup_eligible = True
 
         for attempt, delay in enumerate((0.0, *retry_delays)):
             if delay > 0.0:
@@ -104,12 +105,16 @@ class TypeSafeSystemOneClient(SystemOnePort):
                     url, headers=headers, json=payload, timeout=timeout
                 )
             except (httpx.TimeoutException, httpx.NetworkError) as error:
+                connection_failure = isinstance(
+                    error, (httpx.ConnectError, httpx.ConnectTimeout)
+                )
+                backup_eligible = backup_eligible and connection_failure
                 last_error = error
                 if attempt < len(retry_delays):
                     continue
                 error_type = (
                     TypeSafeUnavailableError
-                    if isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout))
+                    if backup_eligible
                     else TypeSafeProviderError
                 )
                 raise error_type(
@@ -136,8 +141,11 @@ class TypeSafeSystemOneClient(SystemOnePort):
                 unavailable = response.status_code in (429, 529) and isinstance(
                     rejected, dict
                 )
+                backup_eligible = backup_eligible and unavailable
                 error_type = (
-                    TypeSafeUnavailableError if unavailable else TypeSafeProviderError
+                    TypeSafeUnavailableError
+                    if backup_eligible
+                    else TypeSafeProviderError
                 )
                 last_error = error_type(
                     f"TypeSafe returned {response.status_code}: {response.text}"

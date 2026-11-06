@@ -493,8 +493,28 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
         return dict(profile.ingest_environment)
 
     environment: dict[str, str] = {}
+    backup = bindings.get("systemone_backup")
+    backup_fields = {
+        name
+        for name in MODEL_BINDING_ENVIRONMENT
+        if name.startswith("systemone_backup_")
+    }
+    if backup is None:
+        if backup_fields & set(bindings):
+            raise StoreBackupError("saved readiness has an incomplete backup policy")
+        # Absence of the entire optional dimension predates the backup feature.
+        # Its recorded source had no backup; never activate one during restore.
+        backup = "none"
+    if backup not in ("none", "openai_decisions"):
+        raise StoreBackupError("saved readiness has an unknown backup policy")
     for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
         value = bindings.get(binding)
+        if (
+            value is None
+            and binding.startswith("systemone_backup")
+            and backup == "none"
+        ):
+            value = UNSET_MODEL_BINDINGS[binding]
         if not isinstance(value, str) or not value:
             raise StoreBackupError(f"saved readiness has no valid {binding} binding")
         normalized = "" if value == UNSET_MODEL_BINDINGS.get(binding) else value

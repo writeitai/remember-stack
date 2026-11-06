@@ -415,3 +415,64 @@ def test_readiness_records_backup_binding_without_credential(
     assert bindings["systemone_backup_model"] == "gpt-6-luna"
     assert bindings["systemone_backup_input_usd_per_million"] == "0.10"
     assert "do-not-disclose" not in json.dumps(bindings)
+
+
+@pytest.mark.parametrize("primitive", ["choice", "score"])
+def test_native_accepts_omitted_zero_probability_options(primitive: str) -> None:
+    """A sparse unit-sum distribution loses no mass or supplied choice semantics."""
+    body = _body()
+    answer = body["answers"][0 if primitive == "choice" else 2]
+    answer["probabilities"] = [
+        {"value": "NEW" if primitive == "choice" else 1, "probability": 1.0}
+    ]
+    if primitive == "score":
+        answer["score"] = 1.0
+    client = _native(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=body))
+    )
+    try:
+        answers, usage = client.evaluate(state={}, questions=_QUESTIONS)
+    finally:
+        client.close()
+    assert answers["match"]["choice"] == "NEW"
+    assert usage.cost_usd == Decimal("0.0001")
+
+
+@pytest.mark.parametrize("first_failure", ["read_timeout", "gateway"])
+@pytest.mark.parametrize("later_failure", ["connect", "overload"])
+def test_ambiguous_primary_attempt_cannot_be_overridden_by_clean_later_failure(
+    monkeypatch: pytest.MonkeyPatch, first_failure: str, later_failure: str
+) -> None:
+    """Backup requires the entire primary retry history to be safely unbilled."""
+    monkeypatch.setattr("rememberstack.adapters.typesafe.time.sleep", lambda _: None)
+    attempts = 0
+
+    def primary_request(request: httpx.Request) -> httpx.Response:
+        """Lose one potentially accepted response, then return clean failures."""
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            if first_failure == "read_timeout":
+                raise httpx.ReadTimeout("response lost", request=request)
+            return httpx.Response(502, json={"error": "gateway"})
+        if later_failure == "connect":
+            raise httpx.ConnectError("unavailable", request=request)
+        return httpx.Response(529, json={"error": "overloaded"})
+
+    primary = TypeSafeSystemOneClient(
+        settings=TypeSafeSettings(api_key="primary-test"),
+        client=httpx.Client(transport=httpx.MockTransport(primary_request)),
+    )
+    backup = _native(
+        transport=httpx.MockTransport(lambda _: pytest.fail("unsafe backup"))
+    )
+    provider = AvailabilityFallbackSystemOne(
+        primary=primary, backup=backup, backup_model="gpt-6-luna"
+    )
+    try:
+        with pytest.raises(TypeSafeProviderError):
+            provider.evaluate(state={}, questions=_QUESTIONS)
+    finally:
+        primary.close()
+        backup.close()
+    assert attempts == 4

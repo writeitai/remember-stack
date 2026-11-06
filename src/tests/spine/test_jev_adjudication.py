@@ -18,6 +18,7 @@ from rememberstack.adapters.typesafe import TypeSafeSettings
 from rememberstack.adapters.typesafe import TypeSafeSystemOneClient
 from rememberstack.core.concise_adjudication import project_concise_inputs
 from rememberstack.model import ProviderAccountingError
+from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
 from rememberstack.model import ProviderInvalidResponseError
 from rememberstack.model.concise_adjudication import PromptFactDecision
@@ -35,6 +36,7 @@ from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION
 from rememberstack.spine.fact_adjudication import RELATION_APPLICATION_VERSION_JEV
 from rememberstack.spine.fact_applications import PreparedApplication
 from rememberstack.spine.fact_applications import snapshot_hash
+from rememberstack.workers.base import Worker
 
 
 class _MockCostMeter(CostMeterPort):
@@ -882,7 +884,16 @@ def test_adjudicate_jev_fallback_to_prompt_on_provider_error() -> None:
     presentation, mapping = project_concise_inputs(snapshot=snap)
 
     mock_client = _MockSystemOneClient(
-        error=TypeSafeProviderError("TypeSafe upstream 503 unavailable")
+        error=TypeSafeProviderError(
+            "TypeSafe upstream 503 unavailable",
+            usage=ProviderCallUsage(
+                model_name="typesafe/jev-latest",
+                cost_usd=Decimal("0.000008"),
+                tokens_in=200,
+                tokens_out=15,
+                latency_ms=120,
+            ),
+        )
     )
     mock_prompt_provider = _MockModelProvider()
     meter = _MockCostMeter()
@@ -912,6 +923,8 @@ def test_adjudicate_jev_fallback_to_prompt_on_provider_error() -> None:
     assert len(mock_prompt_provider.calls) == 1
     assert decision.confidence == 0.95
     assert "Fallback prompt decision" in decision.rationale
+    assert [record[3] for record in meter.records] == ["provider_error", "ok"]
+    assert sum(record[2].cost_usd for record in meter.records) == Decimal("0.005008")
 
 
 def test_adjudicate_jev_invalid_stance_raises_provider_invalid_response_error() -> None:
@@ -1029,3 +1042,62 @@ def test_adjudicate_jev_invalid_response_does_not_fallback_to_prompt() -> None:
 
     # Fallback prompt provider was never called
     assert len(mock_prompt_provider.calls) == 0
+
+
+@pytest.mark.parametrize("engine", ["prompt", "jev"])
+@pytest.mark.parametrize(
+    "error_type", [ProviderCallError, ProviderInvalidResponseError]
+)
+def test_propagated_adjudication_error_is_metered_once_at_worker_boundary(
+    monkeypatch: pytest.MonkeyPatch, engine: str, error_type: type[ProviderCallError]
+) -> None:
+    """An invalid paid response must not be charged by both adjudicator and worker."""
+    usage = ProviderCallUsage(
+        model_name="openai-decisions/gpt-6-luna",
+        tokens_in=1000,
+        tokens_out=12,
+        cost_usd=Decimal("0.0001"),
+        latency_ms=25,
+    )
+    error = error_type("invalid paid response", usage=usage)
+    snap = _sample_snapshot(with_candidate=True)
+    presentation, mapping = project_concise_inputs(snapshot=snap)
+    prompt_provider = _MockModelProvider()
+
+    def failed_generate(*, request: Any, response_type: type[Any]) -> Any:
+        """Return the same paid failure from the generative provider boundary."""
+        del request, response_type
+        raise error
+
+    monkeypatch.setattr(prompt_provider, "generate", failed_generate)
+    adjudicator = FactAdjudicator(
+        engine=None,  # type: ignore[arg-type]
+        model_provider=prompt_provider,  # type: ignore[arg-type]
+        settings=FactAdjudicationSettings(engine=engine),  # type: ignore[arg-type]
+        systemone_provider=_MockSystemOneClient(error=error),
+    )
+    prepared = PreparedApplication(
+        application_id=UUID(snap["application"]["application_id"]),
+        attempt_id=uuid4(),
+        input_hash="same-input",
+        inputs=snap,
+        decision=None,
+    )
+    meter = _MockCostMeter()
+    adjudicate = (
+        adjudicator._adjudicate_jev
+        if engine == "jev"
+        else adjudicator._adjudicate_prompt
+    )
+    with pytest.raises(error_type) as failure:
+        adjudicate(
+            prepared=prepared,
+            presentation=presentation,
+            mapping=mapping,
+            meter=meter,
+            call_key="paid-attempt",
+        )
+    Worker._record_failed_provider_usage(meter=meter, exception=failure.value)
+    assert meter.records == [
+        ("provider_failure", "failed_response", usage, "provider_error")
+    ]

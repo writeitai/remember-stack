@@ -337,11 +337,11 @@ def _probabilities(
         if key in result or key not in expected:
             raise ValueError("Duplicate or unsupplied probability option")
         result[key] = _unit(value=entry["probability"])
-    if set(result) != expected or not math.isclose(
-        sum(result.values()), 1, abs_tol=1e-6
-    ):
+    if not math.isclose(sum(result.values()), 1, abs_tol=1e-6):
         raise ValueError("The probability distribution does not cover the question")
-    return result
+    # A complete unit sum leaves zero probability for omitted supplied options.
+    # Arbitrary incomplete distributions still fail instead of being normalized.
+    return {key: result.get(key, 0.0) for key in expected}
 
 
 def _systemone_answers(

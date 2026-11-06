@@ -63,9 +63,10 @@ The System One adjudication policy can use an explicit availability backup.
 adapter behind the same `SystemOnePort`. This is a substrate change, not a
 generative-prompt fallback. The existing `fallback_to_prompt` option is separate.
 
-After TypeSafe's bounded attempts, only connection-establishment failures and
-documented HTTP 429/529 rejections with no answer or usage fields authorize one
-backup request. Authentication/configuration failures, invalid questions,
+After TypeSafe's bounded attempts, the entire attempt history must contain only
+connection-establishment failures or documented HTTP 429/529 rejections with no
+answer or usage fields to authorize one backup request. A later clean rejection
+does not erase an earlier ambiguous failure. Authentication/configuration failures, invalid questions,
 ambiguous read timeouts, generic gateway errors, malformed completed replies,
 and unknown accounting do not authorize backup. A valid uncertain answer is
 accepted by the existing confidence policy, not sent to a second provider to
@@ -75,7 +76,10 @@ there is no provider cycle or automatic primary switching across requests.
 The native adapter supports Choice, Noul-to-predicate, and Score, preserving
 the complete supplied criteria and ordered levels. It rejects unsupported
 primitives or request shapes before HTTP. Validate response names, types,
-closed choices, complete probability distributions and numeric bounds locally.
+closed choices, unit-sum probability distributions and numeric bounds locally.
+Omitted supplied options have zero probability only when the reported entries
+already sum to one within numerical tolerance; never normalize missing mass.
+Score levels use the documented zero-based indices and weighted mean.
 Provider refusal is an invalid typed result, not a fabricated answer. Confidence
 and probability distributions are preserved. Equal confidence values from
 different providers are not a proven equivalent error rate: evaluate labeled
@@ -107,6 +111,9 @@ assumed zero cost. Preserve parsed usage on invalid answers or error responses;
 missing/inconsistent accounting raises nonretryable `ProviderAccountingError`.
 
 The readiness binding records backup selection and its non-secret configuration.
+A historical artifact lacking this entire optional dimension restores with backup
+disabled; partial active policies fail validation. This reads historical metadata
+without retaining an obsolete runtime implementation or rewriting its identity.
 Current LoCoMo explicitly freezes backup to `none`; changing its provider policy
 requires a new prepared identity. Accepted facts, extraction products and vectors
 are not reprocessed by adding an unused adapter. No extractor, normalizer,
@@ -425,14 +432,20 @@ not collide with the Jev attempt key.
 The TypeSafe client constructs the real, canonical `ProviderCallUsage`:
 - If TypeSafe returns a response lacking `usage` or `input_tokens`, it raises
   `ProviderAccountingError("TypeSafe response carries no token usage")`.
-- `model_name = f"typesafe/{settings.model}"` (e.g. `"typesafe/jev-latest"`)
+- `model_name` uses the reported serving model in the `typesafe/` namespace,
+  falling back to the requested model only when the provider omits its model name.
 - `tokens_in = int(usage["input_tokens"])`
 - `tokens_out = int(usage.get("output_tokens", 0))`
-- `cost_usd = Decimal(str(round(Decimal(tokens_in) * Decimal("0.000000042"), 6)))`
+- `cost_usd = Decimal(tokens_in) * Decimal("0.000000042")`, without
+  pre-persistence rounding that could erase small calls.
 
   (TypeSafe pricing table: $0.042 per 1M input tokens, output tokens free).
 - `latency_ms = int(elapsed_s * 1000)`
 Recorded via `meter.record(call_key=f"{base_receipt_key}:jev", tier="fact_adjudication_jev", usage=usage)`.
+A propagated usage-bearing provider error is recorded once by the worker boundary.
+The adjudicator records failed usage itself only when it consumes the error to
+perform the explicitly configured generative-prompt fallback; that subsequent
+call has its own receipt. Invalid native answers follow the same ownership rule.
 
 ---
 

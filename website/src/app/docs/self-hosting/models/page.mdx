@@ -120,6 +120,8 @@ With `REMEMBERSTACK_FACT_ADJUDICATION_ENGINE=jev`, Jev stays primary. Set
 after exhausted connection-establishment, rate-limit (429), or overload (529)
 failures. The default is `none`. The backup uses `gpt-6-luna` on OpenAI's native
 API; OpenRouter credit does not pay for it.
+Outside Compose, `OPENAI_API_KEY` is also accepted. Compose forwards only the
+prefixed credential, so set that variable for container deployments.
 
 Valid low confidence, invalid credentials, malformed answers, ambiguous read
 timeouts, generic gateway errors and missing usage do not trigger the backup.
