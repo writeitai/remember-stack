@@ -16,6 +16,7 @@ from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from pydantic_settings import SettingsConfigDict
 
+from rememberstack.core.object_transfer import record_object_transfer
 from rememberstack.core.storage_routing import COLD
 from rememberstack.core.storage_routing import HOT
 from rememberstack.model import ObjectAlreadyExistsError
@@ -163,9 +164,11 @@ class MinIOObjectStore:
             raise
         body = response["Body"]
         try:
-            return body.read()
+            content = body.read()
         finally:
             body.close()
+        record_object_transfer(bytes_read=len(content))
+        return content
 
     def write_bytes(
         self, *, key: ObjectKey, content: bytes, storage_class: str
@@ -174,6 +177,8 @@ class MinIOObjectStore:
         if storage_class not in {HOT, COLD}:
             raise ValueError("invalid storage class")
         metadata = {"storage-class": storage_class}
+        # Counted as sent: a put refused because the key exists still uploaded.
+        record_object_transfer(bytes_written=len(content))
         try:
             self._client.put_object(
                 Bucket=self._bucket,
