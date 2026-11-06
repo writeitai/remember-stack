@@ -3900,3 +3900,27 @@ def test_an_entity_seen_only_in_superseded_content_stays_a_member(
     assert published[0]["live_mention_count"] == 0
     assert published[0]["live_document_count"] == 0
     assert rows == 0
+
+
+def test_identity_reads_skip_unrequested_entity_count_aggregates(
+    corpus: _Corpus,
+) -> None:
+    """Visibility-only readers must not recalculate current-content statistics."""
+    plans: dict[str, str] = {}
+    with corpus.engine.connect() as connection:
+        for name, columns in (
+            ("identity", "entity_id, canonical_name"),
+            ("counts", "entity_id, live_mention_count, live_document_count"),
+        ):
+            plan = connection.execute(
+                text(
+                    "EXPLAIN (VERBOSE, FORMAT JSON) SELECT "
+                    + columns
+                    + " FROM memory_v1.entities_current"
+                    + " WHERE deployment_id = :deployment AND entity_id = :entity"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "entity": corpus.entity["alice"]},
+            ).scalar_one()
+            plans[name] = json.dumps(plan).lower()
+    assert "sum(" not in plans["identity"]
+    assert "sum(" in plans["counts"]

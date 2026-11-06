@@ -583,10 +583,15 @@ as today.
 
 - **No configuration, no change.** Without a configuration row: no gap rows, no held work, the same
   chain, component versions and readiness list; every response, `GET /operations` descriptor,
-  `GET /deployment` body, MCP catalogue and tool schema, the query-surface manifest and its hash are
-  byte-identical.
+  `GET /deployment` body, MCP catalogue and tool schema are byte-identical. Layer
+  configuration itself does not change the query-surface manifest or its hash.
+  Independent schema changes follow D89 publication: p9_42 replaces an entity
+  view join and rolls the current manifest identity, while preserving the
+  other pre-D143 default captures.
 - **LoCoMo** runs with every layer enabled and is unaffected: its readiness gate, model bindings,
-  surface manifest hash and catalogue hash stay as pinned.
+  catalogue hash stay as pinned. Its current surface pin follows independently
+  accepted schema changes; p9_42 advances that pin without changing ingestion
+  generations or model bindings.
 - **Clients.** The request parameter is optional and the new route is additive; no response model
   changes, so clients of either age read every response. The Python SDK and TypeScript client gain
   the parameter and the route together (D141 parity).
@@ -598,9 +603,10 @@ database-level, with recorded or fake model providers:
 
 1. **Defaults are byte-identical.** With no configuration: the readiness stage list and component
    versions; the serialized `GET /operations`, `GET /deployment`, an operation response of each
-   assured operation, both MCP tool lists with input schemas; the regenerated query-surface manifest
-   and its hash; the LoCoMo protocol pins (`benchmarks/locomo/protocol.py`) — all equal the
-   pre-D143 values. No configuration row or gap row is written.
+   assured operation and both MCP tool lists with input schemas all equal the
+   pre-D143 values. The manifest capture pins the current approved view identity
+   (its three hash fields are updated for p9_42), and LoCoMo pins that identity
+   through its current protocol. No configuration row or gap row is written.
 2. **Facts off.** A version ingests to `ready` with the claims-mode reconcile; no E3 stage row and no
    E3 provider call exist; a living lineage that drops a paragraph retires that paragraph's claims;
    claim search returns only current testimony; a version that completed the full pipeline before

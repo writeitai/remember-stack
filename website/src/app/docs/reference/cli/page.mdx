@@ -54,13 +54,18 @@ For remember.dev:
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`documents`, `mcp`, `connectors`, `doctor`) accepts the same three flags:
+`documents`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
 
 | Flag | Meaning |
 |---|---|
+| `--timeout SECONDS` | HTTP request timeout for SDK-backed commands; overrides `REMEMBER_TIMEOUT`, default 300 seconds. Set above the combined server database budgets. |
 | `--api-url URL` | The deployment address. |
 | `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
 | `--project PROJECT` | Which project to use, by id or name, when the key covers several.<Cloud> Only a remember.dev key uses it.</Cloud> |
+
+The `doctor` health probe keeps its short five-second check. Remote MCP bridge
+mode uses its fixed 300-second timeout; `--timeout` and `REMEMBER_TIMEOUT` apply
+to the local-engine MCP path.
 
 Put flags after the subcommand: `remember query sql --api-url … "SELECT 1"`.
 

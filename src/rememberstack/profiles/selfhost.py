@@ -36,6 +36,8 @@ import sqlalchemy
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
+from remember.retrieval import MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from rememberstack.adapters import BoundedPostgresReadPool
 from rememberstack.adapters import OpenRouterModelProvider
 from rememberstack.adapters import OpenRouterSettings
@@ -254,6 +256,12 @@ class SelfHostSettings(BaseSettings):
     retrieval_pool_size: int = Field(default=4, ge=1, le=32)
     retrieval_pool_timeout_s: float = Field(default=1.0, gt=0, le=30)
     retrieval_max_concurrency: int = Field(default=4, ge=1, le=32)
+    retrieval_database_budget_s: float = Field(
+        default=DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS,
+        gt=0,
+        le=MAX_RETRIEVAL_DATABASE_BUDGET_SECONDS,
+        allow_inf_nan=False,
+    )
 
     @model_validator(mode="after")
     def graph_concurrency_fits_pool(self) -> Self:
@@ -1298,6 +1306,7 @@ class SelfHostProfile:
             model_provider=self._model_provider,
             embedding_model=embedding_model,
             fact_read_pool=retrieval_reads,
+            database_budget_seconds=self._settings.retrieval_database_budget_s,
             surface_cost=surface_cost,
         )
         from rememberstack.spine.processing_layers import (  # noqa: PLC0415

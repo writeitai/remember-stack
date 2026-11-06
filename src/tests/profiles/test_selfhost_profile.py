@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from unittest.mock import MagicMock
 from uuid import UUID
 from uuid import uuid4
 
@@ -500,3 +501,58 @@ def test_retired_model_settings_are_gone_from_compose_and_env_example() -> None:
     ):
         assert name not in compose
         assert name not in example
+
+
+@pytest.mark.parametrize("budget", [0.0, -1.0, 3601.0, float("inf"), float("nan")])
+def test_retrieval_database_budget_rejects_unbounded_values(budget: float) -> None:
+    """The operator cannot accidentally disable the operation deadline."""
+    with pytest.raises(ValidationError, match="retrieval_database_budget_s"):
+        SelfHostSettings(deployment_id=uuid4(), retrieval_database_budget_s=budget)
+
+
+def test_retrieval_database_budget_is_environment_configurable_and_deployment_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit deployment policy wins without mutating another deployment."""
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S", "240")
+    from_env = SelfHostSettings(deployment_id=uuid4())
+    explicit = SelfHostSettings(deployment_id=uuid4(), retrieval_database_budget_s=75)
+    assert from_env.retrieval_database_budget_s == 240
+    assert explicit.retrieval_database_budget_s == 75
+
+
+@pytest.mark.parametrize("budget", [0.0, -1.0, 3601.0, float("inf"), float("nan")])
+def test_query_engine_rejects_invalid_database_budget(budget: float) -> None:
+    """Direct library composition enforces the same finite positive contract."""
+    from rememberstack.surfaces import QueryEngine
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        QueryEngine(
+            engine=MagicMock(),
+            search_index=MagicMock(),
+            model_provider=MagicMock(),
+            embedding_model="budget-test",
+            database_budget_seconds=budget,
+        )
+
+
+def test_query_engine_database_budget_does_not_leak_between_instances() -> None:
+    """Two deployments can choose different deadlines in the same process."""
+    from rememberstack.surfaces import QueryEngine
+
+    first = QueryEngine(
+        engine=MagicMock(),
+        search_index=MagicMock(),
+        model_provider=MagicMock(),
+        embedding_model="budget-test",
+        database_budget_seconds=240,
+    )
+    second = QueryEngine(
+        engine=MagicMock(),
+        search_index=MagicMock(),
+        model_provider=MagicMock(),
+        embedding_model="budget-test",
+        database_budget_seconds=75,
+    )
+    assert first.database_budget_seconds == 240
+    assert second.database_budget_seconds == 75

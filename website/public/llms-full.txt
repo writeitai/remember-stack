@@ -4646,8 +4646,8 @@ One fact-context result carries at most `max(60, 2*k)` evidence links in
 total. Allocation gives every selected fact its available supporting and
 contradicting evidence before adding deeper evidence, within
 `evidence_per_fact` per stance (fixed at 3 for `combined_context`).
-Fact retrieval has a 25-second
-database budget; if the database cannot answer inside it you get a
+Fact retrieval has a configurable database budget (default 120 seconds;
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`); if the database cannot answer inside it you get a
 `boundary` result, not a partial one.
 
 ## Call it from Python
@@ -13321,7 +13321,8 @@ more) have been confirmed, and their evidence is attached — up to
 of `max(60, 2*k)`. Evidence is allocated across every selected fact and both
 stances before additional claims are attached to earlier facts.
 
-The operation has a 25-second database budget. If it runs out, or the live
+The operation has a configurable database budget (default 120 seconds;
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`). If it runs out, or the live
 graph or search index cannot answer, the result is `negative.kind`
 `boundary` with an explanation, never a silently smaller answer.
 
@@ -16213,7 +16214,7 @@ Client(
     api_key: str | None = None,
     base_url: str | None = None,
     project: str | None = None,
-    timeout: float = 30.0,
+    timeout: float = 300.0,
     client: httpx.Client | None = None,
     transport: httpx.BaseTransport | None = None,
 )
@@ -16226,7 +16227,7 @@ All parameters are keyword-only.
 | `api_key` | The API key. A bare key or a full `Bearer …` value. |
 | `base_url` | The deployment address. |
 | `project` | Which project to use, by id or name, when the key covers several. |
-| `timeout` | Seconds per HTTP request. Default 30. |
+| `timeout` | Seconds per HTTP request. Default 300. |
 | `client` | An `httpx.Client` you built yourself, with its own address and headers. It cannot be combined with any other parameter, and nothing is resolved. The SDK does not close a client you pass in. |
 | `transport` | An `httpx` transport to use instead of the network (for tests or a proxy). |
 
@@ -17470,7 +17471,7 @@ import { Client } from '@rememberdev/client';
 const client = new Client({
   apiKey: process.env.REMEMBER_API_KEY,
   baseUrl: 'http://127.0.0.1:8000',
-  timeoutMs: 30_000,
+  timeoutMs: 300_000,
 });
 try {
   const info = await client.deploymentBuildInfo();
@@ -17658,7 +17659,7 @@ npm connector libraries on the client machine.
 
 ## Transport and errors
 
-Ordinary requests default to `timeoutMs: 30_000`. Caller cancellation raises
+Ordinary requests default to `timeoutMs: 300_000`. Caller cancellation raises
 AbortError with the signal reason; an HTTP deadline raises RequestTimeoutError;
 readiness expiry raises TimeoutError with its last report. These are distinct.
 
@@ -17819,13 +17820,18 @@ standalone tool; `uvx remember …` runs it without installing.
 ## How the CLI finds your deployment
 
 Every command that talks to a deployment (`ingest`, `query`, `operations`,
-`documents`, `mcp`, `connectors`, `doctor`) accepts the same three flags:
+`documents`, `mcp`, `connectors`, `doctor`) accepts the same connection and request flags:
 
 | Flag | Meaning |
 |---|---|
+| `--timeout SECONDS` | HTTP request timeout for SDK-backed commands; overrides `REMEMBER_TIMEOUT`, default 300 seconds. Set above the combined server database budgets. |
 | `--api-url URL` | The deployment address. |
 | `--api-key KEY` | The API key. A bare key or a full `Bearer …` value. |
 | `--project PROJECT` | Which project to use, by id or name, when the key covers several. |
+
+The `doctor` health probe keeps its short five-second check. Remote MCP bridge
+mode uses its fixed 300-second timeout; `--timeout` and `REMEMBER_TIMEOUT` apply
+to the local-engine MCP path.
 
 Put flags after the subcommand: `remember query sql --api-url … "SELECT 1"`.
 
@@ -19160,6 +19166,7 @@ default; see [Processing layers](https://remember.dev/docs/concepts/pipeline#pro
 | `REMEMBERSTACK_SELFHOST_WORKER_BURST` | `20.0` | float ≥ 1 | Claim burst per worker process. |
 | `REMEMBERSTACK_SELFHOST_WORKER_FALLBACK_POLL_S` | `5.0` | float > 0 | Poll interval when no notification arrives. |
 | `REMEMBERSTACK_SELFHOST_WORKER_SESSION_S` | `3600.0` | float > 0 | Length of one worker session. |
+| `REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S` | `120.0` | finite float > 0, max 3600 | One retrieval operation’s database deadline, including admission and nested reads. Combined context has two independently bounded children; allow their sum plus overhead in client/proxy timeouts (e.g. `MemoryClient(..., timeout=300)`). Expiry is an incomplete `boundary`, not evidence that nothing exists. Larger values hold a read slot and snapshot longer. |
 | `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE` | `4` | int 1–32 | Connections for retrieval in the API. |
 | `REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S` | `1.0` | float, max 30 | Wait for a retrieval connection. |
 | `REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY` | `4` | int 1–32, ≤ pool size | Retrievals at once. |

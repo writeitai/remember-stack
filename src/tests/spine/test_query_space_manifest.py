@@ -14,6 +14,9 @@ import json
 import pytest
 
 from rememberstack.spine import CANONICAL_OPERATIONS
+from rememberstack.spine.migrations.versions.p9_42_0063_entity_counts_demand import (
+    ENTITIES_DEMAND_COUNTS_DDL,
+)
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
 from rememberstack.spine.query_space import build_manifest
@@ -407,3 +410,11 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
     assert len(EXECUTED_TARGETS) + len(deferred) == len(DELETION_TARGETS)
     for target in deferred:
         assert target.executed_in in {"C", "D"}
+
+
+def test_latest_entity_view_definition_is_part_of_the_surface_identity() -> None:
+    """A migration's actual view definition must match the published fingerprint."""
+    statement = ENTITIES_DEMAND_COUNTS_DDL.split("COMMENT ON VIEW", maxsplit=1)[0]
+    assert AUTHORED_VIEWS["entities_current"].definition_ast == serialize_definition(
+        authored_definition=statement
+    )

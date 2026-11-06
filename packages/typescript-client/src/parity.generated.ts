@@ -43,7 +43,7 @@ export default {
     },
     "MemoryClient": {
       "__init__": {
-        "arguments": "self, *, api_key: str | None=None, base_url: str | None=None, project: str | None=None, timeout: float=30.0, client: httpx.Client | None=None, transport: httpx.BaseTransport | None=None",
+        "arguments": "self, *, api_key: str | None=None, base_url: str | None=None, project: str | None=None, timeout: float=300.0, client: httpx.Client | None=None, transport: httpx.BaseTransport | None=None",
         "property": false,
         "returns": "None",
         "typescriptOptions": "{apiKey?, baseUrl?, project?, timeoutMs?, client?: HttpClient, transport?: HttpTransport, agents?: {http?: NodeHttpAgent, https?: NodeHttpsAgent}}"

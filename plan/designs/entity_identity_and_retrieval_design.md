@@ -730,7 +730,25 @@ context attempt without silently choosing one candidate. That harness policy
 improves benchmark degradation while leaving library ambiguity explicit and
 does not substitute for identity convergence.
 
-The default operation has one absolute 25-second PostgreSQL budget. Pool
+Read-side name resolution materializes its distinct current-alias candidate
+IDs before hydrating each through a correlated current-entity authority lookup.
+The hydration query uses a planning barrier (`OFFSET 0`) to preserve that order.
+This prevents repeated full authority-view expansion; it does not cap exact
+homonyms, bypass provenance checks, or change fuzzy/phonetic ordering.
+
+The default operation has one absolute PostgreSQL budget, configurable per
+engine instance with a finite positive `database_budget_seconds` (starting
+default: 120 seconds, maximum 3600 seconds). The stock profile reads
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`; an explicit library
+`EngineSettings.deployment.retrieval_database_budget_s` overrides that process
+environment for its own deployment. Clients and proxies must allow more than
+this budget. `combined_context` runs two independently bounded children, so
+its transport must allow their sum plus overhead (for example, a 300-second
+client timeout for two 120-second budgets).
+The Python and TypeScript SDKs and the CLI default to a 300-second request
+timeout. The CLI accepts `--timeout` and `REMEMBER_TIMEOUT`. Operators raising
+the database budget must raise their client and proxy timeouts accordingly.
+This read policy never changes ingestion or paid-product reuse. Pool
 admission, P1 channel-readiness checks, semantic fact nomination, optional
 entity-profile rescue, anchor/neighbor authority checks, graph expansion, and
 fact/evidence confirmation all consume that same deadline. P1 reads and fact

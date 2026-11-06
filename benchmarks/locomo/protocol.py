@@ -41,14 +41,14 @@ ADAPTER_VERSION: Final = "locomo-full-adapter-2026.10-configurable-retrieval-v39
 MAX_TOOL_CALLS: Final = 8
 MAX_AGENT_CALLS: Final = 9
 ANSWER_READER_RETRY_BUDGET: Final = 2
-API_TIMEOUT_SECONDS: Final = 180.0
-"""Transport budget for compound retrieval, larger than the server DB budget."""
+API_TIMEOUT_SECONDS: Final = 300.0
+"""Transport budget covering both independently bounded combined-context children."""
 EXPECTED_DOCUMENT_BINDING_GENERATION: Final = "document-t0-v1"
 EXPECTED_PROMPT_RENDERER_VERSION: Final = "concise-handles-2"
 """Concise adjudication projector/response-adapter generation (D121/D123)."""
 
 EXPECTED_SURFACE_MANIFEST_HASH: Final = (
-    "f8a6e2e20e404fd14d0963cbd4f5808ca0b19882356b5c1f21b2e9397b0a03d2"
+    "9f02973aa7ccf1484b4e4c50cf5318a1065f1a2efe7bccdc0c1776949ae6440f"
 )
 EXPECTED_PIPELINE_STAGES: Final = (
     "convert",
@@ -150,6 +150,7 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
 )
 INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
     {
+        "REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S": "120",
         **dict.fromkeys(
             (
                 "REMEMBERSTACK_STRUCTURER_MODEL",

@@ -764,3 +764,13 @@ def test_chat_routing_transport_settings_leave_fingerprints_stable(
 
     assert tool_catalog_sha256() == baseline_catalog
     assert EXPECTED_SURFACE_MANIFEST_HASH == baseline_surface
+
+
+def test_execution_profile_freezes_server_and_compound_transport_budgets() -> None:
+    """A new run records enough transport time for both bounded child reads."""
+    profile = PROTOCOL_REGISTRY[DEFAULT_PROTOCOL_KEY].execution_profile
+    assert (
+        profile.ingest_environment["REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S"]
+        == "120"
+    )
+    assert profile.api_timeout_seconds > 2 * 120

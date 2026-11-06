@@ -154,7 +154,7 @@ class MemoryClient:
         api_key: str | None = None,
         base_url: str | None = None,
         project: str | None = None,
-        timeout: float = 30.0,
+        timeout: float = 300.0,
         client: httpx.Client | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:

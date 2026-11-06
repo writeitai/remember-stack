@@ -84,7 +84,7 @@ export function transportError({ error }: { error: unknown }): MemoryApiError | 
 }
 
 /** Bound routing, network and body reads; a caller abort keeps its own identity. */
-export async function bounded<T>({ work, signal, timeoutMs = 30000, controllers }: {
+export async function bounded<T>({ work, signal, timeoutMs = 300000, controllers }: {
   work: (signal: AbortSignal) => Promise<T>;
   signal?: AbortSignal;
   timeoutMs?: number;

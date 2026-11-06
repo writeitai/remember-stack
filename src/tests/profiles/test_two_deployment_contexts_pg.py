@@ -176,6 +176,9 @@ def profiles(
         built[deployment_id] = SelfHostProfile(
             settings=SelfHostSettings(
                 deployment_id=deployment_id,
+                retrieval_database_budget_s=75
+                if deployment_id == _DEPLOYMENT_A
+                else 240,
                 forget_manifest_root=root / "forget",
                 projection_work_root=root / "projection",
             ),
@@ -211,6 +214,9 @@ def test_two_contexts_keep_requests_and_tasks_in_their_own_database(
         str(deployment_id): profile.api_deployment()
         for deployment_id, profile in profiles.items()
     }
+
+    assert contexts[str(_DEPLOYMENT_A)].engine.database_budget_seconds == 75
+    assert contexts[str(_DEPLOYMENT_B)].engine.database_budget_seconds == 240
 
     def per_request(request: Request) -> ApiDeployment:
         return contexts[request.headers["x-deployment"]]

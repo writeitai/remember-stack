@@ -151,7 +151,7 @@ class RunConfiguration(FrozenModel):
     max_tool_calls_per_question: Literal[8] = 8
     max_agent_calls_per_question: Literal[9] = 9
     answer_reader_retry_budget: Literal[2] = 2
-    api_timeout_seconds: float = Field(default=180.0, gt=0)
+    api_timeout_seconds: float = Field(default=300.0, gt=0)
     knowledge_mode: Literal["not_composed"] = "not_composed"
     document_binding_generation: Literal["document-t0-v1"] = "document-t0-v1"
     answer_agent_model: AnswerAgentModel = "openai/gpt-6-luna"

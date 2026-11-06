@@ -70,7 +70,7 @@ export class MemoryClient {
   protected readonly timeoutMs:number; protected readonly controllers=new Set<AbortController>();
   readonly #route:EngineRoute|null; #closed=false;
   /** Resolve settings or accept a caller-owned adapter unchanged. */
-  constructor({apiKey,baseUrl,project,timeoutMs=30000,client,transport,agents}:ClientOptions={}) {
+  constructor({apiKey,baseUrl,project,timeoutMs=300000,client,transport,agents}:ClientOptions={}) {
     if(!Number.isFinite(timeoutMs)||timeoutMs<=0||timeoutMs>2147483647)throw new InputValidationError({detail:'timeoutMs must be positive, finite and at most 2147483647'});
     this.timeoutMs=timeoutMs;
     if(client) {
@@ -365,7 +365,7 @@ export class Client extends MemoryClient {
 export class AccountApi {
   readonly #connection:Connection|null;readonly #http:HttpTransport;readonly #timeoutMs:number;readonly #controllers:Set<AbortController>;readonly #assertOpen:()=>void;
   /** Bind the account transport without fetching issuer metadata. */
-  constructor({connection,http,timeoutMs=30000,controllers=new Set<AbortController>(),assertOpen=()=>{}}:{connection:Connection|null;http:HttpTransport;timeoutMs?:number;controllers?:Set<AbortController>;assertOpen?:()=>void}) {this.#assertOpen=assertOpen;this.#connection=connection;this.#http=http;this.#timeoutMs=timeoutMs;this.#controllers=controllers;}
+  constructor({connection,http,timeoutMs=300000,controllers=new Set<AbortController>(),assertOpen=()=>{}}:{connection:Connection|null;http:HttpTransport;timeoutMs?:number;controllers?:Set<AbortController>;assertOpen?:()=>void}) {this.#assertOpen=assertOpen;this.#connection=connection;this.#http=http;this.#timeoutMs=timeoutMs;this.#controllers=controllers;}
   /** Read whoami as an object from the issuer account endpoint. */
   async whoami({signal}:RequestOptions={}):Promise<Record<string,Models.JsonValue>> {return objectResponse({value:await this.get({path:'/v1/keys/self',signal})});}
   /** Read a safe relative account path; reject traversal and cross-origin redirects. */
