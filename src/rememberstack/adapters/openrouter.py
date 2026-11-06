@@ -1025,18 +1025,22 @@ def _unbilled_capacity_rejection(*, response: httpx.Response) -> bool:
         body = response.json()
     except ValueError:
         return False
-    if not isinstance(body, dict) or any(
-        key in body for key in ("usage", "choices", "id")
-    ):
+    if not isinstance(body, dict) or any(key in body for key in ("usage", "choices")):
         return False
     error = body.get("error")
     if not isinstance(error, dict):
         return False
-    return response.status_code in (429, 503) or (
-        response.status_code == 200
+    code = error.get("code")
+    if (
+        response.status_code in (200, 429, 503)
+        and (code is None or str(code) in ("429", "503"))
         and "flex processing is temporarily unavailable"
         in str(error.get("message", "")).lower()
-    )
+    ):
+        # OpenRouter can allocate an id before OpenAI rejects uncharged Flex
+        # admission. Preserve choices/usage as a strict no-replay boundary.
+        return True
+    return "id" not in body and response.status_code in (429, 503)
 
 
 def _retryable_upstream_error(*, response: httpx.Response) -> bool:
@@ -1047,6 +1051,8 @@ def _retryable_upstream_error(*, response: httpx.Response) -> bool:
     retries. This applies equally to Flex and standard providers.
     """
     transient_codes = {429, 500, 502, 503, 504, 529}
+    if _unbilled_capacity_rejection(response=response):
+        return True
     try:
         body = response.json()
     except ValueError:

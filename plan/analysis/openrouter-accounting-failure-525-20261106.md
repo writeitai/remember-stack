@@ -10,8 +10,9 @@ The adapter already polls existing metadata five times, at delays 0/1/2/3/5
 seconds, without issuing another generation. Increasing that loop alone cannot
 explain or resolve the missing original response. A 100-call synthetic probe
 with four concurrent requests did not reproduce the failure. Another bounded
-probe uses the ingestion token allowance and higher concurrency; its outcome
-remains pending.
+probe used the ingestion token allowance with sixteen concurrent requests;
+another 100 calls also completed without an unusable response. These bounded
+probes do not establish the original upstream cause.
 
 The inspected retry classifier rejects every response containing an `id`, even
 when an HTTP-200 error envelope has no usage or choices. OpenRouter documents
@@ -20,7 +21,7 @@ OpenAI separately documents that a Flex Resource Unavailable rejection is not
 charged. An ID alone therefore does not establish that this specific rejection
 was billed. It also does not establish that every other error is unbilled.
 
-The narrow remedy under investigation is to recognize the explicit Flex
+The narrow remedy is to recognize the explicit Flex
 capacity rejection before interpreting the response as successful accounting,
 and let its existing bounded capacity-retry path run. Generic errors, partial
 choices, positive or incomplete usage, missing usage on a completed response,
