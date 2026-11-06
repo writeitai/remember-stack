@@ -1,6 +1,7 @@
-"""Typed live-graph reads over PostgreSQL 19 SQL/PGQ and bounded helpers.
+"""Typed live-graph reads over PostgreSQL relational SQL and bounded helpers.
 
-One-hop neighborhoods execute static SQL/PGQ. Deeper neighborhoods and
+One-hop neighborhoods execute a static relational join over the live edge
+views. Deeper neighborhoods and
 shortest entity or document paths execute deployment-first
 PostgreSQL helpers. Hydration shares one read-only repeatable-read transaction,
 so every answer is one MVCC cut and one temporal instant without snapshots.
@@ -9,7 +10,7 @@ Entity traversal applies the D140 §8.1 evidence gate at ``valid_at``: an edge
 whose only support is document text not in force then is not part of the
 answer. The graph role cannot read evidence, so it is granted exactly one
 private predicate, ``rememberstack_graph_internal.relation_evidence_in_scope``,
-which the traversal helpers and the one-hop PGQ statement apply to every
+which the traversal helpers and the one-hop statement apply to every
 candidate edge before expansion, ordering, offset and limit, in the
 traversal's own snapshot. An ineligible edge therefore never spends a budget
 or a result slot.
@@ -45,7 +46,7 @@ from rememberstack.model import Negative
 from rememberstack.model import NegativeKind
 from rememberstack.model import Truncation
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 
 DEFAULT_NEIGHBORHOOD_CAP = 500
 MAX_NEIGHBORHOOD_DEPTH = 4
@@ -677,7 +678,7 @@ def _rows(
 def _shallow_neighborhood_rows(
     *, connection: Connection, parameters: dict[str, object]
 ) -> list[RowMapping]:
-    """Run the relational guard, and execute PGQ only after explicit admission."""
+    """Run the relational guard, and execute the one-hop read only after admission."""
     guard_rows = _rows(
         connection=connection,
         statement=HISTORY_NEIGHBORHOOD_GUARD,
@@ -710,7 +711,9 @@ def _shallow_neighborhood_rows(
             )
         ]
     paths = _rows(
-        connection=connection, statement=HISTORY_NEIGHBORHOOD_PGQ, parameters=parameters
+        connection=connection,
+        statement=HISTORY_NEIGHBORHOOD_ONE_HOP,
+        parameters=parameters,
     )
     representatives: dict[UUID, RowMapping] = {}
     for row in paths:

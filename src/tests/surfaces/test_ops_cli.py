@@ -50,9 +50,8 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
         lambda *, engine: GraphCatalogEnsureResult(
             ready=True,
             changed=True,
-            problems_before=("property graphs mismatch",),
+            problems_before=("graph source views missing",),
             problems_after=(),
-            definitions={"memory_current": "CREATE PROPERTY GRAPH …"},
         ),
     )
 
@@ -61,9 +60,8 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
     assert result == 0
     assert json.loads(capsys.readouterr().out) == {
         "changed": True,
-        "definitions": {"memory_current": "CREATE PROPERTY GRAPH …"},
         "problems_after": [],
-        "problems_before": ["property graphs mismatch"],
+        "problems_before": ["graph source views missing"],
         "ready": True,
     }
     assert engine.disposed is True

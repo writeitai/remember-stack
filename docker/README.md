@@ -14,7 +14,8 @@ preprocessor flags instead of changing the source; drop the flag once a pinned
 release includes the header itself.
 
 pgvector is pinned to the PGDG build `0.8.6-1.pgdg13+2`, which PGDG rebuilt
-against the Beta 4 headers. No newer build exists. Between Beta 4 and RC 1 the
+against the Beta 4 headers; that is the tested pin (PGDG also publishes
+`0.8.7-1.pgdg13+1`). Between Beta 4 and RC 1 the
 index access-method interface (`access/amapi.h`) is unchanged, and the one
 changed index-vacuum struct (`IndexVacuumInfo`, a new `is_autovacuum` flag)
 moves only fields pgvector 0.8.6 does not read (checked against the

@@ -17,15 +17,16 @@ Two changes:
   values and the distinct non-null ``source_label`` values of every reference
   the edge merges, sorted (labels in byte order). Without them an edge would
   show only its smallest row's qualifiers, and a pinned or caller-flagged
-  citation merged into it would read as a plain one. The property graph's
-  edge properties are unchanged, so the view is replaced in place.
+  citation merged into it would read as a plain one. The view is replaced in
+  place.
 - ``graph_citation_path`` expands that projection instead of the public
   per-reference view. Its signature, result columns, budgets, comment and
   grants are unchanged; it is replaced in place.
 
 The downgrade restores the p9_17 helper body and the p9_38 projection, which
-drops the two columns; the property graph that depends on the view is dropped
-and recreated around it with its grants.
+drops the two columns, and grants the recreated view again. (As shipped, the
+SQL/PGQ property graph over the view was dropped and recreated around it; the
+D98 RC 1 amendment removed it, see p9_42_0063.)
 """
 
 from collections.abc import Sequence
@@ -33,6 +34,7 @@ from collections.abc import Sequence
 from alembic import op
 
 from rememberstack.spine.migrations._helpers import apply_ddl
+from rememberstack.spine.migrations._helpers import DROP_PROPERTY_GRAPHS
 from rememberstack.spine.postgres_graph_sql import _replace_exact
 
 revision: str = "p9_40_0061"
@@ -141,8 +143,7 @@ def downgrade() -> None:
     )
 
     op.execute(_replaceable(sql=graph._CITATION_PATH_HELPER))
-    op.execute("DROP PROPERTY GRAPH memory_v1.memory_current")
+    op.execute(DROP_PROPERTY_GRAPHS)
     op.execute("DROP VIEW rememberstack_graph_internal.crossrefs_live")
     apply_ddl(sql=GRAPH_CROSSREFS_SOURCE_DDL)
-    op.execute(graph._CURRENT_GRAPH)
     op.execute(QUERY_ROLE_GRANTS)

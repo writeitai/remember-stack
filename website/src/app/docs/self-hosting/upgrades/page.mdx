@@ -164,14 +164,27 @@ RememberStack runs on a PostgreSQL 19 prerelease, release candidate 1
 (`19rc1`); releases up to v0.17.2 ran Beta 3 (`19beta3`). A PostgreSQL
 prerelease does not promise that its data directory opens under the next
 prerelease or the final release. The Beta 3 to RC 1 step changes the
-catalog version, so a Beta 3 data directory does not open under RC 1. The
-project has not published a procedure for moving a deployment's data across
-such a change.
+catalog version, so a Beta 3 data directory does not open under RC 1.
+
+Beta 3 also had SQL/PGQ property graphs, which RC 1 removed, and a Beta 3
+database still holds two of them. `pg_upgrade` and `pg_restore` would replay
+their definitions, which RC 1 cannot parse. To move a Beta 3 deployment:
+
+1. Upgrade RememberStack while it still runs on the Beta 3 PostgreSQL image.
+   `setup` runs migration `p9_42_0063`, which drops the two property graphs.
+2. Move the data into a new RC 1 volume with `pg_upgrade`, or with a logical
+   dump and restore (below).
+
+The logical path was tested for this release: after step 1, take the roles
+file and the `pg_dump` described under [A logical backup](#a-logical-backup)
+from the Beta 3 database, create the roles in the new RC 1 server (skip the
+superuser that already exists), `pg_restore` the dump into its empty
+database, then run `setup` and `remember ops graph-catalog ensure`.
+`pg_upgrade` was not tested. Starting a new deployment and sending your
+documents again also works.
 
 If a release changes the PostgreSQL image, its release notes are the place
-to look. Without instructions there, move the data with a logical dump and
-restore (below) into a new PostgreSQL volume, or start a new deployment and
-send your documents again.
+to look.
 
 ## The deployment id is permanent
 
@@ -243,7 +256,7 @@ docker compose up -d --wait
 docker compose exec -T api remember ops graph-catalog ensure
 ```
 
-The last command checks that the graph definitions in the restored database
+The last command checks that the graph views and functions in the restored database
 match this release ([Operating the pipeline](/docs/self-hosting/operating#the-graph-catalog)).
 
 ### A logical backup

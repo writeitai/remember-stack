@@ -696,14 +696,15 @@ def test_parameters_execute_end_to_end(migrated: str) -> None:
     assert outcome.returned_row_count == 1
 
 
-def test_pg19_accepts_pgq_but_public_executor_rejects_direct_pgq(migrated: str) -> None:
-    """The server grammar upgrade cannot bypass the PG18 public AST gate."""
+def test_server_and_public_executor_both_reject_pgq(migrated: str) -> None:
+    """PostgreSQL 19 RC 1 has no SQL/PGQ, and the public AST gate rejects it."""
     sql = (
         "SELECT * FROM GRAPH_TABLE (memory_v1.memory_current "
         "MATCH (x IS entity) COLUMNS (x.entity_id AS entity_id)) AS g LIMIT 0"
     )
     with psycopg.connect(_psycopg_url(migrated)) as connection:
-        assert connection.execute(sql).fetchall() == []
+        with pytest.raises(psycopg.errors.SyntaxError):
+            connection.execute(sql)
     outcome = _executor(migrated).query_sql(sql=sql)
     assert outcome.termination_reason == "rejected"
     assert outcome.error_code == QueryErrorCode.PARSE_ERROR

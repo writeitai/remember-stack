@@ -1,6 +1,7 @@
 # Analysis: PostgreSQL 19 SQL/PGQ as the live graph
 
-**Status:** non-binding analysis for D98  
+**Status:** non-binding analysis for D98; SQL/PGQ parts overtaken by §10
+(2026-11-06)  
 **Date:** 2026-08-27  
 **Repository baseline:** `origin/main` on branch
 `design/postgres19-sqlpgq-live-graph`  
@@ -572,3 +573,54 @@ This analysis supersedes the conclusion of
 but it evaluated PostgreSQL 18 before the operator chose public Cypher as
 optional, live graph as preferable, and early PostgreSQL 19 adoption as an
 acceptable pre-user risk.
+
+## 10. SQL/PGQ removed in Beta 4 (2026-11-06)
+
+**What happened.** PostgreSQL 19 Beta 4 lists "Revert SQL/PGQ (property graph
+query) support" among its changes since Beta 3
+([release announcement](https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/)).
+Release candidate 1 therefore rejects `CREATE PROPERTY GRAPH` and
+`GRAPH_TABLE` as syntax errors, and its catalog has no `pg_propgraph_*`
+tables. On RC 1 the engine could not even be set up: migration `p9_17_0038`
+creates the two property graphs (`memory_current`, `memory_history`). This
+was found while moving the reference image to RC 1 (remember-stack PR #530).
+
+**What the engine used SQL/PGQ for.** Less than this analysis first planned.
+Two-hop and deeper reads, shortest paths, and citation paths already ran in
+the bounded frontier functions (§8, §9). SQL/PGQ served exactly one shape: the
+fixed one-hop entity neighborhood, after a relational guard had admitted it.
+Everything else around the property graphs was their own upkeep: DDL in three
+migrations, `SELECT ON PROPERTY GRAPH` grants, and catalog/ACL readiness
+checks.
+
+**Alternatives considered.**
+
+1. *Stay on Beta 3.* Keeps SQL/PGQ but pins the product to a beta that
+   upstream has moved past, with no supported path to GA. Rejected.
+2. *Wait for SQL/PGQ in a later PostgreSQL major.* Blocks the RC 1 move (and
+   the managed runtime that waits on the RC 1 image) on an upstream schedule
+   nobody controls, for a feature that served one query. Rejected.
+3. *Apache AGE.* Rejected for the reasons in §4: label tables duplicate the
+   authority data, and it adds an extension without solving temporal
+   traversal.
+4. *Plain relational joins over the existing node and edge views (chosen).*
+   PG19's SQL/PGQ was implemented as a query rewrite: the planner turned a
+   `GRAPH_TABLE` pattern into ordinary joins over the views the property graph
+   named. Writing those joins directly gives the same rows and the same kind
+   of plan. The one-hop read becomes a two-branch `UNION ALL` over
+   `relations_current` (or `relations_history` for as-of reads): one branch
+   for edges whose subject is the anchor and one for edges whose object is the
+   anchor, both excluding self-loops. This is what the either-direction
+   pattern `(x)-[r]-(y)` with `y <> x` meant. The relation views already join
+   `entities_live` for both endpoints, so the separate vertex joins that
+   SQL/PGQ added are redundant and dropped.
+
+**Consequences.** The graph, its views, the guard, the budgets, the evidence
+gate, and every result stay the same; existing graph tests pass with only
+renames. The property graphs, their grants and their catalog checks are
+removed; the catalog check now verifies that the views exist. Migration
+`p9_42_0063` drops the property graphs from Beta 3 stores, which must run it
+before their data moves to RC 1 (`pg_upgrade` and `pg_restore` would
+otherwise replay DDL that RC 1 cannot parse). Public SQL/PGQ, which this
+analysis deferred to a PG19-capable parser, has no server to run on and is no
+longer a deferred path.

@@ -1281,7 +1281,8 @@ question; the enforcement dial) tracked in `questions.md`.
 surviving semantic requirement is redirect-safe, deployment-keyed, temporal
 graph views over PostgreSQL authority data. D98 drops the six snapshot-export
 `v_graph_*` views named below and replaces them with no-row private live source
-views plus SQL/PGQ metadata. Only `v_graph_survivor` remains as the private
+views plus SQL/PGQ metadata (the metadata was removed by the D98 RC 1
+amendment; the views remain). Only `v_graph_survivor` remains as the private
 merge-resolution authority behind `v_memory_entity_survivor`; it is not a graph
 export or public query surface. The D98 graph design owns the current schema
 and contracts.
@@ -2132,7 +2133,8 @@ application of D60's existing boundary, not a new subsystem or a retreat from co
 
 > **D98 amendment (2026-08-27).** D61's no-engine-abstraction principle
 > survives, but LadybugDB is removed from the fixed engine identity. The graph
-> implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions.
+> implementation is PostgreSQL 19 SQL/PGQ plus bounded frontier functions
+> (since the D98 RC 1 amendment, a relational one-hop join instead of SQL/PGQ).
 
 **Decision.** The deployment *substrate* is reached only through narrow **ports** (interfaces with
 swappable implementations), each with exactly **two maintained adapters** — a **self-host adapter**
@@ -2150,7 +2152,7 @@ and the **reference adapter** (which is also what the cloud offering runs):
 | Hard-forget manifest + store purge capabilities (D74/D94) | dedicated append-only manifest root + LocalFS/local-Git erasure; PostgreSQL transaction scrubs P1 state | separately durable manifest store + reference object/mount/K erasure; PostgreSQL transaction scrubs P1 state |
 
 **Anti-goal — the engine is not abstracted.** PostgreSQL 19 with
-pgvector/pg_textsearch and the live SQL/PGQ/bounded-frontier graph, the E/K/P data model,
+pgvector/pg_textsearch and the live relational/bounded-frontier graph (SQL/PGQ until the D98 RC 1 amendment), the E/K/P data model,
 PageIndex/semchunk/Claimify, and the K compile machine are the system's *identity*, not substrate; no
 port wraps them, and no design should hedge on them. The requirements' former "Imposed constraints"
 section is re-titled the **reference deployment**: the fixed production profile (Postgres on Hetzner;
@@ -3618,8 +3620,9 @@ three operations; renaming every recipe transport is not part of this cut.
 
 Before SQL or saved-query execution, the runtime verifies the live `memory_v1`
 shape against the checked-in manifest and fails `schema_version_mismatch` on
-drift. Server-owned SQL/PGQ separately verifies the pinned live property-graph
-contract. P1-backed
+drift. The live graph separately verifies its pinned catalog contract (its
+views, helpers, and roles; the property-graph checks were removed by the D98
+RC 1 amendment). P1-backed
 SQL functions are executor-resolved query-embedding + ranked-statement bridges. Body
 fetch verifies the reproducible embedding-text hash and source/prefix
 separation; the source-content hash remains a coordinate until the body store
@@ -4410,6 +4413,9 @@ query path, envelope grain, or hydration (D48–D49).
 
 ## D98. The graph is live PostgreSQL 19 SQL/PGQ plus work-bounded frontier traversal
 
+**Status:** amended 2026-11-06 — SQL/PGQ was removed upstream; the one-hop
+read is relational SQL over the same views (see the RC 1 amendment below).
+
 > **D142 amendment (2026-10-21, proposed).** The `pg_textsearch` 1.3.1 pin
 > and its PG19 compatibility patch are replaced by upstream 1.5.1 or later,
 > which supports PostgreSQL 19 and fills post-filtered top-k scans; no local
@@ -4417,12 +4423,30 @@ query path, envelope grain, or hydration (D48–D49).
 >
 > **PostgreSQL 19 RC 1 amendment (2026-11-06, owner).** The reference image
 > moves from Beta 3 to release candidate 1 (`postgres:19rc1-trixie`, pinned by
-> digest), and to the final release when it ships. RC 1 changes the catalog
-> version, so a Beta 3 data directory does not open under it; pre-GA storage
-> stays disposable and replayable, as below. pg_textsearch v1.5.1 builds
+> digest), and to the final release when it ships. pg_textsearch v1.5.1 builds
 > against the RC 1 headers only with `<limits.h>` force-included, a compiler
-> flag rather than a source patch (`docker/README.md`). The rest of D98
-> stands.
+> flag rather than a source patch (`docker/README.md`).
+>
+> PostgreSQL 19 Beta 4 reverted SQL/PGQ
+> ([release notes](https://www.postgresql.org/about/news/postgresql-19-beta-4-released-3386/)),
+> so RC 1 has no `CREATE PROPERTY GRAPH` or `GRAPH_TABLE`. The graph stays
+> live PostgreSQL over the same private node and edge views; only its query
+> mechanism changes. The server-owned one-hop read becomes a static relational
+> join over the `relations_current`/`relations_history` edge views, one branch
+> per edge direction, after the same guard-first admission, and returns the
+> same results (PG19's SQL/PGQ was a rewrite to those joins). The two property
+> graphs, their DDL, grants, and catalog/ACL readiness checks are removed; the
+> graph catalog check now verifies that the node and edge views exist, plus the
+> helpers and roles as before. Migration `p9_42_0063` drops the property graphs
+> from Beta 3 stores, and the earlier migrations no longer create them: RC 1
+> cannot parse that DDL, and pre-GA storage is disposable and replayable, as
+> below. RC 1 also changes the catalog version, so a Beta 3 store upgrades the
+> engine on Beta 3 first (running `p9_42_0063`) and then moves its data to
+> RC 1 with `pg_upgrade` or `pg_dump`/`pg_restore`. Public SQL/PGQ is no
+> longer a deferred path: the reference server has no SQL/PGQ. The sentences
+> below that make SQL/PGQ the one-hop mechanism or describe property graphs,
+> the PG19 SQL/PGQ subset, and a PG19-capable public PGQ gate are superseded
+> by this amendment; everything else in D98 stands.
 
 **Decision (2026-08-27).** Move the reference runtime directly to the latest
 PostgreSQL 19 prerelease, initially the exact Beta 3 image proven by the D98
@@ -5498,7 +5522,7 @@ D32, D43's untyped statement, D98, D100–D105.
    - **Concepts First**: Deep conceptual explanation of bitemporal memory, why vector RAG fails, contradiction adjudication, and graph relationships.
    - **Universal Onboarding**: Single `uvx remember setup` quickstart auto-configuring Cursor, Claude Code, Claude Desktop, Codex, and Antigravity with a clear choice between Cloud and Self-Hosted.
    - **Identical Client Surface**: Python SDK (`remember`) and MCP server (`remember mcp`) work identically across all deployment targets with zero code changes.
-   - **Transparent Deployment Choice**: Clear, honest separation between Self-Hosted OSS (Docker Compose, Kubernetes Helm, PostgreSQL 19 + SQL/PGQ) and Managed Cloud (`remember login`, `balance`, dedicated private database pods, zero-ops maintenance).
+   - **Transparent Deployment Choice**: Clear, honest separation between Self-Hosted OSS (Docker Compose, Kubernetes Helm, PostgreSQL 19; SQL/PGQ was removed by the D98 RC 1 amendment) and Managed Cloud (`remember login`, `balance`, dedicated private database pods, zero-ops maintenance).
 3. **Open Query Space Parity (`open_query`)**: The open query space is designed for complete local-to-cloud parity: fully implemented and active on Self-Hosted Engine (v0.17.0+), and planned for Remember Cloud deployment under active operator dogfooding. Every cloud project runs in a dedicated private pod and database instance (physical pod isolation, zero shared multi-tenant tables). Queries are AST-validated with PostgreSQL's parser (`pglast`), deny-by-default read-only transaction sandboxed (`QuerySandboxExecutor`), constrained strictly to the authoritative `memory_v1` surface (24 public relations and 11 allowlisted functions per `src/rememberstack/spine/query_space/memory_v1_manifest.json`), and metered under request spend leases (`_spend_gated_route` prerequisite in Phase 2).
 4. **Unified Machine Discovery**: `https://remember.dev/llms.txt` and `https://remember.dev/llms-full.txt` are served directly from the canonical documentation build.
 

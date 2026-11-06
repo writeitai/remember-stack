@@ -43,7 +43,7 @@ can fall behind.
 | Pipeline work: what ran, what failed, what waits | PostgreSQL | Authority |
 | Model spend (the cost ledger) | PostgreSQL | Authority |
 | Search indexes: vectors (`pgvector`) and keyword ranking (BM25, `pg_textsearch`) | PostgreSQL | Derived. Written by the embedding and labelling stages after the rows they index. |
-| The live graph | PostgreSQL property-graph definitions over the current tables | Neither: a view. It reads the tables themselves, so it cannot fall behind them. |
+| The live graph | PostgreSQL views over the current tables | Neither: a view. It reads the tables themselves, so it cannot fall behind them. |
 | The query space `memory_v1` for [SQL queries](/docs/concepts/retrieval#sql-queries-over-the-query-space) | PostgreSQL views and functions | A read-only view of the authority. |
 | Original files | Object storage, bucket `remember-raw` | Authority. Identical bytes are stored once. |
 | Converted Markdown and the files produced with it | Object storage, bucket `remember-artifacts` | Derived from the original. Chunks point at positions in it, so it is kept, not rebuilt. |

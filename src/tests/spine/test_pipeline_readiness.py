@@ -175,16 +175,17 @@ def test_graph_catalog_ensure_repairs_missing_replayable_metadata(
     engine, _version_id = ready_rows
     with engine.begin() as connection:
         connection.exec_driver_sql(
-            "DROP PROPERTY GRAPH IF EXISTS memory_v1.memory_current"
+            "DROP VIEW rememberstack_graph_internal.relations_current"
         )
 
     result = ensure_graph_catalog(engine=engine)
 
     assert result.ready is True
     assert result.changed is True
-    assert result.problems_before
+    assert result.problems_before == (
+        "graph source views missing: ['rememberstack_graph_internal.relations_current']",
+    )
     assert result.problems_after == ()
-    assert set(result.definitions) == {"memory_current", "memory_history"}
     # The replay restores head's citation source: the merged projection with
     # its qualifiers, and the helper that traverses it (p9_40_0061).
     with engine.connect() as connection:
@@ -206,8 +207,12 @@ def test_graph_catalog_ensure_repairs_missing_replayable_metadata(
                 )
             ).scalars()
         )
+        relations_current = connection.execute(
+            text("SELECT to_regclass('rememberstack_graph_internal.relations_current')")
+        ).scalar_one()
     assert "FROM rememberstack_graph_internal.crossrefs_live AS x" in helper
     assert {"bindings", "source_labels"} <= columns
+    assert relations_current is not None
 
 
 def test_graph_catalog_detects_and_repairs_the_per_reference_citation_helper(
@@ -215,7 +220,7 @@ def test_graph_catalog_detects_and_repairs_the_per_reference_citation_helper(
 ) -> None:
     """A citation helper that walks every live reference row is drift.
 
-    Both property graphs stay intact and the old helper keeps the current
+    The graph views stay intact and the old helper keeps the current
     helper's identity, attributes, comment and grants, so only the semantic
     check can see it; the repair puts the projection traversal back.
     """

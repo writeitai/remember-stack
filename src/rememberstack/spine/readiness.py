@@ -29,9 +29,9 @@ from rememberstack.model import VersionPipelineReadiness
 from rememberstack.model.client import ProcessingLayer
 from rememberstack.spine.graph_catalog import graph_catalog_problems
 from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import CURRENT_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_GUARD
-from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_PGQ
+from rememberstack.spine.postgres_graph_sql import HISTORY_NEIGHBORHOOD_ONE_HOP
 from rememberstack.spine.processing_layers import layer_configuration_on
 from rememberstack.spine.projection import ProjectionCatalog
 
@@ -612,7 +612,7 @@ def _live_graph_status(
                 break
         if parameters is None:
             return False, "graph_smoke_identifier_collision"
-        pgq_parameters = {
+        one_hop_parameters = {
             **parameters,
             "anchor_id": parameters["candidate_id"],
             "max_depth": 1,
@@ -625,19 +625,19 @@ def _live_graph_status(
             "believed_at": checked_at,
             "result_offset": 0,
         }
-        for guard_statement, pgq_statement in (
-            (CURRENT_NEIGHBORHOOD_GUARD, CURRENT_NEIGHBORHOOD_PGQ),
-            (HISTORY_NEIGHBORHOOD_GUARD, HISTORY_NEIGHBORHOOD_PGQ),
+        for guard_statement, one_hop_statement in (
+            (CURRENT_NEIGHBORHOOD_GUARD, CURRENT_NEIGHBORHOOD_ONE_HOP),
+            (HISTORY_NEIGHBORHOOD_GUARD, HISTORY_NEIGHBORHOOD_ONE_HOP),
         ):
             guard_rows = (
-                connection.execute(text(guard_statement), pgq_parameters)
+                connection.execute(text(guard_statement), one_hop_parameters)
                 .mappings()
                 .all()
             )
             if len(guard_rows) != 1 or not bool(guard_rows[0]["admitted"]):
-                return False, "graph_pgq_guard_smoke_failed"
-            if connection.execute(text(pgq_statement), pgq_parameters).first():
-                return False, "graph_pgq_smoke_failed"
+                return False, "graph_one_hop_guard_smoke_failed"
+            if connection.execute(text(one_hop_statement), one_hop_parameters).first():
+                return False, "graph_one_hop_smoke_failed"
         for reason, statement in (
             ("graph_neighborhood_smoke_failed", _NEIGHBORHOOD_HEALTH),
             ("graph_path_smoke_failed", _PATH_HEALTH),

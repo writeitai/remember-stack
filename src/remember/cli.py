@@ -423,7 +423,6 @@ def _run_graph_catalog_ensure() -> int:
                     "changed": result.changed,
                     "problems_before": result.problems_before,
                     "problems_after": result.problems_after,
-                    "definitions": result.definitions,
                 },
                 sort_keys=True,
             )
