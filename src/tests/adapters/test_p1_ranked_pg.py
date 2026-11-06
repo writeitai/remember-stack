@@ -36,7 +36,6 @@ from rememberstack.ports.p1_index import P1Termination
 from rememberstack.ports.p1_index import search_account
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
-from rememberstack.surfaces import query_engine as query_engine_module
 from rememberstack.surfaces.query_engine import QueryEngine
 from tests.database_reset import reset_database
 from tests.surfaces.lineage_seed import seed_live_document_lineage
@@ -540,7 +539,10 @@ def test_the_margin_counts_terms_with_the_real_parser(
     assert counted == terms
 
 
-def _surface(database_engine: Engine) -> QueryEngine:
+def _surface(
+    database_engine: Engine, *, database_budget_seconds: float = 120.0
+) -> QueryEngine:
+    """Compose a real read surface with an explicit operation deadline."""
     pool = BoundedPostgresReadPool(
         engine=database_engine, max_concurrency=2, pool_wait_seconds=5.0
     )
@@ -552,6 +554,7 @@ def _surface(database_engine: Engine) -> QueryEngine:
         model_provider=MagicMock(),
         embedding_model=_MODEL,
         fact_read_pool=pool,
+        database_budget_seconds=database_budget_seconds,
     )
 
 
@@ -563,9 +566,6 @@ def test_a_real_statement_timeout_is_a_typed_deadline_boundary(
     attestation or confirmation answers p1_deadline through the public
     search, and the cleanup never replaces the original error."""
     _seed_chunks(database_engine, [f"alpha filler{n}" for n in range(30)])
-    monkeypatch.setattr(
-        query_engine_module, "FACTS_CONTEXT_DATABASE_BUDGET_SECONDS", 1.0
-    )
     if stage == "attestation":
         original_attest = p1_ranked.attest_index_plan
 
@@ -583,7 +583,7 @@ def test_a_real_statement_timeout_is_a_typed_deadline_boundary(
                 relation_where + " AND pg_sleep(3) IS NOT NULL", id_expression
             ),
         )
-    envelope = _surface(database_engine).search_chunks(
+    envelope = _surface(database_engine, database_budget_seconds=1.0).search_chunks(
         deployment_id=_DEPLOYMENT_ID, query="alpha", k=5, channel="bm25"
     )
     assert envelope.negative is not None

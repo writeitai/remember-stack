@@ -45,6 +45,7 @@ from remember.models import HistoryReadTime
 from remember.retrieval import ContextRetrievalBudget
 from remember.retrieval import DEFAULT_CONTEXT_CANDIDATES
 from remember.retrieval import DEFAULT_CONTEXT_K
+from remember.retrieval import DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS
 from remember.retrieval import MAX_CONTEXT_K
 from rememberstack.core.document_filters import is_empty
 from rememberstack.core.document_filters import live_version_matches
@@ -210,8 +211,6 @@ FACTS_CONTEXT_CONFIRMATION_BATCH_SIZE: Final = 30
 FACTS_CONTEXT_CONFIRMATION_MIN_BATCH_SIZE: Final = 16
 """Minimum confirmation batch for small result counts, within the 30-row cap."""
 
-FACTS_CONTEXT_DATABASE_BUDGET_SECONDS: Final = 25.0
-"""Operation wall-clock budget; each PostgreSQL statement gets the remainder."""
 
 FACTS_CONTEXT_PROFILE_ENTITY_K: Final = 20
 """Maximum profile-text entity nominations used to rescue enumerative queries."""
@@ -380,7 +379,7 @@ def _with_fact_snapshot[**P](method: Callable[P, Envelope]) -> Callable[P, Envel
         selected_time = (
             cast(FactTime | None, call_kwargs.get("time")) or CurrentFactTime()
         )
-        deadline = monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
+        deadline = monotonic() + engine.database_budget_seconds
         call_kwargs["evaluated_at"] = evaluation
         call_kwargs["_database_deadline"] = deadline
         try:
@@ -416,6 +415,7 @@ class QueryEngine:
         batch_engine: Engine | None = None,
         fact_read_pool: PostgresReadPoolPort | None = None,
         surface_cost: SqlSurfaceCostRecorder | None = None,
+        database_budget_seconds: float = DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS,
     ) -> None:
         """Bind the engine to the spine, the P1 indexes, and the embedder.
 
@@ -434,7 +434,14 @@ class QueryEngine:
         dedicated no-overflow engine. Other compositions may omit it only when
         they do not expose `facts_context`; that operation fails closed rather
         than opening an unbounded connection.
+
+        `database_budget_seconds` is one finite, positive wall-clock budget
+        shared by admission and every nested PostgreSQL read in an operation.
+        It belongs to this engine instance; changing it never reprocesses data.
         """
+        if not math.isfinite(database_budget_seconds) or database_budget_seconds <= 0:
+            raise ValueError("database_budget_seconds must be finite and positive")
+        self._database_budget_seconds = database_budget_seconds
         self._engine = engine
         self._search_index = search_index
         self._claim_vector_index = (
@@ -450,6 +457,11 @@ class QueryEngine:
         self._batch_engine = batch_engine or engine
         self._fact_read_pool = fact_read_pool
         self._surface_cost = surface_cost
+
+    @property
+    def database_budget_seconds(self) -> float:
+        """Return this engine instance's operation-wide PostgreSQL deadline budget."""
+        return self._database_budget_seconds
 
     @contextmanager
     def _fact_connection(
@@ -482,7 +494,7 @@ class QueryEngine:
         if not callable(snapshot) or (callable(in_snapshot) and in_snapshot()):
             yield  # no pool, or an enclosing operation already holds the snapshot
             return
-        with snapshot(deadline=monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS):
+        with snapshot(deadline=monotonic() + self.database_budget_seconds):
             yield
 
     @contextmanager
@@ -503,7 +515,7 @@ class QueryEngine:
             yield evaluated_at or datetime.now(UTC)
             return
         with pool.snapshot(
-            deadline=monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS,
+            deadline=monotonic() + self.database_budget_seconds,
             evaluated_at=evaluated_at,
         ):
             operation = pool.operation()
@@ -1255,7 +1267,7 @@ class QueryEngine:
             if _database_deadline is not None
             else operation.deadline
             if operation is not None
-            else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
+            else monotonic() + self.database_budget_seconds
         )
         if self._fact_read_pool is None:
             raise SQLAlchemyTimeoutError(
@@ -1548,7 +1560,7 @@ class QueryEngine:
             if _database_deadline is not None
             else operation.deadline
             if operation is not None
-            else monotonic() + FACTS_CONTEXT_DATABASE_BUDGET_SECONDS
+            else monotonic() + self.database_budget_seconds
         )
 
         def confirmed_facts(
@@ -5305,13 +5317,21 @@ def _context_hit_counts(
 
 
 _RESOLVE_T0_SQL = """
-    SELECT DISTINCT entity.entity_id, entity.canonical_name
-    FROM memory_v1.entity_aliases_current AS alias
-    JOIN memory_v1.entities_current AS entity
-      ON entity.deployment_id = alias.deployment_id
-     AND entity.entity_id = alias.entity_id
-    WHERE alias.deployment_id = :deployment_id
-      AND alias.normalized_lemma = :lemma
+    WITH candidates AS MATERIALIZED (
+        SELECT DISTINCT alias.entity_id
+        FROM memory_v1.entity_aliases_current AS alias
+        WHERE alias.deployment_id = :deployment_id
+          AND alias.normalized_lemma = :lemma
+    )
+    SELECT entity.entity_id, entity.canonical_name
+    FROM candidates
+    CROSS JOIN LATERAL (
+        SELECT entity.entity_id, entity.canonical_name
+        FROM memory_v1.entities_current AS entity
+        WHERE entity.deployment_id = :deployment_id
+          AND entity.entity_id = candidates.entity_id
+        OFFSET 0
+    ) AS entity
     """
 
 _RESOLVE_T0 = text(_RESOLVE_T0_SQL)
@@ -5341,7 +5361,7 @@ _RESOLVE_T1_T2_SQL = """
               && daitch_mokotoff(:lemma)
           AND t1.entity_id IS NULL
     ),
-    blocked AS (
+    blocked AS MATERIALIZED (
         SELECT t1.entity_id, t1.score, 'T1'::text AS tier
         FROM t1
         UNION ALL
@@ -5352,9 +5372,13 @@ _RESOLVE_T1_T2_SQL = """
            blocked.score AS trigram_score,
            blocked.tier
     FROM blocked
-    JOIN memory_v1.entities_current AS entity
-      ON entity.deployment_id = :deployment_id
-     AND entity.entity_id = blocked.entity_id
+    CROSS JOIN LATERAL (
+        SELECT entity.entity_id, entity.canonical_name, entity.normalized_name
+        FROM memory_v1.entities_current AS entity
+        WHERE entity.deployment_id = :deployment_id
+          AND entity.entity_id = blocked.entity_id
+        OFFSET 0
+    ) AS entity
     ORDER BY blocked.score DESC,
              similarity(entity.normalized_name, :lemma) DESC,
              entity.entity_id

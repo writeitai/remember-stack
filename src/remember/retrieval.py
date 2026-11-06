@@ -8,6 +8,7 @@ from pydantic import Field
 from pydantic import model_validator
 
 DEFAULT_CONTEXT_K: Final = 50
+DEFAULT_RETRIEVAL_DATABASE_BUDGET_SECONDS: Final = 120.0
 MAX_CONTEXT_K: Final = 100
 MIN_CONTEXT_CANDIDATES: Final = 60
 CONTEXT_OVERFETCH: Final = 4

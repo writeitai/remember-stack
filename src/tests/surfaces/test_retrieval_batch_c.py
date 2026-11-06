@@ -1229,7 +1229,7 @@ def test_default_facts_context_maps_graph_failures_to_a_boundary(
 def test_default_facts_context_maps_fact_pool_admission_timeout_to_boundary(
     corpus: _Corpus,
 ) -> None:
-    """The shared 25-second budget includes fact-authority pool admission."""
+    """The configured operation budget includes fact-authority pool admission."""
     index = _FactIndex(fact_keys=(("relation", corpus.relation_id),))
     read_pool = _TimedOutReadPool()
     engine = QueryEngine(
@@ -1254,7 +1254,7 @@ def test_default_facts_context_maps_fact_pool_admission_timeout_to_boundary(
     assert index.requested_k == []
     assert len(read_pool.deadlines) == 1
     assert read_pool.deadlines[0] is not None
-    assert started + 24.0 < read_pool.deadlines[0] < started + 26.0
+    assert started + 119.0 < read_pool.deadlines[0] < started + 121.0
 
 
 def test_default_facts_context_maps_primary_p1_unavailability_to_boundary(
@@ -1310,18 +1310,18 @@ def test_default_facts_context_fails_closed_without_bounded_fact_pool(
 def test_default_facts_context_stops_graph_expansion_at_the_shared_deadline(
     corpus: _Corpus, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Sequential anchor traversals consult the 25-second operation deadline."""
+    """Sequential anchor traversals consult the shared operation deadline."""
     engine, index = corpus.query_engine(fact_ids=(corpus.relation_id,))
     graph = _GraphNeighborhood(neighbor_ids=())
 
     def operation_clock() -> float:
-        """One shared clock: 26 s have passed once the first traversal ran.
+        """One shared clock: 121 s have passed once the first traversal ran.
 
         Keyed to the traversal, not to a count of clock reads, so nested
         reads that re-clamp their statement timeout (D142 §8.6) do not
         shift it.
         """
-        return 26.0 if graph.calls else 0.0
+        return 121.0 if graph.calls else 0.0
 
     monkeypatch.setattr(query_engine_module, "monotonic", operation_clock)
     monkeypatch.setattr(bounded_read_module, "monotonic", operation_clock)
@@ -1337,7 +1337,7 @@ def test_default_facts_context_stops_graph_expansion_at_the_shared_deadline(
     assert answer.negative is not None
     assert answer.negative.kind is NegativeKind.BOUNDARY
     assert len(graph.calls) == 1
-    assert graph.calls[0]["_deadline"] == 25.0
+    assert graph.calls[0]["_deadline"] == 120.0
     assert index.requested_k == []
 
 

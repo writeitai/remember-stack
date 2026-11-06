@@ -150,6 +150,7 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
 )
 INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(
     {
+        "REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S": "120",
         **dict.fromkeys(
             (
                 "REMEMBERSTACK_STRUCTURER_MODEL",

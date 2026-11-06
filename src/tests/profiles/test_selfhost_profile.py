@@ -500,3 +500,22 @@ def test_retired_model_settings_are_gone_from_compose_and_env_example() -> None:
     ):
         assert name not in compose
         assert name not in example
+
+
+@pytest.mark.parametrize("budget", [0.0, -1.0, float("inf"), float("nan")])
+def test_retrieval_database_budget_rejects_unbounded_values(budget: float) -> None:
+    """The operator cannot accidentally disable the operation deadline."""
+    with pytest.raises(ValidationError, match="retrieval_database_budget_s"):
+        SelfHostSettings(deployment_id=uuid4(), retrieval_database_budget_s=budget)
+
+
+def test_retrieval_database_budget_is_environment_configurable_and_deployment_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit deployment policy wins without mutating another deployment."""
+    monkeypatch.setenv("REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S", "240")
+    from_env = SelfHostSettings(deployment_id=uuid4())
+    explicit = SelfHostSettings(deployment_id=uuid4(), retrieval_database_budget_s=75)
+    assert from_env.retrieval_database_budget_s == 240
+    assert explicit.retrieval_database_budget_s == 75
+    assert from_env.retrieval_database_budget_s == 240

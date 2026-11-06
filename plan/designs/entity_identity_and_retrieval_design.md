@@ -730,7 +730,20 @@ context attempt without silently choosing one candidate. That harness policy
 improves benchmark degradation while leaving library ambiguity explicit and
 does not substitute for identity convergence.
 
-The default operation has one absolute 25-second PostgreSQL budget. Pool
+Read-side name resolution materializes its distinct current-alias candidate
+IDs before hydrating each through a correlated current-entity authority lookup.
+The hydration query uses a planning barrier (`OFFSET 0`) to preserve that order.
+This prevents repeated full authority-view expansion; it does not cap exact
+homonyms, bypass provenance checks, or change fuzzy/phonetic ordering.
+
+The default operation has one absolute PostgreSQL budget, configurable per
+engine instance with a finite positive `database_budget_seconds` (starting
+default: 120 seconds). The stock profile reads
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`; an explicit library
+`EngineSettings.deployment.retrieval_database_budget_s` overrides that process
+environment for its own deployment. Clients and proxies must allow more than
+this budget (for example, a 180-second client timeout for a 120-second budget).
+This read policy never changes ingestion or paid-product reuse. Pool
 admission, P1 channel-readiness checks, semantic fact nomination, optional
 entity-profile rescue, anchor/neighbor authority checks, graph expansion, and
 fact/evidence confirmation all consume that same deadline. P1 reads and fact

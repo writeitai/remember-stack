@@ -299,7 +299,10 @@ what this operation sees, and is visible to the next operation.
   `p1_unavailable`; it never falls back to an independent snapshot.
 
 The D97 operation deadline and bounded read admission govern the context's
-transaction.
+transaction. The deadline is configured per query-engine instance (stock
+`REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S`, starting default 120
+seconds), not per statement or channel. Every nested read consumes the same
+remaining time; the short connection-admission wait remains a separate limit.
 
 ### 8.3 Nominate, confirm, continue (D142)
 
