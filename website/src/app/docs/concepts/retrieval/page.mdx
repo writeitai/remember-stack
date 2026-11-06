@@ -289,3 +289,8 @@ passages.
 - [Give an agent context](/docs/guides/agent-context) and
   [Build a memory-backed agent](/docs/guides/build-an-agent).
 - [MCP tools](/docs/reference/mcp): what the `remember` MCP server exposes.
+
+An operation reuses one query embedding across claims, source chunks and facts
+when the query text and configured vector space are identical. This reuse
+ends with the request. Usage accounting records actual provider calls; it
+does not charge again when another channel uses the same vector.

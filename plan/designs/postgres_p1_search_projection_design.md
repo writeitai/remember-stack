@@ -305,15 +305,38 @@ seconds), not per statement or channel. Every nested read consumes the same
 remaining time; the short connection-admission wait remains a separate limit.
 
 Current-entity identity and fact-visibility reads must not compute unrequested
-mention/document statistics. `entities_current` attaches its one-row count
+mention/document or evidence statistics. `entities_current` and
+`facts_visible_history` attach their one-row count
 aggregate with `LEFT JOIN LATERAL ... ON true`, allowing the planner to remove
-it when neither count column is selected. The aggregate has no grouping or
+them when neither count column is selected. Each aggregate has no grouping or
 HAVING and always produces one row, so this preserves count values and all
 provenance/merge/forgetting membership checks. No counts are cached and no
 stored ingestion products are rewritten. This SQL AST change is included in
 the query-space manifest identity, so ordinary setup atomically suspends active
 saved queries for revalidation before publishing the new hash. It also rolls
 the current benchmark surface pin; recorded run identities remain unchanged.
+
+Entity membership checks start at the candidate terminal ID and walk its
+absorbed members through the indexed `merged_into` links. Each member's
+unsuperseded decisions are selected by the entity index inside a lateral
+`OFFSET 0` fence before joining mentions and visible source coordinates.
+The latest unsuperseded decision still wins by `(decided_at, decision_id)`;
+a non-latest row cannot establish provenance. The forward survivor view
+starts its recursive walk at the requested source row. Reverse scoped
+retrieval starts at requested terminal IDs and follows indexed redirects,
+rather than building an all-entity closure and filtering afterwards. Cycles
+and dangling chains emit no terminal, and no arbitrary depth cap is added.
+
+Final fact hydration must also keep its authority lookup inside a per-ID
+lateral `OFFSET 0` fence. A materialized requested-ID list followed by an
+ordinary join does not prevent PostgreSQL from scanning unrelated entity
+provenance. The inner lookup filters deployment, fixed fact kind and requested
+ID; outer temporal, entity, evidence and predicate gates remain unchanged.
+The fence changes the plan, not membership, ordering or requested counts.
+Do not force join order or disable nested-loop plans on fact-read connections:
+those overrides prevent efficient indexed lookups inside the bounded authority
+query. Runtime/transaction deadlines, JIT suppression and bounded per-query
+parallelism remain operation controls, separate from the join strategy.
 
 ### 8.3 Nominate, confirm, continue (D142)
 

@@ -1195,12 +1195,7 @@ class PostgresP1Index:
             raise ValueError(f"unknown testimony channel {channel!r}")
 
         scope_ctes = f"""
-            WITH scoped_entities AS MATERIALIZED (
-                SELECT entity_id, survivor_entity_id
-                FROM v_memory_entity_survivor
-                WHERE deployment_id = :deployment_id
-                  AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-            ), scoped_items AS MATERIALIZED (
+            {_SURVIVOR_SCOPE_CTE}, scoped_items AS MATERIALIZED (
                 SELECT mention.{mention_column} AS item_id,
                        scoped.survivor_entity_id
                 FROM scoped_entities AS scoped
@@ -1659,14 +1654,7 @@ class PostgresP1Index:
             }
         )
         if entity_ids:
-            scope_cte = """
-                scoped_entities AS MATERIALIZED (
-                    SELECT entity_id, survivor_entity_id
-                    FROM v_memory_entity_survivor
-                    WHERE deployment_id = :deployment_id
-                      AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))
-                ),
-            """
+            scope_cte = _SURVIVOR_SCOPE_BODY + ","
             result_order = "coverage DESC, distance, qualifier, item_id"
             self._require_fact_scope_budget(
                 required=required,
@@ -1767,7 +1755,7 @@ class PostgresP1Index:
                 """
             )
         statement = f"""
-            WITH {scope_cte} candidates AS ({" UNION ALL ".join(branches)})
+            WITH RECURSIVE {scope_cte} candidates AS ({" UNION ALL ".join(branches)})
             SELECT item_id, qualifier, 1.0 - distance AS score
             FROM candidates
             ORDER BY {result_order} LIMIT :limit
@@ -2453,13 +2441,24 @@ def _exact_testimony(
     ]
 
 
-_SURVIVOR_SCOPE_CTE = (
-    "WITH scoped_entities AS MATERIALIZED ("
-    " SELECT entity_id, survivor_entity_id FROM v_memory_entity_survivor"
-    " WHERE deployment_id = :deployment_id"
-    "   AND survivor_entity_id = ANY(CAST(:entity_ids AS uuid[]))) "
+_SURVIVOR_SCOPE_BODY = """
+scoped_entities(entity_id, survivor_entity_id) AS MATERIALIZED (
+    SELECT entity_id, entity_id
+    FROM entities
+    WHERE deployment_id = :deployment_id
+      AND entity_id = ANY(CAST(:entity_ids AS uuid[]))
+      AND merged_into IS NULL
+    UNION ALL
+    SELECT redirect.entity_id, scoped.survivor_entity_id
+    FROM scoped_entities AS scoped
+    JOIN entities AS redirect ON redirect.merged_into = scoped.entity_id
+    WHERE redirect.deployment_id = :deployment_id
 )
-"""Every entity the requested survivors absorbed (merge redirects resolved)."""
+"""
+"""Walk absorbed members from requested terminal identities using redirect indexes."""
+
+_SURVIVOR_SCOPE_CTE = "WITH RECURSIVE " + _SURVIVOR_SCOPE_BODY
+"""The bounded reverse merge scope, shared by counting and ranked retrieval."""
 
 _FACT_AUTHORITY_JOIN = (
     " JOIN memory_v1.facts_visible_history AS fact"

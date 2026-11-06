@@ -14,8 +14,11 @@ import json
 import pytest
 
 from rememberstack.spine import CANONICAL_OPERATIONS
-from rememberstack.spine.migrations.versions.p9_42_0063_entity_counts_demand import (
-    ENTITIES_DEMAND_COUNTS_DDL,
+from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
+    ENTITIES_BOUNDED_PROVENANCE_DDL,
+)
+from rememberstack.spine.migrations.versions.p9_45_0066_fact_counts_demand import (
+    FACTS_DEMAND_COUNTS_DDL,
 )
 from rememberstack.spine.query_space import AUTHORED_AUTHORIZATION_HELPERS
 from rememberstack.spine.query_space import AUTHORED_VIEWS
@@ -414,7 +417,20 @@ def test_the_matrix_covers_every_surface_and_names_its_deferrals() -> None:
 
 def test_latest_entity_view_definition_is_part_of_the_surface_identity() -> None:
     """A migration's actual view definition must match the published fingerprint."""
-    statement = ENTITIES_DEMAND_COUNTS_DDL.split("COMMENT ON VIEW", maxsplit=1)[0]
+    statement = ENTITIES_BOUNDED_PROVENANCE_DDL.split("COMMENT ON VIEW", maxsplit=1)[
+        0
+    ].strip()
     assert AUTHORED_VIEWS["entities_current"].definition_ast == serialize_definition(
         authored_definition=statement
+    )
+
+
+def test_latest_fact_view_definition_is_part_of_the_surface_identity() -> None:
+    """Publish the exact fact view definition applied by the latest migration."""
+    assert AUTHORED_VIEWS[
+        "facts_visible_history"
+    ].definition_ast == serialize_definition(
+        authored_definition=FACTS_DEMAND_COUNTS_DDL.split(
+            "COMMENT ON VIEW", maxsplit=1
+        )[0].strip()
     )

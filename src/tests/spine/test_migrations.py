@@ -148,6 +148,7 @@ def test_revision_graph_is_one_linear_structural_chain() -> None:
         "p9_42_0063",
         "p9_43_0064",
         "p9_44_0065",
+        "p9_45_0066",
     )
     assert len(script.get_heads()) == 1
 
@@ -689,7 +690,7 @@ def test_postgresql_fresh_downgrade_reupgrade_mutation_and_noop_lifecycle() -> N
     head_before_noop = _head_revision(database_url=database_url)
     command.upgrade(config=config, revision="head")
     head_after_noop = _head_revision(database_url=database_url)
-    assert head_before_noop == head_after_noop == "p9_44_0065"
+    assert head_before_noop == head_after_noop == "p9_45_0066"
     assert _inventory(database_url=database_url) == restored_inventory
 
 
@@ -1306,7 +1307,7 @@ def test_fresh_setup_runs_on_a_server_without_sql_pgq() -> None:
             assert graph_catalog_problems(connection=connection) == ()
     finally:
         engine.dispose()
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"
 
 
 def test_citation_projection_migration_round_trips_graph_metadata() -> None:
@@ -1397,7 +1398,7 @@ def test_d118_refuses_lossy_downgrade() -> None:
     command.upgrade(config=config, revision="head")
     with pytest.raises(RuntimeError, match="explicitly reviewed restore/conversion"):
         command.downgrade(config=config, revision="p9_27_0048")
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"
 
 
 def test_d122_refuses_a_populated_store() -> None:
@@ -1441,7 +1442,7 @@ def test_d122_refuses_a_populated_store() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"
 
 
 _BACKFILL_MIMES = (
@@ -1650,7 +1651,7 @@ def test_d134_backfills_metadata_and_names_for_existing_versions() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"
 
 
 def test_d134_own_document_name_span_downgrade_guard() -> None:
@@ -1709,7 +1710,7 @@ def test_d134_own_document_name_span_downgrade_guard() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"
 
 
 def test_d138_downgrade_guard_protects_search_only_readings() -> None:
@@ -1844,4 +1845,4 @@ def test_d138_downgrade_guard_protects_search_only_readings() -> None:
         engine.dispose()
         reset_database(config=config)
         command.upgrade(config=config, revision="head")
-    assert _head_revision(database_url=database_url) == "p9_44_0065"
+    assert _head_revision(database_url=database_url) == "p9_45_0066"

@@ -249,7 +249,7 @@ def test_unscoped_fact_nomination_defers_authority_to_its_caller() -> None:
     assert "ORDER BY embedding <=> CAST(:query_vector AS vector)" in nomination
 
 
-def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> None:
+def test_scoped_fact_nomination_uses_indexed_reverse_survivor_expansion() -> None:
     """Scoped nomination keeps merge semantics and full fact authority.
 
     Review r1 P1-5 (D87): authority-ineligible facts must not take the
@@ -279,7 +279,8 @@ def test_scoped_fact_nomination_uses_only_the_survivor_mapping_authority() -> No
 
     ranked_sql = str(connection.execute.call_args_list[-1].args[0])
     parameters = connection.execute.call_args_list[-1].args[1]
-    assert "v_memory_entity_survivor" in ranked_sql
+    assert "redirect.merged_into = scoped.entity_id" in ranked_sql
+    assert "AND merged_into IS NULL" in ranked_sql
     assert "memory_v1.facts_visible_history" in ranked_sql
     assert "AS coverage" in ranked_sql
     executed = [str(call.args[0]) for call in connection.execute.call_args_list]
@@ -328,7 +329,8 @@ def test_scoped_testimony_nomination_defers_visibility_to_hydration(
         if name.endswith("execute") and call.args
     ]
     coverage_sql = next(sql for sql in executed if sql.endswith("FROM coverage"))
-    assert "v_memory_entity_survivor" in coverage_sql
+    assert "redirect.merged_into = scoped.entity_id" in coverage_sql
+    assert "AND merged_into IS NULL" in coverage_sql
     assert "resolution_decisions" in coverage_sql
     assert "JOIN mentions" in coverage_sql
     assert "memory_v1" not in coverage_sql

@@ -103,7 +103,7 @@ def _build_in_scratch_database(*, database_url: str, name: str) -> dict[str, Any
         scratch_url = make_url(database_url).set(database=name)
         rendered = scratch_url.render_as_string(hide_password=False)
         config = Config(str(_ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", rendered)
+        config.set_main_option("sqlalchemy.url", rendered.replace("%", "%%"))
         command.upgrade(config=config, revision="head")
         engine = create_engine(rendered)
         try:
@@ -3752,7 +3752,7 @@ def test_deployed_definition_drift_is_detected(
             .render_as_string(hide_password=False)
         )
         config = Config(str(_ROOT / "alembic.ini"))
-        config.set_main_option("sqlalchemy.url", rendered)
+        config.set_main_option("sqlalchemy.url", rendered.replace("%", "%%"))
         command.upgrade(config=config, revision="head")
         reference = create_engine(rendered)
         try:
@@ -3924,3 +3924,25 @@ def test_identity_reads_skip_unrequested_entity_count_aggregates(
             plans[name] = json.dumps(plan).lower()
     assert "sum(" not in plans["identity"]
     assert "sum(" in plans["counts"]
+
+
+def test_fact_identity_reads_skip_unrequested_evidence_counts(corpus: _Corpus) -> None:
+    """ID-only fact checks prune statistics while requested counts still run."""
+    plans: dict[str, str] = {}
+    with corpus.engine.connect() as connection:
+        for name, columns in (
+            ("identity", "fact_id"),
+            ("counts", "fact_id, evidence_count_current, contradict_count_current"),
+        ):
+            plan = connection.execute(
+                text(
+                    "EXPLAIN (VERBOSE, FORMAT JSON) SELECT "
+                    + columns
+                    + " FROM memory_v1.facts_visible_history"
+                    + " WHERE deployment_id = :deployment AND fact_id = :fact"
+                ),
+                {"deployment": _DEPLOYMENT_ID, "fact": corpus.fact["current"]},
+            ).scalar_one()
+            plans[name] = json.dumps(plan).lower()
+    assert "count(*) filter" not in plans["identity"]
+    assert "count(*) filter" in plans["counts"]

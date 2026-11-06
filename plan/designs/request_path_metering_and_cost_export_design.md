@@ -301,20 +301,28 @@ Persist algorithm:
 
 ### 4.2 Request scope (exact interface)
 
-**Immutable context only.** A `ContextVar` holds a frozen
+**Request lifetime.** A `ContextVar` holds a frozen
 
 ```text
-SurfaceRequestScope(request_id: UUID, surface: SurfaceCostKind)
+SurfaceRequestScope(request_id: UUID, surface: SurfaceCostKind, work: SurfaceRequestWork)
 ```
 
-or `None`. No counters in the context object.
+or `None`. The identity owns request-local work: a synchronized embedding
+cache and provider-call ordinal. The cache key includes QueryEngine identity,
+deployment, embedding model, dimensions and exact input text. Claims, chunks,
+facts and coverage probes reuse one successful vector for that key. Only an
+actual provider call produces a receipt, attributed to its first call site;
+a cache hit creates neither a second charge nor a synthetic receipt. Provider
+or receipt failures do not populate the cache. Nested scopes reuse this work;
+the outer scope resets in `finally`, releasing vectors and query text. There
+is no cross-request or persistent query cache.
 
 **HTTP (customer app):** an **async** middleware (not a sync `Depends`)
 opens the scope before the sync endpoint runs in the threadpool, and
 resets the token in `finally`. FastAPI copies context into worker
 threads from the async task; a scope set in a sync dependency is
-invisible to the endpoint. A test must prove two embeds in one
-`combined_context` HTTP call share `request_id`.
+invisible to the endpoint. A test must prove the children of one `combined_context` call reuse one
+embedding and its receipt carries that request's `request_id`.
 
 **Assured operations / QueryEngine public methods:** if a scope is
 already set, reuse it (nested). If not, the public method opens
@@ -338,9 +346,9 @@ scope.
 | --- | --- | --- |
 | `GET /search/claims`, `GET /search/chunks` (semantic) | `search` | 1 |
 | same, `channel=bm25` | `search` | 0 |
-| `POST /operations/{name}` `claims_and_sources_context` | `operation` | 2 on the unscoped path; **N+M** when entity-scoped coverage loops re-embed the same query per tier (`_coverage_ordered_nominations`). Ordinal absorbs N. |
-| `POST /operations/{name}` `facts_context` | `operation` | 1 unscoped; **P** with eligibility coverage loop |
-| `POST /operations/{name}` `combined_context` | `operation` | testimony + fact (not a fixed 3 when scoped) |
+| `POST /operations/{name}` `claims_and_sources_context` | `operation` | 1 for identical query text across claims, chunks and coverage probes. |
+| `POST /operations/{name}` `facts_context` | `operation` | 1, reused by eligibility coverage probes |
+| `POST /operations/{name}` `combined_context` | `operation` | 1 across testimony and facts for identical query text |
 | `GET /lookup/observations?property_query=` | `lookup` | 1 |
 | `POST /query/sql` (execute) | `open_query` | 0..n |
 | `POST /query/sql/explain`, Cypher, Cypher explain | — | 0 |
@@ -352,17 +360,12 @@ scope.
 ### 4.3 Closed `call_site` vocabulary
 
 Writers pass a `SurfaceCallSite` enum. `_embed` takes
-`call_site: SurfaceCallSite` explicitly. The ordinal is a second
-ContextVar holding an `int`, initialized to `0` when the scope opens,
-reset in the same `finally`. Sequential embeds in one sync endpoint
-share one context copy: `ordinal = get() + 1; set(ordinal)`. There is
-no ContextVar compare-and-set. Concurrent embeds inside one request
-are not in the current call graph; do not add them without replacing
-this with a lock.
-
-Repeated embeds of the **same query string** (coverage-tier loops) are
-sequential and **are** in the current call graph. They share
-`call_site` and increment `ordinal`. That is why ordinal exists.
+`call_site: SurfaceCallSite` explicitly. The ordinal counts actual provider
+calls, starting at 1. It lives in the request's synchronized work object,
+so inherited thread contexts cannot assign the same ordinal to distinct
+calls. The same reentrant lock protects cache lookup, provider completion,
+receipt recording and cache insertion. Independent requests have independent
+locks. Failure releases the lock and leaves that key uncached.
 
 Initial enum members:
 

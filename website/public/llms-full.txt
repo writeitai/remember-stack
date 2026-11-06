@@ -2878,6 +2878,11 @@ passages.
   [Build a memory-backed agent](https://remember.dev/docs/guides/build-an-agent).
 - [MCP tools](https://remember.dev/docs/reference/mcp): what the `remember` MCP server exposes.
 
+An operation reuses one query embedding across claims, source chunks and facts
+when the query text and configured vector space are identical. This reuse
+ends with the request. Usage accounting records actual provider calls; it
+does not charge again when another channel uses the same vector.
+
 ---
 
 Source: https://remember.dev/docs/concepts/reading-results

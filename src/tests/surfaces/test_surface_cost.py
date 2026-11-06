@@ -21,6 +21,7 @@ from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingResponse
 from rememberstack.model import ProviderCallUsage
 from rememberstack.ports.p1_index import P1SearchPort
+from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine.deployment_bootstrap import DeploymentBootstrapper
 from rememberstack.spine.settings import load_database_settings
 from rememberstack.spine.surface_cost import open_surface_scope
@@ -28,6 +29,7 @@ from rememberstack.spine.surface_cost import SqlSurfaceCostRecorder
 from rememberstack.spine.surface_cost import SurfaceCallSite
 from rememberstack.spine.surface_cost import SurfaceCostKind
 from rememberstack.spine.surface_cost import SurfaceCostMeter
+from rememberstack.surfaces.operation_executor import OperationExecutor
 from rememberstack.surfaces.query_engine import QueryEngine
 from tests.database_reset import reset_database
 
@@ -143,6 +145,42 @@ def test_bm25_search_writes_zero_surface_rows(database_engine: Engine) -> None:
             text("SELECT count(*) FROM surface_cost_ledger")
         ).scalar_one()
     assert int(count) == 0
+
+
+def test_combined_operation_embeds_and_bills_once_per_request(
+    database_engine: Engine,
+) -> None:
+    """Actual operation children reuse one vector; a subsequent request pays anew."""
+    _bootstrap(database_engine)
+    provider = FakeModelProvider()
+    executor = OperationExecutor(
+        query_engine=QueryEngine(
+            engine=database_engine,
+            search_index=cast(P1SearchPort, _NullSearchIndex()),
+            model_provider=provider,
+            embedding_model="toy",
+            surface_cost=SqlSurfaceCostRecorder(
+                engine=database_engine, deployment_id=_DEPLOYMENT_ID
+            ),
+        )
+    )
+    operation = next(
+        op for op in CANONICAL_OPERATIONS if op.name.value == "combined_context"
+    )
+    for _ in range(2):
+        executor.execute(
+            deployment_id=_DEPLOYMENT_ID,
+            operation=operation,
+            arguments={"query": "one shared question"},
+        )
+    assert provider.embedded_texts == ["one shared question", "one shared question"]
+    with database_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT request_id, ordinal, outcome::text FROM surface_cost_ledger")
+        ).all()
+    assert len(rows) == 2
+    assert len({row[0] for row in rows}) == 2
+    assert all(row[1:] == (1, "ok") for row in rows)
 
 
 def test_operational_profile_meter_writes_an_allowlisted_surface_receipt(

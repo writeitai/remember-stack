@@ -585,12 +585,12 @@ as today.
   chain, component versions and readiness list; every response, `GET /operations` descriptor,
   `GET /deployment` body, MCP catalogue and tool schema are byte-identical. Layer
   configuration itself does not change the query-surface manifest or its hash.
-  Independent schema changes follow D89 publication: p9_42 replaces an entity
-  view join and rolls the current manifest identity, while preserving the
+  Independent schema changes follow D89 publication: p9_42 and p9_45 replace entity and fact
+  count joins and rolls the current manifest identity, while preserving the
   other pre-D143 default captures.
 - **LoCoMo** runs with every layer enabled and is unaffected: its readiness gate, model bindings,
   catalogue hash stay as pinned. Its current surface pin follows independently
-  accepted schema changes; p9_42 advances that pin without changing ingestion
+  accepted schema changes; p9_42/p9_45 advances that pin without changing ingestion
   generations or model bindings.
 - **Clients.** The request parameter is optional and the new route is additive; no response model
   changes, so clients of either age read every response. The Python SDK and TypeScript client gain
@@ -605,7 +605,7 @@ database-level, with recorded or fake model providers:
    versions; the serialized `GET /operations`, `GET /deployment`, an operation response of each
    assured operation and both MCP tool lists with input schemas all equal the
    pre-D143 values. The manifest capture pins the current approved view identity
-   (its three hash fields are updated for p9_42), and LoCoMo pins that identity
+   (its three hash fields are updated for p9_42/p9_45), and LoCoMo pins that identity
    through its current protocol. No configuration row or gap row is written.
 2. **Facts off.** A version ingests to `ready` with the claims-mode reconcile; no E3 stage row and no
    E3 provider call exist; a living lineage that drops a paragraph retires that paragraph's claims;

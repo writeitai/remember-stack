@@ -6,8 +6,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from contextvars import Token
 from dataclasses import dataclass
+from dataclasses import field
 from enum import StrEnum
 import logging
+from threading import RLock
 from typing import Iterator
 from uuid import UUID
 from uuid import uuid4
@@ -22,7 +24,6 @@ _logger = logging.getLogger(__name__)
 _SCOPE: ContextVar[SurfaceRequestScope | None] = ContextVar(
     "surface_cost_scope", default=None
 )
-_ORDINAL: ContextVar[int] = ContextVar("surface_cost_ordinal", default=0)
 
 
 class SurfaceCostKind(StrEnum):
@@ -63,12 +64,26 @@ class SurfaceCallSite(StrEnum):
     PROFILE_DELETE = "profile_delete"
 
 
+@dataclass(slots=True)
+class SurfaceRequestWork:
+    """Mutable work shared by nested callers of one request scope."""
+
+    embedding_vectors: dict[tuple[object, UUID, str, str, int], tuple[float, ...]] = (
+        field(default_factory=dict, compare=False, repr=False)
+    )
+    embedding_lock: RLock = field(default_factory=RLock, compare=False, repr=False)
+    ordinal: int = 0
+
+
 @dataclass(frozen=True, slots=True)
 class SurfaceRequestScope:
-    """Immutable request identity for one inbound or in-process call."""
+    """Immutable identity with work retained only for this request's lifetime."""
 
     request_id: UUID
     surface: SurfaceCostKind
+    work: SurfaceRequestWork = field(
+        default_factory=SurfaceRequestWork, compare=False, repr=False
+    )
 
 
 class SurfaceCostUnrecordedError(RuntimeError):
@@ -86,12 +101,12 @@ def bind_surface_scope(
         return
     scope = SurfaceRequestScope(request_id=request_id, surface=surface)
     scope_token: Token[SurfaceRequestScope | None] = _SCOPE.set(scope)
-    ordinal_token: Token[int] = _ORDINAL.set(0)
     try:
         yield scope
     finally:
+        with scope.work.embedding_lock:
+            scope.work.embedding_vectors.clear()
         _SCOPE.reset(scope_token)
-        _ORDINAL.reset(ordinal_token)
 
 
 @contextmanager
@@ -103,12 +118,12 @@ def open_surface_scope(*, surface: SurfaceCostKind) -> Iterator[SurfaceRequestSc
         return
     scope = SurfaceRequestScope(request_id=uuid4(), surface=surface)
     scope_token: Token[SurfaceRequestScope | None] = _SCOPE.set(scope)
-    ordinal_token: Token[int] = _ORDINAL.set(0)
     try:
         yield scope
     finally:
+        with scope.work.embedding_lock:
+            scope.work.embedding_vectors.clear()
         _SCOPE.reset(scope_token)
-        _ORDINAL.reset(ordinal_token)
 
 
 def current_surface_scope() -> SurfaceRequestScope | None:
@@ -117,10 +132,13 @@ def current_surface_scope() -> SurfaceRequestScope | None:
 
 
 def next_surface_ordinal() -> int:
-    """Increment and return the per-scope embed ordinal."""
-    ordinal = _ORDINAL.get() + 1
-    _ORDINAL.set(ordinal)
-    return ordinal
+    """Increment the request's ordinal, including inherited thread contexts."""
+    scope = _SCOPE.get()
+    if scope is None:
+        return 1
+    with scope.work.embedding_lock:
+        scope.work.ordinal += 1
+        return scope.work.ordinal
 
 
 class SqlSurfaceCostRecorder:
@@ -151,7 +169,6 @@ class SqlSurfaceCostRecorder:
             scope = SurfaceRequestScope(
                 request_id=uuid4(), surface=SurfaceCostKind.LIBRARY
             )
-            _ORDINAL.set(0)
         ordinal = next_surface_ordinal()
         try:
             with self._engine.begin() as connection:

@@ -4027,6 +4027,11 @@ Does not amend D43 ladder semantics, `hub_top_k`, or claim-normalize fan-out.
 
 ## D91. Request-path provider spend is a sibling ledger; export is a pull union
 
+> **Amended by [D149](#d149-reuse-query-embeddings-within-a-request-prune-unrequested-fact-statistics) (2026-11-06).**
+> Repeated identical query embeddings are replaced by request-local reuse;
+> the provider-call ordinal is synchronized in request work. The ledger,
+> attribution, export and durable-loss/fail-closed accounting rules remain.
+
 **Decision (2026-08-13).** Worker provider spend stays on `cost_ledger` with
 D67 identity (`processing_id` NOT NULL, lock-and-copy attribution). Interactive
 provider calls (search, assured operations, lookup, SQL nomination, in-process
@@ -7548,3 +7553,26 @@ compression is not part of this decision; these numbers are what would justify i
 **Consequences.** [Orchestration §7](plan/designs/orchestration_design.md#7-observable-state-and-telemetry--no-dashboard-subsystem)
 lists the attributes; the observability docs describe them.
 
+
+## D149. Reuse query embeddings within a request; prune unrequested fact statistics
+
+**Status:** accepted. **Date:** 2026-11-06.
+
+Entity membership starts from candidate IDs and indexed provenance; scoped
+merge expansion walks indexed redirects from requested terminals. Forward
+survivor lookup starts at its source row, with cycle-safe recursion and no
+fixed depth cap. Fact-ID nomination must not compute unrequested evidence counts. Its one-row
+aggregate uses a left lateral join so PostgreSQL can remove it without
+changing membership or returned counts. Eligibility predicates remain before
+the relevance cut; this does not remove source or temporal correctness.
+
+An operation embeds identical query text once per engine, deployment, model
+and dimensions. Its D91 scope owns the vector and synchronized call ordinal;
+nested channels share it, separate requests do not. Only actual provider
+calls create cost receipts. This amends D91's repeated-embedding/ordinal
+implementation; the ledger and fail-closed accounting contract stay intact.
+No ingestion or paid-product reuse identity changes.
+
+See [analysis](plan/analysis/retrieval_work_amplification_20261106.md),
+[D91 §4.2](plan/designs/request_path_metering_and_cost_export_design.md#42-request-scope-exact-interface)
+and [D142 §8.2](plan/designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract).
