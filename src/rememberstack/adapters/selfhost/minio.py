@@ -274,6 +274,12 @@ class MinIOObjectStore:
                 )
 
 
+# botocore keeps 10 pooled connections by default, fewer than one `llm` worker's
+# default 20 tasks in flight (D146); excess requests would open and discard
+# connections. 50 leaves headroom for API request threads sharing the client.
+_MAX_POOL_CONNECTIONS = 50
+
+
 def _client(*, settings: MinIOSettings) -> _S3Client:
     """Construct the path-style S3 client the bundled store supports."""
     return cast(
@@ -284,7 +290,11 @@ def _client(*, settings: MinIOSettings) -> _S3Client:
             aws_access_key_id=settings.access_key.get_secret_value(),
             aws_secret_access_key=settings.secret_key.get_secret_value(),
             region_name=settings.region,
-            config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+            config=Config(
+                signature_version="s3v4",
+                s3={"addressing_style": "path"},
+                max_pool_connections=_MAX_POOL_CONNECTIONS,
+            ),
         ),
     )
 

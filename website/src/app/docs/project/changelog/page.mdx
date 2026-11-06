@@ -24,6 +24,115 @@ runs today, and what that means for you, is on
 
 </Cloud>
 
+## 0.18.0 (November 2026)
+
+**Self-hosted upgrades need action.** Read
+[Upgrades and migrations](/docs/self-hosting/upgrades) before moving an
+existing deployment. A 0.17 deployment upgrades in place: its data is kept and
+`setup` migrates it. PostgreSQL is the exception (below).
+
+**PostgreSQL 19 release candidate 1.**
+
+- **Action needed.** The database image is now
+  `ghcr.io/writeitai/remember-stack-postgres:19rc1-0.18.0`. Releases up to
+  0.17.2 ran PostgreSQL 19 Beta 3, and a Beta 3 data directory does not open
+  under RC 1. Move in two steps:
+  1. Upgrade the engine to 0.18.0 while it still runs on the Beta 3 image.
+     `setup` drops the Beta 3 property graphs.
+  2. Dump the database and restore it into a new RC 1 volume.
+
+  The order matters: a dump taken before step 1 holds definitions RC 1 cannot
+  restore. [Upgrades](/docs/self-hosting/upgrades#postgresql-prerelease-versions)
+  has the commands.
+- The graph no longer uses SQL/PGQ, which RC 1 removed. One-hop neighbourhoods
+  are plain joins over the same views, and they return the same results.
+- **Action needed.** Readiness reasons are renamed:
+  `graph_pgq_smoke_failed` is now `graph_one_hop_smoke_failed`, and
+  `graph_pgq_guard_smoke_failed` is now `graph_one_hop_guard_smoke_failed`.
+  Update any alerting that matches the old names.
+- **Action needed.** The JSON output of `remember ops graph-catalog ensure` no
+  longer has a `definitions` field. It no longer checks property graphs, and
+  it checks the graph views instead.
+
+**Workers.**
+
+- **Action needed.** Workers run by class, not by stage. `worker --stage
+  <stage>` is replaced by `worker --class convert|llm` with `--concurrency`.
+  `convert` converts files one at a time. `llm` runs every other stage, with
+  20 tasks in flight by default. The Compose file now has two worker services,
+  `worker-convert` and `worker-llm`, in place of one per stage. Stop the old
+  stack with `docker compose down --remove-orphans`, so the per-stage worker
+  containers are removed. Size with `REMEMBERSTACK_SELFHOST_LLM_CONCURRENCY`
+  and `REMEMBERSTACK_SELFHOST_CONVERT_CONCURRENCY`, or `--scale`; see
+  [Scaling](/docs/self-hosting/scaling).
+- A claimed task is a lease that its worker renews. If the worker dies, the
+  task goes back to the queue once the lease expires, instead of staying
+  `running` forever.
+- Several deployments can run their migrations against one PostgreSQL server
+  at the same time.
+- Each worker item's log records `object_bytes_read` and
+  `object_bytes_written` ([Observability](/docs/self-hosting/observability)).
+
+**HTTP API.**
+
+- **Behaviour change.** A request whose decoded path contains a control
+  character, such as `%0A`, gets `400 invalid_path`. It is refused before
+  authentication and routing.
+- `POST /documents/search` finds documents by name, metadata and text.
+  `documents` filters on `POST /search/claims` and `POST /search/chunks` limit
+  a search to chosen documents. `source_path` on `POST /ingest` records where
+  a file came from.
+- Effective periods, version keys, section history and cross-references:
+  read a document as it was in force on a date. See
+  [Read a document as of a date](/docs/guides/versions-in-force).
+
+<Cloud>
+
+- Fixes to spend-gate classification. Section history with empty key segments,
+  mounted paths and percent-encoded delimiters are now metered like any other
+  read.
+
+</Cloud>
+
+**Processing.**
+
+- **Behaviour change.** Every page of every PDF is OCR'd. A deployment
+  without a Mistral OCR key parks PDFs as `no_route`.
+  `REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES` now adds to the stock route
+  table instead of replacing it. It cannot route PDFs to a text-layer
+  converter.
+- Many more file types are ingested: office documents, HTML, e-books, email,
+  notebooks, spreadsheets, delimited data and datasets. Code, logs and file
+  cards are searchable, and claims are not extracted from them. See
+  [File types](/docs/guides/file-types).
+- The claims and facts layers can be switched off per deployment
+  (`REMEMBERSTACK_SELFHOST_CLAIMS_LAYER`, `REMEMBERSTACK_SELFHOST_FACTS_LAYER`)
+  and per request. Turning one back on processes the versions it skipped.
+- Claims that refer to their own document by a phrase such as "this
+  agreement" name the document.
+- `REMEMBERSTACK_SELFHOST_RETRIEVAL_DATABASE_BUDGET_S` sets one retrieval
+  operation's database time budget.
+- `setup` accepts a database URL whose password is percent-encoded.
+
+**Clients.**
+
+- The `adjacent_chunks` MCP tool.
+- A TypeScript client, `@rememberdev/client`, with the same methods as the
+  Python client. It is available as repository source and is not published to
+  npm.
+
+**Embedding the engine.** A program can build an engine for a deployment
+from explicit settings and run several in one process. It can run a named
+task with `run_task`. Other options:
+
+- one API app serving several deployments, which resolves, authenticates and
+  admits each request against its own deployment;
+- replaceable conversion routes;
+- a forget-manifest bucket, so no deployment state is kept on local disk;
+- credentials per bucket;
+- `engine_options` for the database connection pool;
+- a separate host, port and TLS settings for the SQL query role.
+
 ## 0.17.0 (22 September 2026)
 
 **Existing deployments must be recreated.** The migrations for mutable fact

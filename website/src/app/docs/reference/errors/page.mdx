@@ -47,6 +47,7 @@ seconds. `wait_for_readiness` raises
 |---|---|---|---|
 | `400` | `cursor is malformed` | `GET /documents` got a cursor it cannot read. | Restart paging without a cursor. |
 | `400` | the cursor problem | `section_history` or `document_references` got a cursor that is malformed or belongs to another call. | Restart paging without a cursor, with the same arguments. |
+| `400` | `invalid_path` | The request path, after percent-decoding, contains an ASCII control character (for example `%0A`). Refused before authentication and routing. | Send a path without control characters. |
 | `401` | `a perimeter credential is required` | No `Authorization` header, and the deployment requires one. | Send `Authorization: Bearer <token>`. |
 | `401` | `perimeter authentication failed` | The credential is not accepted: wrong secret, bad signature, expired, revoked, or unknown signing key. | Get a fresh token.<Cloud> On remember.dev, run `remember login` again or create a token in the console.</Cloud> |
 | `403` | `credential is for another deployment` | The credential is valid for a different deployment. | Use the token issued for this deployment, or the right `REMEMBER_API_URL`. |

@@ -7337,8 +7337,9 @@ fact child).
 ## D147. A deployment's engine is built from explicit settings and can run beside others in one process
 
 **Status:** accepted (owner direction 2026-11-06, relaunch plan phase 2 item c). Merged
-as D144 in #531 and renumbered the same day, because D144–D146 were already taken by the
-claim-lease, stage-class worker and egress decisions.
+as D144 in #531 and renumbered the same day to avoid colliding with decisions being written
+in parallel. D144 is unused; D145 is the claim-lease decision, D146 the stage-class worker
+decision and D148 the egress decision.
 **Date:** 2026-11-06.
 
 **Context.** Until now one process served one deployment. The self-host profile read the
