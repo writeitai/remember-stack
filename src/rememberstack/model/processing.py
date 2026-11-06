@@ -169,7 +169,7 @@ class RecordCall(BaseModel):
     Attribution fields (stage, lane, target) are copied from the locked
     ``processing_state`` row by the spine and can never be supplied here (D67).
     ``attempt`` is the caller's claim: the call is recorded only while that
-    attempt still holds the row (D145).
+    attempt still holds the row (D144).
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
