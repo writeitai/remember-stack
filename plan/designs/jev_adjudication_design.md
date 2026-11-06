@@ -87,7 +87,8 @@ application examples before enabling the option. The existing confidence floor
 continues to express the adjudication policy; it is not an availability trigger.
 
 Native calls use `gpt-6-luna` at `POST /v1/decisions`, with a distinct native API
-credential (`REMEMBERSTACK_OPENAI_DECISIONS_API_KEY`). An OpenRouter key or
+credential (`REMEMBERSTACK_OPENAI_DECISIONS_API_KEY`, or `OPENAI_API_KEY`
+outside Compose). An OpenRouter key or
 balance does not authenticate this endpoint. Native Decisions has no configured
 chat reasoning-effort override. The adapter uses implicit prompt caching with
 the documented 30-minute TTL and no output-token charge. The verified global
@@ -112,7 +113,10 @@ missing/inconsistent accounting raises nonretryable `ProviderAccountingError`.
 
 The readiness binding records backup selection and its non-secret configuration.
 A historical artifact lacking this entire optional dimension restores with backup
-disabled; partial active policies fail validation. This reads historical metadata
+disabled with an explicit selector overriding base-environment files; partial
+active policies fail validation. Inactive native settings are excluded from the
+runtime comparison, since Compose may resolve defaults that cannot be used while
+backup is disabled. This applies with or without an execution profile and reads historical metadata
 without retaining an obsolete runtime implementation or rewriting its identity.
 Current LoCoMo explicitly freezes backup to `none`; changing its provider policy
 requires a new prepared identity. Accepted facts, extraction products and vectors

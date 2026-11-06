@@ -122,6 +122,8 @@ failures. The default is `none`. The backup uses `gpt-6-luna` on OpenAI's native
 API; OpenRouter credit does not pay for it.
 Outside Compose, `OPENAI_API_KEY` is also accepted. Compose forwards only the
 prefixed credential, so set that variable for container deployments.
+Native response handling has only been validated with offline mock transports.
+Run a small live API check with your native credential before enabling the backup.
 
 Valid low confidence, invalid credentials, malformed answers, ambiguous read
 timeouts, generic gateway errors and missing usage do not trigger the backup.

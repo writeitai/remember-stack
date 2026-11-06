@@ -9,6 +9,7 @@ import inspect
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import tarfile
 from typing import overload
@@ -1101,8 +1102,8 @@ def test_prefeature_backup_restores_with_optional_provider_disabled(
     )
     original = state_path.read_bytes()
     environment = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
-    assert environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == ""
-    assert environment["REMEMBERSTACK_OPENAI_DECISIONS_MODEL"] == ""
+    assert environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == "none"
+    assert "REMEMBERSTACK_OPENAI_DECISIONS_MODEL" not in environment
     assert state_path.read_bytes() == original
 
 
@@ -1126,3 +1127,125 @@ def test_partial_backup_binding_cannot_restore_an_implicit_policy(
     )
     with pytest.raises(store_backup.StoreBackupError, match="incomplete|no valid"):
         store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+
+
+@pytest.mark.parametrize("profiled", [False, True])
+@pytest.mark.parametrize("prefeature", [False, True])
+def test_disabled_provider_restores_through_compose_defaults_and_identity_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, profiled: bool, prefeature: bool
+) -> None:
+    """Disabled providers survive actual Compose defaults and cannot inherit activation."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+        if not prefeature or not name.startswith("systemone_backup")
+    }
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+    if profiled:
+        saved_environment = {
+            store_backup.MODEL_BINDING_ENVIRONMENT[name]: (
+                "" if value == store_backup.UNSET_MODEL_BINDINGS.get(name) else value
+            )
+            for name, value in bindings.items()
+        }
+        if not prefeature:
+            saved_environment["REMEMBERSTACK_TYPESAFE_BACKUP"] = "none"
+        run = json.loads((run_dir / "run.json").read_text())
+        run["execution_profile"] = {
+            "ingest_model_bindings": bindings,
+            "ingest_environment": saved_environment,
+        }
+        (run_dir / "run.json").write_text(json.dumps(run))
+    revision = "r" * 40
+    deployment = "57000000-0000-0000-0000-000000000001"
+    runtime_path = store_backup._write_runtime_environment(
+        run_dir=run_dir,
+        sample_id="conv-1",
+        deployment_id=deployment,
+        repository_revision=revision,
+    )
+    runtime = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    defaults = dict(
+        re.findall(
+            r"^\s+(REMEMBERSTACK_[A-Z0-9_]+): \$\{\1:-([^}]*)\}",
+            Path("compose.yaml").read_text(),
+            re.MULTILINE,
+        )
+    )
+    assert defaults["REMEMBERSTACK_OPENAI_DECISIONS_MODEL"] == "gpt-6-luna"
+    # The later runtime env-file must override even an active policy in base.env.
+    base = {"REMEMBERSTACK_TYPESAFE_BACKUP": "openai_decisions"}
+    supplied = {**base, **runtime}
+    api_environment = {
+        name: supplied.get(name) or default for name, default in defaults.items()
+    }
+    api_environment.update(
+        {name: value for name, value in supplied.items() if name not in defaults}
+    )
+    api_environment["REMEMBERSTACK_SELFHOST_DEPLOYMENT_ID"] = deployment
+    assert api_environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == "none"
+
+    def run_command(
+        *, args: tuple[str, ...], capture_output: bool = False, text: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        """Resolve the real Compose defaults without starting a Docker service."""
+        if args[:3] == ("docker", "image", "inspect"):
+            return _completed_process(
+                args, stdout=json.dumps([f"REMEMBERSTACK_BUILD_REVISION={revision}"])
+            )
+        return _completed_process(
+            args,
+            stdout=json.dumps(
+                {"services": {"api": {"image": "test", "environment": api_environment}}}
+            ),
+        )
+
+    monkeypatch.setattr(store_backup, "_run", run_command)
+    manifest = store_backup.BackupManifest.model_construct(
+        sample_id="conv-1",
+        deployment_id=deployment,
+        run=store_backup.RunIdentity.model_construct(repository_revision=revision),
+    )
+    store_backup._validate_runtime_identity(
+        manifest=manifest,
+        compose_project="test",
+        compose_base_env=tmp_path / "base.env",
+        runtime_environment=runtime_path,
+    )
+    # Supplying a live backup despite the saved disabled policy must still fail.
+    api_environment["REMEMBERSTACK_TYPESAFE_BACKUP"] = "openai_decisions"
+    with pytest.raises(store_backup.StoreBackupError, match="differs"):
+        store_backup._validate_runtime_identity(
+            manifest=manifest,
+            compose_project="test",
+            compose_base_env=tmp_path / "base.env",
+            runtime_environment=runtime_path,
+        )
+
+
+def test_active_backup_restore_keeps_every_price_and_provider_binding(
+    tmp_path: Path,
+) -> None:
+    """Inactive settings may be ignored; an active backup must retain its full policy."""
+    run_dir = tmp_path / "run"
+    _run_json(run_dir)
+    bindings = {
+        name: store_backup.UNSET_MODEL_BINDINGS.get(name, f"value-{name}")
+        for name in store_backup.MODEL_BINDING_ENVIRONMENT
+    }
+    bindings["systemone_backup"] = "openai_decisions"
+    for name in bindings:
+        if name.startswith("systemone_backup_"):
+            bindings[name] = f"saved-{name}"
+    (run_dir / "state.json").write_text(
+        json.dumps({"readiness": {"conv-1": {"model_bindings": bindings}}})
+    )
+    environment = store_backup._runtime_environment(run_dir=run_dir, sample_id="conv-1")
+    assert environment["REMEMBERSTACK_TYPESAFE_BACKUP"] == "openai_decisions"
+    for name, value in bindings.items():
+        if name.startswith("systemone_backup_"):
+            assert environment[store_backup.MODEL_BINDING_ENVIRONMENT[name]] == value

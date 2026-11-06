@@ -72,3 +72,14 @@ again under a different key. Keep one owner: the worker meters propagated
 errors; the adjudicator meters only failures it consumes for an explicitly
 enabled prompt fallback. Historical backup metadata without this new optional
 provider dimension means disabled, rather than inheriting ambient settings.
+
+Follow-up review exercised the restore identity validator against defaults read
+from the actual Compose file, rather than stopping at environment serialization.
+An empty disabled selector is not equivalent to `none`, and unused native
+settings resolve to non-empty Compose defaults. The restore now explicitly pins
+the selector and excludes only inactive native settings from comparison. Old
+execution profiles also receive an explicit disabled selector so a base env-file
+cannot activate the new provider. Active policies retain and compare every
+recorded provider and price field. Operator docs disclose mock-only response
+validation. Score probability labels must match the supplied numeric index as
+an additional guard against interpreting a different level scale.

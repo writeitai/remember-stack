@@ -480,6 +480,7 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
     if not isinstance(bindings, dict):
         raise StoreBackupError(f"state.json has no model bindings for {sample_id}")
 
+    backup_environment = _saved_backup_environment(bindings=bindings)
     profile_data = _load_object(run_dir / "run.json").get("execution_profile")
     if profile_data is not None:
         profile = _RuntimeExecutionProfile.model_validate(profile_data)
@@ -490,37 +491,64 @@ def _runtime_environment(*, run_dir: Path, sample_id: str) -> dict[str, str]:
                 c in value for c in "\r\n\x00"
             ):
                 raise StoreBackupError("execution profile contains unsafe environment")
-        return dict(profile.ingest_environment)
+        environment = dict(profile.ingest_environment)
+        for name, value in backup_environment.items():
+            recorded = environment.get(name)
+            historical_disabled = (
+                recorded is None
+                and name == "REMEMBERSTACK_TYPESAFE_BACKUP"
+                and "systemone_backup" not in bindings
+            )
+            if not historical_disabled and recorded != value:
+                raise StoreBackupError(
+                    "execution profile differs from the saved backup policy"
+                )
+        # Disabled native settings are not part of this runtime's identity.
+        for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+            if binding.startswith("systemone_backup"):
+                environment.pop(variable, None)
+        environment.update(backup_environment)
+        return environment
 
-    environment: dict[str, str] = {}
-    backup = bindings.get("systemone_backup")
-    backup_fields = {
-        name
-        for name in MODEL_BINDING_ENVIRONMENT
-        if name.startswith("systemone_backup_")
-    }
-    if backup is None:
-        if backup_fields & set(bindings):
-            raise StoreBackupError("saved readiness has an incomplete backup policy")
-        # Absence of the entire optional dimension predates the backup feature.
-        # Its recorded source had no backup; never activate one during restore.
-        backup = "none"
-    if backup not in ("none", "openai_decisions"):
-        raise StoreBackupError("saved readiness has an unknown backup policy")
+    environment: dict[str, str] = dict(backup_environment)
     for binding, variable in MODEL_BINDING_ENVIRONMENT.items():
+        if binding.startswith("systemone_backup"):
+            continue
         value = bindings.get(binding)
-        if (
-            value is None
-            and binding.startswith("systemone_backup")
-            and backup == "none"
-        ):
-            value = UNSET_MODEL_BINDINGS[binding]
         if not isinstance(value, str) or not value:
             raise StoreBackupError(f"saved readiness has no valid {binding} binding")
         normalized = "" if value == UNSET_MODEL_BINDINGS.get(binding) else value
         if "\n" in normalized or "\r" in normalized or "\x00" in normalized:
             raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
         environment[variable] = normalized
+    return environment
+
+
+def _saved_backup_environment(*, bindings: dict[str, object]) -> dict[str, str]:
+    """Restore the recorded provider policy; inactive native defaults are irrelevant."""
+    backup = bindings.get("systemone_backup")
+    fields = {
+        name
+        for name in MODEL_BINDING_ENVIRONMENT
+        if name.startswith("systemone_backup_")
+    }
+    if backup is None:
+        if "systemone_backup" in bindings or fields & set(bindings):
+            raise StoreBackupError("saved readiness has an incomplete backup policy")
+        # The entire absent dimension predates this optional feature.
+        backup = "none"
+    if not isinstance(backup, str) or backup not in ("none", "openai_decisions"):
+        raise StoreBackupError("saved readiness has an unknown backup policy")
+    environment = {"REMEMBERSTACK_TYPESAFE_BACKUP": backup}
+    if backup == "none":
+        return environment
+    for binding in fields:
+        value = bindings.get(binding)
+        if not isinstance(value, str) or not value or value == "unset":
+            raise StoreBackupError(f"saved readiness has no valid {binding} binding")
+        if any(c in value for c in "\r\n\x00"):
+            raise StoreBackupError(f"saved readiness has an unsafe {binding} binding")
+        environment[MODEL_BINDING_ENVIRONMENT[binding]] = value
     return environment
 
 

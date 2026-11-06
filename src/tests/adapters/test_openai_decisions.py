@@ -60,8 +60,8 @@ def _body() -> dict[str, Any]:
                 "score": 0.75,
                 "confidence": 0.5,
                 "probabilities": [
-                    {"value": 0, "probability": 0.25},
-                    {"value": 1, "probability": 0.75},
+                    {"value": 0, "label": "0", "probability": 0.25},
+                    {"value": 1, "label": "1", "probability": 0.75},
                 ],
             },
         ],
@@ -206,7 +206,14 @@ def test_native_missing_or_inconsistent_accounting_stops_without_replay(
 
 @pytest.mark.parametrize(
     "fault",
-    ["unknown_choice", "duplicate_name", "missing_option", "refusal", "wrong_score"],
+    [
+        "unknown_choice",
+        "duplicate_name",
+        "missing_option",
+        "refusal",
+        "wrong_score",
+        "wrong_score_label",
+    ],
 )
 def test_native_invalid_answers_keep_their_billable_usage(fault: str) -> None:
     """Every invalid closed decision still carries the metered native response."""
@@ -219,6 +226,8 @@ def test_native_invalid_answers_keep_their_billable_usage(fault: str) -> None:
         body["answers"][0]["probabilities"].pop()
     elif fault == "refusal":
         body["answers"][0] = {"type": "refusal", "name": "match"}
+    elif fault == "wrong_score_label":
+        body["answers"][2]["probabilities"][0]["label"] = "1"
     else:
         body["answers"][2]["score"] = 0.2
     client = _native(
@@ -423,7 +432,11 @@ def test_native_accepts_omitted_zero_probability_options(primitive: str) -> None
     body = _body()
     answer = body["answers"][0 if primitive == "choice" else 2]
     answer["probabilities"] = [
-        {"value": "NEW" if primitive == "choice" else 1, "probability": 1.0}
+        {
+            "value": "NEW" if primitive == "choice" else 1,
+            **({"label": "1"} if primitive == "score" else {}),
+            "probability": 1.0,
+        }
     ]
     if primitive == "score":
         answer["score"] = 1.0

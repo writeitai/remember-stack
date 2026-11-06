@@ -320,7 +320,7 @@ def _unit(*, value: object) -> float:
 def _probabilities(
     *, answer: Mapping[str, Any], expected: set[str], score: bool
 ) -> dict[str, float]:
-    """Preserve a complete closed distribution; reject duplicates and omissions."""
+    """Preserve a closed unit-sum distribution without inventing missing mass."""
     entries = answer["probabilities"]
     if not isinstance(entries, list):
         raise ValueError("Missing probability array")
@@ -334,6 +334,8 @@ def _probabilities(
         ):
             raise ValueError("Wrong probability option type")
         key = str(value)
+        if score and entry.get("label") != key:
+            raise ValueError("Score probability label differs from its level index")
         if key in result or key not in expected:
             raise ValueError("Duplicate or unsupplied probability option")
         result[key] = _unit(value=entry["probability"])
