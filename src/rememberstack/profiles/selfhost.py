@@ -742,6 +742,19 @@ class _SelfHostSavedQueryReads:
             return action(registry)
 
 
+def _migration_config(*, path: Path, database_url: str) -> Config:
+    """Alembic's configuration with the database URL stored verbatim.
+
+    Alembic keeps options in a ``ConfigParser``, which treats ``%`` as an
+    interpolation marker; a URL-encoded password (``p%40ss``) would fail to
+    parse, and the parser's error quotes the raw value, password included.
+    Doubling every ``%`` stores the URL exactly and reads it back unchanged.
+    """
+    config = Config(str(path))
+    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    return config
+
+
 def _query_role_connect_factory(
     *, engine: Engine, host: str | None = None, port: int | None = None
 ):
@@ -1059,9 +1072,9 @@ class SelfHostProfile:
 
     def setup(self) -> None:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
-        migration = Config(str(self._settings.migration_config))
-        migration.set_main_option(
-            "sqlalchemy.url", self._engine.url.render_as_string(hide_password=False)
+        migration = _migration_config(
+            path=self._settings.migration_config,
+            database_url=self._engine.url.render_as_string(hide_password=False),
         )
         command.upgrade(config=migration, revision="head")
         self._raw_store.ensure_bucket()
