@@ -163,3 +163,5 @@ src/tests/surfaces/test_d143_layer_errors.py
 src/tests/profiles/test_engine_settings.py
 src/tests/spine/test_new_work.py
 src/tests/surfaces/test_per_request_perimeter.py
+
+src/tests/surfaces/test_request_embeddings.py
