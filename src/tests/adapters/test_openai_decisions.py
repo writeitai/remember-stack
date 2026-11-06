@@ -396,11 +396,11 @@ def test_readiness_records_backup_binding_without_credential(
     from rememberstack.profiles.selfhost import _model_bindings
 
     monkeypatch.setenv("REMEMBERSTACK_FACT_ADJUDICATION_ENGINE", "jev")
+    monkeypatch.setenv("REMEMBERSTACK_OPENROUTER_API_KEY", "offline-test")
     monkeypatch.setenv("REMEMBERSTACK_TYPESAFE_BACKUP", "openai_decisions")
     monkeypatch.setenv("REMEMBERSTACK_OPENAI_DECISIONS_API_KEY", "do-not-disclose")
     bindings = _model_bindings()
     assert bindings["systemone_backup"] == "openai_decisions"
-    configuration = json.loads(bindings["systemone_backup_config"])
-    assert configuration["model"] == "gpt-6-luna"
-    assert "api_key" not in configuration
+    assert bindings["systemone_backup_model"] == "gpt-6-luna"
+    assert bindings["systemone_backup_input_usd_per_million"] == "0.10"
     assert "do-not-disclose" not in json.dumps(bindings)

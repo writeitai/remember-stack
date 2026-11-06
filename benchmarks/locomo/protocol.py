@@ -132,6 +132,20 @@ EXPECTED_INGEST_MODEL_BINDINGS: Final[Mapping[str, str]] = MappingProxyType(
         "openrouter_reasoning_effort_map": '{"openai/gpt-6-luna": "low"}',
         "p1_embedding": "qwen/qwen3-embedding-8b",
         "systemone_backup": "none",
+        **dict.fromkeys(
+            (
+                "systemone_backup_model",
+                "systemone_backup_base_url",
+                "systemone_backup_timeout_s",
+                "systemone_backup_input_usd_per_million",
+                "systemone_backup_cached_input_usd_per_million",
+                "systemone_backup_cache_write_usd_per_million",
+                "systemone_backup_long_context_threshold",
+                "systemone_backup_long_context_multiplier",
+                "systemone_backup_pricing_multiplier",
+            ),
+            "unset",
+        ),
     }
 )
 INGEST_ENVIRONMENT: Final[Mapping[str, str]] = MappingProxyType(

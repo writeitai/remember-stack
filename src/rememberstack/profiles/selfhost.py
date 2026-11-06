@@ -1893,6 +1893,21 @@ def _model_bindings() -> dict[str, str]:
         "relation_normalization": e3.normalize_model,
         "entity_resolution": observations.small_model,
         "fact_adjudication": fact_adjudication_model,
+        "systemone_backup": "none",
+        **dict.fromkeys(
+            (
+                "systemone_backup_model",
+                "systemone_backup_base_url",
+                "systemone_backup_timeout_s",
+                "systemone_backup_input_usd_per_million",
+                "systemone_backup_cached_input_usd_per_million",
+                "systemone_backup_cache_write_usd_per_million",
+                "systemone_backup_long_context_threshold",
+                "systemone_backup_long_context_multiplier",
+                "systemone_backup_pricing_multiplier",
+            ),
+            "unset",
+        ),
         "p1_embedding": p1.embedding_model,
         "openrouter_embedding_provider": openrouter.embedding_provider or "auto",
         "openrouter_embedding_provider_order": (
@@ -1920,9 +1935,16 @@ def _model_bindings() -> dict[str, str]:
         if settings.backup == "openai_decisions":
             from rememberstack.adapters.openai_decisions import OpenAIDecisionsSettings
 
-            bindings["systemone_backup_config"] = json.dumps(
-                OpenAIDecisionsSettings().model_dump(mode="json", exclude={"api_key"}),
-                sort_keys=True,
+            native = OpenAIDecisionsSettings().model_dump(
+                mode="json", exclude={"api_key"}
+            )
+            bindings.update(
+                {
+                    f"systemone_backup_{name}": str(value)
+                    if value is not None
+                    else "auto"
+                    for name, value in native.items()
+                }
             )
     return bindings
 

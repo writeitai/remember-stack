@@ -67,6 +67,15 @@ MODEL_BINDING_ENVIRONMENT = {
     "skeleton_check": "REMEMBERSTACK_SKELETON_CHECK_MODEL",
     "structure_fallback": "REMEMBERSTACK_STRUCTURER_MODEL",
     "systemone_backup": "REMEMBERSTACK_TYPESAFE_BACKUP",
+    "systemone_backup_model": "REMEMBERSTACK_OPENAI_DECISIONS_MODEL",
+    "systemone_backup_base_url": "REMEMBERSTACK_OPENAI_DECISIONS_BASE_URL",
+    "systemone_backup_timeout_s": "REMEMBERSTACK_OPENAI_DECISIONS_TIMEOUT_S",
+    "systemone_backup_input_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_INPUT_USD_PER_MILLION",
+    "systemone_backup_cached_input_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_CACHED_INPUT_USD_PER_MILLION",
+    "systemone_backup_cache_write_usd_per_million": "REMEMBERSTACK_OPENAI_DECISIONS_CACHE_WRITE_USD_PER_MILLION",
+    "systemone_backup_long_context_threshold": "REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_THRESHOLD",
+    "systemone_backup_long_context_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_LONG_CONTEXT_MULTIPLIER",
+    "systemone_backup_pricing_multiplier": "REMEMBERSTACK_OPENAI_DECISIONS_PRICING_MULTIPLIER",
 }
 UNSET_MODEL_BINDINGS = {
     "openrouter_embedding_provider": "auto",
@@ -75,6 +84,14 @@ UNSET_MODEL_BINDINGS = {
     "openrouter_reasoning_effort": "auto",
     "openrouter_reasoning_effort_map": "unset",
     "systemone_backup": "none",
+    **dict.fromkeys(
+        (
+            name
+            for name in MODEL_BINDING_ENVIRONMENT
+            if name.startswith("systemone_backup_")
+        ),
+        "unset",
+    ),
 }
 
 NonEmpty = Annotated[str, Field(min_length=1)]

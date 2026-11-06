@@ -39,7 +39,9 @@ class AvailabilityFallbackSystemOne:
             return self._primary.evaluate(
                 model=model, state=state, questions=questions, timeout_s=timeout_s
             )
-        except TypeSafeUnavailableError:
+        except TypeSafeUnavailableError as error:
+            if error.usage is not None:
+                raise
             _logger.warning(
                 "systemone_backup_used primary=typesafe backup=openai_decisions"
             )
