@@ -199,7 +199,7 @@ class _MovesBytesThenFails:
 
 
 def test_worker_event_reports_the_object_bytes_the_attempt_moved() -> None:
-    """D147: the attempt's worker.run event carries its object-storage traffic."""
+    """D146: the attempt's worker.run event carries its object-storage traffic."""
     registry = HandlerRegistry()
     registry.register(stage=PipelineStage.CONVERT, handler=_MovesBytesThenFails())
     stream = StringIO()

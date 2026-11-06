@@ -177,12 +177,13 @@ class MinIOObjectStore:
         if storage_class not in {HOT, COLD}:
             raise ValueError("invalid storage class")
         metadata = {"storage-class": storage_class}
+        validated = _validated_key(key=key)
         # Counted as sent: a put refused because the key exists still uploaded.
         record_object_transfer(bytes_written=len(content))
         try:
             self._client.put_object(
                 Bucket=self._bucket,
-                Key=_validated_key(key=key),
+                Key=validated,
                 Body=content,
                 IfNoneMatch="*",
                 Metadata=metadata,
