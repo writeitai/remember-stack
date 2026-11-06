@@ -218,3 +218,54 @@ def test_reuse_writes_target_provenance_and_preserves_claim_identity(
         _WHOLE_IMAGE.model_dump(mode="json")
     ]
     assert len(rows) == 2
+
+
+def test_own_document_name_span_persists_and_survives_reuse(
+    database_engine: Engine,
+) -> None:
+    """D134: the span is on the claim row, so a reused occurrence carries it."""
+    catalog = ClaimCatalog(engine=database_engine)
+    prior_chunk = uuid4()
+    target_chunk = uuid4()
+    claim_text = "The report Audit_2025.pdf summarizes the 2025 audit findings."
+    claim = _claim(
+        chunk_id=prior_chunk,
+        source_span="This report summarizes the 2025 audit findings.",
+        char_start=0,
+    ).model_copy(
+        update={
+            "claim_text": claim_text,
+            "own_document_name_start": 11,
+            "own_document_name_end": 25,
+        }
+    )
+    plain = _claim(chunk_id=prior_chunk, source_span="Revenue grew.", char_start=60)
+    catalog.record_extraction(claims=(claim, plain), decisions=())
+    catalog.attach_reused_claims(
+        deployment_id=_DEPLOYMENT_ID,
+        chunk_id=target_chunk,
+        prior_chunk_id=prior_chunk,
+        occurrences=None,
+        evidence_spans={
+            claim.claim_id: (EvidenceSpan(char_start=0, char_end=48),),
+            plain.claim_id: (EvidenceSpan(char_start=60, char_end=73),),
+        },
+    )
+    with database_engine.connect() as connection:
+        stored = connection.execute(
+            text(
+                "SELECT lower(own_document_name_span), upper(own_document_name_span)"
+                " FROM claims WHERE claim_id = :id"
+            ),
+            {"id": claim.claim_id},
+        ).one()
+    assert tuple(stored) == (11, 25)
+    reused = {
+        loaded.claim_id: loaded
+        for loaded in catalog.claims_for_chunks(chunk_ids=(target_chunk,))
+    }
+    assert reused[claim.claim_id].own_document_name() == "Audit_2025.pdf"
+    assert reused[plain.claim_id].own_document_name() is None
+    loaded = catalog.claim_for_normalization(claim_id=claim.claim_id)
+    assert loaded is not None
+    assert (loaded.own_document_name_start, loaded.own_document_name_end) == (11, 25)

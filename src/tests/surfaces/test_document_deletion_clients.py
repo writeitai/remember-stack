@@ -25,6 +25,7 @@ from remember import MemoryApiError
 from remember import MemoryClient
 from remember.cli import main as cli_main
 from remember.mcp_engine import EngineMcpServer
+from remember.mcp_tools import ADJACENT_CHUNKS_TOOL_NAME
 from remember.mcp_tools import memory_tools
 from remember.mcp_tools import OPERATION_TOOL_NAMES
 from rememberstack.model import DocumentNotFoundError
@@ -295,7 +296,11 @@ def test_local_mcp_offers_deletion_only_when_composed() -> None:
         deletion=deletion,
     )
     names = [tool["name"] for tool in server.list_tools()["tools"]]  # type: ignore[index]
-    assert names == ["delete_document", *OPERATION_TOOL_NAMES]
+    assert names == [
+        "delete_document",
+        *OPERATION_TOOL_NAMES,
+        ADJACENT_CHUNKS_TOOL_NAME,
+    ]
     done = server.call_tool(name="delete_document", arguments={"doc_id": str(_DOC)})
     assert done["isError"] is False
     assert _payload(done)["claims_retired"] == 4

@@ -9,7 +9,7 @@ x-app: &app
       # Empty when the caller does not supply it; released images get the tag's
       # commit from CI.
       REMEMBERSTACK_BUILD_REVISION: ${REMEMBERSTACK_BUILD_REVISION:-}
-  image: ghcr.io/writeitai/remember-stack:0.17.1
+  image: ghcr.io/writeitai/remember-stack:0.17.2
   # Every variable in .env reaches the engine, so any engine setting can be
   # set there. The environment list below adds defaults and the values
   # Compose fixes itself (database URL, object-store endpoint, container port);
@@ -38,6 +38,11 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_SLUG}
     REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME: ${REMEMBERSTACK_SELFHOST_DEPLOYMENT_NAME}
     REMEMBERSTACK_SELFHOST_API_PORT: "8000"
+    # Processing layers (D143). Both default to true; facts requires claims.
+    # Switching one off stops new work for that layer and hides it from
+    # retrieval; switching it back on backfills it oldest version first.
+    REMEMBERSTACK_SELFHOST_CLAIMS_LAYER: "${REMEMBERSTACK_SELFHOST_CLAIMS_LAYER:-true}"
+    REMEMBERSTACK_SELFHOST_FACTS_LAYER: "${REMEMBERSTACK_SELFHOST_FACTS_LAYER:-true}"
     # Believe X-Ingest-Principal-* on POST /ingest (D101). Leave false unless
     # this deployment is reachable ONLY by a control plane that already
     # authenticated the actor it names; on a public perimeter attribution
@@ -55,12 +60,6 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_API_REVOCATION_URL: ${REMEMBERSTACK_SELFHOST_API_REVOCATION_URL:-}
     REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S: ${REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S:-60}
     REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S: ${REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S:-3600}
-    # Direct-path admission limits, per credential and per deployment (429
-    # with Retry-After when reached). Counted in this one API process.
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE:-120}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT:-8}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE:-600}
-    REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT: ${REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT:-32}
     # Browser origins allowed to call this deployment. Empty advertises no
     # CORS at all, which is the right default for a deployment no app points at.
     REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS: ${REMEMBERSTACK_SELFHOST_BROWSER_ORIGINS:-}
@@ -71,6 +70,7 @@ x-app: &app
     REMEMBERSTACK_SELFHOST_METER_ORG_ID: ${REMEMBERSTACK_SELFHOST_METER_ORG_ID:-}
     REMEMBERSTACK_SELFHOST_METER_PROJECT_ID: ${REMEMBERSTACK_SELFHOST_METER_PROJECT_ID:-}
     REMEMBERSTACK_SELFHOST_REQUIRE_METERING: ${REMEMBERSTACK_SELFHOST_REQUIRE_METERING:-false}
+    # PDF always uses OCR; a missing Mistral key parks it as no_route.
     REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES: ${REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES:-}
     REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES: ${REMEMBERSTACK_SELFHOST_INGEST_BODY_MAX_BYTES:-}
     REMEMBERSTACK_MISTRAL_OCR_API_KEY: ${REMEMBERSTACK_MISTRAL_OCR_API_KEY:-}
@@ -121,6 +121,9 @@ x-app: &app
     REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT: ${REMEMBERSTACK_FACT_FALLBACK_TO_PROMPT:-false}
     REMEMBERSTACK_TYPESAFE_API_KEY: ${REMEMBERSTACK_TYPESAFE_API_KEY:-}
     REMEMBERSTACK_TYPESAFE_MODEL: ${REMEMBERSTACK_TYPESAFE_MODEL:-jev-latest}
+    REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL: ${REMEMBERSTACK_IMAGE_DESCRIPTION_MODEL:-openai/gpt-6-luna}
+    REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT: ${REMEMBERSTACK_IMAGE_DESCRIPTION_REASONING_EFFORT:-}
+    REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY: ${REMEMBERSTACK_IMAGE_DESCRIPTION_PROVIDER_ONLY:-null}
     REMEMBERSTACK_TYPESAFE_BASE_URL: ${REMEMBERSTACK_TYPESAFE_BASE_URL:-https://api.typesafe.ai/v1}
     REMEMBERSTACK_TYPESAFE_TIMEOUT_S: ${REMEMBERSTACK_TYPESAFE_TIMEOUT_S:-30.0}
   volumes:
@@ -134,7 +137,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.1
+    image: ghcr.io/writeitai/remember-stack-postgres:19beta3-0.17.2
     command:
       - postgres
       - -c
@@ -143,10 +146,11 @@ services:
       - pg_partman_bgw.dbname=${REMEMBERSTACK_POSTGRES_DB}
       - -c
       - pg_partman_bgw.role=${REMEMBERSTACK_POSTGRES_USER}
-      # Above the stock stack's connection ceilings (API 23 + 12 workers x 16
-      # = 215), so a busy default deployment cannot run out of connections.
+      # Default 300: above the stock stack's connection ceiling (API 23 + 13
+      # workers x 16 = 231), so a busy default deployment cannot run out of
+      # connections. Raise it when you add API replicas or worker containers.
       - -c
-      - max_connections=300
+      - max_connections=${REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-300}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${REMEMBERSTACK_POSTGRES_USER}
@@ -248,6 +252,13 @@ services:
       setup:
         condition: service_completed_successfully
 
+  worker-crossref:
+    <<: *app
+    command: ["worker", "--stage", "crossref"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
   worker-chunk:
     <<: *app
     command: ["worker", "--stage", "chunk"]
@@ -314,6 +325,13 @@ services:
   worker-label-relation:
     <<: *app
     command: ["worker", "--stage", "label_relation"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  worker-review-fact-windows:
+    <<: *app
+    command: ["worker", "--stage", "review_fact_windows"]
     depends_on:
       setup:
         condition: service_completed_successfully

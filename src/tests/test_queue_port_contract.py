@@ -44,6 +44,7 @@ _PIPELINE_STAGE_VALUES = (
     "reconcile",
     "dispatch_knowledge",
     "hard_forget",
+    "review_fact_windows",
 )
 
 

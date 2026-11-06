@@ -27,13 +27,16 @@ from rememberstack.model.conversion import SourceLocator
 from rememberstack.model.conversion import SourceMapEntry
 from rememberstack.model.documents import NonEmptyString
 
-EvidenceMode = Literal["source_expression", "model_observation", "model_interpretation"]
+EvidenceMode = Literal[
+    "source_expression", "computed", "model_observation", "model_interpretation"
+]
 """How mediated a labeled range is; most-mediated wins when a span crosses."""
 
 _MODE_RANK: dict[EvidenceMode, int] = {
     "source_expression": 0,
-    "model_observation": 1,
-    "model_interpretation": 2,
+    "computed": 1,
+    "model_observation": 2,
+    "model_interpretation": 3,
 }
 
 
@@ -212,7 +215,8 @@ def resolve_occurrence_provenance(
     """Stamp one grounded absolute interval against the target representation.
 
     Evidence mode is the most-mediated intersecting range
-    (``model_interpretation`` > ``model_observation`` > ``source_expression``).
+    (``model_interpretation`` > ``model_observation`` > ``computed`` >
+    ``source_expression``).
     Derivation kind comes from that winning mode; ties break by
     ``(start, end, kind)``. Locators are the union of intersecting source-map
     entries, deduplicated, at the converter's own precision — never a

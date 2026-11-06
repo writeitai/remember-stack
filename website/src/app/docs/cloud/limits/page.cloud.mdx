@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Limits",
-  description: "Every limit remember.dev enforces on ingest, storage, tokens, sign-in, projects and billing, with the error you get when you reach it.",
+  description: "Every limit remember.dev enforces on ingest, storage, reading, API keys, sign-in, hosted MCP, projects and billing, with the error you get when you reach it.",
 };
 
 # Limits
@@ -50,25 +50,34 @@ time. A graph request that cannot start within about a second is refused
 with `503` and `live graph is busy`; retry it with backoff.
 
 Each deployment limits the request rate and the number of requests running
-at once, per token and across all tokens. Over a limit it answers `429`
-(`rate_limited` or `concurrency_limited`) with `Retry-After`; see
-[Admission limits](/docs/reference/http-api#admission-limits).
-Reading is also subject to the provider-cost safeguard described in
-[Spend caps and auto top-up](/docs/cloud/spend-controls#provider-cost-safeguard).
+at once, per key and across all keys:
 
-## Tokens
+| Limit | Value |
+|---|---|
+| Per key | 120 requests per minute, burst 30; 8 at a time |
+| Per deployment, all keys together | 600 requests per minute; 32 at a time |
+
+Over a limit it answers `429` (`rate_limited` or `concurrency_limited`)
+with `Retry-After`; see
+[Admission limits](/docs/reference/http-api#admission-limits).
+
+Reads are charged and stop when the balance reaches zero or a cap is
+reached; see [Spend caps and auto top-up](/docs/cloud/spend-controls#what-stops-when-money-or-a-cap-runs-out).
+
+## API keys
 
 | Limit | Value | Refusal |
 |---|---|---|
-| Deployment API token lifetime | 365 days | expired tokens get `401` |
-| Live deployment API tokens per deployment | 20 | `409` |
-| Deployment API token mints | 60 per hour, per member per organisation | `429` |
-| Control-plane token lifetime | 90 days by default, 180 at most | request refused with `422` above 180 |
-| Control-plane token mints | 20 per hour, per member per organisation | `429`, `control_token.rate_limited`, with `Retry-After` |
-| Control-plane token self-revocation | 30 per 5 minutes per credential | `429` |
+| Lifetime | 7, 30, 90 (default), 180 or 365 days | expired keys get `401` |
+| Projects listed in one key | 1 to 20 | `422`, `key.invalid_projects` |
+| Keys created | 60 per hour, per person per organisation | `429`, `key.mint_rate_limited` |
+| Live keys | 50 per person per organisation; 1,000 per organisation | `409`, `key.too_many_active` |
+| Account API requests | 60 per minute per key | `429`, `key.rate_limited`, with `Retry-After` |
+| Self-revocation | 30 per 5 minutes per key | `429` |
+| Requests with an invalid or revoked key | 20 per 15 minutes per address | `429`, `key.too_many_failures` |
+| Key names | 1 to 100 characters | `422` |
 | Browser read credentials | 60 per hour per member per deployment; 240 attempts per hour per member | `429` |
 | Browser upload credentials | same numbers, counted separately | `429` |
-| Token labels | 1 to 100 characters | `422` |
 
 ## `remember login`
 
@@ -86,11 +95,16 @@ A rate-limited poll gets the device-flow error `temporarily_unavailable`.
 
 | Limit | Value |
 |---|---|
-| Access token | 1 hour |
-| Refresh token | 30 days, single use |
-| Connect page | 15 minutes |
+| Requests per key or connection | 120 per minute; 8 at a time |
+| Requests per organisation | 1,200 per minute |
+| Request body | 32 MiB plus 64 KiB (`413`) |
+| Tool call | 90 seconds, then the tool error `timeout` |
+| Client registrations | 20 per hour per address |
+| Consent page | 15 minutes |
 | Authorization code | 5 minutes, single use |
-| Redirect addresses | `https`, or `http` on `localhost` / `127.0.0.1` |
+| Access token | 1 hour |
+| Connection | ends 30 days after its last refresh, and at most 180 days after approval |
+| Redirect addresses | `https`, `http` on a loopback address, or an app's own scheme |
 
 ## Account and team
 

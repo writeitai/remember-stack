@@ -131,6 +131,17 @@ class CurrencyLedgerAudit(BaseModel):
     mismatches: tuple[CurrencyMismatch, ...]
 
 
+class ProcessingLayersReport(BaseModel):
+    """D143: the layer states and the backfill gaps an operator watches."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    claims: Literal["enabled", "backfilling", "disabled"]
+    facts: Literal["enabled", "backfilling", "disabled"]
+    #: Gap counts by ``<layer>_<open|entered|discharged>``.
+    gaps: dict[str, int] = Field(default_factory=dict)
+
+
 class OperationalReport(BaseModel):
     """One coherent, deployment-scoped operational inspection snapshot."""
 
@@ -143,6 +154,7 @@ class OperationalReport(BaseModel):
     poison_targets: PoisonTargetReport
     latest_projections: tuple[ProjectionSnapshotState, ...]
     currency: CurrencyLedgerAudit
+    processing_layers: ProcessingLayersReport
 
 
 class DeadLetterReplayResult(BaseModel):

@@ -64,6 +64,11 @@ project needs its own activation Checkout:
 Abandoning the Checkout does not create a deployment. The project stays in
 the list, not activated.
 
+An agent can start the same steps with the `create_project` tool of
+[hosted MCP](/docs/cloud/hosted-mcp#account-tools), with an owner's key or
+connection holding `account:manage`. It returns the Checkout link; a person
+completes the payment.
+
 You can create another project only when:
 
 - the organisation's billing is active (its first purchase went through);
@@ -116,8 +121,9 @@ Each person in an organisation is an **owner** or a **member**.
 | Create, rename and archive projects; set project sub-caps | yes | no |
 | Assign people to projects | yes | no |
 | Invite people, see pending invites | yes | no |
-| Mint, list and revoke deployment API tokens | yes | no |
-| Approve `remember login` for a deployment | yes | no |
+| Remove people from the organisation | yes, through hosted MCP | no |
+| Create API keys and approve `remember login` for themselves | yes, for any project | yes, for their assigned projects |
+| See and revoke API keys and MCP connections | every one in the organisation | their own |
 | Request or close a project (offboarding) | yes | no |
 | Open support records | yes | yes |
 
@@ -129,9 +135,11 @@ assigned to.
 
 An owner gives a member access to a project by assigning them to it
 (`POST /v1/orgs/{org_id}/projects/{project_id}/members` with the member's
-`user_id`). Revoking the assignment takes access away and cannot be undone
-by an old credential: each revocation advances a generation number that
-credentials are checked against.
+`user_id`). A member can be assigned to at most 20 projects.
+
+Revoking the assignment takes access away at once: the member's API keys
+that list the project are revoked, and their MCP connections lose the
+project. See [API keys and sign-in](/docs/cloud/tokens-and-sign-in#revoke-a-key).
 
 The console does not yet have a screen for project assignment; use the
 [remember.dev API](/docs/reference/cloud-api).
@@ -139,7 +147,8 @@ The console does not yet have a screen for project assignment; use the
 <Callout type="note">
 
 Project membership decides which projects a member sees in the console
-and whether they can upload to a project. It is not a permission system
+and which projects their API keys and MCP connections can reach. It is not
+a permission system
 inside the memory. There are no per-document or per-source permissions:
 anyone who can read a project's memory can read all of it.
 
@@ -157,8 +166,24 @@ Owners invite people under **Team → Invite member**. An invitation:
 An owner can also add someone who already has a remember.dev account
 directly (`POST /v1/orgs/{org_id}/members`).
 
-There is no way yet to remove a member from an organisation or change their
-role, in the console or the API. Ask [support](/docs/cloud/support).
+An owner can also invite people through the `invite_member` tool of
+[hosted MCP](/docs/cloud/hosted-mcp#account-tools). An invitation made there
+assigns no projects; assign them once the person has joined.
+
+## Removing people
+
+An owner removes a person from the organisation with the `remove_member`
+tool of [hosted MCP](/docs/cloud/hosted-mcp#account-tools), naming them by
+`user_id` or email address. In one step it:
+
+- ends their membership and their project assignments;
+- revokes all their API keys in the organisation, and every key created
+  from those;
+- ends their MCP connections, and revokes every key created through them.
+
+The last owner of an organisation cannot be removed. The console and the
+REST API have no removal yet, and there is no way to change a person's
+role; ask [support](/docs/cloud/support) for a role change.
 
 ## Archiving a project
 
@@ -169,6 +194,6 @@ stops a deployment or its charges on its own.
 
 ## Related
 
-- [Tokens and sign-in](/docs/cloud/tokens-and-sign-in)
+- [API keys and sign-in](/docs/cloud/tokens-and-sign-in)
 - [Pricing and credits](/docs/cloud/pricing)
 - [remember.dev API](/docs/reference/cloud-api)

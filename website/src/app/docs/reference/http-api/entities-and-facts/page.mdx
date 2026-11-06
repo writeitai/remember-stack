@@ -112,7 +112,10 @@ now or at a past instant.
 Every filter is optional; the ones you send are combined with AND. A
 relation matches when it has not been invalidated and its validity window
 covers `valid_at` (or now). A relation with no known start or end is treated
-as open on that side.
+as open on that side. A relation must also pass the
+[evidence gate](/docs/reference/assured-operations#text-in-force) at
+`valid_at` (or now): a relation whose only supporting text is a version not
+in force at that instant is left out.
 
 At most `k` relations come back. When more match, `truncation` says so
 (`truncated: true`, `reason: "lookup_k_limit"`, `total_is_exact: false`):
@@ -171,7 +174,8 @@ well they match a phrase.
 | `k` | query | integer | no | `10` | 1–400. The most observations to return. |
 
 Without `property_query`, the live observations on the entity whose validity
-covers now are returned, strongest evidence first, at most `k`; when more
+covers now, and that pass the
+[evidence gate](/docs/reference/assured-operations#text-in-force) now, are returned, strongest evidence first, at most `k`; when more
 exist, `truncation` says so (`reason: "lookup_k_limit"`). With
 `property_query`, up to `k` candidates are nominated by similarity and each is
 re-checked against the database before it is returned; candidates that no

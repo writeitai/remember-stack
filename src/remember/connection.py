@@ -41,6 +41,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
+import os
 import threading
 import time
 from typing import Final
@@ -144,7 +145,15 @@ def resolve_connection(
     env_key = env.api_key.get_secret_value() if env.api_key is not None else None
 
     stored: StoredCredentials | None = None
-    if (api_key is None and not env_key) or (api_url is None and not env.api_url):
+    supplied_key = api_key or env_key
+    windows_routed = (
+        os.name == "nt"
+        and bool(supplied_key)
+        and signed_key_claims(normalize_key(supplied_key or "")) is not None
+    )
+    if (api_key is None and not env_key) or (
+        not windows_routed and api_url is None and not env.api_url
+    ):
         # A project matters only for a key routed by its issuer, which needs no
         # engine URL, so a caller naming both key and URL never needs the file.
         stored = load_credentials()
@@ -336,7 +345,7 @@ class EngineRoute:
             )
         return DEFAULT_API_URL, connection.authorization
 
-    def re_resolve(self) -> bool:
+    def re_resolve(self, *, previous_url: str | None = None) -> bool:
         """Re-resolve a key-routed URL; ``True`` only when it changed.
 
         A failure to resolve is not raised here: the caller surfaces the
@@ -352,7 +361,7 @@ class EngineRoute:
         with self._lock:
             if self._pinned is not None and self._pinned[0] == project_id:
                 self._pinned = (project_id, fresh.api_url)
-        return previous.rstrip("/") != fresh.api_url.rstrip("/")
+        return (previous_url or previous).rstrip("/") != fresh.api_url.rstrip("/")
 
     def _first(self) -> tuple[str, str]:
         """The pinned ``(project id, URL)``, resolving once under the lock."""

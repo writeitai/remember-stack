@@ -53,8 +53,9 @@ def test_selfhost_convert_routes_come_from_settings_and_default_to_stock() -> No
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
     routes = build_conversion_routes(route_names=settings.conversion_routes)
-    assert routes["text/plain"].name == "passthrough"
+    assert routes["text/plain"].name == "text"
     assert routes["text/markdown"] is routes["text/plain"]
+    assert routes["application/octet-stream"].name == "card"
     assert routes["text/html"].name == "markitdown"
     source = Path(selfhost_mod.__file__).read_text(encoding="utf-8")
     assert "build_conversion_routes" in source
@@ -65,6 +66,7 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
     assert _SUPPORTED_WORKER_STAGES == (
         PipelineStage.CONVERT,
         PipelineStage.STRUCTURE,
+        PipelineStage.CROSSREF,
         PipelineStage.CHUNK,
         PipelineStage.EMBED_CHUNK,
         PipelineStage.EXTRACT_CLAIMS,
@@ -75,8 +77,15 @@ def test_selfhost_composes_every_implemented_continuous_route() -> None:
         PipelineStage.EMBED_CLAIM,
         PipelineStage.RECONCILE,
         PipelineStage.LABEL_RELATION,
+        PipelineStage.REVIEW_FACT_WINDOWS,
     )
-    assert tuple(_expected_components()) == _SUPPORTED_WORKER_STAGES
+    # crossref work is per reference generation and window reviews per lineage
+    # and fact (D140), so readiness never waits on either
+    assert tuple(_expected_components()) == tuple(
+        stage
+        for stage in _SUPPORTED_WORKER_STAGES
+        if stage not in (PipelineStage.CROSSREF, PipelineStage.REVIEW_FACT_WINDOWS)
+    )
 
 
 def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
@@ -86,7 +95,6 @@ def test_enum_only_and_fused_stages_are_not_advertised_as_workers() -> None:
         PipelineStage.EMBED_RELATION,
         PipelineStage.EMBED_OBSERVATION,
         PipelineStage.LABEL_OBSERVATION,
-        PipelineStage.CROSSREF,
         PipelineStage.REFRESH_PROFILE,
     }.isdisjoint(_SUPPORTED_WORKER_STAGES)
 
@@ -127,10 +135,6 @@ def test_compose_wires_the_exact_supported_worker_set_and_projection_job() -> No
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_SIZE", "4"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_POOL_TIMEOUT_S", "1"),
         ("REMEMBERSTACK_SELFHOST_RETRIEVAL_MAX_CONCURRENCY", "4"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE", "120"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_IN_FLIGHT", "8"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_PER_MINUTE", "600"),
-        ("REMEMBERSTACK_SELFHOST_API_ADMISSION_DEPLOYMENT_IN_FLIGHT", "32"),
         ("REMEMBERSTACK_SELFHOST_API_KEY_REFRESH_S", "60"),
         ("REMEMBERSTACK_SELFHOST_API_REVOCATION_MAX_AGE_S", "3600"),
     ):
@@ -163,12 +167,15 @@ def test_compose_restarts_long_running_services_but_not_one_shot_jobs() -> None:
 def test_postgres_connection_limit_covers_the_stock_stack_ceilings() -> None:
     """API (general 15 + retrieval + graph pools) plus 16 per worker fits, with headroom."""
     compose = (_ROOT / "compose.yaml").read_text(encoding="utf-8")
-    limits = re.findall(r"- max_connections=(\d+)\n", compose)
+    limits = re.findall(
+        r"- max_connections=\$\{REMEMBERSTACK_POSTGRES_MAX_CONNECTIONS:-(\d+)\}\n",
+        compose,
+    )
     assert len(limits) == 1
     workers = len(re.findall(r'command: \["worker", "--stage", "[^"]+"\]', compose))
     api = 15 + 4 + 4  # general pool (5 + 10 overflow), retrieval 4, graph 4
     ceiling = api + workers * (15 + 1)  # general pool + one LISTEN connection
-    assert ceiling == 215
+    assert ceiling == 247
     assert int(limits[0]) >= ceiling + 50
 
 
@@ -374,12 +381,30 @@ def test_blank_routes_env_falls_back_to_the_stock_table(
     settings = SelfHostSettings(deployment_id=uuid4())
     assert settings.conversion_routes == STOCK_CONVERSION_ROUTE_NAMES
 
+
+def test_routes_env_overlays_the_stock_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D138 §3: configured routes add or override entries, never replace the table.
+
+    Existing route names keep working: ``passthrough`` can still be bound.
+    """
+    from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
+    from rememberstack.profiles.selfhost import SelfHostSettings
+
     monkeypatch.setenv(
-        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/html": "markitdown"}'
+        "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES",
+        '{"image/png": "image_ocr_description", "application/pdf": "mistral_ocr",'
+        ' "text/plain": "passthrough"}',
     )
-    assert SelfHostSettings(deployment_id=uuid4()).conversion_routes == {
-        "text/html": "markitdown"
+    routes = SelfHostSettings(deployment_id=uuid4()).conversion_routes
+    assert routes == {
+        **STOCK_CONVERSION_ROUTE_NAMES,
+        "image/png": "image_ocr_description",
+        "application/pdf": "mistral_ocr",
+        "text/plain": "passthrough",
     }
+    # untouched stock entries survive the overlay
+    assert routes["text/markdown"] == "text"
+    assert routes["image/jpeg"] == "card"
 
 
 def test_external_mount_roots_load_from_environment(

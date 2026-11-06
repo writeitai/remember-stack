@@ -451,9 +451,17 @@ jobs:
       # engine pins recorded `.env.example`, copied forward from the first,
       # because they were written from this list rather than from a release.
       # Check the published asset names, not this block, when pinning.
+      # Release tags are protected by a ruleset; only the release app may
+      # create them, so the release is created with the app's token.
+      - id: app-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ vars.REMEMBER_RELEASE_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.REMEMBER_RELEASE_AUTOMATION_APP_PRIVATE_KEY }}
       - name: Create the release with pinned deployment inputs
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.2.1
         with:
+          token: ${{ steps.app-token.outputs.token }}
           tag_name: ${{ needs.prepare.outputs.tag }}
           name: remember ${{ needs.prepare.outputs.version }}
           target_commitish: ${{ needs.prepare.outputs.source_sha }}

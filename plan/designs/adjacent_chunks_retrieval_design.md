@@ -10,7 +10,7 @@
 ## 1. Principles (Binding)
 
 1. **Chunk Neighborhood Determinism:**
-   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_live`.
+   * Given a visible, live source chunk `chunk_id`, its document neighborhood is strictly defined by document identity `doc_id`, version `version_id`, and ordinal sequence `ordinal` within `memory_v1.chunks_all_versions_live` (D140): the chunk may belong to any non-deleted ready version of a live lineage — a time-scoped search can return a passage of a version that is not the lineage's newest — and is read in that version's current representation.
    * Expanding context around a chunk must never cross document or version boundaries.
 2. **Symmetric Windowing (`window: int = 1`):**
    * The retrieval primitive accepts `chunk_id: UUID` and a symmetric `window: int = 1` (constrained to `1 <= window <= 2`).
@@ -23,7 +23,7 @@
    * If `chunk_id` does not exist or fails visibility/provenance gates, the operation returns an empty `Envelope` with `Negative(kind=NegativeKind.KNOWN_EMPTY)`.
 4. **Simplicity Over Complex Grammar:**
    * The primitive avoids complex sandbox SQL or multi-turn coordination by providing a direct, typed endpoint across HTTP, SDK, CLI, and benchmark harness.
-   * No database migrations are required; the PostgreSQL table `chunks` is indexed by `ix_chunks_doc (deployment_id, doc_id)` and per-document chunk counts are bounded.
+   * No database migrations are required beyond D140's `chunks_all_versions_live` view; the PostgreSQL table `chunks` is indexed by `ix_chunks_doc (deployment_id, doc_id)` and per-document chunk counts are bounded.
 
 ---
 
@@ -46,17 +46,17 @@ def adjacent_chunks(
 
 **Implementation Steps:**
 1. Validate `ADJACENT_CHUNKS_MIN_WINDOW <= window <= ADJACENT_CHUNKS_MAX_WINDOW`; raise `ValueError` if out of bounds.
-2. Execute target lookup over `memory_v1.chunks_live`:
+2. Execute target lookup over `memory_v1.chunks_all_versions_live` (D140; before D140 this read `chunks_live`, which holds only the newest version):
    ```sql
    SELECT doc_id, version_id, ordinal
-   FROM memory_v1.chunks_live
+   FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id AND chunk_id = :chunk_id
    ```
    If no row matches, return an empty `Envelope` with `NegativeKind.KNOWN_EMPTY`.
 3. Query surrounding chunk identifiers:
    ```sql
    SELECT chunk_id
-   FROM memory_v1.chunks_live
+   FROM memory_v1.chunks_all_versions_live
    WHERE deployment_id = :deployment_id
      AND doc_id = :doc_id
      AND version_id = :version_id
@@ -108,5 +108,5 @@ Outputs standard `Envelope` JSON containing `chunks` (`ChunkEvidenceResult` list
    * Register `adjacent_chunks` in `_primitive_tool_descriptors()` with properties `chunk_id` (uuid) and `window` (int, default 1, 1..2), expanding the catalog from 21 to 22 tools.
    * Dispatch in `_dispatch_primitive`.
    * Include in `_has_content_bearing_attempt` direct tools in `benchmarks/locomo/runner.py`.
-2. **Top-level MCP Scope Boundary (D50, D83, D87):**
-   * Raw primitives do not mint top-level MCP tools. The four platform-owned assured operations are the only MCP intent tools; the rest of the full shared MCP catalogue `remember.mcp_tools` (D136, [one_key_client_surfaces_design.md §3](one_key_client_surfaces_design.md#3-the-tool-catalogue-remembermcp_tools)) is infrastructure (`ingest`, `pipeline_readiness`, `delete_document`, `source_open`, the seven open-query tools), and `adjacent_chunks` is not among them.
+2. **Top-level MCP Scope Boundary (D50, D83, D87, amended by D137):**
+   * Under D137, `adjacent_chunks` is a first-class read tool in the shared MCP catalogue (`remember.mcp_tools`, D136) and exposed across `OperationMcpServer` and `EngineMcpServer` to ensure complete client parity across HTTP API, Python SDK, CLI, and MCP.

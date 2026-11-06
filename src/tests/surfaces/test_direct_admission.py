@@ -4,6 +4,7 @@ Per credential and per deployment: a token bucket for rate and a counting
 semaphore for requests in flight, checked after authentication and before the
 spend lease and routing. A refusal is ``429`` with ``rate_limited`` or ``concurrency_limited``
 and ``Retry-After`` in whole seconds; slots come back however a request ends.
+Every limit is off unless configured: ``0`` (the default) never refuses.
 """
 
 from __future__ import annotations
@@ -24,15 +25,16 @@ from remember.errors import RateLimited
 from rememberstack.model import AuthenticatedContext
 from rememberstack.model import PerimeterCredential
 from rememberstack.model.auth import CredentialKind
+from rememberstack.profiles.selfhost import SelfHostSettings
 from rememberstack.surfaces.direct_admission import admission_key
 from rememberstack.surfaces.direct_admission import AdmissionLimits
 from rememberstack.surfaces.direct_admission import AdmissionRefused
 from rememberstack.surfaces.direct_admission import DirectPathAdmission
+from rememberstack.surfaces.http_api import _HeldRoute
 from rememberstack.surfaces.http_api import build_api
 from rememberstack.surfaces.query_engine import QueryEngine
 
 _DEPLOYMENT_ID = UUID("13600000-0000-0000-0000-000000000076")
-_ROOMY = 10_000
 
 
 class _Clock:
@@ -47,10 +49,10 @@ class _Clock:
 
 def _admission(
     *,
-    key_per_minute: int = _ROOMY,
-    key_in_flight: int = _ROOMY,
-    deployment_per_minute: int = _ROOMY,
-    deployment_in_flight: int = _ROOMY,
+    key_per_minute: int = 0,
+    key_in_flight: int = 0,
+    deployment_per_minute: int = 0,
+    deployment_in_flight: int = 0,
     clock: _Clock | None = None,
 ) -> DirectPathAdmission:
     return DirectPathAdmission(
@@ -73,14 +75,39 @@ def _refusal(admission: DirectPathAdmission, *, key: str | None) -> AdmissionRef
 # --- The limiter itself -----------------------------------------------------
 
 
-def test_the_starting_values_are_the_designed_ones() -> None:
+def test_every_limit_is_off_by_default() -> None:
     limits = AdmissionLimits()
     assert (
         limits.key_per_minute,
         limits.key_in_flight,
         limits.deployment_per_minute,
         limits.deployment_in_flight,
-    ) == (120, 8, 600, 32)
+    ) == (0, 0, 0, 0)
+    assert not limits.enabled
+    assert AdmissionLimits(key_in_flight=1).enabled
+
+
+def test_the_selfhost_settings_leave_admission_off_by_default() -> None:
+    fields = SelfHostSettings.model_fields
+    for name in (
+        "api_admission_key_per_minute",
+        "api_admission_key_in_flight",
+        "api_admission_deployment_per_minute",
+        "api_admission_deployment_in_flight",
+    ):
+        assert fields[name].default == 0
+
+
+def test_a_zero_limit_never_refuses() -> None:
+    """Only the configured limit applies; the others are not counted."""
+    admission = _admission(key_in_flight=1)
+    held = admission.admit(key="jti-a")
+    assert _refusal(admission, key="jti-a").code == "concurrency_limited"
+    # No rate limit and no deployment limit: any number of other callers pass.
+    for _ in range(1_000):
+        admission.admit(key=None)
+    admission.release(held)
+    admission.admit(key="jti-a")
 
 
 def test_a_credential_gets_its_burst_then_waits_for_a_token() -> None:
@@ -253,9 +280,9 @@ def test_in_flight_holds_under_real_thread_contention() -> None:
         "deployment_in_flight",
     ],
 )
-def test_a_limit_below_one_is_refused(field: str) -> None:
+def test_a_negative_limit_is_refused(field: str) -> None:
     with pytest.raises(ValueError, match=field):
-        AdmissionLimits(**{field: 0})
+        AdmissionLimits(**{field: -1})
 
 
 # --- Over HTTP ----------------------------------------------------------------
@@ -336,7 +363,7 @@ class _Probe:
 
 
 def _app(
-    admission: DirectPathAdmission,
+    admission: DirectPathAdmission | None,
     *,
     auth: bool = True,
     lease: _Lease | None = None,
@@ -366,6 +393,16 @@ def _app(
 
 def _bearer(value: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {value}"}
+
+
+def test_without_configured_limits_nothing_is_ever_refused() -> None:
+    """The default: no admission object, so the gate only authenticates."""
+    app, _ = _app(None)
+    assert app.router.route_class is not _HeldRoute
+    client = TestClient(app)
+    for _ in range(300):
+        assert client.get("/probe", headers=_bearer("key-a")).status_code == 200
+    assert client.get("/probe").status_code == 401
 
 
 def test_a_rate_refusal_is_429_with_code_and_retry_after() -> None:

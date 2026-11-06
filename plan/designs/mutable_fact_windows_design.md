@@ -130,6 +130,20 @@ In particular:
 - High-confidence semantic adjudication can attach evidence, create a distinct
   fact, revise a fact, cap a predecessor, or preserve incompatible testimony.
   Existing confidence thresholds and conservative coexistence rules still apply.
+- A claim that occurs in versions with declared effective periods (D140) is shown
+  with its **in-force intervals** — the union of those versions' intervals — as
+  another dated input, beside the claim's own dates. It can justify or bound a
+  window ("the allowance was 45 per day from 2024-01-01 until 2026-01-01") like any
+  other date; it is not a second window authority. A later change to those periods
+  queues a **window review** of the facts the affected claims support: a keep-or-replace
+  window decision grounded in supplied claims, recorded like any other adjudication
+  ([effective time design §8.2](effective_time_and_section_references_design.md#82-adjudication-input-and-window-review)).
+- Separately from adjudication, fact **reads** under a time scope apply D140's
+  deterministic evidence gate: a fact is returned only if its window matches the
+  scope **and** at least one supporting claim occurs in a version in force for the
+  scope (or in a lineage without declared periods). The gate never changes the
+  window; it prevents an answer that rests solely on an edition not yet or no
+  longer in force.
 
 Relation normalization must stage the assertion before identity selection. It
 must not merge every live `(subject, predicate, object)` triple and ask about

@@ -1,0 +1,74 @@
+{
+  "arguments": {
+    "lineages": 10000,
+    "versions": 5,
+    "chunks": 10,
+    "periodised": 0.5,
+    "semantic_chunks": 100000,
+    "queries": 40,
+    "rewrite_versions": 1000,
+    "maintenance_work_mem": "8GB",
+    "skip_seed": false,
+    "out": "/home/jpuc/dated.json"
+  },
+  "seed": {
+    "load_seconds": 92.43740379100018,
+    "bm25_index_seconds": 3.5098264520001976,
+    "semantic_seconds": 1247.7317645050007
+  },
+  "corpus": {
+    "documents": 10000,
+    "document_versions": 50000,
+    "chunks": 500000,
+    "chunk_search": 500000
+  },
+  "postgres": "PostgreSQL 19beta3 (Debian 19~beta3-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+  "latency": {
+    "bm25_main_baseline": {
+      "p50_ms": 2723.85,
+      "p95_ms": 2758.78,
+      "max_ms": 2761.79
+    },
+    "bm25_current": {
+      "p50_ms": 2605.52,
+      "p95_ms": 2629.51,
+      "max_ms": 2650.59
+    },
+    "bm25_at_2003": {
+      "p50_ms": 2600.86,
+      "p95_ms": 2640.17,
+      "max_ms": 2649.16
+    },
+    "bm25_history": {
+      "p50_ms": 7980.77,
+      "p95_ms": 8036.96,
+      "max_ms": 8095.7
+    },
+    "semantic_main_baseline": {
+      "p50_ms": 833.14,
+      "p95_ms": 844.4,
+      "max_ms": 853.45
+    },
+    "semantic_current": {
+      "p50_ms": 856.97,
+      "p95_ms": 868.32,
+      "max_ms": 877.25
+    },
+    "semantic_at_2003": {
+      "p50_ms": 859.2,
+      "p95_ms": 867.7,
+      "max_ms": 877.83
+    },
+    "semantic_history": {
+      "p50_ms": 2456.55,
+      "p95_ms": 2482.17,
+      "max_ms": 2486.87
+    }
+  },
+  "projection_rewrite": {
+    "versions": 1000,
+    "p50_ms": 49.06,
+    "p95_ms": 53.55,
+    "max_ms": 54.06
+  }
+}

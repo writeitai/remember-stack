@@ -473,6 +473,164 @@ def _bridge_function_signatures() -> dict[str, CanonicalValue]:
             },
         ]
     )
+    time_scope_arguments: list[CanonicalValue] = [
+        {"name": "mode", "type": "text", "required": True},
+        {"name": "at", "type": "timestamptz", "required": False, "default": None},
+        {
+            "name": "range_start",
+            "type": "timestamptz",
+            "required": False,
+            "default": None,
+        },
+        {
+            "name": "range_end",
+            "type": "timestamptz",
+            "required": False,
+            "default": None,
+        },
+        {
+            "name": "evaluated_at",
+            "type": "timestamptz",
+            "required": False,
+            "default": "now()",
+        },
+        {
+            "name": "believed_at",
+            "type": "timestamptz",
+            "required": False,
+            "default": None,
+        },
+    ]
+    functions.extend(
+        [
+            {
+                "name": "versions_in_scope",
+                "target": "documents",
+                "channel": "time_scope",
+                "arguments_min": 2,
+                "arguments_max": 8,
+                "arguments": [
+                    {"name": "deployment_id", "type": "uuid", "required": True},
+                    *time_scope_arguments,
+                    {
+                        "name": "doc_ids",
+                        "type": "uuid[]",
+                        "required": False,
+                        "default": None,
+                    },
+                ],
+                "volatility": "stable",
+                "security": "definer",
+                "parallel": "safe",
+                "filters": [],
+                "pre_rank_filters": [],
+                "comment": (
+                    "D140: the non-deleted ready versions a time scope selects, one"
+                    " row per selecting in-force interval: versions in force for"
+                    " lineages with declared effective periods, the served version"
+                    " (null bounds) for every other live lineage. A believed_at"
+                    " evaluates the declaration ledgers as known then and requires"
+                    " doc_ids."
+                ),
+                "example": (
+                    "SELECT doc_id, version_id, effective_from, effective_until"
+                    " FROM versions_in_scope($1::uuid, 'at', $2::timestamptz)"
+                    " ORDER BY doc_id, effective_from"
+                ),
+                "columns": [
+                    "doc_id",
+                    "version_id",
+                    "representation_id",
+                    "effective_from",
+                    "effective_until",
+                ],
+                "column_types": ["uuid", "uuid", "uuid", "timestamptz", "timestamptz"],
+            },
+            {
+                "name": "effective_intervals",
+                "target": "documents",
+                "channel": "time_scope",
+                "arguments_min": 2,
+                "arguments_max": 3,
+                "arguments": [
+                    {"name": "deployment_id", "type": "uuid", "required": True},
+                    {"name": "doc_ids", "type": "uuid[]", "required": True},
+                    {
+                        "name": "believed_at",
+                        "type": "timestamptz",
+                        "required": False,
+                        "default": "now()",
+                    },
+                ],
+                "volatility": "stable",
+                "security": "definer",
+                "parallel": "safe",
+                "filters": [],
+                "pre_rank_filters": [],
+                "comment": (
+                    "D140: the derived in-force interval of every declared"
+                    " effective period known at believed_at of the non-deleted"
+                    " versions of the given lineages, whatever their processing"
+                    " status; the end is the declared end, else the next declared"
+                    " start."
+                ),
+                "example": (
+                    "SELECT version_id, effective_from, effective_until,"
+                    " until_declared FROM effective_intervals($1::uuid,"
+                    " $2::uuid[]) ORDER BY effective_from"
+                ),
+                "columns": [
+                    "doc_id",
+                    "version_id",
+                    "period_id",
+                    "effective_from",
+                    "effective_until",
+                    "until_declared",
+                ],
+                "column_types": [
+                    "uuid",
+                    "uuid",
+                    "uuid",
+                    "timestamptz",
+                    "timestamptz",
+                    "boolean",
+                ],
+            },
+            {
+                "name": "fact_in_scope_support",
+                "target": "facts",
+                "channel": "time_scope",
+                "kind": "scalar",
+                "arguments_min": 4,
+                "arguments_max": 9,
+                "arguments": [
+                    {"name": "deployment_id", "type": "uuid", "required": True},
+                    {"name": "fact_kind", "type": "text", "required": True},
+                    {"name": "fact_id", "type": "uuid", "required": True},
+                    *time_scope_arguments,
+                ],
+                "volatility": "stable",
+                "security": "definer",
+                "parallel": "safe",
+                "filters": [],
+                "pre_rank_filters": [],
+                "comment": (
+                    "D140 evidence gate: true when a claim supporting the fact"
+                    " occurs in a version the time scope selects or in a lineage"
+                    " without declared effective periods. facts_current does not"
+                    " apply it; combine the two to exclude facts supported only by"
+                    " text not in force."
+                ),
+                "example": (
+                    "SELECT fact_kind, fact_id, statement FROM facts_current AS f"
+                    " WHERE fact_in_scope_support(f.deployment_id, f.fact_kind,"
+                    " f.fact_id, 'current') LIMIT 50"
+                ),
+                "columns": ["fact_in_scope_support"],
+                "column_types": ["boolean"],
+            },
+        ]
+    )
     published = {entry["name"] for entry in functions}  # type: ignore[index]
     return {
         "contract": "memory_v1.functions/1",

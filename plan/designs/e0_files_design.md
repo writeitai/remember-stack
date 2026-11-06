@@ -80,6 +80,42 @@ Two buckets per deployment (storage is per-deployment, like entity spaces, D16):
   exists *only* in a sidecar is invisible to the blockizer, E2, P1, and D32 grounding — it
   does not exist as testimony.
 
+**Byte-authoritative admission (D132).** Before raw storage or a catalog row,
+E0 inspects file signatures and header fields, ISO BMFF file-type brands
+(distinguishing common MP4 video, M4A audio, and HEIC/AVIF images), and, for
+office ZIP packages, their member names. Printable prefix strings alone do
+not establish a binary class; a PDF token after a bounded preamble requires a
+PDF object body and end marker, even if the file has trailing padding.
+Remaining content must be valid UTF-8 text without binary controls; a UTF-8 BOM
+and CRLF are valid. It detects text, PDF, image, audio, video, and office
+classes. A contradictory declared class is a typed ingest refusal, surfaced
+as HTTP 422. Binary bytes D132 cannot classify may use a D138 registry hint
+for a family D132 does not cover (for example, an archive); the converter
+validates that format. Remaining unrecognized binary is stored as a D138
+binary card. The stored
+`content_objects.mime` is the decided MIME and drives the D38 route, D51
+original class, and managed text metering. Text flavours cannot be settled by
+bytes: once bytes establish text, D133/D138 registry hints select Markdown,
+CSV, code, configuration, or plain text and their distinct processing postures.
+Textual email, notebooks, RTF, and delimited data keep their registry families;
+their converters validate full structure. Recognizable HTML markup retains
+`text/html` for its separate converter, and an empty upload
+is valid text in the self-host profile (the managed text profile rejects an
+empty measured source).
+
+For legacy OLE office containers, bytes establish the office class and the
+declared legacy office MIME selects its subtype. Otherwise an ambiguous OLE
+container is refused. This check identifies the class; a converter still
+validates the complete format before producing evidence.
+
+**Class on every object (D132).** The object-store write contract requires an
+explicit class. Original video/audio/image bytes are `hot`, other originals
+`cold` as D51 specifies. Canonical Markdown, source maps, blocks, PageIndex,
+derived media, and P3 snapshots/manifests are `hot` because queries and agents
+read them. Conversion checkpoints and private K transcripts are `cold` because
+only retry/replay paths open them. The policy lives in `core/storage_routing.py`;
+storage adapters record the chosen class on every write.
+
 (`content_hash` = sha256 of the raw bytes — the canonical *byte* identity, deduplicated in
 `content_objects` and used in the path; the *logical document* identity is the lineage's
 `(source_kind, source_ref)` — D55.)
@@ -126,7 +162,10 @@ re-run on a version change; downstream E1/E2/P3 invalidation keys include `struc
 versions, so a converter or structurer bump reprocesses exactly the affected documents.
 
 Re-ingesting an identical file is a `content_hash` no-op (this is the *only* surviving "dedup" — as
-idempotency, never a value tier, per D25). **A changed file from a watched source is a new
+idempotency, never a value tier, per D25) — except that identical bytes arriving under a different
+name, title or path are a **metadata observation**: no version is created and the lineage's
+`title` is unchanged; a `document_names` row is added so `search_documents` (D134) finds the file
+under its new name. **A changed file from a watched source is a new
 *version* of its lineage** (D55): connectors debounce rapid edits to one ingested version per
 stability window; unchanged chunks of the new version **reuse** their prior extraction and
 embeddings via the content-addressed keys (D56), so the cost of a version is proportional to
@@ -160,20 +199,25 @@ gates everything downstream:
   sequence from `document.md` downstream of every route, emitting `blocks.json` — see
   `e1_chunks_design.md` §2. Offsets into `document.md` are load-bearing (E2 grounding, D32;
   chunking; PageIndex); source locator provenance is best-effort per converter capability.
-- **Router by input type** (per-deployment config): digital PDF → direct text extraction; scanned /
-  complex PDF → **OCR** (e.g. Mistral OCR / docling / marker); `image/*` → dedicated OCR
-  plus an independent vision-LLM description call for every supported image, without a
-  classifier or conditional lane budgets (D115; `media_design.md` §2); office / html /
-  email → **markitdown**; plain
-  text → passthrough. (This generalizes the common practice of
-  *Mistral OCR for PDFs, markitdown for the rest* into a routing table.) **Media routes (D65),
-  bound in `media_design.md` §2:** audio → **diarized ASR** (transcript as document.md, one
-  block per speaker turn); video → ASR + **adaptive keyframes** + optional VLM shot notes;
-  standalone image that is a *picture* → **VLM description** + OCR of visible text, behind a
-  document-vs-picture discriminator (MIME alone cannot tell a scanned page from a photo).
-  Media converters are versioned like every other — an ASR/VLM upgrade is a
-  `converter_version` bump, flowing the processing-driven lifecycle ruleset
+- **Routing by format family (D133).** An engine-shipped **format registry** maps every
+  recognized family to a posture — **full** reading, **profile** (a description of a data
+  file, not its rows), or **card** (a deterministic file card) — and to the converter
+  implementing it. Deployments overlay
+  the registry (add or override routes, for example provider-backed ones); they never replace
+  it. The shipped families, detection order and profiles are bound in
+  [`workspace_formats_design.md`](workspace_formats_design.md) (D138); the framework and
+  locator kinds in [`format_conversion_design.md`](format_conversion_design.md). **Media
+  routes (D65/D115),** bound in `media_design.md` §2, run when a deployment configures their
+  providers; by default images, audio and video get cards (D138): audio → **diarized ASR**
+  (transcript as document.md, one block per speaker turn); video → ASR + **adaptive
+  keyframes** + optional VLM shot notes; every supported image → dedicated OCR plus an
+  independent vision-LLM description call. Converters are versioned — a model or parser
+  upgrade is a `converter_version` bump, flowing the processing-driven lifecycle ruleset
   (`evidence_lifecycle_design.md` §3).
+  **PDFs (D139) always use OCR for every accepted page**, including pages with
+  selectable text. The PDF route neither extracts text layers nor switches
+  between text extraction and OCR by page; an unconfigured OCR provider parks
+  conversion under D117.
 - **Versioned** (`converter_version`): a converter or routing change re-converts the affected docs (a
   batch keyed by version), which rebuilds everything downstream — the D7 rebuildability discipline
   applied to the foundation.
@@ -191,8 +235,10 @@ gates everything downstream:
   configured route table. Adding one route cannot release other unsupported
   formats. A worker that still lacks the route parks the item again and refunds
   its just-started attempt; converter content errors remain ordinary failures.
-  This handles configuration skew without a dead-letter loop. Matching follows
-  the router's exact MIME lookup. The admission and managed text-classification
+  This handles configuration skew without a dead-letter loop. Matching uses
+  the registry's normalized routing key (D133). Parking covers recognized families
+  whose converter needs an unconfigured provider or is not yet built; every file is
+  stored (D138). The admission and managed text-classification
   contracts remain in force; storage acceptance does not assert processing readiness.
 
   **Connector completeness:** a live observation parked with `no_route` keeps
@@ -275,6 +321,10 @@ whole corpus as it grows (a single document cannot know the global tree).
 
 ### 4.1 Scalable structure route (D79, 2026-07-27) — deterministic skeleton, bounded summaries, orientation-only consumption
 
+> **D138:** a representation with no claim-eligible range (search-only text, a data profile, a
+> card) takes only the deterministic skeleton: no model call for skeleton checks, roles or
+> summaries. Model-written structure is for prose.
+
 The shipped route is a **single schema-constrained LLM call** over up to `max_prompt_chars`
 of `document.md` (default 200K; documents under `min_blocks_for_llm` skip the call) returning
 the entire tree — every span, role, and summary — in one response, with char offsets snapped
@@ -318,6 +368,43 @@ unchanged):
   disambiguation, resolved by deterministic search — never raw character offsets; an anchor
   that resolves ambiguously or not at all degrades to the enclosing parent, mirroring the
   snap's degrade-to-parent rule.
+- **Section keys (D140).** A heading may end with a Pandoc/kramdown attribute block
+  (`## 4. Per-diem allowance {#per-diem}`). The parser takes the block's `#identifier` as the
+  section's stable `section_key` (1–200 characters from `[A-Za-z0-9_.:/-]`), strips the block
+  from the title, and stores two deterministic hashes on every section: `own_content_hash` (the
+  section's own blocks) and `subtree_content_hash` (its whole span, children included — what
+  "this section changed" means). Sections that predate D140 get the hashes from a
+  deterministic backfill over stored `blocks.json`; a new parser generation is one D56/D65
+  extraction-basis rollover for each lineage's next version. Keys are unique per structure generation (a duplicate keeps the
+  first heading and records a structure warning); reads resolve a key in the version's current
+  representation's current structure generation; model-anchored fallback sections get no key.
+  Keys identify a section across versions for section history and cross-references
+  ([D140 design §4](effective_time_and_section_references_design.md#4-section-keys)).
+- **Fallback section run-merging (D137):** When models propose section anchors in conversational
+  transcripts or dialogue documents, individual dialogue turns (e.g. Joanna asking "So what's
+  your favorite game?" at Block 61 and Nate answering "Yep! I'm currently playing..." at Block 62)
+  are frequently proposed as section headings. If unresolved, each turn becomes an isolated
+  single-block leaf section (`block_start == block_end`). Because E2 claim extraction (`e2.py`,
+  `_neighbour_text`) inspects surrounding context only within the *same section*, this splits
+  question turns from their answers, breaking cross-turn anaphora resolution (D131).
+  *Rule:* In `resolve_fallback_skeleton()`, contiguous runs of single-block leaf sections are
+  identified. If followed by an immediate next leaf section without subsections, the run is merged
+  forward with that succeeding section into a single section spanning `[run_start, next_leaf.block_end]`.
+  If at the end of the document or followed by a section with subsections, the run collapses into a
+  single merged section spanning `[run_start, run_end]`. In all cases, the merged section is titled
+  by the proposal at `run_start` (its first block), so title, heading level, and starting position
+  remain aligned without in-place mutation. Sections with subsections are never absorbed and never
+  absorb runs, protecting hierarchical structures (e.g. `PART ONE` and `Chapter 1` under D57).
+  *Costs and Boundaries:*
+  1. Flat unnested chapters: If a single-block section such as `PART ONE` is followed by a flat
+     sibling leaf such as `Chapter 1`, the two merge and the section keeps only the `PART ONE`
+     title. Hierarchy protection relies on the model emitting subsections.
+  2. Long micro-turn runs: A run of 200 consecutive single-block turns collapses into a single
+     section `[0..199]`, representing an honest flat document rather than 200 micro-sections.
+  3. Non-contiguous boundary turns: If a question is the final block of a multi-block section and
+     the answer begins the next section, or a single-block turn is stranded at document end without
+     an answer, run-merging does not bridge across multi-block sections. Such cross-boundary
+     dialogue remains a documented boundary of section-scoped context.
 - **Skeleton sanity check (2026-07-28 addition, revised after Grok + Codex review): a judge,
   never a proposer.** Density can look healthy while the parsed tree is nonsense — a
   complicated print template whose running headers, TOC pages, or scrambled heading order
@@ -496,39 +583,68 @@ in prose.
 
 ## 4A. Cross-references — the `crossref` sub-worker
 
+> **D138:** for a representation with no claim-eligible range, cross-reference detection stays
+> deterministic; the ambiguous residue is left unresolved instead of going to a model.
+>
+> **D140:** references belong to a source *version*, may name sections by key, bind their
+> target `floating` or `pinned`, and are either extracted here or supplied by the caller. The
+> complete contract — schema, kinds, binding, supplied reference sets, reading operations —
+> is [the effective time and section references design §6](effective_time_and_section_references_design.md#6-cross-references);
+> this section keeps the extraction rungs.
+
 The last E0 sub-worker records how documents point at each other — the raw material for the
-live `DOC_CROSSREF` graph edges and one source of the E2 bundle's entity hints
-(design-review F7). Product: `document_crossrefs` rows `(from_doc_id, to_doc_id NULLABLE,
-kind, context)`, kinds `cites | links_to | attaches | replies_to`.
+live `document_crossref` graph edges, the `document_references` operation, and one source of
+the E2 bundle's entity hints (design-review F7). Product: `document_crossrefs` rows, one per
+reference **made by one source version** (`from_version_id`), with optional source and target
+section keys, a target named by source identity and resolved to `to_doc_id` when ingested,
+and kinds `cites | links_to | attaches | replies_to | refers_to | amends | implements`.
+
+The sub-worker has two inputs and writes one table:
+
+- **Supplied references** (`origin = supplied`): each accepted PUT of a caller-provided NDJSON
+  reference set is a new *generation*, stored as an artifact of the version (D140 §6.3). The
+  generation is validated against the version's structure all-or-nothing (an unknown source
+  section key rejects the set, never broadens a reference to document grain) and materialized
+  deterministically; no model is involved. Pinned targets
+  name the target version's immutable `version_key`.
+- **Extracted references** (`origin = extracted`), below.
 
 **Extraction — deterministic per kind:**
 
 - `links_to` — URLs and links in the converted Markdown (`conversion.json` blocks keep the
-  offsets);
+  offsets); a link whose resolved target carries an anchor (`page#heading`) becomes
+  `refers_to` with `to_section_key` set;
 - `attaches` — container relationships known at ingest/convert time (e-mail attachments,
   archive members);
 - `replies_to` — thread metadata (e-mail `In-Reply-To`/`References` headers, chat thread ids);
 - `cites` — citation strings, mined primarily from PageIndex `references`-role sections: DOIs,
-  arXiv ids, ISBNs, plus deployment-specific citation grammars (e.g. case citations in the law
-  deployment — configured per deployment, like the D38 converter routing table).
+  arXiv ids, ISBNs, plus deployment-specific citation grammars configured per deployment,
+  like the D38 converter routing table (e.g. case-law citations or standard numbers).
 
 **Resolution — cheap-first (the D4 discipline).** A reference resolves to an ingested document
-via exact keys first (normalized URL ↔ `documents.source_uri`; DOI/arXiv id ↔ document
-metadata; `content_hash` for attachments), then fuzzy title match (`pg_trgm` against
-`documents.title`, recall-first floor), and only the ambiguous residue goes to a small-model
-rung ("is citation string X document Y?"). Below threshold the row keeps `to_doc_id = NULL` —
-a cited-but-not-ingested reference: real provenance, no graph edge (`v_graph_crossref` filters
-nulls).
+via exact keys first (source identity `(source_kind, source_ref)`; normalized URL ↔
+`documents.source_uri`; DOI/arXiv id ↔ document metadata; `content_hash` for attachments), then
+fuzzy title match (`pg_trgm` against `documents.title`, recall-first floor), and only the
+ambiguous residue goes to a small-model rung ("is citation string X document Y?"). Below
+threshold the row keeps `to_doc_id = NULL` — a cited-but-not-ingested reference: real
+provenance, no graph edge. Extracted references are always `floating`; target *versions* and
+*sections* are resolved at read time by a temporal join with the reading scope (D140 §6.2).
 
 **Late binding.** Dangling references are not dead: when a new document is ingested, its
-identity keys (URI, DOI/ids, title) are matched against unresolved crossrefs — one indexed
-lookup on the ingest path — so earlier documents' citations bind to it retroactively. No
-periodic sweep; resolution rides the write path in both directions.
+identity keys (source identity, URI, DOI/ids, title) are matched against unresolved crossrefs —
+one indexed lookup on the ingest path — so earlier documents' references bind to it
+retroactively. Pinned version keys and section keys need no binding step: they resolve at
+read time. No periodic sweep; resolution rides the write path in both directions.
 
-Idempotent on `content_hash` + crossreferencer version (D12); versioned because the fuzzy rung
-is non-deterministic; the citation `context` snippet is stored for audit. Execution class
-(D52): deterministic first, one small-model rung for the residue — LLM spend scales with
-ambiguity, not volume (D4).
+Extracted rows are idempotent on the source `version_id`, its representation and the
+crossreferencer version (not on `content_hash`: an A→B→A version needs its own rows); versioned because the fuzzy rung is non-deterministic; the citation `context` snippet
+is stored for audit. Every row belongs to a generation — one per source `version_id` and origin
+(supplied: per accepted PUT; extracted: per representation and crossreferencer version) — and
+only the active generation is visible; a new generation replaces it atomically, extracted ones
+together with the D65 representation swap. Workers are idempotent on the generation. Execution
+class (D52): deterministic first, one small-model rung for the extraction residue — LLM
+spend scales with ambiguity, not volume (D4). A deployment that supplies references for a
+source kind may disable extraction for that source kind by configuration.
 
 ## 5. Mounting — agents read the memory on their filesystem
 
@@ -671,6 +787,7 @@ with it.
 1. **The top level is configured, not emergent.** Placement hints reconcile *within* a
    deployment-declared facet skeleton (registry-style config): e.g. `by-type/` (emails,
    papers, contracts, notes…), `by-source/`, `by-topic/` (placement-hint/registry-derived), `entities/`.
+   `entities/` exists only while the deployment serves its facts processing layer (D143).
    Emergent top levels reshuffle as the corpus grows — exactly what path-holding consumers
    cannot tolerate. Facets are stable; their interiors reorganize.
 2. **One document, many views — by stub duplication.** An email about Project Atlas belongs
@@ -725,7 +842,7 @@ derived → P3.
 
 1. Upload `acme-10k-2023.pdf` → **ingest**: raw bytes to the raw bucket, `content_hash`, a
    `documents` row.
-2. **convert**: router picks OCR (scanned PDF) → `document.md` + `conversion.json` (offsets) to
+2. **convert**: router OCRs every page of the PDF → `document.md` + `conversion.json` (offsets) to
    artifacts.
 3. **structure**: PageIndex builds the tree (sections, roles, spans, summaries) + a `placement` hint
    `/finance/annual-reports/2023/`; `pageindex.json` to artifacts, `document_sections` rows to
@@ -745,8 +862,9 @@ hint), **D40** (P3 corpus-filesystem projection), **D65** (media routes + genera
 canonical-text rule — binding home: `media_design.md`).
 
 Open spikes (measure before committing):
-1. **Conversion fidelity vs cost** — OCR is the expensive, quality-critical step; cheap-extract →
-   OCR-on-failure fallback chain? Measure on real PDFs.
+1. **Conversion fidelity and cost** — measure OCR reading order, layout fidelity
+   and page cost on born-digital, scanned and mixed PDFs. D139 keeps OCR
+   mandatory for every accepted page regardless of those measurements.
 2. **When to run the PageIndex tool vs. a synthetic root.** Every doc gets a `document_sections`
    structure either way (§4); measure where running the full tool earns its cost vs. a synthetic
    root — an implementation-routing question, not a contract gap.

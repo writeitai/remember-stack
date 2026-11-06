@@ -54,7 +54,9 @@ class _ReferenceRouter:
             ):
                 if body not in target:
                     continue
-                label = re.search(r"\[(S\d+)\] TARGET:\n" + re.escape(body), prompt)
+                label = re.search(
+                    r"\[(S\d+)\] TARGET:\norigin=[^\n]+\n" + re.escape(body), prompt
+                )
                 assert label is not None
                 refs.append(
                     {"name": name, "aliases": aliases, "source_refs": [label.group(1)]}
@@ -70,7 +72,9 @@ class _ReferenceRouter:
             assert "Riverside Cup also called River Open" in prompt
             assert "Hill Cup" in prompt  # Same date does not merge the two events.
             origin = re.search(
-                r"\[(S\d+)\] TARGET \(origin-eligible\):\n" + re.escape(_TARGET), prompt
+                r"\[(S\d+)\] TARGET \(origin-eligible\):\norigin=[^\n]+\n"
+                + re.escape(_TARGET),
+                prompt,
             )
             support = re.search(r'(S\d+): "' + re.escape(_INTRO) + '"', prompt)
             assert origin is not None and support is not None

@@ -7,11 +7,23 @@ from datetime import UTC
 from uuid import UUID
 
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+import pytest
 
+from remember.client import MemoryClient
+from remember.models import Envelope as ClientEnvelope
+from remember.models import GraphEdge as ClientGraphEdge
 from rememberstack.model import current_temporal_scope
 from rememberstack.model import Envelope
 from rememberstack.model import Freshness
 from rememberstack.model import Grain
+from rememberstack.model import GraphEdge
+from rememberstack.model import GraphNode
+from rememberstack.model import GraphPath
+from rememberstack.model import Negative
+from rememberstack.model import NegativeKind
+from rememberstack.model.client import ProcessingLayerState
+from rememberstack.model.client import ProcessingLayerStates
 from rememberstack.surfaces.graph_queries import GraphHydrationError
 from rememberstack.surfaces.http_api import build_api
 
@@ -20,6 +32,9 @@ _ENTITY_A = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 _ENTITY_B = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 _DOC_A = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 _DOC_B = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+_DOC_C = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+_PINNED_REF = UUID("12121212-1212-1212-1212-121212121212")
+_LABELLED_REF = UUID("34343434-3434-3434-3434-343434343434")
 
 
 class _Ready:
@@ -68,7 +83,9 @@ class _Graph:
     def citation_path(self, **kwargs: object) -> Envelope:
         """Capture a citation-path call."""
         self.calls.append(("citation_path", kwargs))
-        return self._answer()
+        return self.citation_answer or self._answer()
+
+    citation_answer: Envelope | None = None
 
 
 def _client(graph: _Graph) -> TestClient:
@@ -191,3 +208,193 @@ def test_graph_hydration_mismatch_is_sanitized() -> None:
     assert response.status_code == 503
     assert response.json() == {"detail": "live graph result unavailable"}
     assert "123" not in response.text
+
+
+def _citation_edge(
+    *,
+    crossref_id: UUID,
+    subject: UUID,
+    target: UUID,
+    bindings: tuple[str, ...],
+    labels: tuple[str, ...],
+) -> GraphEdge:
+    """Build one citation edge the way citation-path hydration does."""
+    return GraphEdge.model_validate(
+        {
+            "relation_id": crossref_id,
+            "subject_id": subject,
+            "object_id": target,
+            "predicate": "cites",
+            "fact": None,
+            "evidence_count": 0,
+            "valid_from": None,
+            "valid_until": None,
+            "ingested_at": None,
+            "invalidated_at": None,
+            "bindings": bindings,
+            "source_labels": labels,
+        }
+    )
+
+
+def test_citation_edges_serialize_binding_and_label_to_the_sdk() -> None:
+    """The route returns each citation edge's qualifiers; the SDK keeps them."""
+    graph = _Graph()
+    now = datetime.now(UTC)
+    edges = (
+        _citation_edge(
+            crossref_id=_PINNED_REF,
+            subject=_DOC_A,
+            target=_DOC_B,
+            bindings=("pinned",),
+            labels=(),
+        ),
+        _citation_edge(
+            crossref_id=_LABELLED_REF,
+            subject=_DOC_B,
+            target=_DOC_C,
+            bindings=("floating",),
+            labels=("wording-unresolved",),
+        ),
+    )
+    graph.citation_answer = Envelope(
+        grain=Grain.FACT,
+        temporal_scope=current_temporal_scope(evaluated_at=now),
+        nodes=tuple(
+            GraphNode(entity_id=doc, name=name, hops=hops)
+            for hops, (doc, name) in enumerate(
+                ((_DOC_A, "A"), (_DOC_B, "B"), (_DOC_C, "C"))
+            )
+        ),
+        paths=(
+            GraphPath(
+                length=2,
+                nodes=(
+                    GraphNode(entity_id=_DOC_A, name="A", hops=0),
+                    GraphNode(entity_id=_DOC_B, name="B", hops=1),
+                    GraphNode(entity_id=_DOC_C, name="C", hops=2),
+                ),
+                edges=edges,
+            ),
+        ),
+        edges=edges,
+        freshness=Freshness(pg_live_ts=now),
+    )
+    response = _client(graph).post(
+        "/graph/citation-path",
+        json={"from_doc_id": str(_DOC_A), "to_doc_id": str(_DOC_C)},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [
+        (edge["bindings"], edge["source_labels"]) for edge in body["paths"][0]["edges"]
+    ] == [(["pinned"], []), (["floating"], ["wording-unresolved"])]
+    assert body["edges"] == body["paths"][0]["edges"]
+    # The Python SDK reads the same route through the real HTTP stack.
+    sdk = MemoryClient(client=_client(graph))
+    answer = sdk.graph_citation_path(from_doc_id=_DOC_A, to_doc_id=_DOC_C)
+    assert isinstance(answer, ClientEnvelope)
+    assert [
+        (edge.relation_id, edge.bindings, edge.source_labels)
+        for edge in answer.paths[0].edges
+    ] == [
+        (_PINNED_REF, ("pinned",), ()),
+        (_LABELLED_REF, ("floating",), ("wording-unresolved",)),
+    ]
+
+
+@pytest.mark.parametrize("model", [GraphEdge, ClientGraphEdge])
+def test_graph_edge_reference_qualifiers_default_empty_and_reject_unknown(
+    model: type[GraphEdge] | type[ClientGraphEdge],
+) -> None:
+    """An entity edge, or a payload stored before the field, has no qualifiers."""
+    legacy = {
+        "relation_id": str(_PINNED_REF),
+        "subject_id": str(_ENTITY_A),
+        "object_id": str(_ENTITY_B),
+        "predicate": "works_for",
+        "fact": "Alice works for Acme",
+        "evidence_count": 1,
+        "valid_from": None,
+        "valid_until": None,
+        "ingested_at": None,
+        "invalidated_at": None,
+    }
+    edge = model.model_validate(legacy)
+    assert edge.bindings == () and edge.source_labels == ()
+    with pytest.raises(ValidationError):
+        model.model_validate({**legacy, "bindings": ["dynamic"]})
+
+
+class _EmptyGraph(_Graph):
+    """Answer every entity-graph read with nothing found."""
+
+    def _answer(self) -> Envelope:
+        """An empty ``known_empty`` fact envelope."""
+        return (
+            super()
+            ._answer()
+            .model_copy(
+                update={
+                    "negative": Negative(
+                        kind=NegativeKind.KNOWN_EMPTY, explanation="no matching edges"
+                    )
+                }
+            )
+        )
+
+
+class _Layers:
+    """A fixed facts state for the D143 layers port."""
+
+    def __init__(self, *, facts: ProcessingLayerState) -> None:
+        self._states = ProcessingLayerStates(claims="enabled", facts=facts)
+
+    def states(self, *, deployment_id: UUID) -> ProcessingLayerStates:
+        """The fixed states."""
+        assert deployment_id == _DEPLOYMENT_ID
+        return self._states
+
+
+_ENTITY_READS = (
+    ("/graph/neighborhood", {"entity_id": str(_ENTITY_A)}),
+    ("/graph/path", {"from_entity_id": str(_ENTITY_A), "to_entity_id": str(_ENTITY_B)}),
+)
+
+
+@pytest.mark.parametrize(("route", "body"), _ENTITY_READS)
+@pytest.mark.parametrize(
+    ("facts", "status", "negative"),
+    [
+        ("enabled", 200, "known_empty"),
+        ("backfilling", 200, "boundary"),
+        ("disabled", 409, None),
+    ],
+)
+def test_entity_graph_reads_follow_the_facts_layer(
+    route: str,
+    body: dict[str, object],
+    facts: ProcessingLayerState,
+    status: int,
+    negative: str | None,
+) -> None:
+    """D143 §7.3: facts disabled is 409; an empty answer while facts backfill is
+    a boundary; with facts complete the envelope is unchanged."""
+    boundary = _Ready()
+    client = TestClient(
+        build_api(
+            engine=_UnusedEngine(),  # type: ignore[arg-type]
+            deployment_id=_DEPLOYMENT_ID,
+            admission=boundary,
+            readiness=boundary,
+            graph=_EmptyGraph(),
+            processing_layers=_Layers(facts=facts),
+        )
+    )
+    response = client.post(route, json=body)
+    assert response.status_code == status
+    if negative is None:
+        assert response.json()["detail"]["code"] == "layer_unavailable"
+    else:
+        assert response.json()["negative"]["kind"] == negative

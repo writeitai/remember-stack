@@ -80,6 +80,11 @@ jobs:
         run: uv python install 3.13
       - name: Install dependencies (locked)
         run: uv sync --locked --python 3.13
+      - name: Install LibreOffice (D138 legacy office conversions)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer-nogui libreoffice-impress-nogui libreoffice-calc-nogui
       - name: Unit pack (no Postgres service)
         run: |
           mapfile -t paths < .github/ci/unit-paths.txt
@@ -313,16 +318,16 @@ jobs:
               store = MinIOObjectStore(bucket=bucket, settings=s3)
               key = ObjectKey(f"ci/round-trip-{uuid4().hex}")
               content = f"round trip {bucket}".encode()
-              store.write_bytes(key=key, content=content)
+              store.write_bytes(key=key, content=content, storage_class="cold")
               if store.read_bytes(key=key) != content:
                   raise RuntimeError(f"{bucket} returned different bytes")
               print(f"{bucket}: write and read back ok")
 
           store = MinIOObjectStore(bucket=profile.raw_bucket_name, settings=s3)
           key = ObjectKey("ci/immutable-object")
-          store.write_bytes(key=key, content=b"first")
+          store.write_bytes(key=key, content=b"first", storage_class="cold")
           try:
-              store.write_bytes(key=key, content=b"replacement")
+              store.write_bytes(key=key, content=b"replacement", storage_class="cold")
           except ObjectAlreadyExistsError:
               pass
           else:
@@ -471,7 +476,7 @@ jobs:
           trap - EXIT
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
-            'SELECT version_num FROM alembic_version')" = 'p9_34_0055'
+            'SELECT version_num FROM alembic_version')" = 'p9_41_0062'
           test "$(docker compose --env-file .env exec -T postgres \
             psql -U rememberstack -d rememberstack -Atc \
             'SELECT count(*) FROM deployments')" = '1'

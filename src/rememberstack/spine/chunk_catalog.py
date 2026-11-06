@@ -5,6 +5,7 @@ section links, version stamps, and the reuse keys; bodies stay in the
 artifacts store and vectors in the P1 index.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import text
@@ -16,6 +17,7 @@ from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ChunkSourceNotFoundError
 from rememberstack.model import EmbeddingUpdate
+from rememberstack.model import TextOriginMatch
 
 
 class ChunkCatalog:
@@ -76,6 +78,42 @@ class ChunkCatalog:
         with self._engine.begin() as connection:
             for record in records:
                 connection.execute(_INSERT_CHUNK, record.model_dump(mode="json"))
+
+    def text_origin_matches(
+        self,
+        *,
+        deployment_id: UUID,
+        doc_id: UUID,
+        reuse_identity_hashes: tuple[str, ...],
+        not_after: datetime,
+    ) -> dict[str, TextOriginMatch]:
+        """Per identity, the earliest eligible text origin in the lineage (D140 §5).
+
+        Eligible: same lineage and ``reuse_identity_hash``, a version that is
+        not deleted now, and a known origin not later than ``not_after`` (the
+        new version's own date). Ties break by version number, then ordinal.
+        Chunks created before D140 carry no identity and never match.
+        """
+        if not reuse_identity_hashes:
+            return {}
+        with self._engine.connect() as connection:
+            rows = (
+                connection.execute(
+                    _SELECT_TEXT_ORIGIN_MATCHES,
+                    {
+                        "deployment_id": deployment_id,
+                        "doc_id": doc_id,
+                        "hashes": list(reuse_identity_hashes),
+                        "not_after": not_after,
+                    },
+                )
+                .mappings()
+                .all()
+            )
+        return {
+            row["reuse_identity_hash"]: TextOriginMatch.model_validate(dict(row))
+            for row in rows
+        }
 
     def chunks_for_embedding(
         self, *, representation_id: UUID, chunker_version: str
@@ -176,10 +214,11 @@ class ChunkCatalog:
         version_id: UUID,
         policy_generation: str,
         embedding_version: str,
-    ) -> dict[str, CarryForwardSource]:
+    ) -> dict[tuple[str, str], CarryForwardSource]:
         """Prior chunks reusable when embedding identity matches (D80).
 
-        For each content hash: nearest strictly earlier version's chunk that
+        For each content/embedding-input hash pair: the nearest version's chunk
+        at or before this version, including another processing generation, that
         already has embedding_text_hash + policy_generation + embedding_version
         and an embedding_ref — vector copy is only valid when the new render
         produces the same embedding_text_hash under the same policy/embedder.
@@ -200,7 +239,7 @@ class ChunkCatalog:
                 .all()
             )
         return {
-            row["chunk_content_hash"]: CarryForwardSource(
+            (row["chunk_content_hash"], row["embedding_text_hash"]): CarryForwardSource(
                 chunk_id=row["chunk_id"],
                 location_header=row["location_header"],
                 embedding_text_hash=row["embedding_text_hash"],
@@ -232,14 +271,20 @@ def _normalize_chunk_embed_row(row: dict) -> dict:
 _SELECT_CHUNK_SOURCE = text(
     """
     SELECT r.deployment_id, v.doc_id, r.version_id, r.representation_id,
-           r.markdown_uri, r.blocks_uri, r.conversion_uri, d.title, d.source_kind,
+           r.markdown_uri, r.blocks_uri, r.conversion_uri, d.title,
+           -- D134: the name and title recorded for THIS version (a rename
+           -- is a new version with a new file name); the lineage title
+           -- above keeps its meaning for embeddings and structure.
+           m.file_name, m.title AS version_title, d.source_kind,
            v.source_modified_at, v.published_at, v.language,
-           r.structurer_version,
+           r.structurer_version, r.blockizer_version,
            coalesce(v.source_shape, 'document') AS source_shape,
            v.channel_ref, v.thread_ref, v.author_ref, v.message_ts
     FROM document_representations r
     JOIN document_versions v ON v.version_id = r.version_id
     JOIN documents d ON d.doc_id = v.doc_id
+    LEFT JOIN document_metadata m
+      ON m.deployment_id = v.deployment_id AND m.version_id = v.version_id
     WHERE r.representation_id = :representation_id
     """
 )
@@ -272,13 +317,31 @@ _INSERT_CHUNK = text(
         chunk_id, deployment_id, doc_id, version_id, representation_id,
         section_id, ordinal, block_start, block_end, chunk_content_hash,
         extraction_input_hash, char_start, char_end, token_count,
-        chunker_version
+        chunker_version, extraction_eligible, extraction_eligibility_version,
+        reuse_identity_hash, text_origin_at
     ) VALUES (
         :chunk_id, :deployment_id, :doc_id, :version_id, :representation_id,
         :section_id, :ordinal, :block_start, :block_end, :chunk_content_hash,
         :extraction_input_hash, :char_start, :char_end, :token_count,
-        :chunker_version
+        :chunker_version, :extraction_eligible, :extraction_eligibility_version,
+        :reuse_identity_hash, CAST(:text_origin_at AS timestamptz)
     )
+    """
+)
+
+_SELECT_TEXT_ORIGIN_MATCHES = text(
+    """
+    SELECT DISTINCT ON (c.reuse_identity_hash)
+           c.reuse_identity_hash, c.text_origin_at, v.version_no, c.ordinal
+    FROM chunks c
+    JOIN document_versions v ON v.version_id = c.version_id
+    WHERE c.deployment_id = :deployment_id
+      AND c.doc_id = :doc_id
+      AND c.reuse_identity_hash = ANY(:hashes)
+      AND c.text_origin_at IS NOT NULL
+      AND c.text_origin_at <= :not_after
+      AND v.deleted_at IS NULL
+    ORDER BY c.reuse_identity_hash, c.text_origin_at, v.version_no, c.ordinal
     """
 )
 
@@ -290,6 +353,7 @@ _SELECT_FOR_EMBEDDING = text(
            c.embedding_input_policy_version, c.policy_generation,
            c.embedding_ref, c.embedding_version, c.location_facts_json,
            c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+           c.extraction_eligible, c.text_origin_at,
            s.role AS section_role, s.node_path AS section_path,
            s.title AS section_title
     FROM chunks c
@@ -324,6 +388,7 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
                c.embedding_input_policy_version, c.policy_generation,
                c.embedding_ref, c.embedding_version, c.location_facts_json,
                c.chunk_content_hash, c.extraction_input_hash, c.section_id,
+               c.extraction_eligible, c.text_origin_at,
                s.role AS section_role, s.node_path AS section_path,
                s.title AS section_title
         FROM chunks c
@@ -356,20 +421,21 @@ _SELECT_FOR_EXTRACT_WINDOW = text(
 
 _SELECT_CARRY_FORWARD = text(
     """
-    SELECT DISTINCT ON (c.chunk_content_hash)
+    SELECT DISTINCT ON (c.chunk_content_hash, c.embedding_text_hash)
            c.chunk_content_hash, c.chunk_id, c.context_prefix,
            c.location_header, c.embedding_text_hash, c.policy_generation
     FROM chunks c
     JOIN document_versions cv ON cv.version_id = c.version_id
     WHERE c.deployment_id = :deployment_id
       AND c.doc_id = :doc_id
-      AND cv.version_no < (SELECT version_no FROM document_versions
+      AND cv.version_no <= (SELECT version_no FROM document_versions
                            WHERE version_id = :version_id)
       AND c.embedding_text_hash IS NOT NULL
+      AND cv.deleted_at IS NULL
       AND c.policy_generation = :policy_generation
       AND c.embedding_version = :embedding_version
       AND c.embedding_ref IS NOT NULL
-    ORDER BY c.chunk_content_hash, cv.version_no DESC, c.ordinal
+    ORDER BY c.chunk_content_hash, c.embedding_text_hash, cv.version_no DESC, c.ordinal, c.chunk_id
     """
 )
 

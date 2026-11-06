@@ -1,0 +1,135 @@
+# D142 implementation review — PR #505
+
+Reviewed `origin/main...HEAD` at `304ada30bd30651bb8fa04f5d3eb94b15de94aa5`; HEAD equals `origin/design/index-driven-ranked-search`. Read the three design reviews, responses, amended D142 corpus, implementation, callers, tests and harnesses. `AGENTS.md` is absent from this checkout and its ancestors. Read the checkout's entire `CLAUDE.md` and the newer `origin/main:CLAUDE.md`, which contains the owner's Rule 4.
+
+Verification: two focused pytest runs produced **52 passed, 117 skipped**. The PostgreSQL tests skipped without a configured integration database; a local Docker query did not respond. No deployment database, running LoCoMo deployment or paid provider was used. Additional in-memory reproductions exercised the actual envelope/fusion methods. Inspected the pinned pg_textsearch source archive; its source, license and notice checksums match the Dockerfile. No tracked files were modified.
+
+## Judgements
+
+- **(a) Bounded reconciliation: reasonable alternative, not acceptable as currently proved.** The real-arithmetic argument under the documented 1/9 fieldnorm bound is sound. With canonical score `C`, index score `I`, `e = 1/9`, and justified rounding bounds, an unseen row satisfies `C(u) ≤ I(u)(1+ε)/(1-e) ≤ I(last)(1+ε)/(1-e) ≤ C(last)(1+ε)²/(1-e)`. A strict comparison against this upper bound also settles stable-ID ties. Inspection of all adjacent entries in the pinned fieldnorm table supports the length bound. Projecting the negated operator while ordering by the raw expression preserves standalone canonical scoring in the cursor executor; the planner hook replaces the direct ORDER BY expression, rather than the nested negated projection. However, **the chosen floating-point slack is not a universal bound** (P1-2), and the revision comparison is not an executable scorer-bound gate. Replacing the approved patch can be accepted after closing those conditions and measuring the extra fetch depth. The post-approval nature and maintenance tradeoff are honestly identified; claiming proven exactness today goes further than the evidence.
+- **(b) Exact entity-scoped fact scans: acceptable only for demonstrably bounded populations.** The changed SQL correctly carries coverage before distance through the relation/observation merge, preserves `(kind, id)`, separates ranking anchors from expanded scope, and resolves endpoints in the cheap nomination path. But these scans have no input-row bound or fact coverage budget. A bounded anchor count or output LIMIT does not bound a hub's facts. The implementation therefore does not justify calling them “exact bounded scans”; see P1-6.
+- **(c) Hydration outside the ranked snapshot: reject.** This breaks a central approved consistency contract, rather than being a harmless loading detail. The gap also extends to public searches, standalone fact context, pending/freshness reads and sandbox body hydration (P1-3).
+- **(d) Manifest/LoCoMo fingerprint change: accept.** `scope_pending.complete` changes the public output schema, so regenerating the manifest, OpenAPI and TypeScript artifacts and updating the expected fingerprint is appropriate. It changes no ingestion reuse key. The comparison harness must nevertheless support baseline artifacts with their original fingerprint; presently it does not (P2-1).
+- **(e) Rejection totals without rule attribution:** no ranking-correctness objection. It is a disclosed telemetry shortfall. Totals cannot substantiate the distinct-text proposal's attribution trigger, and must not be presented as per-rule evidence. More seriously, even these totals and per-channel accounts are not propagated end to end (P1-1).
+- **(f) Document-filtered claims always using the loop:** no independent exactness objection, provided stops are disclosed. It leaves a performance difference from chunks that needs measurement. **The new ≤5,000-row chunk tier is a valid strategy:** it enumerates eligible rows before scoring, keeps positive lexical matches only, and uses canonical scoring and stable IDs. It does not violate D87. It needs threshold-boundary coverage and accurate chunk-only wording; it does not resolve the measured 6,000-row case.
+- **Scaling failure:** the analysis and plan honestly label the 3M/1% stratum a failure. Disclosure is necessary, but is not passage of the approved scaling gate (P1-9). The D142 rewrite uses the 64-bit extended hash, variable lengths and D134 metadata, so it does not retain the old D140 seed's all-`w0` defect. This is supported by the [PostgreSQL hash implementation](https://doxygen.postgresql.org/hashfunc_8c_source.html). The sweep is useful diagnostic evidence, with methodological limits in P2-4.
+- **Owner invariant:** no chunking, converter, lineage, date/origin, extraction/Claimify/embedding identity, policy-generation or carry-forward input changes were found. The P1 writer gains vector validation, so “query path only” is not literally the entire code delta, but it introduces no reuse boundary. Comparing extraction input hashes and pinning Selection-call deltas is the right non-vacuous Selection check; it is not a complete proof of Rule 4's paid-work/claim-reuse promise (P2-5).
+
+The adapter loop does implement one continuing cursor, disjoint fetches, positive-match-only BM25, primary-key confirmation, and conservative HNSW drain classification. D140 selection/evidence predicates remain in the changed full-search confirmations. No new tenant-predicate omission or privilege escalation was found in the changed SQL; no application schema migration is needed for the chosen approach. The 1.5.1 source/license pins and removal of the old D98 compatibility patch are coherent. Actual image compatibility/test gates remain subject to P2-3.
+
+WP-RS.0 real-data EXPLAIN and the paid LoCoMo run remain explicitly pending by instruction; their absence is **not** a finding. The unchosen distinct-text index is **not** required by this review.
+
+## P0
+
+None found.
+
+## P1
+
+1. **Termination accounts disappear and capped searches manufacture `known_empty`.** `src/rememberstack/surfaces/query_engine.py:1809`, `:1904`, `:2817`, `:3930`, `:3874`, `:1180`.
+
+   Public `search_claims`/`search_chunks` never inspect the returned `P1SearchIds.account`: they omit truncation and unconditionally produce `known_empty` when hydration returns nothing. The testimony hybrid strips channels to UUID tuples for RRF, retains only a boolean in `_bound_testimony_result`, loses the `p1_*` reason, and `combine_evidence` manufactures `known_empty` again. Fact fusion returns an ordinary tuple; `facts_context` infers completeness from candidate-list length and ignores the account even without fusion. An incomplete profile-entity channel can also disappear when it yields no profile IDs.
+
+   **Reproduced:** supplying an empty `WORK_BUDGET` result with `fetched=20000` yields `known_empty` with no truncation in both public searches; the hybrid yields `known_empty`, `truncated=true`, `reason=None`; fusing capped fact results produces a plain tuple that `search_account()` calls `exhausted`. This directly defeats the advertised disclosure for the known scaling failure.
+
+   **Fix:** carry typed per-channel accounts through RRF, hydration, fact/profile fusion and compound envelopes; combine them conservatively, retain reasons/counters/limits, and allow `known_empty` only after every contributing stream proves exhaustion. Make structured results explicit in the port signatures rather than treating missing metadata as exhaustion in production. Add empty-cap, partial-cap and one-capped-channel tests through the real public entry points, including facts and zero-row SQL invocation records. In the sandbox, `nominated=len(nominations)` at `bridge.py:401` currently reports only the final returned prefix, not the fetched candidate count; publish the actual search account too.
+
+2. **The fixed BM25 floating-point slack does not support the claimed stopping proof.** `src/rememberstack/adapters/p1_ranked.py:60`, `:313`; `plan/designs/postgres_p1_search_projection_design.md:397`.
+
+   Positive float4 accumulation error depends on the number of contributing terms; `1e-4` is asserted without an enforced analyzed-term limit. The adapter and SQL bridge accept queries far longer than the HTTP search model's 4,096-character limit. A 40,000-term query with four-letter distinct tokens occupies about 200 KB and fits the SQL parameter budget.
+
+   A source-derived IEEE float32 emulation of the pinned default memtable formula gives a concrete violation: corpus `N=50,000,000`, one document of raw length `73,751` (decoded length `65,560`), other documents length 1, and 40,000 query terms each occurring once only in that document. Then `avg=1.0014749765396118`, `idf=17.32206916809082`, index total `22.990617752075195`, canonical total `25.87208990007639`, and **canonical/index = 1.1253325238614393**, above the implemented **M = 1.12522501125**. This is an arithmetic counterexample to the assumed bound, not a claimed PostgreSQL wrong-answer integration run. It uses the [memtable float4 accumulation](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/scoring/bmw.c#L747-L772) and [standalone term computation/accumulation](https://github.com/timescale/pg_textsearch/blob/fa142d049d08eac45a263f5abc250c8877ae076e/src/types/query.c#L693-L724). The 1/9 length bound itself is not the defect.
+
+   **Fix:** derive a conservative finite-precision bound for the supported query/document domain and all scoring paths, using a query-dependent accumulation bound or a validated analyzed-term cap at every entry point; alternatively restore a canonical scorer patch. Add built-image tests that compare actual index and canonical scores, including this large-term case, repeated terms, mixed storage and near ties. A test comparing two revision strings does not establish either inequality or stream monotonicity.
+
+3. **The operation does not have one shared authority snapshot.** `src/rememberstack/surfaces/query_engine.py:1529`, `:3491`, `:3591`; `src/rememberstack/surfaces/query_sandbox/bridge.py:351`, `:390`.
+
+   The new context binds only reads using the retrieval pool. Claim/chunk confirmation still opens `self._engine` connections, as do pending enumeration, touched-ID mapping and freshness calculation (`:451`, `:534`, `:619`). Public `search_claims` and `search_chunks` never open the context at all. Standalone `facts_context` is also unwrapped; only `default_facts_context` has the snapshot decorator. Adapter readiness can therefore run before the ranked transaction. `DocumentSearch.search_documents` still uses an ordinary connection rather than a read-only repeatable-read transaction. In the sandbox the import context ends immediately after nomination, before `_hydrate` fetches projection bodies.
+
+   A deletion, representation change or declaration committed between these reads can remove the nominated prefix, mix claim/chunk views of the operation, or produce freshness from a newer state. There is no refill from the original ranking after those drops. This differs from the approved rule that a deletion between fetches remains visible to this invocation and disappears on the next one.
+
+   **Fix:** own the context at every ranked operation boundary and route readiness, entity checks, nomination, final authority/body hydration and pending/freshness reads through its connection, or explicitly imported helper connections. Keep the sandbox import alive through body loading. Add real engine and SQL-bridge insert/delete/representation-change tests, not only a direct adapter snapshot-import test.
+
+4. **Snapshot import does not pin the operation's evaluation instant.** `src/rememberstack/surfaces/query_sandbox/bridge.py:711`, `:749`; `src/rememberstack/surfaces/query_engine.py:1794`, `:1889`, `:2798`.
+
+   `BridgeSettings` carries no pinned evaluation instant. Facts use a fresh `datetime.now(UTC)` per invocation; chunk/claim calls omit `time`, causing the adapter to create a new instant. Bridge confirmation still uses clock-dependent current views and `statement_timestamp()` for `pg_confirmed_at` (`query_sandbox/nomination.py:400`, `:434`). Likewise engine searches compute a scope but pass `None` into nomination when the user omits `time`; the four default testimony channels consequently select at different instants.
+
+   REPEATABLE READ freezes rows, not clocks. Crossing an already-declared effective-period boundary can nominate the newer edition and confirm at the older requested instant, or let two SRFs disagree with each other and with outer SQL, without any concurrent write.
+
+   **Fix:** put `evaluated_at`/`believed_at` in the ranked context, pass an explicit default-current scope everywhere, and confirm through predicates/functions evaluated at those same instants. Report that pinned authority instant. Test an effective boundary through the actual bridge and default-time compound engine operation.
+
+5. **Cheap fact nomination still cuts candidates before full authority eligibility.** `src/rememberstack/adapters/postgres_p1.py:1576`, especially `relation=""` at `:1579`; `src/rememberstack/surfaces/query_engine.py:1013`.
+
+   The fact-context path prefers `nominate_facts_scored`. Its new loop confirms base-table time predicates plus the D140 evidence gate, but deliberately omits `facts_visible_history`. That gate does not establish survivor/current-entity membership or all historical claim-coordinate visibility; `v_memory_fact_visible` separately requires those. The scoped variant also ranks base rows before that authority check. The engine then takes only `FACTS_CONTEXT_CANDIDATE_K` and performs the missing confirmation later.
+
+   Thus authority-ineligible head facts can consume the entire bounded nomination depth while an eligible lower-ranked fact is never considered. Merely sharing snapshots or preserving termination metadata cannot repair this D87 violation.
+
+   **Fix:** apply the full fact authority membership in each batch's confirmation before accepting it toward the ranked candidate cut, retaining the D140 gate and composite identity. For scoped exact tiers, enumerate/score the eligible tier. Add a fixture with more than the candidate depth of time/gate-passing facts whose endpoints fail current authority, followed by eligible facts, and verify refill across both branches.
+
+6. **Entity work is not bounded as specified, and the main testimony caller bypasses the implemented tiers.** `src/rememberstack/adapters/postgres_p1.py:1150`, `:1177`, `:1197`, `:1382`, `:1584`, `:2310`.
+
+   `nominate_testimony_scored`, used by entity-anchored context and pending replay, still aggregates and exactly scores the scoped population in one statement, including tiers above 5,000. It does not call `_entity_tiers`. Its guard counts grouped items, rather than mention rows read, after materializing the scope. `_entity_tiers` similarly LIMITs grouped output, so millions of mentions can be consumed without exceeding the declared coverage-row budget. The entity-scoped fact paths have no such guard at all; their output LIMIT does not bound the number scored. Finally the new `P1EntityScopeTooBroadError` is not mapped to the required `entity_scope_too_broad` envelope boundary by these engine callers.
+
+   **Fix:** enforce the mention/endpoint-row budget before trusting complete coverage, return the typed boundary on overflow, and share coverage-tier execution across ordinary search, cheap testimony nomination, pending replay and facts. Exact scoring is appropriate below the threshold; large tiers need the loop or an explicitly approved alternative with a measured input bound. Test >5,000-item tiers, many mentions per item, and hub fact scopes.
+
+7. **The advertised deadline does not bound testimony or sandbox P1 work.** `src/rememberstack/adapters/postgres_p1.py:928`, `:960`, `:989`; `src/rememberstack/adapters/bounded_postgres_read.py:62`; `src/rememberstack/surfaces/query_sandbox/bridge.py:458`.
+
+   Testimony calls open `_ranked_connection()` and invoke `nominate_and_confirm()` without a deadline. `_configure_p1_connection` returns immediately for `None`. The context's deadline, including the sandbox's apparent 30-second bound, is used only for pool admission; `snapshot()` neither stores it for nested calls nor installs execution timeouts. The loop therefore never checks it, and blocking EXPLAIN/FETCH/confirmation/coverage queries can run indefinitely under the stock retrieval connection. A fetched-candidate budget does not bound BM25 posting/scoring work or coverage aggregation.
+
+   **Fix:** carry one absolute operation deadline in the context, clamp statement/transaction timeouts and every nested call to its remaining time, and handle expiration with the specified typed outcome. Use the executor's remaining budget for sandbox work, not a fresh independent budget per SRF. Exercise timeouts during actual FETCH and confirmation, including a wait before the next fetch.
+
+8. **`scope_pending.complete` ignores the pending-lineage enumeration cap.** `src/rememberstack/surfaces/query_engine.py:451`, `:465`, `:520`; `_PENDING_IN_FORCE` at `:5418`.
+
+   Only the first 200 pending lineages are considered, but completeness is computed solely from nomination accounts. If the sole relevant pending lineage is the 201st by ID, probes over the first 200 can all exhaust and the operation reports no pending lineage, with no incomplete marker. The same new field defaults to true in the document-search path, which shares this capped enumeration. Complete nomination over a truncated scope does not prove a complete pending count.
+
+   **Fix:** detect enumeration overflow with a sentinel/limit-plus-one, apply explicit document restrictions before the cap, and propagate `complete=false` even when no lineage was found. Retain any subsequent nomination incompleteness too. Test >200 pending lineages with the relevant text beyond the enumeration boundary, through both search surfaces.
+
+9. **The measured common filtered stratum fails the binding scaling gate.** `plan/analysis/index_driven_ranked_search.md:506`; `plan/plans/index_driven_ranked_search.md:25`; `benchmarks/p1_ranked/sweep.py:227`.
+
+   At 3M, the 1% filter yields p50 3.8 s/p95 5.0 s and 10/40 `work_budget` stops. This sweep keeps a constant document fraction (`lineages // 100`); it is not merely the documented exception of a fixed eligible set shrinking against a growing corpus. Crossing the 5,000-row exact-tier threshold exposes a major cliff. The report honestly says failure, but the delivery cannot be accepted as satisfying the approved common-stratum latency/completeness gate. Currently public callers also lose its claimed `p1_work_budget` disclosure (P1-1).
+
+   **Fix before merge:** resolve this stratum with a measured filter-aware strategy and rerun the identical workload around 5,000/5,001 and at scale, reporting public operation results, returned-k and truncation alongside latency. Alternatively obtain an explicit reviewed change to the acceptance criteria; recording a failed gate is not that decision. Complete the non-paid HNSW recall validation on an isolated vector corpus using a corrected oracle (P2-2). Neither item requires the unchosen distinct-text index, the occupied real deployment or a paid LoCoMo run.
+
+## P2
+
+1. **The LoCoMo comparison harness cannot load an ordinary main baseline and can silently change the question population.** `benchmarks/p1_ranked/locomo_gate.py:43`, `:64`.
+
+   `_load_run` validates against the current protocol pins (`benchmarks/locomo/runner.py:1303`, `:1314`). A main artifact with the old surface manifest hash is rejected by this branch's gate. Separately, `gate()` intersects question sets instead of enforcing the predeclared identical set, and missing judge records become incorrect labels rather than an unfinished-run error. These permit an invalid comparison or prevent the intended comparison altogether.
+
+   **Fix:** consume integrity-checked immutable per-side exports without demanding that both sides use the current code's manifest pin; retain strict resume validation in the runner. Require equal question manifests, matching ingested-data identities and complete answers/judges, and reject omissions or mismatches. Add an old-hash main/new-hash change fixture and mismatched/incomplete-run tests. This is a harness defect, not an objection to the pending paid run.
+
+2. **The recall oracle measures a different eligible set and can count exact-tier searches as ANN validation.** `benchmarks/p1_ranked/recall.py:77`, `:127`, `:140`.
+
+   The oracle reads every live edition without D140 selection or model/policy attestation, whereas the adapter searches current in-force, attested rows and requires document metadata for document filters. The two sides also use independent snapshots. The 50-document stratum can fall entirely into the new exact tier, so perfect reported recall need not exercise HNSW. Empty strata are dropped from acceptance rather than made inconclusive.
+
+   **Fix:** share eligibility and pinned scope/snapshot with the adapter, use recorded query samples and all required strata, explicitly record which tier ran, and force/choose actual ANN populations for ANN recall. Treat missing required strata as inconclusive. Add dated-version, stale-generation and exact-tier-bypass checks before using this as a gate.
+
+3. **WP-RS.7 and image-test completion are overstated beyond the acknowledged randomized-corpus gap.** `plan/plans/index_driven_ranked_search.md:24`; `Dockerfile.postgres:48`; `src/tests/adapters/test_p1_ranked_pg.py:230`, `:287`, `:323`.
+
+   The restrictive BM25 filter and 48/50/67 fixture are real useful PostgreSQL cases. The 40/41 fixture has only two rows, so both fit in the initial fetch and it does not challenge continuation across a tie boundary. The HNSW case has six rows, not real tuple/memory-stop tests. The import case calls the adapter directly, not the public bridge, and no new tests cover between-fetch deletion/spill/compaction, prepared cursor plans, channel-cap envelopes or broad-entity boundaries. Plan rejection is tested with fabricated EXPLAIN JSON. The Dockerfile runs make/install; neither it nor the CI startup script runs the upstream SQL regression suite or the stated cursor-generation gate, despite binding prose saying the build does.
+
+   **Fix:** mark these checks pending accurately, implement the specified adversarial cases on the built PG19 image, and wire the upstream regression and scorer/cursor tests into an executable image gate. Keep historical 1.3.1 test evidence separate from 1.5.1 evidence.
+
+4. **Sweep instrumentation is useful but not yet the claimed full scaling methodology.** `benchmarks/p1_ranked/sweep.py:196`, `:215`; `plan/analysis/index_driven_ranked_search.md:502`.
+
+   The rewritten 64-bit text generator and metadata fix address the degenerate/empty-filter seed problems. However, the internal-work proxy EXPLAINs LIMIT 80 without the canonical projection, while the production cursor uses LIMIT 20,000 at k=20; this changes pg_textsearch's initial top-k/scoring work. It omits the actual continuation and confirmation work, planning cost and available scoring-pass counters. Only BM25 chunks and three strata run, not semantic/claims/facts/entities/context, at/hub/tie strata or the target sweep. Query sampling is repeatable per size but not held fixed across sizes, and the 300k main p95 uses only eight observations. “Unfiltered searches no longer grow with corpus” is stronger than these measurements establish.
+
+   **Fix:** retain this as a labeled diagnostic sweep, record corpus/query hashes and matched eligibility statistics, instrument actual cursor execution (including initial LIMIT and continuation), report planning/scoring-pass/buffer work, and extend the required channel/operation strata. State measured sublinear improvement rather than corpus-independent latency. Archive machine-readable results for reproducibility.
+
+5. **The reuse regression is a useful Selection check, but not the claimed complete owner-invariant proof.** `src/tests/workers/test_reuse_lifecycle.py:659`, `:729`, `:750`; `decisions.md:6976`.
+
+   It ingests two versions of one stable lineage, requires a real multi-section/multi-chunk edit, compares extraction input hashes and pins Selection-call deltas. Those assertions are meaningful and should stay. But the new fixture uses undated living observations, counts no Claimify calls, does not check per-chunk claim IDs/origins or embedding identity, and bounds only total embedding calls. Vector equality alone cannot distinguish carry-forward from recomputing the same deterministic fake vector; a small number of calls could also be charged to the wrong untouched chunks. Existing D140 dated tests and older D122 tests are useful but do not supply this combined multi-section proof. Rule 4 explicitly names known Claimify-window/packing gaps; D142's blanket “at most changed chunk and neighbours” claim obscures them.
+
+   **Fix:** keep the hash-based Selection assertions and extend a dated stable-lineage fixture with positive baselines, per-input Selection/Claimify/embedding call traces, nonempty reused claim-ID sets, text-origin/reuse identities, and packing/window cases. Mark the known gaps as expected failures rather than describing them as solved. Qualify D142's decision text to the unchanged reuse boundary and the specific behavior actually proved.
+
+6. **Writer validation omits entity profiles.** `src/rememberstack/adapters/postgres_p1.py:2147`; `src/rememberstack/spine/profile_refresher.py:116`, `:725`.
+
+   Chunk/claim/fact writers now reject non-finite and zero vectors, but the entity-profile writer still checks dimensions only. It can store an attested zero vector that cosine HNSW does not index; the new entity-search exhaustion count nevertheless includes it. This makes the design's “every searchable row is reachable” premise false and can cause persistent spurious ANN-bound results.
+
+   **Fix:** use shared validation at every P1 vector writer, including both profile-refresh paths, before opening the write transaction. Add zero/non-finite provider-response checks and define handling of existing invalid disposable vectors without changing ingestion identity inputs.
+
+## Nits
+
+- `plan/designs/postgres_p1_search_projection_design.md:456` describes the small document-filter tier as applying to a “testimony search,” but `_TestimonyQuery.versions_sql` is populated only for chunks. Say “chunk search” consistently and record the claims-only-loop deviation alongside the binding rule.
+- `src/rememberstack/adapters/p1_ranked.py:201`, `:210`: attestation EXPLAINs a SELECT while the server cursor is declared separately, and restoration uses `TO DEFAULT` rather than the previous setting. Attest the actual DECLARE planning form and restore captured values; cover a caller with non-default planner settings and generic/custom prepared execution.
+
+Verdict: Request changes

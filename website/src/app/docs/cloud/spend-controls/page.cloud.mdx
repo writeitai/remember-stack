@@ -1,6 +1,6 @@
 export const metadata = {
   title: "Spend caps and auto top-up",
-  description: "Set a monthly cap for the organisation and a sub-cap per project, understand exactly what stops when money or a cap runs out, and refill the balance automatically within a ceiling.",
+  description: "Set a monthly cap for the organisation and a sub-cap per project, understand exactly what stops, reads included, when money or a cap runs out, and refill the balance automatically within a ceiling.",
 };
 
 # Spend caps and auto top-up
@@ -9,8 +9,8 @@ export const metadata = {
 
 remember.dev cannot spend more than you have paid for. On top of that you
 can set how much it may spend in a month, for the whole organisation and
-for each project. When a limit is reached, chargeable work stops before it
-starts; nothing is billed after the fact.
+for each project. When a limit is reached, chargeable work and reads stop
+before they start; nothing is billed beyond your balance or a cap.
 
 ## The organisation's monthly cap
 
@@ -19,7 +19,8 @@ An owner sets the cap under **Billing → Monthly hard cap**, in credits.
 - The month is the UTC calendar month.
 - Before any chargeable work, remember.dev checks that this month's
   charges, plus the holds still open, plus the new work's hold stay within
-  the cap. If they would not, the work does not start.
+  the cap. If they would not, the work does not start. A read places no
+  hold: it is admitted while the cap has room left.
 - Without a cap, spending is limited only by the balance.
 
 You can set a first cap and lower it at any time. **Raising or removing a
@@ -52,7 +53,20 @@ cap.
 
 ## What stops when money or a cap runs out
 
-Three different things can be refused, and they behave differently.
+Four different things can be refused, and they behave differently.
+
+**Reading.** A read is admitted only while the balance is above zero, the
+organisation cap and the project's sub-cap have room left, billing is not
+suspended and the project is active. Otherwise it is refused with `423` and
+a `detail` of `dispatch_parked:` followed by the first reason that applies:
+
+| Reason | Meaning |
+|---|---|
+| `PAYMENT_SUSPENDED` | Billing is suspended |
+| `INSUFFICIENT_BALANCE` | The balance is zero. An auto top-up counts only once its credits arrive |
+| `MONTHLY_CAP_EXCEEDED` | The organisation's monthly cap is used up |
+| `PROJECT_SUBCAP_EXCEEDED` | The project's sub-cap is used up |
+| `PROJECT_PARKED` | The project is parked (below) and not active again yet |
 
 **Processing new documents.** Each new document version needs a hold for
 its processing before the expensive work starts. If the hold is refused,
@@ -64,29 +78,21 @@ current UTC day, placed at the start of each day. If the balance or a cap
 cannot cover it, the project is parked:
 
 - no new work starts: new documents wait unprocessed, and nothing fails;
+- every memory read stops too, including the document list, with `423`;
+  only readiness, deployment information and `/healthz` still answer;
 - the active-project charge stops at the same moment;
-- your memory stays readable: search, the assured operations and SQL
-  queries keep answering;
-- your data, tokens and hostname are kept.
+- your data, keys and hostname are kept.
 
-When a purchase or a higher limit makes the next hold possible, the parked
-work resumes on the same hostname with the same memory and the same tokens.
-
-<Callout type="warning">
-
-Today a parked project goes further than this: its deployment is
-**blocked** and the endpoint stops answering all requests, reads
-included, until the project is funded again. This will change so that
-reads continue. Until then, keep enough balance for at least a day of
-every active project, or turn on auto top-up.
-
-</Callout>
+When a purchase or a higher limit makes the next hold possible, the project
+becomes active again on the same hostname with the same memory and the same
+keys, and reads and processing resume together. That can take a few minutes
+after the purchase; until then reads get `dispatch_parked:PROJECT_PARKED`.
 
 **Storage growth.** Each new document version also places a small hold for
 the storage it will add. If a project's daily storage measurement is
 missing for 48 hours, the project stops accepting data that would grow its
-storage until measurement resumes; reads continue. You are not charged
-for that period.
+storage until measurement resumes; reads continue while the balance and
+caps allow. You are not charged for that period.
 
 ### Provider-cost safeguard
 

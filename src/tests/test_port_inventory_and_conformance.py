@@ -102,7 +102,7 @@ class FakeObjectStore:
         return self.objects[key.root]
 
     def write_bytes(
-        self, *, key: ObjectKey, content: bytes, storage_class: str | None = None
+        self, *, key: ObjectKey, content: bytes, storage_class: str
     ) -> None:
         """Store new bytes and reject replacement of an existing immutable key."""
         if key.root in self.objects:
@@ -279,10 +279,10 @@ def test_object_store_fake_rejects_immutable_key_replacement() -> None:
     """Show the byte/key contract fails rather than overwriting immutable content."""
     store = FakeObjectStore()
     key = ObjectKey(root="raw/deployment/document/version")
-    store.write_bytes(key=key, content=b"first")
+    store.write_bytes(key=key, content=b"first", storage_class="cold")
 
     try:
-        store.write_bytes(key=key, content=b"replacement")
+        store.write_bytes(key=key, content=b"replacement", storage_class="cold")
     except FileExistsError:
         pass
     else:

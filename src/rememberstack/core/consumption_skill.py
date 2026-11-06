@@ -300,13 +300,14 @@ def _mounts(*, mounts: PublishedMounts | None) -> str:
             "orientation, readable artifacts, and query operations."
         )
     else:
-        availability = (
-            "The four read-only mounts are available:\n\n"
-            f"- P3 corpus tree: `{mounts.p3}`\n"
-            f"- E0 artifacts: `{mounts.artifacts}`\n"
-            f"- raw originals (off the navigation path; audited): `{mounts.raw}`\n"
-            f"- plane K checkout: `{mounts.knowledge}`"
-        )
+        views = [
+            f"- P3 corpus tree: `{mounts.p3}`",
+            f"- E0 artifacts: `{mounts.artifacts}`",
+            f"- raw originals (off the navigation path; audited): `{mounts.raw}`",
+        ]
+        if mounts.knowledge is not None:
+            views.append(f"- plane K checkout: `{mounts.knowledge}`")
+        availability = "These read-only mounts are available:\n\n" + "\n".join(views)
     return (
         "## Filesystem first when mounts exist\n\n"
         f"{availability}\n\n"

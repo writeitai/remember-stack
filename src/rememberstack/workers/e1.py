@@ -28,10 +28,19 @@ from rememberstack.core.embedding_input_policy import EmbeddingInputRender
 from rememberstack.core.embedding_input_policy import location_facts_json
 from rememberstack.core.embedding_input_policy import LocationFacts
 from rememberstack.core.embedding_input_policy import render_embedding_input
+from rememberstack.core.extraction_eligibility import block_eligibility
+from rememberstack.core.extraction_eligibility import (
+    EXTRACTION_ELIGIBILITY_POLICY_VERSION,
+)
+from rememberstack.core.source_origins import origin_input_hash
+from rememberstack.core.source_origins import SOURCE_ORIGINS_VERSION
+from rememberstack.core.text_origin import resolve_text_origin
+from rememberstack.core.text_origin import reuse_identity_hash
 from rememberstack.model import ChunkForEmbedding
 from rememberstack.model import ChunkRecord
 from rememberstack.model import ChunkSource
 from rememberstack.model import ClaimedWork
+from rememberstack.model import DerivationRange
 from rememberstack.model import EmbeddingRequest
 from rememberstack.model import EmbeddingUpdate
 from rememberstack.model import EnqueueWork
@@ -43,6 +52,9 @@ from rememberstack.model import PipelineStage
 from rememberstack.model import ProcessingTarget
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderInvalidResponseError
+from rememberstack.model.occurrence_provenance import (
+    parse_persisted_conversion_manifest,
+)
 from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.object_store import ObjectStorePort
@@ -55,8 +67,15 @@ from rememberstack.workers.section_orientation import SECTION_ORIENTATION_VERSIO
 E1_CHUNK_VERSION: Final = CHUNKER_VERSION
 """The chunk stage's component version IS the chunker version (D12/D58)."""
 
-E1_EMBED_VERSION: Final = "e1-embed-2026.08-d80"
-"""The embed stage's component version (D80 policy path; model id on stamps)."""
+E1_EMBED_VERSION: Final = f"e1-embed-2026.10:{CHUNKER_VERSION}"
+"""Delivery generation for the current chunk rows, not a new vector identity.
+
+The chunker base generation is part of delivery identity so its next bump
+cannot be blocked by an old completed embed job. The origin-aware generation
+needs a fresh embed job even for an already
+processed representation. Unchanged D80 inputs reuse their existing vectors;
+the embedding policy and model, rather than this work version, key paid reuse.
+"""
 
 E1_PREFIXER_VERSION: Final = EMBEDDING_INPUT_POLICY_VERSION
 """Alias: policy generation replaces the retired LLM prefixer version string."""
@@ -65,7 +84,7 @@ E2_EXTRACTOR_VERSION: Final = (
     f"e2-extract-2026.09:d119-multi-span-1:d80-location-elements-1:"
     f"token-union-grounding-1:temporal-anchor-4:d107-kind-vocabulary-1:"
     f"{SECTION_ORIENTATION_VERSION}:assertion-clarity-4:d122-source-references-1:"
-    f"d131-anaphora-1"
+    f"d131-anaphora-1:d134-selfref-1:{SOURCE_ORIGINS_VERSION}"
 )
 """Extractor generation in extraction_input_hash (D56). d119-multi-span-1:
 coherent claims cite engine-labeled source passages; occurrence rows store
@@ -74,7 +93,9 @@ windows whose previous/next slots keep side identity. 08a: D80 typed
 location elements replace free-form context_prefix in the bundle/grounding
 union. temporal-anchor-4: a resolved relative date is written into
 claim_text as its ISO value and grounded by the claim's own valid-time
-fields (D41/D32 amendments of 2026-09-11)."""
+fields (D41/D32 amendments of 2026-09-11). d134-selfref-1: the header
+carries the version's file name and title, and a claim about its own
+document names it (the gate records the inserted name's span)."""
 
 _EMBED_BATCH_SIZE: Final = 64
 """Default provider batch size for chunk embeddings (capability starting point)."""
@@ -130,12 +151,29 @@ class ChunkHandler:
             self._artifact_store.read_bytes(key=ObjectKey(source.blocks_uri))
         )
         blocks = blocks_from_sidecar(blocks_doc=blocks_doc, document_md=document_md)
+        derivation_ranges = self._derivation_ranges(source=source)
+        eligible = block_eligibility(blocks=blocks, ranges=derivation_ranges)
         packed = pack_blocks(
             blocks=blocks,
             sections=source.sections,
             document_md=document_md,
             params=self._params,
+            ineligible_ordinals=frozenset(
+                block.ordinal
+                for block, is_eligible in zip(blocks, eligible, strict=True)
+                if not is_eligible
+            ),
         )
+        identities = tuple(
+            _reuse_identity_hash(
+                source=source,
+                packed=packed,
+                index=index,
+                derivation_ranges=derivation_ranges,
+            )
+            for index in range(len(packed))
+        )
+        origins = self._text_origins(source=source, identities=identities)
         self._catalog.record_chunks(
             records=tuple(
                 _chunk_record(
@@ -143,11 +181,51 @@ class ChunkHandler:
                     packed=packed,
                     index=index,
                     chunker_version=self._chunker_version,
+                    reuse_identity_hash=identities[index],
+                    text_origin_at=origins[index],
+                    derivation_ranges=derivation_ranges,
                 )
                 for index in range(len(packed))
             )
         )
         return _embed_follow_up(work=work, source=source)
+
+    def _text_origins(
+        self, *, source: ChunkSource, identities: tuple[str, ...]
+    ) -> tuple[datetime | None, ...]:
+        """Each new chunk's text origin time, looked up once at creation (D140 §5).
+
+        Recorded on the row and never recomputed: a retried chunk stage
+        replays the rows above instead of reaching this lookup again.
+        """
+        version_date = source.source_modified_at or source.published_at
+        matches = (
+            {}
+            if version_date is None
+            else self._catalog.text_origin_matches(
+                deployment_id=source.deployment_id,
+                doc_id=source.doc_id,
+                reuse_identity_hashes=tuple(dict.fromkeys(identities)),
+                not_after=version_date,
+            )
+        )
+        return tuple(
+            resolve_text_origin(
+                matches=() if match is None else (match,), version_date=version_date
+            )
+            for match in (matches.get(identity) for identity in identities)
+        )
+
+    def _derivation_ranges(self, *, source: ChunkSource) -> tuple[DerivationRange, ...]:
+        """The converter's labelled ranges; a legacy row without a manifest has none."""
+        if source.conversion_uri is None:
+            return ()
+        return parse_persisted_conversion_manifest(
+            payload=self._artifact_store.read_bytes(
+                key=ObjectKey(source.conversion_uri)
+            ),
+            uri=source.conversion_uri,
+        ).derivation_ranges
 
 
 class EmbedChunksHandler:
@@ -257,11 +335,11 @@ class EmbedChunksHandler:
             if stored_hash == rendered.embedding_text_hash:
                 vectors[chunk.chunk_id] = vector
 
-        # Cross-version carry-forward when embedding identity matches.
+        # Reuse matching vectors across versions or processing generations.
         for chunk, rendered in active:
             if chunk.chunk_id in vectors:
                 continue
-            prior = carry.get(chunk.chunk_content_hash)
+            prior = carry.get((chunk.chunk_content_hash, rendered.embedding_text_hash))
             if (
                 prior is None
                 or prior.embedding_text_hash != rendered.embedding_text_hash
@@ -575,32 +653,51 @@ def _location_facts(
     )
 
 
+def _reuse_identity_hash(
+    *,
+    source: ChunkSource,
+    packed: tuple[PackedChunk, ...],
+    index: int,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
+) -> str:
+    """The chunk's date-free identity: the D56 key inputs minus any date (D140 §5)."""
+    chunk = packed[index]
+    return reuse_identity_hash(
+        own_block_hashes=(chunk.chunk_content_hash,),
+        neighbor_block_hashes=_neighbor_hashes(packed=packed, index=index),
+        header_facts=_undated_header_facts(source=source, chunk=chunk),
+        blockizer_version=source.blockizer_version or "",
+        structurer_version=source.structurer_version,
+        extractor_version=E2_EXTRACTOR_VERSION,
+        provenance_hashes=_consumed_origin_hashes(
+            packed=packed, index=index, ranges=derivation_ranges
+        ),
+    )
+
+
 def _chunk_record(
     *,
     source: ChunkSource,
     packed: tuple[PackedChunk, ...],
     index: int,
     chunker_version: str,
+    reuse_identity_hash: str,
+    text_origin_at: datetime | None,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
 ) -> ChunkRecord:
-    """Build one chunk row, deriving its D56 reuse key from stable inputs only."""
+    """Build one chunk row, deriving its D56 reuse key from stable inputs only.
+
+    The only date in the key is the chunk's text origin time (D140 §5): an
+    unchanged chunk of a newly dated version keeps the key of the chunk it
+    inherited its origin from, so E2 reuses that extraction.
+    """
     chunk = packed[index]
-    previous_hash = (
-        packed[index - 1].chunk_content_hash
-        if index > 0 and packed[index - 1].section_id == chunk.section_id
-        else ""
-    )
-    next_hash = (
-        packed[index + 1].chunk_content_hash
-        if index + 1 < len(packed) and packed[index + 1].section_id == chunk.section_id
-        else ""
-    )
-    neighbor_hashes = (previous_hash, next_hash)
+    undated = _undated_header_facts(source=source, chunk=chunk)
+    # The single date sits where the version dates did: after title and kind.
     header_facts = (
-        source.title or "",
-        source.source_kind,
-        _isoformat_or_empty(value=source.source_modified_at),
-        _isoformat_or_empty(value=source.published_at),
-        source.language or "",
+        *undated[:2],
+        _isoformat_or_empty(value=text_origin_at),
+        *undated[2:],
     )
     return ChunkRecord(
         chunk_id=uuid4(),
@@ -615,16 +712,83 @@ def _chunk_record(
         chunk_content_hash=chunk.chunk_content_hash,
         extraction_input_hash=extraction_input_hash(
             own_block_hashes=(chunk.chunk_content_hash,),
-            neighbor_block_hashes=neighbor_hashes,
+            neighbor_block_hashes=_neighbor_hashes(packed=packed, index=index),
             header_facts=header_facts,
             extractor_version=E2_EXTRACTOR_VERSION,
             structurer_version=source.structurer_version,
+            provenance_hashes=_consumed_origin_hashes(
+                packed=packed, index=index, ranges=derivation_ranges
+            ),
         ),
         char_start=chunk.char_start,
         char_end=chunk.char_end,
         token_count=chunk.token_count,
         chunker_version=chunker_version,
+        extraction_eligible=chunk.extraction_eligible,
+        extraction_eligibility_version=EXTRACTION_ELIGIBILITY_POLICY_VERSION,
+        reuse_identity_hash=reuse_identity_hash,
+        text_origin_at=text_origin_at,
     )
+
+
+def _neighbor_hashes(*, packed: tuple[PackedChunk, ...], index: int) -> tuple[str, str]:
+    """Previous and next same-section chunk hashes; "" where there is none."""
+    chunk = packed[index]
+    previous_hash = (
+        packed[index - 1].chunk_content_hash
+        if index > 0 and packed[index - 1].section_id == chunk.section_id
+        else ""
+    )
+    next_hash = (
+        packed[index + 1].chunk_content_hash
+        if index + 1 < len(packed) and packed[index + 1].section_id == chunk.section_id
+        else ""
+    )
+    return previous_hash, next_hash
+
+
+def _consumed_origin_hashes(
+    *, packed: tuple[PackedChunk, ...], index: int, ranges: tuple[DerivationRange, ...]
+) -> tuple[str, ...]:
+    """Origins for exactly the target and same-section neighbors E2 consumes."""
+    target = packed[index]
+    return tuple(
+        origin_input_hash(
+            start=packed[position].char_start,
+            end=packed[position].char_end,
+            ranges=ranges,
+        )
+        if 0 <= position < len(packed)
+        and packed[position].section_id == target.section_id
+        else ""
+        for position in (index - 1, index, index + 1)
+    )
+
+
+def _undated_header_facts(
+    *, source: ChunkSource, chunk: PackedChunk
+) -> tuple[str, ...]:
+    """The stable header facts without any date: title, kind, language, file name.
+
+    D134: the file name is a header fact — a self-referencing claim names
+    the file, so a renamed version must never reuse claims naming the old one.
+    """
+    header_facts = (
+        source.header_title() or "",
+        source.source_kind,
+        source.language or "",
+        source.file_name or "",
+    )
+    if not chunk.extraction_eligible:
+        # D133 §4.5: the policy version joins the reuse basis of ineligible
+        # chunks, so they never share a Selection result with an eligible
+        # chunk and a policy change re-keys exactly them. Eligible chunks keep
+        # their key, so the policy never re-extracts prose.
+        header_facts = (
+            *header_facts,
+            f"ineligible:{EXTRACTION_ELIGIBILITY_POLICY_VERSION}",
+        )
+    return header_facts
 
 
 def _embed_follow_up(*, work: ClaimedWork, source: ChunkSource) -> HandlerOutcome:
@@ -655,16 +819,26 @@ def _extract_follow_up(
     chunks: tuple[ChunkForEmbedding, ...],
     chunker_version: str,
 ) -> HandlerOutcome:
-    """D84: fan out one extract_claims job per chunk (or normalize if none)."""
+    """D84: fan out one extract_claims job per chunk (or normalize if none).
+
+    The outcome carries the D143 claims boundary: the ledger runs these
+    follow-ups unchanged for an unconfigured deployment and decides by the
+    lineage order for a configured one.
+    """
+    from rememberstack.workers.base import ClaimsBoundary
     from rememberstack.workers.base import EmptyObsFlushComplete
     from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 
+    boundary = ClaimsBoundary(
+        deployment_id=work.deployment_id, version_id=source.version_id, lane=work.lane
+    )
     if not chunks:
         # D90: no claims ⇒ durable empty_complete + supersession + embed_claim.
         # Never insert a document_version adjudicate_observations row at the
         # entity-fanout component version (§5.7 / §5.8).
         return HandlerOutcome(
             follow_up=(),
+            claims_boundary=boundary,
             empty_obs_flush=EmptyObsFlushComplete(
                 deployment_id=work.deployment_id,
                 version_id=source.version_id,
@@ -678,6 +852,7 @@ def _extract_follow_up(
             ),
         )
     return HandlerOutcome(
+        claims_boundary=boundary,
         follow_up=tuple(
             EnqueueWork(
                 deployment_id=work.deployment_id,
@@ -694,7 +869,7 @@ def _extract_follow_up(
                 },
             )
             for chunk in chunks
-        )
+        ),
     )
 
 

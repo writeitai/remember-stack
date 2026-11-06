@@ -21,12 +21,14 @@ from alembic.config import Config
 from pydantic import ValidationError
 import pytest
 from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import RowMapping
 from sqlalchemy.exc import DBAPIError
 
+from remember.models import Envelope as ClientEnvelope
 from rememberstack.model import DeploymentBootstrapInput
 from rememberstack.model import NegativeKind
 from rememberstack.spine import DeploymentBootstrapper
@@ -69,6 +71,124 @@ def database_engine() -> Iterator[Engine]:
         yield engine
     finally:
         engine.dispose()
+
+
+def _served_version(*, connection: Connection, doc_id: UUID, version_no: int) -> UUID:
+    """Give a document a new ready version, make it the served one, return it."""
+    version_id, representation_id = uuid4(), uuid4()
+    content_hash = f"graph-citing-{doc_id}-{version_no}"
+    connection.execute(
+        text(
+            "INSERT INTO content_objects (deployment_id, content_hash, mime,"
+            " raw_uri) VALUES (:deployment_id, :content_hash, 'text/plain',"
+            " 'raw')"
+        ),
+        {"deployment_id": _DEPLOYMENT_ID, "content_hash": content_hash},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+            " content_hash, version_no, status) VALUES (:version_id,"
+            " :deployment_id, :doc_id, :content_hash, :version_no, 'ready')"
+        ),
+        {
+            "version_id": version_id,
+            "deployment_id": _DEPLOYMENT_ID,
+            "doc_id": doc_id,
+            "content_hash": content_hash,
+            "version_no": version_no,
+        },
+    )
+    connection.execute(
+        text(
+            "INSERT INTO document_representations (representation_id,"
+            " deployment_id, version_id, route, status) VALUES"
+            " (:representation_id, :deployment_id, :version_id, 'passthrough',"
+            " 'ready')"
+        ),
+        {
+            "representation_id": representation_id,
+            "deployment_id": _DEPLOYMENT_ID,
+            "version_id": version_id,
+        },
+    )
+    connection.execute(
+        text(
+            "UPDATE document_versions SET current_representation_id ="
+            " :representation_id WHERE version_id = :version_id"
+        ),
+        {"representation_id": representation_id, "version_id": version_id},
+    )
+    connection.execute(
+        text(
+            "UPDATE documents SET current_version_id = :version_id"
+            " WHERE doc_id = :doc_id"
+        ),
+        {"version_id": version_id, "doc_id": doc_id},
+    )
+    return version_id
+
+
+def _reference_generation(
+    *, connection: Connection, doc_id: UUID, version_id: UUID
+) -> UUID:
+    """Open the active supplied reference generation of one version."""
+    generation_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO document_reference_generations (generation_id,"
+            " deployment_id, doc_id, version_id, origin, input_hash,"
+            " request_seq, artifact_uri, status) VALUES (:generation,"
+            " :deployment_id, :doc_id, :version_id, 'supplied', 'h', 1,"
+            " 'refs.ndjson', 'active')"
+        ),
+        {
+            "generation": generation_id,
+            "deployment_id": _DEPLOYMENT_ID,
+            "doc_id": doc_id,
+            "version_id": version_id,
+        },
+    )
+    return generation_id
+
+
+def _add_reference(
+    *,
+    connection: Connection,
+    generation_id: UUID,
+    from_doc_id: UUID,
+    version_id: UUID,
+    to_doc_id: UUID,
+    binding: str = "floating",
+    version_key: str | None = None,
+    label: str | None = None,
+) -> UUID:
+    """Write one resolved ``cites`` reference of a version's generation."""
+    crossref_id = uuid4()
+    connection.execute(
+        text(
+            "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
+            " from_doc_id, from_version_id, generation_id, to_doc_id,"
+            " kind, origin, resolved, binding, to_version_key,"
+            " source_label)"
+            " VALUES (:crossref_id, :deployment_id, :from_doc_id,"
+            " :version_id, :generation, :to_doc_id, 'cites', 'supplied',"
+            " true, CAST(:binding AS crossref_binding), :version_key,"
+            " :label)"
+        ),
+        {
+            "crossref_id": crossref_id,
+            "deployment_id": _DEPLOYMENT_ID,
+            "from_doc_id": from_doc_id,
+            "version_id": version_id,
+            "generation": generation_id,
+            "to_doc_id": to_doc_id,
+            "binding": binding,
+            "version_key": version_key,
+            "label": label,
+        },
+    )
+    return crossref_id
 
 
 class _GraphCorpus:
@@ -192,23 +312,30 @@ class _GraphCorpus:
                         "title": title,
                     },
                 )
-            for citing, cited in (
-                ("Report", "Follow-up"),
-                ("Follow-up", "Original Spec"),
+            # One pinned reference and one floating reference that carries the
+            # caller's label, so citation edges prove both qualifiers.
+            for citing, cited, binding, version_key, label in (
+                ("Report", "Follow-up", "pinned", "follow-up-v1", None),
+                ("Follow-up", "Original Spec", "floating", None, "wording-unresolved"),
             ):
-                connection.execute(
-                    text(
-                        "INSERT INTO document_crossrefs (crossref_id, deployment_id,"
-                        " from_doc_id, to_doc_id, kind, resolved)"
-                        " VALUES (:crossref_id, :deployment_id, :from_doc_id,"
-                        " :to_doc_id, 'cites', true)"
+                # D140: a reference is made by the citing document's served
+                # version, through its active reference generation
+                version_id = _served_version(
+                    connection=connection, doc_id=self.docs[citing], version_no=1
+                )
+                _add_reference(
+                    connection=connection,
+                    generation_id=_reference_generation(
+                        connection=connection,
+                        doc_id=self.docs[citing],
+                        version_id=version_id,
                     ),
-                    {
-                        "crossref_id": uuid4(),
-                        "deployment_id": _DEPLOYMENT_ID,
-                        "from_doc_id": self.docs[citing],
-                        "to_doc_id": self.docs[cited],
-                    },
+                    from_doc_id=self.docs[citing],
+                    version_id=version_id,
+                    to_doc_id=self.docs[cited],
+                    binding=binding,
+                    version_key=version_key,
+                    label=label,
                 )
 
     def _seed_claim(self, *, connection: Connection) -> tuple[UUID, UUID]:
@@ -269,6 +396,15 @@ class _GraphCorpus:
                 "version_id": version_id,
             },
         )
+        # a ready version reads its current representation (D65), as the
+        # catalog records when the representation becomes ready
+        connection.execute(
+            text(
+                "UPDATE document_versions SET current_representation_id ="
+                " :representation_id WHERE version_id = :version_id"
+            ),
+            {"representation_id": representation_id, "version_id": version_id},
+        )
         connection.execute(
             text(
                 "INSERT INTO chunks (chunk_id, deployment_id, doc_id, version_id,"
@@ -300,6 +436,16 @@ class _GraphCorpus:
                 "doc_id": doc_id,
                 "chunk_id": chunk_id,
             },
+        )
+        # the origin occurrence claim_catalog writes with every claim
+        connection.execute(
+            text(
+                "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                " FROM claims WHERE claim_id = :origin_claim"
+            ),
+            {"origin_claim": claim_id},
         )
         return doc_id, claim_id
 
@@ -1002,6 +1148,305 @@ def test_recursive_citation_path_is_directed(graph: GraphQueries) -> None:
         reverse.negative is not None
         and reverse.negative.kind is NegativeKind.KNOWN_EMPTY
     )
+
+
+def test_citation_edges_carry_reference_binding_and_label(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Each citation edge returns its reference's binding and source label.
+
+    The pinned reference and the floating one with a caller label both
+    round-trip, through the path's edges and the envelope's distinct edges,
+    without changing the stored direction or the reference's identity.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    chain = graph.citation_path(
+        from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+    )
+    assert chain.negative is None and len(chain.paths) == 1
+    pinned, floating = chain.paths[0].edges
+    assert (pinned.subject_id, pinned.object_id) == (docs["Report"], docs["Follow-up"])
+    assert pinned.bindings == ("pinned",) and pinned.source_labels == ()
+    assert (floating.subject_id, floating.object_id) == (
+        docs["Follow-up"],
+        docs["Original Spec"],
+    )
+    assert floating.bindings == ("floating",)
+    assert floating.source_labels == ("wording-unresolved",)
+    assert chain.edges == chain.paths[0].edges
+    with database_engine.connect() as connection:
+        stored = {
+            row.crossref_id: (row.binding, row.source_label)
+            for row in connection.execute(
+                text(
+                    "SELECT crossref_id, binding::text AS binding, source_label"
+                    " FROM document_crossrefs WHERE deployment_id = :deployment_id"
+                ),
+                {"deployment_id": _DEPLOYMENT_ID},
+            )
+        }
+    assert stored[pinned.relation_id] == ("pinned", None)
+    assert stored[floating.relation_id] == ("floating", "wording-unresolved")
+    wire = ClientEnvelope.model_validate_json(chain.model_dump_json())
+    assert [
+        (edge.relation_id, edge.bindings, edge.source_labels)
+        for edge in wire.paths[0].edges
+    ] == [
+        (pinned.relation_id, ("pinned",), ()),
+        (floating.relation_id, ("floating",), ("wording-unresolved",)),
+    ]
+
+
+def _live_references(
+    *, connection: Connection, from_doc_id: UUID, to_doc_id: UUID
+) -> list[UUID]:
+    """The public per-reference rows between two documents, in id order."""
+    return list(
+        connection.execute(
+            text(
+                "SELECT crossref_id FROM memory_v1.document_crossrefs_live"
+                " WHERE deployment_id = :deployment_id"
+                " AND from_doc_id = :from_doc_id AND to_doc_id = :to_doc_id"
+                " ORDER BY crossref_id"
+            ),
+            {
+                "deployment_id": _DEPLOYMENT_ID,
+                "from_doc_id": from_doc_id,
+                "to_doc_id": to_doc_id,
+            },
+        ).scalars()
+    )
+
+
+def test_parallel_references_merge_into_one_edge_with_every_qualifier(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Three references from one document to another are one edge, not three paths.
+
+    The edge is the smallest contributing reference and carries the binding and
+    label of every reference it merges, so neither the pinned citation nor the
+    flagged ones is hidden behind the others.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    with database_engine.begin() as connection:
+        version_id, generation_id = connection.execute(
+            text(
+                "SELECT x.from_version_id, x.generation_id"
+                " FROM document_crossrefs AS x"
+                " WHERE x.deployment_id = :deployment_id"
+                " AND x.from_doc_id = :from_doc_id"
+            ),
+            {"deployment_id": _DEPLOYMENT_ID, "from_doc_id": docs["Report"]},
+        ).one()
+        for label in ("wording-unresolved", "cz:static"):
+            _add_reference(
+                connection=connection,
+                generation_id=generation_id,
+                from_doc_id=docs["Report"],
+                version_id=version_id,
+                to_doc_id=docs["Follow-up"],
+                label=label,
+            )
+        references = _live_references(
+            connection=connection,
+            from_doc_id=docs["Report"],
+            to_doc_id=docs["Follow-up"],
+        )
+    assert len(references) == 3
+
+    chain = graph.citation_path(
+        from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+    )
+
+    assert chain.negative is None and len(chain.paths) == 1
+    merged, onward = chain.paths[0].edges
+    assert merged.relation_id == references[0]
+    assert merged.bindings == ("floating", "pinned")
+    assert merged.source_labels == ("cz:static", "wording-unresolved")
+    assert onward.bindings == ("floating",)
+    assert onward.source_labels == ("wording-unresolved",)
+    assert chain.edges == chain.paths[0].edges
+
+
+def test_reference_made_only_by_a_superseded_version_is_not_traversed(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """A citation the current wording no longer makes is not a citation path.
+
+    The superseded version's reference stays readable as version history in
+    ``document_crossrefs_live``; traversal reads only the versions in force now.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    with database_engine.begin() as connection:
+        _served_version(connection=connection, doc_id=docs["Report"], version_no=2)
+    with database_engine.connect() as connection:
+        history = _live_references(
+            connection=connection,
+            from_doc_id=docs["Report"],
+            to_doc_id=docs["Follow-up"],
+        )
+    assert len(history) == 1
+
+    gone = graph.citation_path(
+        from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+    )
+    assert gone.negative is not None
+    assert gone.negative.kind is NegativeKind.KNOWN_EMPTY
+    still = graph.citation_path(
+        from_doc_id=docs["Follow-up"], to_doc_id=docs["Original Spec"]
+    )
+    assert still.negative is None and still.paths[0].length == 1
+
+
+_UNRELATED_CITERS = 500
+
+
+def _add_unrelated_citers(*, connection: Connection, target: UUID) -> None:
+    """Give the deployment many other served lineages that all cite ``target``."""
+    lineage = " FROM generate_series(1, :citers) AS ordinal"
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "citers": _UNRELATED_CITERS,
+        "target": target,
+    }
+    for statement in (
+        "INSERT INTO documents (doc_id, deployment_id, source_kind, source_ref,"
+        " title) SELECT md5('citer-doc-' || ordinal)::uuid, :deployment_id,"
+        " 'upload', 'citer-' || ordinal, 'Citer ' || ordinal" + lineage,
+        "INSERT INTO content_objects (deployment_id, content_hash, mime, raw_uri)"
+        " SELECT :deployment_id, 'citer-' || ordinal, 'text/plain', 'raw'" + lineage,
+        "INSERT INTO document_versions (version_id, deployment_id, doc_id,"
+        " content_hash, version_no, status) SELECT"
+        " md5('citer-version-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-doc-' || ordinal)::uuid, 'citer-' || ordinal, 1, 'ready'"
+        + lineage,
+        "INSERT INTO document_representations (representation_id, deployment_id,"
+        " version_id, route, status) SELECT"
+        " md5('citer-representation-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-version-' || ordinal)::uuid, 'passthrough', 'ready'" + lineage,
+        "UPDATE document_versions AS v SET current_representation_id ="
+        " md5('citer-representation-' || ordinal)::uuid"
+        " FROM generate_series(1, :citers) AS ordinal"
+        " WHERE v.version_id = md5('citer-version-' || ordinal)::uuid",
+        "UPDATE documents AS d SET current_version_id ="
+        " md5('citer-version-' || ordinal)::uuid"
+        " FROM generate_series(1, :citers) AS ordinal"
+        " WHERE d.doc_id = md5('citer-doc-' || ordinal)::uuid",
+        "INSERT INTO document_reference_generations (generation_id,"
+        " deployment_id, doc_id, version_id, origin, input_hash, request_seq,"
+        " artifact_uri, status) SELECT md5('citer-generation-' || ordinal)::uuid,"
+        " :deployment_id, md5('citer-doc-' || ordinal)::uuid,"
+        " md5('citer-version-' || ordinal)::uuid, 'supplied', 'h', 1,"
+        " 'refs.ndjson', 'active'" + lineage,
+        "INSERT INTO document_crossrefs (crossref_id, deployment_id, from_doc_id,"
+        " from_version_id, generation_id, to_doc_id, kind, origin, resolved)"
+        " SELECT md5('citer-reference-' || ordinal)::uuid, :deployment_id,"
+        " md5('citer-doc-' || ordinal)::uuid,"
+        " md5('citer-version-' || ordinal)::uuid,"
+        " md5('citer-generation-' || ordinal)::uuid, :target, 'cites',"
+        " 'supplied', true" + lineage,
+    ):
+        connection.execute(text(statement), parameters)
+
+
+def test_citation_edge_hydration_reads_only_the_returned_groups(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Hydrating one edge reads that edge's references, not the deployment's.
+
+    Many other lineages cite the same target, the worst case for a probe on
+    the target. The projection lookup must still be bounded by the edge's own
+    source, target and kind, under the graph role and its executor settings.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    with database_engine.begin() as connection:
+        _add_unrelated_citers(connection=connection, target=docs["Original Spec"])
+        for table in (
+            "documents",
+            "document_versions",
+            "document_version_scope",
+            "document_reference_generations",
+            "document_crossrefs",
+        ):
+            connection.exec_driver_sql(f"ANALYZE {table}")
+    parameters = {
+        "deployment_id": _DEPLOYMENT_ID,
+        "from_doc_id": docs["Follow-up"],
+        "to_doc_id": docs["Original Spec"],
+        "max_depth": 6,
+        "max_paths": 10,
+        "expansion_budget": 2000,
+        "frontier_budget": 1000,
+        "time_budget_ms": 1000,
+    }
+    with graph._transaction() as connection:  # noqa: SLF001
+        plan = connection.execute(
+            text(
+                "EXPLAIN (ANALYZE, FORMAT JSON) " + graph_queries_module._CITATION_PATHS  # noqa: SLF001
+            ),
+            parameters,
+        ).scalar_one()
+    reference_nodes = [
+        node
+        for node in _walk_plan_nodes(plan[0]["Plan"])
+        if node.get("Relation Name") == "document_crossrefs"
+    ]
+    assert reference_nodes, plan
+    read = sum(
+        (
+            int(node["Actual Rows"])
+            + int(node.get("Rows Removed by Filter", 0))
+            + int(node.get("Rows Removed by Index Recheck", 0))
+        )
+        * int(node["Actual Loops"])
+        for node in reference_nodes
+    )
+    assert read <= 10, [
+        {key: node.get(key) for key in ("Index Name", "Index Cond", "Actual Loops")}
+        for node in reference_nodes
+    ]
+
+    answer = graph.citation_path(
+        from_doc_id=docs["Follow-up"], to_doc_id=docs["Original Spec"]
+    )
+    assert answer.negative is None and len(answer.paths) == 1
+    assert answer.paths[0].edges[0].source_labels == ("wording-unresolved",)
+
+
+def test_citation_traversal_and_its_edges_are_one_statement(
+    graph: GraphQueries, database_engine: Engine
+) -> None:
+    """Traversal and edge hydration read the projection at one instant.
+
+    The projection is "the versions in force at statement_timestamp()", which
+    a repeatable-read snapshot does not freeze; a second statement could cross
+    an effective-period boundary. So exactly one statement reads it, and the
+    answer reports that statement's instant.
+    """
+    docs = graph.docs  # type: ignore[attr-defined]
+    statements: list[str] = []
+
+    def record(*arguments: object) -> None:
+        statements.append(str(arguments[2]))
+
+    event.listen(database_engine, "before_cursor_execute", record)
+    try:
+        answer = graph.citation_path(
+            from_doc_id=docs["Report"], to_doc_id=docs["Original Spec"]
+        )
+    finally:
+        event.remove(database_engine, "before_cursor_execute", record)
+
+    readers = [
+        statement
+        for statement in statements
+        if "crossrefs_live" in statement or "graph_citation_path" in statement
+    ]
+    assert len(readers) == 1
+    assert "rememberstack_graph_internal.crossrefs_live" in readers[0]
+    assert "memory_v1.graph_citation_path" in readers[0]
+    assert answer.negative is None and answer.paths[0].length == 2
+    assert answer.temporal_scope.evaluated_at == answer.freshness.pg_live_ts
 
 
 def test_typed_absence_boundaries_and_hard_depth_limits(graph: GraphQueries) -> None:

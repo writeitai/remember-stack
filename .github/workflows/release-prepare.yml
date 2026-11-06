@@ -84,5 +84,10 @@ jobs:
           else
             existing="$(gh pr create --base main --head "$branch" --title "Prepare v${VERSION}" --body "Automated canonical release-coordinate bump from protected main. Merging triggers the serialized immutable publisher.")"
           fi
+          # Checks register a few seconds after the push; wait for them.
+          for _ in $(seq 1 30); do
+            gh pr checks "$existing" 2>&1 | grep -q "no checks reported" || break
+            sleep 10
+          done
           gh pr checks "$existing" --watch --fail-fast
           gh pr merge "$existing" --squash

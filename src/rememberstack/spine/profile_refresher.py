@@ -21,6 +21,7 @@ from rememberstack.ports.cost_meter import CostMeterPort
 from rememberstack.ports.model_provider import ModelProviderPort
 from rememberstack.ports.p1_index import ENTITY_INPUT_POLICY
 from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
+from rememberstack.ports.p1_index import require_p1_vector
 from rememberstack.ports.profile_refresher import ProfileRefreshContendedError
 
 PROFILE_SUMMARY_FACT_LIMIT: Final = 5
@@ -723,11 +724,11 @@ def _clear_profile(
 
 
 def _vector_literal(vector: tuple[float, ...]) -> str:
-    """Serialize one fixed-size semantic vector for PostgreSQL pgvector."""
-    if len(vector) != P1_VECTOR_DIMENSIONS:
-        raise ValueError(
-            f"P1 vector has {len(vector)} dimensions; expected {P1_VECTOR_DIMENSIONS}"
-        )
+    """Serialize one validated semantic vector for PostgreSQL pgvector.
+
+    Called on the provider response, before any write transaction opens.
+    """
+    require_p1_vector(vector)
     return "[" + ",".join(repr(value) for value in vector) + "]"
 
 

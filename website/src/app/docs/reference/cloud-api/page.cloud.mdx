@@ -1,6 +1,6 @@
 export const metadata = {
   title: "remember.dev API",
-  description: "The remember.dev account API for sign-in, organisations, projects, tokens, device login, billing, usage, settings, support, offboarding and hosted MCP sign-in, with authentication and error shapes.",
+  description: "The remember.dev account API for sign-in, organisations, projects, API keys, device login, MCP sign-in and connections, billing, usage, settings, support and offboarding, with authentication and error shapes.",
 };
 
 # remember.dev API
@@ -8,7 +8,7 @@ export const metadata = {
 <AppliesTo products={["remember.dev"]} />
 
 The remember.dev API manages everything around your memory: accounts,
-organisations, projects, tokens, billing and closing projects. It does not
+organisations, projects, API keys, billing and closing projects. It does not
 read or write memory. Memory requests go to your deployment's own hostname;
 see the [HTTP API reference](/docs/reference/http-api) and
 [What remember.dev serves](/docs/cloud/compatibility).
@@ -28,16 +28,30 @@ Every path on this page is relative to it, for example
 | Method | How | Used for |
 |---|---|---|
 | Browser session | The `__session` cookie set by `POST /v1/auth/login` or Google sign-in | Every route marked **session** |
-| Control-plane token | `Authorization: Bearer umc_cp_…` | Only the routes marked **cp**; see [Tokens and sign-in](/docs/cloud/tokens-and-sign-in#control-plane-tokens) |
-| Deployment API token | `Authorization: Bearer umc_dp_…` | Only `DELETE /v1/api-tokens/self` |
-| Hosted MCP access token | `Authorization: Bearer …` from the OAuth flow | Only `POST /mcp` |
+| API key | `Authorization: Bearer rmb_…` | Only the routes marked **key**, with the permission named there; see [API keys and sign-in](/docs/cloud/tokens-and-sign-in) |
 | None | | Routes marked **public** |
+
+MCP access tokens from browser sign-in work only at
+`https://remember.dev/mcp`, never on this API.
 
 Routes marked **session** also need a verified email address, except where
 noted. Roles:
 
 - **member**: any active member of the organisation;
 - **owner**: an owner of the organisation.
+
+A key reaches only the routes marked **key**; every other route refuses it
+with `403` and `route_not_permitted`. A key also needs:
+
+- the permission the route names (`403`, `permission_insufficient`
+  otherwise);
+- the organisation in the path to be its own (`403`,
+  `organisation_not_bound`);
+- for a route naming a deployment, that deployment's project covered by the
+  key and usable by its person now (`403`, `project_not_covered`);
+- for the billing routes marked **owner**, a person who is an owner now
+  (`403`, `owner_only`);
+- a person who is still an active member (`403`, `membership_inactive`).
 
 ## Errors
 
@@ -47,15 +61,16 @@ the body.
 | Shape | Where |
 |---|---|
 | `{"detail": "<message>"}` | Most routes |
-| `{"detail": {"code": "…", "message": "…", "retryable": true/false}}` | Control-plane tokens, browser credentials |
+| `{"detail": {"code": "…", "message": "…", "retryable": true/false}}` | API keys and key checks, MCP consent and connections, browser credentials |
 | `{"detail": {"code": "…"}}` | `GET /v1/organisations/{org_id}/deployments/{deployment_id}` |
 | `{"detail": [{"loc": […], "msg": "…", "type": "…"}]}` | `422` request validation, on every route |
-| `{"error": "…", "error_description": "…"}` | `POST /v1/device/token` (device-flow errors) and the OAuth routes |
+| `{"error": "…", "error_description": "…"}` | The OAuth routes: `/oauth/register`, `/oauth/authorize`, `/oauth/token` (including device-flow polling) |
 | `{"detail": {"code": "dp.bridge_removed", "message": "…", "retryable": false, "request_id": "…"}}` | The retired `/dp/v1/…` path, with `X-Request-Id` |
 
-Common statuses: `401` not signed in or bad token; `403` signed in but not
-allowed (not a member, not an owner, email not verified, or the route is
-outside a control-plane token's profile); `404` not found or not visible to
+Common statuses: `401` not signed in, or a missing, invalid, expired or
+revoked key (`key.invalid`, `key.revoked`); `403` signed in but not allowed
+(not a member, not an owner, email not verified, or a route or permission
+the key does not reach); `404` not found or not visible to
 you; `409` conflict with the current state; `429` rate limited, sometimes
 with `Retry-After`; `503` a dependency is unavailable.
 
@@ -86,7 +101,7 @@ with `Retry-After`; `503` a dependency is unavailable.
 |---|---|---|---|
 | `GET` | `/v1/orgs` | session | Organisations you belong to, with your role |
 | `POST` | `/v1/orgs` | session | Create a team organisation you own. Body `name` (1–100), optional `slug` (≤63) |
-| `GET` | `/v1/orgs/{org_id}` | session member, cp | `id`, `slug`, `name`, `kind` |
+| `GET` | `/v1/orgs/{org_id}` | session member, key `account:read` | `id`, `slug`, `name`, `kind` |
 | `PATCH` | `/v1/orgs/{org_id}` | session owner | Rename. Body `name` |
 
 ## Members and invitations
@@ -101,7 +116,9 @@ with `Retry-After`; `503` a dependency is unavailable.
 | `POST` | `/v1/orgs/{org_id}/invites/{invite_id}/revoke` | session owner | Revoke |
 | `POST` | `/v1/invites/accept` | session | Body `token` from the invitation email. The signed-in, verified email must match |
 
-There is no route to remove a member or change a role.
+There is no route to remove a member or change a role. Owners remove
+members with the `remove_member` tool of
+[hosted MCP](/docs/cloud/hosted-mcp#account-tools).
 
 ## Projects
 
@@ -125,53 +142,72 @@ when the Default project has not been activated, or when
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/deployments` | session member, cp | Deployments of the projects visible to you |
-| `GET` | `/v1/organisations/{org_id}/deployments/{deployment_id}` | session member, cp | One deployment. Header `X-Correlation-ID` (required) |
+| `GET` | `/v1/orgs/{org_id}/deployments` | session member | Deployments of the projects visible to you |
+| `GET` | `/v1/organisations/{org_id}/deployments/{deployment_id}` | session member | One deployment. Header `X-Correlation-ID` (required) |
 
 A deployment has `id`, `org_id`, `project_id`, `state` (`requested`,
 `provisioning`, `active`, `blocked`, `recovering`, `disabled`),
 `created_at`, `data_plane_hostname` and `data_plane_hostname_live`.
 
-## Deployment API tokens
+## API keys
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/deployments/{deployment_id}/api-tokens` | session owner | Token metadata: `token_id`, `label`, `state`, `created_at`, `last_used_at`, `revoked_at`, `expires_at` |
-| `POST` | `/v1/orgs/{org_id}/deployments/{deployment_id}/api-tokens` | session owner | Mint. Body `label` (1–100), optional `replaces_token_id`. Returns `secret` once, `data_plane_hostname`, `data_plane_hostname_live`, `expires_at`, `replaced_predecessor` |
-| `DELETE` | `/v1/orgs/{org_id}/deployments/{deployment_id}/api-tokens/{token_id}` | session owner | Revoke. Repeating it is harmless |
-| `DELETE` | `/v1/api-tokens/self` | deployment API token | Revoke the presenting token |
+| `POST` | `/v1/orgs/{org_id}/keys` | session member, key `account:manage` | Create a key for yourself. Body `name` (1–100), optional `projects` (`"org:*"` for owners, or 1–20 project ids), `permissions`, `default_project_id`, `lifetime_days` (7, 30, 90, 180 or 365; default 90). `201` with `Cache-Control: no-store`, returning `key` (the secret, once), `id`, `org_id`, `name`, `projects`, `permissions`, `default_project_id`, `parent_key_id`, `expires_at` |
+| `GET` | `/v1/orgs/{org_id}/keys` | session member, key `account:manage` | Key metadata, never secrets: every key for an owner, your own for a member |
+| `DELETE` | `/v1/orgs/{org_id}/keys/{key_id}` | session member, key `account:manage` | Revoke a key and every key created from it. Members revoke their own keys; owners any. Repeating it is harmless. Returns the key's metadata |
+| `GET` | `/v1/keys/self` | key `account:read` | The presenting key: `key` (`id`, `name`, `permissions`, `projects`, `default_project`, `expires_at`, `parent`), `user`, `organisation`, `role`, and `projects` it covers that its person may use, each with `id`, `name`, `slug`, `api_url` |
+| `GET` | `/v1/keys/self/project` | any valid key | Where one covered project is served. Query `project` (id, slug or name; default: the key's default project). Returns `project`, `name`, `api_url`. `404` `project.not_found` or `project.no_deployment`, `409` `project.ambiguous` |
+| `DELETE` | `/v1/keys/self` | any key, including a revoked one | Revoke the presenting key. `204`; repeating it is harmless |
 
-Minting answers `409` at 20 live tokens and `429` above 60 mints an hour.
-An `expires_at` of `null` in a listing means the token predates expiry, not
-that it never expires.
+Omitted fields on create take the defaults: an owner's key covers all
+projects (`"org:*"`) and a member's covers every project they are assigned
+to; permissions are `memory:read`, `memory:write`, `account:read`, and
+choosing `memory:write` adds `memory:read`. A key created with a key
+defaults to its parent's projects and permissions without
+`account:manage`, cannot exceed them, and cannot outlive the parent
+(`403`, `key.outlives_parent`).
 
-## Control-plane tokens
+Each key in a listing carries `id`, `name`, `subject_user_id`, `source`,
+`projects`, `permissions`, `default_project_id`, `parent_key_id`,
+`oauth_grant_id`, `state` (`active` or `revoked`), `created_at`,
+`expires_at`, `last_used_at`, `revoked_at` and `revoked_reason`. `source`
+says how it was created:
+
+| `source` | Created by |
+|---|---|
+| `console` | The console or this API with a browser session |
+| `device` | `remember login` |
+| `key` | Another key, named in `parent_key_id` |
+| `grant` | The `create_api_key` tool on an MCP connection, named in `oauth_grant_id`. It is revoked when that connection ends |
+
+Creating answers `409` `key.too_many_active` at 50 live keys per person or
+1,000 per organisation, and `429` `key.mint_rate_limited` above 60 an hour.
+Every key route answers `429` `key.rate_limited` above 60 requests a minute
+per key.
+
+## MCP connections
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/v1/orgs/{org_id}/control-tokens` | session member | Mint. Body `label` (1–100), `profile` (`status:read`), optional `expires_in_days` (1–180). Returns `secret` once |
-| `GET` | `/v1/orgs/{org_id}/control-tokens` | session member | Your tokens' metadata |
-| `DELETE` | `/v1/orgs/{org_id}/control-tokens/{token_id}` | session member | Revoke |
-| `DELETE` | `/v1/control-tokens/self` | cp | Revoke the presenting token |
+| `GET` | `/v1/orgs/{org_id}/connections` | session member | Connected MCP clients: every one for an owner, your own for a member. Each has `id`, `subject_user_id`, `client_name`, `redirect_host`, `projects`, `permissions`, `default_project_id`, `created_at`, `last_used_at`, `expires_at` |
+| `DELETE` | `/v1/orgs/{org_id}/connections/{grant_id}` | session member | Disconnect: end the connection and revoke every key created through it. `204` |
 
 ## Device login
 
-These routes implement the OAuth 2.0 device authorization flow for
-deployment and control-plane tokens.
+`remember login` uses these routes: the standard OAuth 2.0 device
+authorization flow (RFC 8628), which ends with one API key.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/v1/device/authorize` | public | Start. Body optional `client_name` (≤64), `audience` (`deployment` default, or `control`). Returns `device_code`, `user_code`, `verification_uri`, `verification_uri_complete`, `expires_in` (900), `interval` (5) |
-| `POST` | `/v1/device/token` | public | Poll. Body `grant_type` = `urn:ietf:params:oauth:grant-type:device_code`, `device_code`. `400` with `authorization_pending`, `slow_down`, `access_denied`, `expired_token` or `temporarily_unavailable` until approved; then the token |
-| `POST` | `/v1/device/grants/preview` | session | Body `user_code`. What the grant asks for, and the organisations and deployments you may choose |
-| `POST` | `/v1/device/grants/approve` | session owner (`deployment`), member (`control`) | Body `user_code`, `org_id`, and for `deployment` the `deployment_id`; optional `label` (≤100) |
-| `POST` | `/v1/device/grants/deny` | session, same roles | Body `user_code`, `org_id` |
+| `POST` | `/v1/device/authorize` | public | Start. Form field `client_name` (optional). Returns `device_code`, `user_code`, `verification_uri`, `verification_uri_complete`, `expires_in` (900), `interval` (5) |
+| `POST` | `/oauth/token` | public | Poll. Form fields `grant_type` = `urn:ietf:params:oauth:grant-type:device_code`, `device_code`. `400` with `authorization_pending`, `slow_down`, `access_denied`, `expired_token` or `temporarily_unavailable` until approved; then the key |
+| `POST` | `/v1/device/grants/preview` | session | Body `user_code`. What the login asks for, and the organisations and projects you may choose |
+| `POST` | `/v1/device/grants/approve` | session member | Body `user_code`, `org_id`, and optional `projects`, `permissions`, `default_project_id`, `lifetime_days`, `name` (≤100), with the same defaults as creating a key |
+| `POST` | `/v1/device/grants/deny` | session | Body `user_code`, `org_id` |
 
-A `deployment` token response carries `access_token`, `token_id`,
-`org_id`, `project_id`, `deployment_id`, `label`, `data_plane_hostname`,
-`data_plane_hostname_live` and `expires_at`. A `control` response carries
-`access_token`, `token_id`, `org_id`, `label`, `profile`,
-`profile_version` and `expires_at`, and no deployment fields.
+The token response carries `access_token` (the API key), `token_type`
+(`Bearer`), `expires_in`, `key_id`, `org_id` and `default_project`.
 
 ## Browser credentials
 
@@ -182,22 +218,22 @@ Used by the console to call a deployment directly.
 | `POST` | `/v1/orgs/{org_id}/deployments/{deployment_id}/browser-credential` | session member | A read-only credential for the deployment, valid 10 minutes |
 | `POST` | `/v1/orgs/{org_id}/deployments/{deployment_id}/browser-credential/ingest` | session owner or project member | An upload-only credential, valid 3 minutes |
 
-A control-plane token cannot obtain either.
+An API key cannot obtain either.
 
 ## Billing
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/pricing/rates` | public | The published rate card: `rate_version_id`, `currency`, `effective_from`, `charges`, `ordinary_retrieval_included`. `404` `pricing_not_published` when none is published |
-| `GET` | `/v1/orgs/{org_id}/billing/purchase-options` | session member, cp | `currency`, `minimum_credits`, `maximum_credits`, `recommended_credits`, `suggested_credits`, `credits_per_currency_unit` |
+| `GET` | `/v1/pricing/rates` | public | The published rate card: `rate_version_id`, `currency`, `effective_from`, `development_pricing`, `charges` (including the `read` line), `agentic_retrieval_included`. `404` `pricing_not_published` when none is published |
+| `GET` | `/v1/orgs/{org_id}/billing/purchase-options` | session member, key `account:read` owner | `currency`, `minimum_credits`, `maximum_credits`, `recommended_credits`, `suggested_credits`, `credits_per_currency_unit` |
 | `POST` | `/v1/orgs/{org_id}/billing/checkout-session` | session owner | Start a Stripe Checkout. Body optional `amount_credits` (whole number), `save_payment_method`. Returns `checkout_session_id` and `url`. `400` `amount_BELOW_MINIMUM`, `amount_NOT_INTEGER` and similar |
-| `GET` | `/v1/orgs/{org_id}/billing/status` | session member, cp | `billing_state` (`AWAITING_PAYMENT`, `ACTIVE`, `SUSPENDED`), `balance_credits`, `monthly_cap_credits` |
-| `GET` | `/v1/orgs/{org_id}/billing/ledger` | session member, cp | Ledger entries, newest first. Query `limit` (1–200, default 50) |
-| `GET` | `/v1/orgs/{org_id}/billing/grants` | session member, cp | Credit grants from purchases, with `status` |
-| `GET` | `/v1/orgs/{org_id}/billing/statements` | session member, cp | Published statements |
-| `GET` | `/v1/orgs/{org_id}/billing/statements/{statement_id}` | session member, cp | One statement with `line_items` and `closing_balance` |
+| `GET` | `/v1/orgs/{org_id}/billing/status` | session member, key `account:read` owner | `billing_state` (`AWAITING_PAYMENT`, `ACTIVE`, `SUSPENDED`), `balance_credits`, `monthly_cap_credits` |
+| `GET` | `/v1/orgs/{org_id}/billing/ledger` | session member, key `account:read` owner | Ledger entries, newest first. Query `limit` (1–200, default 50) |
+| `GET` | `/v1/orgs/{org_id}/billing/grants` | session member, key `account:read` owner | Credit grants from purchases, with `status` |
+| `GET` | `/v1/orgs/{org_id}/billing/statements` | session member, key `account:read` owner | Published statements |
+| `GET` | `/v1/orgs/{org_id}/billing/statements/{statement_id}` | session member, key `account:read` owner | One statement with `line_items` and `closing_balance` |
 | `PUT` | `/v1/orgs/{org_id}/billing/cap` | session owner | Body `monthly_cap_credits`. Raising or clearing an existing cap answers `403` |
-| `GET` | `/v1/orgs/{org_id}/billing/auto-top-up` | session member, cp | Settings, `can_enable` and `disable_reason` |
+| `GET` | `/v1/orgs/{org_id}/billing/auto-top-up` | session member, key `account:read` owner | Settings, `can_enable` and `disable_reason` |
 | `PUT` | `/v1/orgs/{org_id}/billing/auto-top-up` | session owner | Body `is_enabled`, `threshold_credits`, `top_up_amount_credits`, `monthly_ceiling_cash`, optional `stripe_payment_method_id` |
 | `POST` | `/v1/orgs/{org_id}/billing/auto-top-up/evaluate` | session owner | Run the auto top-up check now. Returns `status` (`skipped`, `pending`, `fulfilled`, `failed`, `needs_reconciliation`) and `detail` |
 
@@ -221,8 +257,8 @@ carries a `completeness` of `complete`, `partial`, `unavailable` or
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate` | session member, cp | The provider-cost safeguard's current `decision`, `reason_code`, `is_parked` and ceiling |
-| `GET` | `/v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/usage` | session member, cp | Estimated and settled provider cost in USD, with adjustments |
+| `GET` | `/v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/gate` | session member, key `account:read` | The provider-cost safeguard's current `decision`, `reason_code`, `is_parked` and ceiling |
+| `GET` | `/v1/orgs/{org_id}/deployments/{deployment_id}/spend-safety/usage` | session member, key `account:read` | Estimated and settled provider cost in USD, with adjustments |
 
 These describe remember.dev's provider-cost safeguard, not your credits.
 
@@ -257,26 +293,34 @@ there is no export. See
 
 ## Hosted MCP and OAuth
 
+The MCP endpoint and its discovery documents are at the root of
+`https://remember.dev`, not under the account API base. The OAuth endpoints
+they name are under the base.
+
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `GET` | `/.well-known/oauth-protected-resource` | public | Protected-resource metadata for `/mcp` |
-| `GET` | `/.well-known/oauth-authorization-server` | public | Authorization-server metadata: endpoints, `S256`, scope `remember.mcp` |
-| `POST` | `/oauth/register` | public | Dynamic client registration. Body `client_name`, `redirect_uris` (`https`, or `http` on localhost) |
-| `GET` | `/oauth/authorize` | public, then browser session | Start authorization. Query `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`, `state`, optional `resource` |
-| `GET` | `/oauth/continue/{ticket}` | browser session | The project-choice page |
-| `POST` | `/oauth/approve` | browser session | Form fields `ticket`, `project` |
-| `POST` | `/oauth/token` | public | Form. `grant_type` `authorization_code` (with `code`, `redirect_uri`, `code_verifier`, `client_id`) or `refresh_token` (with `refresh_token`, `client_id`). Returns `access_token` (1 hour), `refresh_token`, `scope` |
-| `POST` | `/mcp` | hosted MCP access token | MCP over HTTP (JSON-RPC): `initialize`, `tools/list`, `tools/call` |
+| `GET` | `https://remember.dev/.well-known/oauth-protected-resource/mcp` (also without `/mcp`) | public | Protected-resource metadata: `resource` `https://remember.dev/mcp`, `authorization_servers`, `scopes_supported` |
+| `GET` | `https://remember.dev/.well-known/oauth-authorization-server` | public | Authorization-server metadata: issuer `https://remember.dev`, the endpoints below, `S256`, the four scopes, and the `remember_mcp_endpoint`, `remember_project_endpoint` and `remember_account_endpoint` the `remember` client reads |
+| `POST` | `/oauth/register` | public | Dynamic client registration (RFC 7591). JSON body `client_name`, `redirect_uris` (`https`, `http` on a loopback address, or an app's own scheme). `201` with `client_id` |
+| `GET` | `/oauth/authorize` | public, then browser session | Start sign-in. Query `response_type=code`, `client_id`, `redirect_uri`, `code_challenge`, `code_challenge_method=S256`, `state`, `resource=https://remember.dev/mcp` (required), optional `scope`. Sends the browser to the consent page |
+| `POST` | `/v1/oauth/requests/preview` | session | Body `request` (the handle from the consent page's URL). What the client asks for, and the organisations and projects you may choose |
+| `POST` | `/v1/oauth/requests/approve` | session member | Body `request`, `org_id`, `permissions`, optional `projects`, `default_project_id`. Returns `redirect_to`, the client's redirect with the code |
+| `POST` | `/v1/oauth/requests/deny` | session | Body `request` |
+| `POST` | `/oauth/token` | public | Form. `grant_type` `authorization_code` (with `code`, `redirect_uri`, `code_verifier`, `client_id`, `resource`), `refresh_token` (with `refresh_token`, `client_id`, optional `resource`), or the device code above. Returns `access_token` (1 hour), `token_type`, `expires_in`, `refresh_token` |
+| `POST` | `/oauth/revoke` | public | RFC 7009. Form `token`: an API key, a refresh token or an access token. `200`, also for an unknown token |
+| `POST` | `https://remember.dev/mcp` | API key or MCP access token | MCP over Streamable HTTP; see [Hosted MCP](/docs/cloud/hosted-mcp) |
 
-The issuer is `https://remember.dev/app/api`, so the metadata documents are
-at `https://remember.dev/app/api/.well-known/…`. See
-[Hosted MCP](/docs/cloud/hosted-mcp).
+OAuth errors use `{"error": "…", "error_description": "…"}`. An unknown
+client or redirect address on `/oauth/authorize` is shown as a `400` page,
+never redirected. Each form body is limited to 16 KiB.
 
 ## Not covered here
 
 The API also has routes that customers do not call: the Stripe webhook,
 remember.dev's operator routes (credit grants, statement publication,
 spend-safety policy and provider keys, the provider dispatch halt), the
-spend lease (`/v1/spend/…`) and billing meter routes that deployments use,
-administration routes, and the deprecated organisation API keys
-(`/v1/orgs/{org_id}/api-keys`). They are omitted on purpose.
+routes deployments use (the spend lease under
+`/v1/deployments/{deployment_id}/spend/…`, the key set and revocation list
+under `/v1/deployments/{deployment_id}/keys` and `…/revocations`, and the
+billing meter routes), and administration routes. They are omitted on
+purpose.

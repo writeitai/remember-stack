@@ -1,0 +1,321 @@
+export const metadata = {
+  title: "Section history and references",
+  description: "Follow one keyed section of a document across its versions, and read what a passage, section or document references and what references it, at any point in time.",
+};
+
+# Section history and references
+
+<AppliesTo products={["self-hosted"]} />
+
+Two reads work at the level of a document's sections rather than its
+passages. `GET /documents/{doc_id}/sections/{section_key}/history` lists
+what one [keyed section](/docs/concepts/documents-and-sources#section-keys)
+held in each version of a document, and whether it changed.
+`POST /documents/references` lists the references a passage, section or
+document makes and receives, each resolved against the versions of the
+target that were in force at the time.
+
+Both take the same `time` scope as the other text reads, and both are
+easier to follow with a worked example: see
+[Read a document as of a date](/docs/guides/versions-in-force). The writes
+they depend on (declaring effective periods and supplying references) are on
+[Ingest, readiness and documents](/docs/reference/http-api/ingest).
+
+Base URL, authentication and error shapes are described in
+[HTTP API conventions](/docs/reference/http-api).
+
+## The time scope
+
+| Mode | Selects |
+|---|---|
+| `current` | Versions in force now. |
+| `at` | Versions in force at the instant `at`. |
+| `overlap` | Versions in force at any point from `from` to `to`, both included. |
+| `history` | Versions in force at any point up to now. |
+
+For a document with declared [effective periods](/docs/concepts/time#when-a-version-is-in-force),
+a version is selected by its periods. For any other document, every mode
+selects its served version, the newest processed one. Instants must carry a
+time zone. A cursor keeps the instant the first page was read at, and reads
+the periods as they were known then, so a correction made while you page
+cannot move a row from one page to another.
+
+## GET /documents/\{doc_id\}/sections/\{section_key\}/history
+
+List, for each version the time scope selects, what that version holds
+under one section key.
+
+**Scope:** `read`.<Cloud> **Spend hold (remember.dev):** `search`.</Cloud>
+
+### Parameters
+
+| Name | In | Type | Required | Default | Constraints |
+|---|---|---|---|---|---|
+| `doc_id` | path | UUID | yes | | A live document. |
+| `section_key` | path | string | yes | | 1 to 200 characters from `A–Z a–z 0–9 _ . : / -`, without the leading `#`. A key may contain `/`. |
+| `mode` | query | `current` \| `at` \| `overlap` \| `history` | no | `history` | The time scope. |
+| `at` | query | date-time | with `mode=at` | | |
+| `from`, `to` | query | date-time | with `mode=overlap` | | `to` not before `from`. |
+| `k` | query | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | query | string | no | | The previous page's `cursor`. |
+
+### Response
+
+`200` with a [`SectionHistoryPage`](/docs/reference/result-types#sectionhistorypage):
+
+```json
+{
+  "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+  "section_key": "per-diem",
+  "periodised": true,
+  "rows": [
+    {
+      "version_id": "6a5b4c3d-2e1f-4a0b-9c8d-7e6f5a4b3c2d",
+      "version_no": 1,
+      "version_key": "edition-1",
+      "effective": [{"from": "2024-01-01T00:00:00Z", "until": "2026-01-01T00:00:00Z", "until_declared": false}],
+      "status": "present",
+      "section": {
+        "section_id": "…",
+        "node_path": "0.4",
+        "title": "4. Per-diem allowance",
+        "own_content_hash": "…",
+        "subtree_content_hash": "…",
+        "changed": null,
+        "own_changed": null,
+        "first_chunk_ids": ["…"]
+      }
+    },
+    {
+      "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+      "version_no": 2,
+      "version_key": "edition-2",
+      "effective": [{"from": "2026-01-01T00:00:00Z", "until": "2027-06-30T00:00:00Z", "until_declared": true}],
+      "status": "present",
+      "section": {"title": "4. Per-diem allowance", "changed": true, "own_changed": true, "…": "…"}
+    }
+  ],
+  "amendments": [],
+  "cursor": null,
+  "evaluated_at": "2027-07-01T08:00:00Z",
+  "believed_at": "2027-07-01T08:00:00Z"
+}
+```
+
+Rows are ordered by the start of each version's period for a document with
+declared periods (`periodised: true`), and by `version_no` otherwise. For a
+document without declared periods, `history` lists every live version (the
+served one with an open interval, the others with none), and every other
+mode lists the served version only.
+
+Each row's `status`:
+
+| Status | Meaning |
+|---|---|
+| `present` | The version has a section with this key; `section` describes it. |
+| `absent` | The version has been indexed for section keys and has no such section: it was removed or never existed there. |
+| `not_indexed` | The version's sections were stored before section keys existed and have not been indexed yet, so whether it has the key is unknown. |
+| `processing` | The version is selected but not fully processed yet. |
+
+In `section`, `changed` compares the whole section, subsections included,
+with the previous row that held the key; `own_changed` compares only the
+section's own text. Both are `null` on the first row that holds the key.
+`first_chunk_ids` are the passages holding the section's first block: pass
+one to [`adjacent_chunks`](/docs/reference/http-api/search#get-chunkschunk_idadjacent)
+to read the section.
+
+`amendments`, on the first page only, lists up to 200 references of kind
+`amends` that live documents make to this section, each with
+`change_effective_from` and `change_date_known`. See
+[`ReferenceInput`](/docs/reference/result-types#referenceinput).
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `422` | validation list | A malformed key, a missing `at`, `from` or `to` for its mode, `to` before `from`, a timestamp without a time zone, or `k` out of range. |
+
+### Example
+
+```bash
+curl -s "$REMEMBER_API_URL/documents/$DOC_ID/sections/per-diem/history" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY"
+```
+
+```python
+from remember import Client
+
+memory = Client()
+page = memory.section_history(doc_id=doc_id, section_key="per-diem")
+for row in page.rows:
+    changed = row.section.changed if row.section else None
+    print(row.version_key, row.status, changed)
+```
+
+## POST /documents/references
+
+List what a passage, a section or a whole document references, and what
+references it, across versions and time.
+
+**Scope:** `read`.<Cloud> **Spend hold (remember.dev):** `search`.</Cloud>
+
+### Request body
+
+A [`DocumentReferencesRequest`](/docs/reference/result-types#documentreferencesrequest):
+
+| Field | Type | Required | Default | Constraints |
+|---|---|---|---|---|
+| `chunk_id` | UUID | one of `chunk_id`, `doc_id` | | A passage. Its version and its section are the source. |
+| `doc_id` | UUID | one of `chunk_id`, `doc_id` | | A document. The versions `time` selects are the source. |
+| `section_key` | string | no | | Only with `doc_id`: the section and its subsections. Omitted: the whole document. |
+| `direction` | `outgoing` \| `incoming` \| `both` | no | `both` | |
+| `kinds` | array of strings | no | all | 1 to 7 of the [reference kinds](/docs/reference/http-api/ingest#reference-kinds). |
+| `time` | object | no | see below | The [time scope](#the-time-scope) of the source versions. |
+| `k` | integer | no | `50` | 1 to 200 rows. |
+| `cursor` | string | no | | The previous page's `cursor`. |
+
+Unknown fields are rejected.
+
+`time` defaults to `current`. With `chunk_id` and no `time`, the window is
+the chunk's own version's in-force time up to now: "what did this passage
+point to while it was in force". For a document without declared periods,
+that is the instant now.
+
+### What it returns
+
+**The source side.** Outgoing rows are the references the selected source
+versions make from the section and its subsections. Incoming rows are
+references other documents make to this document, or to the section or one of
+its subsections, from versions that their own `time` scope selects. A section
+with more than 1,000 keyed subsections is too broad for one call: the result
+has no rows and a `too_broad` block asking for a narrower section.
+
+Each source version contributes its **source window**: its in-force time
+inside the query window (the instant for `current` and `at`, `from`–`to` for
+`overlap`, everything up to now for `history`). A document without declared
+periods counts as in force throughout.
+
+**The target side.** Each reference is resolved against the target versions
+for its source window:
+
+- a **floating** reference to a document with declared periods gives one row
+  per target version in force during the window, with `applies_during`, the
+  part of the window it covers. Two versions in force at the same time
+  (overlapping periods, or a point in time where both are in force) are both
+  returned, marked `concurrent: true`; none is chosen for you;
+- a **floating** reference to any other document gives one row for its
+  served version;
+- a **pinned** reference gives one row for the version with the named
+  `version_key`, whether or not it is in force, with that version's own
+  periods in `target.effective`.
+
+The target version is chosen first, then checked. If it cannot be read, the
+row says so; it never falls back to another version.
+
+| `status` | Meaning |
+|---|---|
+| `resolved` | The target version is readable, and the named section is in it. `target` has the version, its `representation_id`, the section's title and `first_chunk_ids` (empty when the reference names the whole document). |
+| `target_processing` | The target version is not fully processed yet. `target` has the version and `applies_during`, not the section. |
+| `target_unavailable` | No live document has the named `source_kind` and `source_ref`: it was never ingested, or it is deleted or forgotten. One status for all three, so a deletion is not revealed. `target` is `null`. |
+| `target_not_in_force` | Floating reference: the target exists, but none of its versions is in force during the window. |
+| `section_not_in_version` | The target version has no section with the named key. |
+| `section_not_indexed` | The target version's sections have not been indexed for keys yet, so whether it has the section is unknown. |
+| `pinned_version_unavailable` | Pinned reference: the target has no live version with that `version_key`. |
+
+Every row carries `named_target`: the target exactly as the source names it
+(`source_kind`, `source_ref`, `version_key`, `section_key`), whatever its
+status. That is part of the source document's content, like the passage
+that contains the reference.
+
+**Order and paging.** Rows are ordered by direction (outgoing first), source
+document, source version, reference, then target version. A page reads at
+most ten times `k` references; it can come back shorter than `k` with a
+`cursor`. Keep paging until `cursor` is `null`.
+
+### Response
+
+`200` with a [`DocumentReferencesPage`](/docs/reference/result-types#documentreferencespage):
+
+```json
+{
+  "rows": [
+    {
+      "direction": "outgoing",
+      "crossref_id": "…",
+      "kind": "refers_to",
+      "origin": "supplied",
+      "binding": "floating",
+      "source_label": null,
+      "context": null,
+      "change_effective_from": null,
+      "change_date_known": null,
+      "source": {
+        "doc_id": "a1f3e0b4-1c2d-5e6f-8a9b-0c1d2e3f4a5b",
+        "version_id": "0f9e8d7c-6b5a-4c3d-2e1f-0a9b8c7d6e5f",
+        "version_key": "edition-2",
+        "section_key": "approvals",
+        "section_title": "7. Approvals",
+        "window": {"from": "2026-01-01T00:00:00Z", "until": "2026-12-31T00:00:00Z", "until_inclusive": true}
+      },
+      "named_target": {"source_kind": "intranet", "source_ref": "policy/expense", "version_key": null, "section_key": "approvals-process"},
+      "status": "resolved",
+      "target": {
+        "doc_id": "…",
+        "version_id": "…",
+        "version_key": "2026",
+        "representation_id": "…",
+        "section_key": "approvals-process",
+        "section_title": "3. Approvals process",
+        "first_chunk_ids": ["…"],
+        "effective": [{"from": "2025-07-01T00:00:00Z", "until": null, "until_declared": false}],
+        "applies_during": {"from": "2026-01-01T00:00:00Z", "until": "2026-12-31T00:00:00Z", "until_inclusive": true},
+        "concurrent": false
+      }
+    }
+  ],
+  "cursor": null,
+  "evaluated_at": "2026-03-02T09:00:00Z",
+  "believed_at": "2026-03-02T09:00:00Z",
+  "too_broad": null
+}
+```
+
+A window runs from `from` (included; `null` is unbounded) to `until`
+(excluded, unless `until_inclusive` is `true`; `null` is unbounded). An
+instant window has `from` equal to `until` and `until_inclusive: true`.
+
+### Errors
+
+| Status | `detail` | Cause |
+|---|---|---|
+| `400` | the cursor problem | The cursor is malformed, or belongs to another call. |
+| `404` | `document_not_found` | No such document, or it is deleted. |
+| `404` | `chunk_not_found` | No such passage, or its document is deleted. |
+| `422` | validation list | Both or neither of `chunk_id` and `doc_id`, `section_key` without `doc_id`, an unknown kind, a bad `time`, `k` out of range, or an unknown field. |
+
+### Example
+
+```bash
+curl -s -X POST "$REMEMBER_API_URL/documents/references" \
+  -H "Authorization: Bearer $REMEMBER_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"doc_id\": \"$DOC_ID\", \"section_key\": \"approvals\", \"direction\": \"outgoing\",
+       \"time\": {\"mode\": \"overlap\", \"from\": \"2026-01-01T00:00:00Z\", \"to\": \"2026-12-31T00:00:00Z\"}}"
+```
+
+```python
+page = memory.document_references(
+    doc_id=doc_id,
+    section_key="approvals",
+    direction="outgoing",
+    time={"mode": "overlap", "from": "2026-01-01T00:00:00Z", "to": "2026-12-31T00:00:00Z"},
+)
+for row in page.rows:
+    print(row.status, row.named_target.source_ref, row.target and row.target.applies_during)
+```
+
+References found in the text itself (links, citations) are not extracted
+yet; today every reference is one you [supplied](/docs/reference/http-api/ingest#put-documentsdoc_idversionsversion_idreferences).
+See [What is not built yet](/docs/project/not-built-yet).

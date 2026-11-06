@@ -45,11 +45,56 @@ For coherent claims and distributed source evidence, start with
 The [analysis](analysis/multi_span_claim_extraction.md) explains the LoCoMo
 findings and reuse constraints. Implementation is not implied by design acceptance.
 
+For which file formats the engine accepts and what it produces from each — the format
+registry, full/profile/card postures and extraction eligibility — see
+[D133 format conversion](designs/format_conversion_design.md), with D139's
+**OCR on every accepted PDF page** in
+[the workspace family design](designs/workspace_formats_design.md#7-office-pdf-email-and-notebook-details);
+for finding files and
+filtering by author or date, [D134 document metadata and search](designs/document_metadata_and_search_design.md).
+The families actually shipped for workspaces, and how they serve coding agents, are
+[D138 workspace formats](designs/workspace_formats_design.md).
+The [analysis](analysis/format_coverage_and_conversion_architecture.md) records the
+current coverage and rejected alternatives; the
+[delivery order](plans/format_coverage_delivery.md) sequences the work.
+
 For conversational anaphora and question-affirmation resolution across dialogue turns,
 see [D131 cross-turn conversational anaphora extraction](designs/cross_turn_conversational_anaphora_extraction_design.md)
 and the [analysis](analysis/cross_turn_conversational_anaphora_analysis.md).
+
+For byte-authoritative ingest MIME and explicit classes on every object write,
+see [D132 in the E0 file design](designs/e0_files_design.md#2-storage-layout--gcs-holds-bodies-postgres-holds-the-index)
+and the [analysis](analysis/content_detection_and_object_classes_20260923.md).
 
 For deleting a document through the API, SDK, CLI or MCP, see D135 in the
 [evidence lifecycle design §8](designs/evidence_lifecycle_design.md#8-deletion--deletion-removes-the-documents-contribution-uniformly)
 and the [analysis](analysis/public_document_deletion.md). Erasure remains
 [D74 hard-forget](designs/hard_forget_design.md).
+
+For documents whose versions are in force for declared periods (policies, price
+lists, standards editions, contract amendments, statutes), stable section keys,
+reading text as of a date, and section-level cross-references that are pinned or
+floating, start with [D140's design](designs/effective_time_and_section_references_design.md)
+and its [analysis](analysis/version_effective_time_and_section_references.md); the
+[delivery plan](plans/effective_time_and_section_references.md) says which parts ship
+together. It also makes D56's version reuse hold for dated versions (text origin time).
+
+For why ranked search must use its indexes, how it keeps eligibility exact and
+reports every early stop, and how semantic recall is measured, start with [D142 in the P1 search design](designs/postgres_p1_search_projection_design.md#8-query-and-filtering-contract),
+its [analysis](analysis/index_driven_ranked_search.md), the unchosen
+[distinct-text index proposal](proposals/distinct_text_search_index.md) and the
+[delivery plan](plans/index_driven_ranked_search.md).
+
+For the full TypeScript counterpart, see [D141 TypeScript client](designs/typescript_client_design.md),
+[analysis](analysis/typescript_client_parity.md), the [normative parity inventory](designs/typescript_client_parity.json)
+and [delivery gates](plans/typescript_client.md). CLI/MCP are separate package boundaries.
+
+For configurable context result counts, automatic fourfold candidate overfetch,
+and the separate full LoCoMo retrieval budget, start with
+[context operations](designs/open_query_space_design.md#31-platform-operations)
+and the [retrieval-depth analysis](analysis/configurable_context_retrieval_20261022.md).
+
+To switch the claims or facts layer off for a deployment, narrow a request to some layers, or
+understand how a layer switched on later is backfilled without re-paying for unchanged text,
+start with [D143's processing layers design](designs/processing_layers_design.md) and its
+[analysis](analysis/processing_layer_toggles.md).

@@ -5,6 +5,11 @@ paths, so the one-hop neighborhood shape lives here. A separate
 bounded relational guard runs first in the same repeatable-read transaction.
 Application code executes ``GRAPH_TABLE`` only when that guard admits the
 request; refusal therefore cannot rely on planner short-circuit behavior.
+
+Every edge scan also applies the D140 §8.1 evidence gate
+(``rememberstack_graph_internal.relation_evidence_in_scope``) in the same
+statement, so an edge without in-scope supporting text is never a candidate:
+it cannot consume the expansion budget or a result slot.
 """
 
 from typing import Final
@@ -40,6 +45,7 @@ edges AS MATERIALIZED (
          row_number() OVER (ORDER BY edge.relation_id) AS scan_ordinal
   FROM bounds AS b
   CROSS JOIN LATERAL (
+    SELECT gated.* FROM (
     SELECT candidate.*
     FROM (
       SELECT c.relation_id, c.subject_entity_id, c.object_entity_id
@@ -72,6 +78,14 @@ edges AS MATERIALIZED (
              OR c.predicate = ANY(CAST(:predicates AS text[])))
     ) AS candidate
     ORDER BY candidate.relation_id
+    OFFSET 0
+    ) AS gated
+    -- D140 §8.1, lazily over the ordered candidates: an edge without
+    -- in-scope supporting text never counts toward the budget
+    WHERE rememberstack_graph_internal.relation_evidence_in_scope(
+          b.deployment_id, gated.relation_id,
+          statement_timestamp(), statement_timestamp(), statement_timestamp())
+    ORDER BY gated.relation_id
     LIMIT b.budget + 1
   ) AS edge
 ),
@@ -100,8 +114,16 @@ CROSS JOIN stats AS s
 """
 
 
+_GATE_NOW = "statement_timestamp(), statement_timestamp(), statement_timestamp())"
+_GATE_HISTORY = (
+    "CAST(:valid_at AS timestamptz), CAST(:believed_at AS timestamptz),"
+    " statement_timestamp())"
+)
+
+
 def _history_statement(*, statement: str) -> str:
     """Derive an as-of statement with both half-open clocks on every edge scan."""
+    statement = _replace_exact(statement=statement, old=_GATE_NOW, new=_GATE_HISTORY)
     return _replace_exact(
         statement=statement,
         old=(
@@ -145,6 +167,9 @@ FROM bounds AS b,
          AND y.entity_id <> x.entity_id
          AND (CAST(:predicates AS text[]) IS NULL
               OR r.predicate = ANY(CAST(:predicates AS text[])))
+         AND rememberstack_graph_internal.relation_evidence_in_scope(
+               b.deployment_id, r.relation_id,
+               statement_timestamp(), statement_timestamp(), statement_timestamp())
        COLUMNS (r.relation_id AS relation_id, y.entity_id AS neighbor_id)
      ) AS g
 """
@@ -152,7 +177,9 @@ FROM bounds AS b,
 
 HISTORY_NEIGHBORHOOD_PGQ: Final = _replace_exact(
     statement=_replace_exact(
-        statement=CURRENT_NEIGHBORHOOD_PGQ,
+        statement=_replace_exact(
+            statement=CURRENT_NEIGHBORHOOD_PGQ, old=_GATE_NOW, new=_GATE_HISTORY
+        ),
         old="memory_v1.memory_current",
         new="memory_v1.memory_history",
     ),

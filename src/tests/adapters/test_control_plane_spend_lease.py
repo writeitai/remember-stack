@@ -769,6 +769,13 @@ def test_parked_deployment_refuses_the_document_list() -> None:
         ("GET", "/healthz", None),
         ("GET", "/operations", None),
         ("DELETE", f"/documents/{_DEPLOYMENT}", None),
+        ("DELETE", f"/documents/{_DEPLOYMENT}/effective-periods", None),
+        (
+            "PUT",
+            f"/documents/{_DEPLOYMENT}/versions/{_DEPLOYMENT}/effective-periods",
+            None,
+        ),
+        ("PUT", f"/documents/{_DEPLOYMENT}/versions/{_DEPLOYMENT}/references", None),
         ("GET", "/connectors", None),
         ("GET", "/query/saved//x", None),
     ],
@@ -850,7 +857,14 @@ def test_every_published_route_is_gated_or_named_ungated() -> None:
         ("GET", "/deployment"),
         ("POST", "/readiness"),
         ("GET", "/operations"),
+        # D143: reading the layer states is a metadata read like /deployment.
+        ("GET", "/processing-layers"),
         ("DELETE", "/documents/{doc_id}"),
+        ("DELETE", "/documents/{doc_id}/effective-periods"),
+        ("PUT", "/documents/{doc_id}/versions/{version_id}/effective-periods"),
+        # D140 supplied references are written by a deterministic E0 worker:
+        # recording the set spends nothing, like the period routes above.
+        ("PUT", "/documents/{doc_id}/versions/{version_id}/references"),
     }
     schema = json.loads(
         (Path(__file__).parents[3] / "openapi.json").read_text(encoding="utf-8")

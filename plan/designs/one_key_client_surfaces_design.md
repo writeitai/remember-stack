@@ -119,9 +119,13 @@ It defines one `ToolDefinition` per memory tool:
 The catalogue contains exactly the memory tools the binding designs expose
 over MCP: `ingest`, `pipeline_readiness`, `delete_document`,
 `resolve_entity`, `facts_context`, `claims_and_sources_context`,
-`combined_context`, `source_open`, `query_sql`, `explain_sql`,
+`combined_context`, `adjacent_chunks`, `source_open`, `query_sql`, `explain_sql`,
 `describe_query_space`, `search_query_space`, `list_saved_queries`,
-`describe_saved_query`, `run_saved_query`. (`delete_document` is D135's tool,
+`describe_saved_query`, `run_saved_query`, `search_documents` (D134), and D140's
+`document_references` and `section_history` (reading cross-references and a section's
+versions, [effective time design §6.2](effective_time_and_section_references_design.md#62-reading-references)).
+(`adjacent_chunks` is D130/D137's
+tool, for neighbouring chunk retrieval; `delete_document` is D135's tool,
 PR #456; `source_open` is D115's, [media_design.md §4a](media_design.md), and
 returns MCP content blocks — text, image or audio — rather than one JSON text
 block.) A new MCP-exposed memory tool is added here, never in a host. Saved queries, including the
@@ -198,7 +202,12 @@ separately, so a host's catalogue and a deployment can differ.
   `memory:read`; PR #455 adds the route to the read table), in a new `tools`
   object mapping tool name to `tool_version`, e.g. `{"facts_context": 3, …}`.
   The seven query tools appear only when the open query facade is composed,
-  and `delete_document` only when deletion is composed.
+  `adjacent_chunks` whenever operations are composed, and `delete_document`
+  only when deletion is composed. `facts_context` and `resolve_entity` appear
+  only while the deployment serves its facts layer (D143); the layer states
+  themselves are read from `GET /processing-layers`, and this response's
+  shape is unchanged
+  ([processing layers design §7.4](processing_layers_design.md#74-discovery)).
 - A host renders a catalogue tool for a deployment only when the deployment
   lists it with the **same** `tool_version`. Otherwise the tool is omitted and
   `remember doctor` names it and the fix (upgrade `remember`, or upgrade the
@@ -276,6 +285,11 @@ the deployment. Giving both an explicit engine URL and a remote MCP URL is a
 start-up error.
 
 ### 5.2 Engine mode
+
+`remember mcp --layers sources,claims` (or `REMEMBER_LAYERS`) narrows the
+session to those processing layers (D143): every operation and sandbox call
+carries the selection, and tools that read only excluded layers are not
+listed. Tool schemas are unchanged.
 
 #### 5.2.1 Transports
 
@@ -573,18 +587,24 @@ denies every signed credential.
 ### 7.6 Direct-path admission limits
 
 SDK and CLI traffic reaches the engine directly, not through a host that could
-meter it, so the perimeter bounds what one key and one deployment can ask for.
-After authentication and before the spend lease and routing, for every
-request including one to an unknown path:
+meter it, so the perimeter can bound what one key and one deployment can ask
+for. The limits are **off by default in the engine**: each applies only when
+its setting is a positive number (unset or `0` is no limit), and with none set
+the perimeter does no admission work at all, only authentication. A
+self-hosted deployment has no limits unless its operator sets them. **The
+hosted fleet sets them** for every cloud deployment, where many callers share
+one deployment; these are its starting values:
 
-| Limit | Starting value |
+| Limit | Cloud starting value |
 | --- | --- |
 | Requests per credential (`jti`) | 120 per minute, burst 30 |
 | In flight per credential | 8 |
 | Requests per deployment | 600 per minute, burst 150 |
 | In flight per deployment | 32 |
 
-The four numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
+Each configured limit applies after authentication and before the spend lease
+and routing, for every request including one to an unknown path. The four
+numbers are settings (`REMEMBERSTACK_SELFHOST_API_ADMISSION_KEY_PER_MINUTE`,
 `…_KEY_IN_FLIGHT`, `…_DEPLOYMENT_PER_MINUTE`, `…_DEPLOYMENT_IN_FLIGHT`);
 nothing else about admission is configurable. Each burst is derived, not set:
 a quarter of its per-minute rate (15 seconds of traffic), which gives the 30
@@ -611,7 +631,7 @@ and 150 above.
   API replicas the effective ceilings are N times the numbers; an operator
   running N replicas divides by N. The self-host profile runs one replica.
 - Spend metering (D91), the spend lease and the D74 admission barrier are
-  unchanged and apply after this check: authentication, then admission, then
+  unchanged and apply after this check (when configured): authentication, then admission, then
   the spend hold, then routing. An unauthenticated or refused request never
   places a hold.
 
@@ -666,6 +686,17 @@ stored-key origin rule below, not a refusal to read the file.
 | Issuer | `--issuer` | `REMEMBER_ISSUER` | `issuer` | key claim `iss` | `https://remember.dev` (login/setup only) |
 | Config directory | — | `REMEMBER_CONFIG_DIR` | — | `$XDG_CONFIG_HOME/remember` | `~/.config/remember` |
 
+**D141 Windows exception.** Automatic stored-file access is refused when owner-only
+access cannot be proved. Argument or environment key and URL bypass the file. A signed key
+supplied by argument or REMEMBER_API_KEY without a URL routes through its issuer
+without reading a stored file, whether present or absent. Stored URL/project/issuer
+values are therefore unavailable in that case; explicit/environment project
+settings still apply. Unsigned keys without a URL refuse a present file and use
+the localhost default if no file exists. POSIX keeps the table's independent
+setting precedence. Connection and config-directory environment names are case-insensitive,
+matching Python settings. If differently cased spellings coexist, the last
+process-environment entry wins; empty connection values then fall through.
+
 A key may be given bare or as `Bearer <key>`. The earlier names
 (`REMEMBER_TOKEN`, `REMEMBER_API_AUTHORIZATION`, `REMEMBERSTACK_API_AUTHORIZATION`,
 `REMEMBER_DATA_PLANE_URL`, `REMEMBERSTACK_API_URL`, `REMEMBER_TOKEN_HOST`,
@@ -700,11 +731,14 @@ and resolves the target:
    request to `api_url` fails with a connection error (DNS failure, refused or
    reset connection, TLS failure), `421 Misdirected Request`, or a `404` whose
    body is not the engine's error envelope. The client then re-resolves: if
-   the `api_url` changed it retries the request once there; otherwise, or if
+   the `api_url` changed it retries an eligible read once there; otherwise, or if
    resolution fails, it surfaces the original error. One retry, never a loop.
-   The retry is safe for every catalogue call: reads have no side effects, a
-   repeated identical ingest is a no-op (D55), and deletion is idempotent
-   (D135).
+   D141: retries apply only to source-classified reads, including body-carrying
+   POST reads. A write is never replayed after connection failure or 421;
+   refresh its host for the next call and surface the original failure.
+   Timeout/abort never triggers retry. This is a safety contract, not a
+   statement that a 421 proves no admission or billing took place.
+
 3. Failure is explicit: an unknown project, a project outside the key, or an
    unreachable issuer raises `ProjectResolutionError` (CLI exit 1) naming the
    project and issuer. The client never falls back to localhost for a signed
@@ -803,7 +837,7 @@ The account API's operations and their permissions are defined by the issuer
 | Bridge `--read-only`: remote tool not annotated `readOnlyHint: true` | Omitted and refused locally |
 | Engine: revocation document with lower `seq`, other audience, or retired signer | Rejected; last accepted document kept; logged |
 | Engine: credential signed by a `kid` absent from `active_kids` | `401` |
-| Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve; retry once if the URL changed |
+| Client: deployment moved (connection failure, `421`, non-engine `404`) | Re-resolve pinned project; retry eligible reads once only if URL changed; never replay writes |
 | Re-login: revocation of the old key unconfirmed | New key kept; old key journalled and retried |
 | HTTP transport: non-loopback `--bind` | Refuses to start |
 | HTTP transport: bad `Origin` | `403` |
@@ -833,7 +867,8 @@ Engine consistency:
 - for every catalogue tool, `permission` equals the scope `route_scope`
   requires for its `http_route` (and `operation_scope` for operations);
 - `GET /deployment` `tools` lists the query tools only when the open query
-  facade is composed, and `delete_document` only when deletion is composed;
+  facade is composed, `adjacent_chunks` whenever operations are composed,
+  and `delete_document` only when deletion is composed;
 - engine HTTP and in-process MCP reject a `project` argument.
 
 `remember mcp`:
@@ -908,3 +943,10 @@ Client:
   sits behind the operator's proxy and defers authorisation to the engine.
 - Token exchange from a key to per-deployment credentials is not part of the
   client; an issuer may do it internally for its own calls.
+
+## TypeScript application of the client contract
+
+[D141](typescript_client_design.md) owns package identity, complete Python parity,
+language adaptations, provider-consumed schemas and SDK drift gates. It adds no
+engine memory semantics. Shared D136 routing applies except the explicitly
+listed TypeScript adaptations; D141 safety amendments apply to Python too.

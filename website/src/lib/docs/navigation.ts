@@ -55,6 +55,7 @@ export const docsNavigation: NavItem[] = [
       { title: "Wait until a document is queryable", href: "/docs/guides/wait-for-readiness" },
       { title: "Give an agent context", href: "/docs/guides/agent-context" },
       { title: "Ask about the past", href: "/docs/guides/ask-about-the-past" },
+      { title: "Read a document as of a date", href: "/docs/guides/versions-in-force" },
       { title: "Cite the source of an answer", href: "/docs/guides/cite-sources" },
       { title: "Handle unknowns and ambiguity", href: "/docs/guides/unknowns-and-ambiguity" },
       { title: "Explore memory with SQL", href: "/docs/guides/sql" },
@@ -70,7 +71,7 @@ export const docsNavigation: NavItem[] = [
         children: [
           { title: "What remember.dev runs for you", href: "/docs/cloud/overview" },
           { title: "Organisations, projects and members", href: "/docs/cloud/organisations-and-projects" },
-          { title: "Tokens and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
+          { title: "API keys and sign-in", href: "/docs/cloud/tokens-and-sign-in" },
           { title: "Hosted MCP", href: "/docs/cloud/hosted-mcp" },
           { title: "Pricing and credits", href: "/docs/cloud/pricing" },
           { title: "Spend caps and auto top-up", href: "/docs/cloud/spend-controls" },
@@ -108,6 +109,7 @@ export const docsNavigation: NavItem[] = [
     children: [
       { title: "HTTP API conventions", href: "/docs/reference/http-api" },
       { title: "Ingest, readiness and documents", href: "/docs/reference/http-api/ingest" },
+      { title: "Section history and references", href: "/docs/reference/http-api/sections-and-references" },
       { title: "Assured operation routes", href: "/docs/reference/http-api/operations" },
       { title: "Entities and facts", href: "/docs/reference/http-api/entities-and-facts" },
       { title: "Search and adjacent chunks", href: "/docs/reference/http-api/search" },
@@ -118,6 +120,7 @@ export const docsNavigation: NavItem[] = [
       { title: "Result types", href: "/docs/reference/result-types" },
       { title: "Query space memory_v1", href: "/docs/reference/query-space" },
       { title: "Python SDK", href: "/docs/reference/python-sdk" },
+      { title: "TypeScript SDK", href: "/docs/reference/typescript-sdk" },
       { title: "CLI", href: "/docs/reference/cli" },
       { title: "MCP tools", href: "/docs/reference/mcp" },
       { title: "Configuration variables", href: "/docs/reference/configuration" },

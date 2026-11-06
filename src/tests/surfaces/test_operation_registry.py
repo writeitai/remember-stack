@@ -28,6 +28,8 @@ from rememberstack.model import Grain
 from rememberstack.model import PrimitiveChainPlan
 from rememberstack.model.assured_operations import AtFactTime
 from rememberstack.model.assured_operations import OverlapFactTime
+from rememberstack.model.client import ProcessingLayer
+from rememberstack.model.processing_layers import LayerAdmission
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import CANONICAL_OPERATIONS
 from rememberstack.spine import DeploymentBootstrapper
@@ -93,9 +95,9 @@ def test_canonical_catalog_is_exact_and_descriptors_are_complete() -> None:
     )
     assert tuple(operation.version for operation in CANONICAL_OPERATIONS) == (
         1,
-        2,
-        3,
+        4,  # Configurable candidate depths and automatic overfetch.
         4,
+        5,
     )
     descriptors = {
         descriptor.name: descriptor
@@ -288,6 +290,14 @@ class _AuthorityStub:
     def __init__(self) -> None:
         self.evaluated_at: list[datetime] = []
         self.default_fact_arguments: list[dict[str, object]] = []
+
+    def layer_admission(
+        self, *, channels: frozenset[ProcessingLayer], **_: object
+    ) -> LayerAdmission:
+        """Every layer served and complete (an unconfigured deployment)."""
+        return LayerAdmission(
+            consulted=channels, unconsulted=frozenset(), backfilling=frozenset()
+        )
 
     def claims_and_sources_context(self, **arguments: object) -> Envelope:
         """Return testimony while recording the executor's evaluation instant."""

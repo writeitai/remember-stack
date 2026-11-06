@@ -1,0 +1,2724 @@
+{
+  "arguments": {
+    "sizes": "300000",
+    "versions": 5,
+    "chunks": 10,
+    "periodised": 0.5,
+    "duplicate_share": 0.5,
+    "queries": 40,
+    "min_words": 20,
+    "max_words": 300,
+    "maintenance_work_mem": "1GB",
+    "out": "/srv/sweep300k.json",
+    "measure_only": false
+  },
+  "sizes": {
+    "300000": {
+      "seed": {
+        "load_seconds": 43.150905857,
+        "bm25_index_seconds": 2.268303170999957
+      },
+      "duplicated_chunks": 120120,
+      "latency": {
+        "query_sha256": "c5d837141e98b3a18b26db53675ec26228ec786ced4241d44dbaaace8175873e",
+        "corpus_md5": "b63f5cd71918a4c5b3a0d7be5c494a61",
+        "strata": {
+          "current": {
+            "p50_ms": 152.2039420000283,
+            "p95_ms": 263.2311990000744,
+            "queries": 40,
+            "eligible_current_chunks": 60000,
+            "public_outcomes": {
+              "k_returned": 40
+            },
+            "returned_k_rate": 1.0,
+            "terminations": {
+              "k_filled": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 894,
+            "max_fetched": 20000,
+            "mean_fetch_rounds": 2.625,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 199.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 182.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 183.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 210.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 128.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 115.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 188.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 190.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 203.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 187.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 147.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 134.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 209.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 116.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 109.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 179.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 164.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 4135.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 20000,
+                "rounds": 8,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 123.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 168.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 191.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 263.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 1200,
+                "rounds": 4,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 176.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 180.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 110.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 114.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 118.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 201.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 110.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 166.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 136.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 157.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 109.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 111.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 112.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 114.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 138.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 127.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 143.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 115.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              }
+            ]
+          },
+          "history": {
+            "p50_ms": 111.67359999990367,
+            "p95_ms": 266.7957139999544,
+            "queries": 40,
+            "eligible_current_chunks": 60000,
+            "public_outcomes": {
+              "k_returned": 40
+            },
+            "returned_k_rate": 1.0,
+            "terminations": {
+              "k_filled": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 496,
+            "max_fetched": 10160,
+            "mean_fetch_rounds": 2.05,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 111.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 100.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 74.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 129.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 120.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 107.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 184.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 126.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 72.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 106.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 131.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 85.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 137.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 117.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 112.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 76.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 109.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 2124.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 10160,
+                "rounds": 7,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 87.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 109.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 127.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 266.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 1200,
+                "rounds": 4,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 116.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 124.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 106.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 111.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 115.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 125.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 108.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 103.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 133.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 150.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 103.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 106.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 108.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 111.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 95.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 129.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 139.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 103.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              }
+            ]
+          },
+          "docs_0.1pct": {
+            "p50_ms": 77.60755950005205,
+            "p95_ms": 90.14646000014181,
+            "queries": 40,
+            "eligible_current_chunks": 60,
+            "public_outcomes": {
+              "known_empty": 19,
+              "fewer_than_k": 14,
+              "k_returned": 7
+            },
+            "returned_k_rate": 0.175,
+            "terminations": {
+              "exhausted": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 60,
+            "max_fetched": 60,
+            "mean_fetch_rounds": 0,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 48.0,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 47.7,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 46.8,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 82.8,
+                "returned": 10,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 77.6,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 46.5,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 87.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 79.3,
+                "returned": 7,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 46.4,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 46.2,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 81.3,
+                "returned": 7,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 78.5,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 90.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 47.3,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 48.2,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 47.5,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 77.9,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 90.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 80.7,
+                "returned": 3,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 78.9,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 84.0,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 90.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 46.0,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 78.6,
+                "returned": 3,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 46.6,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 46.5,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 46.2,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 83.2,
+                "returned": 5,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 48.4,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 53.4,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 82.7,
+                "returned": 9,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 90.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 47.1,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 77.6,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 46.8,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 46.5,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 85.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 81.7,
+                "returned": 14,
+                "outcome": "fewer_than_k",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 84.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 46.3,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 60,
+                "rounds": 0,
+                "termination": "exhausted"
+              }
+            ]
+          },
+          "docs_1pct": {
+            "p50_ms": 234.70757649999996,
+            "p95_ms": 351.0016560001077,
+            "queries": 40,
+            "eligible_current_chunks": 600,
+            "public_outcomes": {
+              "fewer_than_k": 21,
+              "k_returned": 18,
+              "known_empty": 1
+            },
+            "returned_k_rate": 0.45,
+            "terminations": {
+              "exhausted": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 600,
+            "max_fetched": 600,
+            "mean_fetch_rounds": 0,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 218.0,
+                "returned": 2,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 219.5,
+                "returned": 3,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 216.3,
+                "returned": 4,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 242.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 228.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 228.6,
+                "returned": 5,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 311.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 243.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 231.0,
+                "returned": 5,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 226.2,
+                "returned": 5,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 282.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 229.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 326.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 222.5,
+                "returned": 11,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 217.7,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 223.3,
+                "returned": 10,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 227.2,
+                "returned": 12,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 351.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 233.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 243.7,
+                "returned": 6,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 285.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 361.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 234.7,
+                "returned": 15,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 251.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 201.4,
+                "returned": 0,
+                "outcome": "known_empty",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 221.5,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 241.5,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 233.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 220.1,
+                "returned": 8,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 218.3,
+                "returned": 3,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 237.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 346.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 237.5,
+                "returned": 2,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 241.8,
+                "returned": 4,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 232.7,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 237.9,
+                "returned": 1,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 311.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 259.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 296.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 234.8,
+                "returned": 3,
+                "outcome": "fewer_than_k",
+                "fetched": 600,
+                "rounds": 0,
+                "termination": "exhausted"
+              }
+            ]
+          },
+          "docs_10pct": {
+            "p50_ms": 600.3382255000815,
+            "p95_ms": 858.5883359999116,
+            "queries": 40,
+            "eligible_current_chunks": 6000,
+            "public_outcomes": {
+              "k_returned": 37,
+              "fewer_than_k": 3
+            },
+            "returned_k_rate": 0.925,
+            "terminations": {
+              "exhausted": 17,
+              "k_filled": 23
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 141.7,
+            "max_fetched": 2480,
+            "mean_fetch_rounds": 1.2,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 575.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 28,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 578.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 48,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 584.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 62,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 616.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 625.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 575.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 35,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 636.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 590.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 567.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 65,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 578.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 36,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 595.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 602.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 652.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 670.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 603.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 21,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 601.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 632.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 858.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 618.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 629.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 67,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 609.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 663.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 565.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 585.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 562.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 27,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 553.0,
+                "returned": 12,
+                "outcome": "fewer_than_k",
+                "fetched": 12,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 584.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 579.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 591.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 45,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 618.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 77,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 592.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 1562.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 2480,
+                "rounds": 5,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 588.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 30,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 599.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 21,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 617.9,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 18,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 551.1,
+                "returned": 11,
+                "outcome": "fewer_than_k",
+                "fetched": 11,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 759.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 680.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 702.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 553.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 25,
+                "rounds": 1,
+                "termination": "exhausted"
+              }
+            ]
+          },
+          "docs_4990_rows": {
+            "p50_ms": 1333.9190445000213,
+            "p95_ms": 2083.8921520000895,
+            "queries": 40,
+            "eligible_current_chunks": 4990,
+            "public_outcomes": {
+              "k_returned": 35,
+              "fewer_than_k": 5
+            },
+            "returned_k_rate": 0.875,
+            "terminations": {
+              "exhausted": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 4990,
+            "max_fetched": 4990,
+            "mean_fetch_rounds": 0,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 1336.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 1319.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 1398.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 1416.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 1348.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 1327.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 1869.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 1394.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 1291.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 1281.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 1344.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 1337.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 2079.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 1301.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 1302.5,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 1309.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 1345.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 2062.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 1331.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 1289.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 1570.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 2097.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 1376.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 1316.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 1291.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 1300.5,
+                "returned": 11,
+                "outcome": "fewer_than_k",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 1293.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 1376.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 1298.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 1304.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 1438.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 2083.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 1275.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 1294.0,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 1328.7,
+                "returned": 14,
+                "outcome": "fewer_than_k",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 1274.4,
+                "returned": 8,
+                "outcome": "fewer_than_k",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 1767.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 1446.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 1705.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 1289.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 4990,
+                "rounds": 0,
+                "termination": "exhausted"
+              }
+            ]
+          },
+          "docs_5010_rows": {
+            "p50_ms": 504.70668049990763,
+            "p95_ms": 779.8404289999326,
+            "queries": 40,
+            "eligible_current_chunks": 5010,
+            "public_outcomes": {
+              "k_returned": 35,
+              "fewer_than_k": 5
+            },
+            "returned_k_rate": 0.875,
+            "terminations": {
+              "exhausted": 18,
+              "k_filled": 22
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 139.175,
+            "max_fetched": 2480,
+            "mean_fetch_rounds": 1.2,
+            "per_query": [
+              {
+                "query": "w9886 w15734",
+                "ms": 477.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 21,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5776 w5740",
+                "ms": 470.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 41,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2059 w28971",
+                "ms": 485.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 50,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w898 w46",
+                "ms": 539.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w253 w8664",
+                "ms": 505.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w32747 w7748",
+                "ms": 510.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 28,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2 w778",
+                "ms": 569.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w49 w1560",
+                "ms": 508.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1780 w37210",
+                "ms": 497.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 62,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w5657 w27436",
+                "ms": 475.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 31,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w26080 w85",
+                "ms": 508.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w121 w41789",
+                "ms": 498.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w4293",
+                "ms": 580.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w25314 w707",
+                "ms": 495.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w21923 w34418",
+                "ms": 479.4,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 18,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w29772 w1281",
+                "ms": 510.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 74,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w964 w2126",
+                "ms": 507.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1 w0",
+                "ms": 779.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 560,
+                "rounds": 3,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w656 w321",
+                "ms": 497.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w20051 w1877",
+                "ms": 486.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 58,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w8 w1391",
+                "ms": 525.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w97 w0",
+                "ms": 592.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w10802 w699",
+                "ms": 505.1,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w960 w355",
+                "ms": 512.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w11226 w24860",
+                "ms": 479.8,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 23,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w41269 w39085",
+                "ms": 508.6,
+                "returned": 11,
+                "outcome": "fewer_than_k",
+                "fetched": 11,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w649 w11906",
+                "ms": 511.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w1170 w102",
+                "ms": 504.3,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5860 w40663",
+                "ms": 504.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 39,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w2066 w6650",
+                "ms": 495.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 62,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w22668 w28",
+                "ms": 514.5,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w0 w33060",
+                "ms": 1511.6,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 2480,
+                "rounds": 5,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w33758 w12339",
+                "ms": 480.0,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 25,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w25736 w35339",
+                "ms": 473.7,
+                "returned": 18,
+                "outcome": "fewer_than_k",
+                "fetched": 18,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w18703 w44701",
+                "ms": 472.5,
+                "returned": 14,
+                "outcome": "fewer_than_k",
+                "fetched": 14,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28368 w47511",
+                "ms": 475.1,
+                "returned": 8,
+                "outcome": "fewer_than_k",
+                "fetched": 8,
+                "rounds": 1,
+                "termination": "exhausted"
+              },
+              {
+                "query": "w28440 w2",
+                "ms": 616.7,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w5215 w20",
+                "ms": 500.4,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 80,
+                "rounds": 1,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19128 w3",
+                "ms": 607.2,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 240,
+                "rounds": 2,
+                "termination": "k_filled"
+              },
+              {
+                "query": "w19819 w22624",
+                "ms": 474.9,
+                "returned": 20,
+                "outcome": "k_returned",
+                "fetched": 24,
+                "rounds": 1,
+                "termination": "exhausted"
+              }
+            ]
+          }
+        },
+        "nomination_plans": [
+          {
+            "query": "w9886 w15734",
+            "limit": 20000,
+            "explain_round_trip_ms": 0.7765249999920343,
+            "index": "ix_chunk_search_bm25"
+          },
+          {
+            "query": "w5776 w5740",
+            "limit": 20000,
+            "explain_round_trip_ms": 0.6602030000522063,
+            "index": "ix_chunk_search_bm25"
+          },
+          {
+            "query": "w2059 w28971",
+            "limit": 20000,
+            "explain_round_trip_ms": 0.71577900007469,
+            "index": "ix_chunk_search_bm25"
+          },
+          {
+            "query": "w898 w46",
+            "limit": 20000,
+            "explain_round_trip_ms": 0.5811830001221097,
+            "index": "ix_chunk_search_bm25"
+          },
+          {
+            "query": "w253 w8664",
+            "limit": 20000,
+            "explain_round_trip_ms": 0.6107809999775782,
+            "index": "ix_chunk_search_bm25"
+          }
+        ]
+      }
+    }
+  }
+}

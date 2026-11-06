@@ -60,6 +60,7 @@ from rememberstack.model import NormalizedRegion
 from rememberstack.model import ProviderAccountingError
 from rememberstack.model import ProviderCallError
 from rememberstack.model import ProviderCallUsage
+from rememberstack.model import ReasoningEffort
 from rememberstack.model import SourceMapEntry
 
 IMAGE_OCR_DESCRIPTION_CONVERTER_VERSION: Final = "image-ocr-description-2026.09"
@@ -73,7 +74,7 @@ _PIL_FORMATS: Final[tuple[str, ...]] = ("PNG", "JPEG")
 _FORMAT_TO_MIME: Final[dict[str, str]] = {"PNG": "image/png", "JPEG": "image/jpeg"}
 _CHECKPOINT_BYTES_KEY: Final = "$bytes_b64"
 
-DEFAULT_VISION_MODEL: Final = "google/gemini-2.5-flash"
+DEFAULT_VISION_MODEL: Final = "openai/gpt-6-luna"
 """Default OpenRouter slug that is explicitly multimodal (image input).
 
 This is not the deployment's text-extraction seat. A configured model must
@@ -128,6 +129,26 @@ class ImageDescriptionSettings(BaseSettings):
     """Disclosed output ceiling for combined observations + interpretations."""
     max_tokens: int = Field(default=4_096, ge=1)
     lane_concurrency: int = Field(default=2, ge=1, le=2)
+    reasoning_effort: ReasoningEffort | None = None
+    provider_only: tuple[str, ...] | None = None
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def _empty_effort_is_unset(cls, value: object) -> object:
+        """Treat an unset Compose optional as absence, not an invalid effort."""
+        return None if value == "" else value
+
+    @field_validator("provider_only")
+    @classmethod
+    def _provider_names_must_not_be_blank(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        """Reject an empty allowlist instead of silently allowing other hosts."""
+        if value is not None and (not value or any(not item.strip() for item in value)):
+            raise ValueError(
+                "image-description provider_only must contain nonblank slugs"
+            )
+        return tuple(item.strip() for item in value) if value is not None else None
 
     @field_validator("api_key")
     @classmethod
@@ -150,7 +171,7 @@ class ImageDescriptionSettings(BaseSettings):
 
     def version_fingerprint(self) -> str:
         """Every output-affecting option, folded into the converter version."""
-        return (
+        base = (
             f"{self.model}"
             f":prompt-{DESCRIPTION_PROMPT_VERSION}"
             f":max-{self.max_description_chars}"
@@ -161,6 +182,13 @@ class ImageDescriptionSettings(BaseSettings):
             f":max-w-{self.max_image_width}"
             f":max-h-{self.max_image_height}"
         )
+        if self.reasoning_effort is not None:
+            base += f":reasoning-{self.reasoning_effort}"
+        if self.provider_only is not None:
+            base += ":providers-" + json.dumps(
+                self.provider_only, separators=(",", ":")
+            )
+        return base
 
 
 class ImageDescriptionOutput(BaseModel):
@@ -483,6 +511,16 @@ class ImageOcrDescriptionConverter:
             },
             "usage": {"include": True},
         }
+        if self._description_settings.reasoning_effort is not None:
+            payload["reasoning"] = {
+                "effort": self._description_settings.reasoning_effort
+            }
+        if self._description_settings.provider_only is not None:
+            payload["provider"] = {
+                "only": list(self._description_settings.provider_only),
+                "allow_fallbacks": False,
+                "data_collection": "deny",
+            }
         try:
             response = self._description_client.post("/chat/completions", json=payload)
         except httpx.HTTPError as err:

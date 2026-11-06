@@ -17,6 +17,7 @@ from rememberstack.workers.e0 import StructureHandler
 from rememberstack.workers.e0 import StructurerSettings
 from rememberstack.workers.e0 import UPLOAD_SOURCE_KIND
 from rememberstack.workers.e0 import UploadIngestor
+from rememberstack.workers.e0_crossref import CrossrefHandler
 from rememberstack.workers.e0_summary import E0_PLACEMENT_VERSION
 from rememberstack.workers.e0_summary import E0_SUMMARY_VERSION
 from rememberstack.workers.e0_summary import SummarySettings
@@ -34,6 +35,7 @@ from rememberstack.workers.e3 import E3_NORMALIZER_VERSION
 from rememberstack.workers.e3 import E3Settings
 from rememberstack.workers.e3 import NormalizeRelationsHandler
 from rememberstack.workers.e3 import OBS_FLUSH_VERSION
+from rememberstack.workers.fact_window_review import FactWindowReviewHandler
 from rememberstack.workers.forget import CorpusForgetRebuilder
 from rememberstack.workers.forget import ForgetKnowledgeRebuilder
 from rememberstack.workers.forget import ForgetProjectionRebuilder
@@ -86,6 +88,8 @@ __all__ = (
     "AdjudicateSupersessionHandler",
     "ChunkHandler",
     "ConvertHandler",
+    "CrossrefHandler",
+    "FactWindowReviewHandler",
     "E1Settings",
     "E1_CHUNK_VERSION",
     "E1_EMBED_VERSION",

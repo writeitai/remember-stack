@@ -1,18 +1,16 @@
-"""Thin CLI wiring for the P3 CorpusFS rebuild implementation."""
+"""Thin CLI wiring for the operator commands."""
 
 import json
-from pathlib import Path
 from uuid import UUID
 
 import pytest
 import sqlalchemy
 
 from remember.cli import main as cli_main
-from rememberstack.spine import ForgetCatalog
+from rememberstack.core import STOCK_CONVERSION_ROUTE_NAMES
 from rememberstack.spine import graph_catalog as graph_catalog_module
 from rememberstack.spine import GraphCatalogEnsureResult
 from rememberstack.spine import settings as settings_module
-from rememberstack.workers import CorpusFsBuilder
 
 _DEPLOYMENT_ID = UUID("74000000-0000-0000-0000-000000000001")
 
@@ -30,47 +28,12 @@ class _Engine:
         self.disposed = True
 
 
-def test_ops_rebuild_invokes_the_existing_builder(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """The admin surface adds no second rebuild implementation."""
-    engine = _Engine()
-    calls: list[dict[str, object]] = []
+def test_ops_has_no_second_snapshot_builder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Snapshots are built only by `project --plane p3`, which writes to the
+    store the mount publisher reads; `ops` offers no local-directory variant."""
     monkeypatch.setenv("REMEMBERSTACK_INTERNAL_OPS", "1")
-    monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
-    monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
-    monkeypatch.setattr(
-        ForgetCatalog, "assert_available", lambda _self, *, deployment_id: None
-    )
-
-    def build(
-        _self: CorpusFsBuilder, *, deployment_id: UUID, version: str | None = None
-    ) -> dict[str, object]:
-        calls.append(
-            {"plane": "p3", "deployment_id": deployment_id, "version": version}
-        )
-        return {"plane": "p3", "published": True}
-
-    monkeypatch.setattr(CorpusFsBuilder, "build", build)
-    result = cli_main(
-        [
-            "ops",
-            "rebuild",
-            "--deployment",
-            str(_DEPLOYMENT_ID),
-            "--snapshot-root",
-            str(tmp_path / "snapshots"),
-            "--version",
-            "drill-v1",
-        ]
-    )
-
-    assert result == 0
-    assert calls[0]["plane"] == "p3"
-    assert calls[0]["deployment_id"] == _DEPLOYMENT_ID
-    assert calls[0]["version"] == "drill-v1"
-    assert json.loads(capsys.readouterr().out) == {"plane": "p3", "published": True}
-    assert engine.disposed is True
+    with pytest.raises(SystemExit):
+        cli_main(["ops", "rebuild", "--deployment", str(_DEPLOYMENT_ID)])
 
 
 def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
@@ -106,10 +69,11 @@ def test_ops_graph_catalog_ensure_prints_semantic_diagnostics(
     assert engine.disposed is True
 
 
+@pytest.mark.parametrize("ocr_key", ["", "test-key"])
 def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], ocr_key: str
 ) -> None:
-    """The resume command validates local routes and reports bounded release IDs."""
+    """The resume command releases PDF only when OCR is configured."""
     from rememberstack.spine import WorkLedger
 
     engine = _Engine()
@@ -119,6 +83,7 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     monkeypatch.setenv(
         "REMEMBERSTACK_SELFHOST_CONVERSION_ROUTES", '{"text/plain":"passthrough"}'
     )
+    monkeypatch.setenv("REMEMBERSTACK_MISTRAL_OCR_API_KEY", ocr_key)
     monkeypatch.setattr(settings_module, "load_database_settings", lambda: _Settings())
     monkeypatch.setattr(sqlalchemy, "create_engine", lambda _url: engine)
 
@@ -133,8 +98,12 @@ def test_ops_resume_no_route_uses_configured_routes_and_prints_released_ids(
     assert (
         cli_main(["ops", "resume-no-route", "--deployment", str(_DEPLOYMENT_ID)]) == 0
     )
+    # The overlay keeps stock routes, but PDF remains parked without OCR.
+    expected_routes = set(STOCK_CONVERSION_ROUTE_NAMES)
+    if not ocr_key:
+        expected_routes.remove("application/pdf")
     assert calls == [
-        {"deployment_id": _DEPLOYMENT_ID, "routes": frozenset({"text/plain"})}
+        {"deployment_id": _DEPLOYMENT_ID, "routes": frozenset(expected_routes)}
     ]
     assert json.loads(capsys.readouterr().out) == {"released": [str(_DEPLOYMENT_ID)]}
     assert engine.disposed

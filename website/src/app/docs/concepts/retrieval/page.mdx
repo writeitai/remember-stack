@@ -35,13 +35,15 @@ The same reads are available from four places. Pick by who is asking:
 |---|---|---|
 | [Python client](/docs/reference/python-sdk) (`import remember`) | Your own code: sync jobs, pipelines, an agent you build. | Everything: ingest, readiness, the four operations, every primitive, SQL queries and saved queries, with typed results. |
 | [CLI](/docs/reference/cli) (`remember`) | A terminal or a shell script: one-off questions, checking what the memory holds, trying a SQL query. | Ingest, the four operations (`remember query`, `remember operations run`), SQL and saved queries, adjacent chunks. Prints JSON. |
-| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, the four operations and the seven SQL query tools. No primitives. |
+| [MCP](/docs/reference/mcp) (`remember mcp`) | A coding agent such as Claude Code or Codex. | Ingest, readiness, delete, document search, section history, document references, the four operations, adjacent chunks, and the seven SQL query tools. |
 | [HTTP API](/docs/reference/http-api) | Any other language or runtime. | Every route; the other three are built on it. |
 
 <Cloud>
 
-remember.dev also runs a hosted MCP server. It has ingest, readiness and
-the four operations, but not the SQL query tools.
+remember.dev also runs a hosted MCP server at `https://remember.dev/mcp`.
+It has the same tools as `remember mcp` for the engine version remember.dev
+runs, with a `project` argument on each, and adds account tools. See
+[Hosted MCP](/docs/cloud/hosted-mcp).
 
 </Cloud>
 
@@ -75,7 +77,8 @@ with `evidence_count` 10. Arguments:
 |---|---|---|
 | `query` | required | 1 to 8,192 characters |
 | `entity_ids` | none | 1 to 19 IDs |
-| `k` | 15 | 1 to 30 facts |
+| `k` | 50 | 1 to 100 facts |
+| `candidate_k` | max(4*k, 60) | 1 to 400; at least k |
 | `evidence_per_fact` | 3 | 1 to 5 claims |
 | `hops` | 1 | 1 or 2 |
 | `predicate` | none | one predicate name |
@@ -88,14 +91,16 @@ the facts about Ravi's projects, not only facts with Ravi in the text.
 
 **Use `claims_and_sources_context` for what was said.** Exact wording,
 quotes, tone, who said what and when, or anything the fact layer did not
-capture. It returns current testimony only. Arguments: `query`, optional
+capture. It returns testimony under the selected time scope. Arguments:
+`query`, optional
 `entity_ids` (up to 20), `k` (default 50, up to 100) and `candidate_k`
-(default 200, up to 400) nominations per search channel.
+(default max(4*k, 60), up to 400) nominations per search channel. With the
+default k=50, this means 200 candidates per channel.
 
 **Use `combined_context` when you want both** and do not want to make two
 calls. It runs the two operations independently and returns them side by
-side, never blended. It takes `query`, `entity_ids`, `hops`, `predicate` and
-`time`.
+side, never blended. It takes `query`, `entity_ids`, `k`, `candidate_k`, `hops`, `predicate` and
+`time`. The same depth controls apply separately to all three evidence types.
 
 ```python
 import remember
@@ -113,8 +118,8 @@ with remember.Client() as memory:
 
 <Callout type="note">
 
-The Python client's `claims_and_sources_context` sends only `query`. To
-pass `entity_ids`, `k` or `candidate_k`, call
+The Python client's `claims_and_sources_context` accepts `query`, `k`,
+`candidate_k` and `time`. To pass `entity_ids`, call
 `memory.run_operation(name="claims_and_sources_context", arguments={...})`.
 
 </Callout>
@@ -128,13 +133,16 @@ anything the facts do not cover. See
 
 Primitives are the building blocks the operations are made of, exposed for
 when you need one exact shape. They are available over HTTP and in the
-Python client. They are not assured operations and are not separate MCP
-tools.
+Python client. They are not assured operations, and most are not MCP tools;
+the table says which are.
 
 | Primitive | Client method | What it returns |
 |---|---|---|
-| Search claims | `search_claims(query=, k=10, channel="semantic")` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400. |
-| Search chunks | `search_chunks(query=, k=10, channel="semantic")` | Source passages, likewise. |
+| Search claims | `search_claims(query=, k=10, channel="semantic", documents=None, time=None)` | Claims, from one search channel (`semantic` or `bm25`), `k` up to 400; `documents` limits them to claims found in matching document versions, `time` to text in force for the scope. |
+| Search chunks | `search_chunks(query=, k=10, channel="semantic", documents=None, time=None)` | Source passages, likewise. |
+| Search documents | `search_documents(query=, filters=, versions="current", k=20, time=None)` | Documents (files) by name, metadata and text. Also an MCP tool. |
+| Section history | `section_history(doc_id=, section_key=, time=None)` | One keyed section across a document's versions, with what changed. Also an MCP tool. |
+| Document references | `document_references(chunk_id= or doc_id=, section_key=, direction="both", time=None)` | What a passage, section or document references, and what references it, resolved against the versions in force. Also an MCP tool. |
 | Adjacent chunks | `adjacent_chunks(chunk_id=, window=1)` | The passages either side of a chunk in document order, `window` 1 or 2. Use it when an answer is cut off at a chunk boundary. |
 | Resolve | `resolve(name=, context_entity_ids=())` | Like `resolve_entity`, optionally reordered by up to 8 entities already in focus. |
 | Lookup relations | `lookup_relations(subject_entity_id=, predicate=, object_entity_id=, valid_at=, k=50)` | Relations matching a pattern, current or at one instant, at most `k`. |
@@ -150,9 +158,48 @@ read (see [Time](/docs/concepts/time#belief-time-and-as-of)). A graph path is re
 whole or not at all: if any edge on it no longer holds, the path is dropped,
 because a path with a gap is a false statement about a connection.
 
+To ask about something *in* certain files, such as "Project X, from Alice's
+emails", pass the same filters `search_documents` takes as `documents`: the
+search then considers only results found in matching document versions,
+before choosing its best `k` results. A returned claim still cites the passage
+it was first extracted from, which can be another version of the same document. See
+[Limiting search to certain documents](/docs/reference/http-api/search#limiting-search-to-certain-documents).
+
 See [Search](/docs/reference/http-api/search),
 [Graph](/docs/reference/http-api/graph) and
 [Resolve, lookup, hydrate, transcript](/docs/reference/http-api/entities-and-facts).
+
+## Narrowing a read to layers
+
+Every read uses the [processing layers](/docs/concepts/pipeline#processing-layers)
+its answer comes from: chunk search and the document reads use `sources`,
+claim search uses `claims`, and entity, fact and graph reads use `facts`.
+`claims_and_sources_context` reads `sources` and `claims`; `combined_context`
+reads all three.
+
+By default a read uses every layer the deployment serves. To narrow it, pass
+`layers` (a subset of `sources`, `claims`, `facts`) to `POST /operations/{name}`
+and the SQL routes, as `layers=` to the client methods that run them, or as
+`--layers` to `remember query text`, `remember operations run` and
+`remember mcp`:
+
+```python
+answer = memory.claims_and_sources_context("harbour tariff", layers=["sources"])
+```
+
+- A read none of whose layers is served or selected is refused:
+  `409 layer_unavailable` for a layer the deployment does not process,
+  `422 invalid_parameter` for one your selection leaves out. So is a read
+  whose argument needs a missing layer, such as `entity_ids` without `facts`:
+  an entity filter is never silently dropped.
+- A read that still has a layer answers from it. When it finds nothing and a
+  layer it would also have read was skipped or is still being backfilled, the
+  `negative` is `boundary` and names that layer, never `known_empty`.
+- In `combined_context`, a side with no layer left is an empty envelope with a
+  `boundary` negative.
+- A SQL statement that uses a view or function of a missing layer is refused
+  with `relation_not_allowed` or `function_not_allowed`; one that reads a layer
+  still being backfilled gets the warning `layer_backfilling:<layer>`.
 
 ## SQL queries over the query space
 
@@ -200,10 +247,18 @@ fuse, confirm**.
   the deployment's embedding model.
 - **BM25**: keyword ranking over chunks and claims, with PostgreSQL's
   `pg_textsearch`. It catches exact names, codes and numbers that vectors
-  blur.
+  blur. Only passages that contain at least one query word are keyword
+  results: a query whose words appear nowhere returns no keyword results
+  rather than filling the list with unrelated passages.
 - **Graph**: for `facts_context` with entity anchors, the live PostgreSQL
   graph expands to the anchors' neighbours, and fact search runs inside that
   scope.
+
+Each channel asks its index for candidates in score order and checks each
+batch against the live state, fetching more until it has enough results that
+are visible to you, or until a work limit stops it. A search stopped by a work
+limit says so in `truncation` (its `reason` starts with `p1_`) instead of
+looking like "nothing more"; see [Reading results](/docs/concepts/reading-results).
 
 **Fuse.** Channel rankings are merged with reciprocal rank fusion (RRF): each
 candidate scores the sum of `1 / (60 + rank)` over the channels that found

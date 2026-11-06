@@ -1,0 +1,158 @@
+{
+  "arguments": {
+    "sizes": "30000,300000,3000000",
+    "versions": 5,
+    "chunks": 10,
+    "periodised": 0.5,
+    "duplicate_share": 0.5,
+    "queries": 40,
+    "min_words": 20,
+    "max_words": 300,
+    "maintenance_work_mem": "1GB",
+    "out": "/srv/sweep3m.json",
+    "measure_only": true
+  },
+  "sizes": {
+    "existing": {
+      "lineages": 60000,
+      "latency": {
+        "query_sha256": "c5d837141e98b3a18b26db53675ec26228ec786ced4241d44dbaaace8175873e",
+        "corpus_md5": "972a88f9dc0c21561d811021c05da16e",
+        "strata": {
+          "current": {
+            "p50_ms": 389.48695799990674,
+            "p95_ms": 2330.443789000128,
+            "queries": 40,
+            "eligible_current_chunks": 600000,
+            "public_outcomes": {
+              "known_empty": 39,
+              "boundary:p1_work_budget": 1
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "k_filled": 39,
+              "work_budget": 1
+            },
+            "truncation_rate": 0.025,
+            "mean_fetched": 1246,
+            "max_fetched": 20000,
+            "mean_fetch_rounds": 3.375
+          },
+          "history": {
+            "p50_ms": 252.6172494981438,
+            "p95_ms": 437.6474620003137,
+            "queries": 40,
+            "eligible_current_chunks": 600000,
+            "public_outcomes": {
+              "known_empty": 39,
+              "boundary:p1_work_budget": 1
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "k_filled": 39,
+              "work_budget": 1
+            },
+            "truncation_rate": 0.025,
+            "mean_fetched": 866,
+            "max_fetched": 20000,
+            "mean_fetch_rounds": 2.45
+          },
+          "docs_0.1pct": {
+            "p50_ms": 328.13590400110115,
+            "p95_ms": 422.0356090008863,
+            "queries": 40,
+            "eligible_current_chunks": 600,
+            "public_outcomes": {
+              "known_empty": 40
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "exhausted": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 600,
+            "max_fetched": 600,
+            "mean_fetch_rounds": 0
+          },
+          "docs_1pct": {
+            "p50_ms": 815.9657770011108,
+            "p95_ms": 3071.38100299926,
+            "queries": 40,
+            "eligible_current_chunks": 6000,
+            "public_outcomes": {
+              "known_empty": 40
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "exhausted": 17,
+              "k_filled": 23
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 141.025,
+            "max_fetched": 2480,
+            "mean_fetch_rounds": 1.2
+          },
+          "docs_10pct": {
+            "p50_ms": 4883.268600999145,
+            "p95_ms": 6406.338660999609,
+            "queries": 40,
+            "eligible_current_chunks": 60000,
+            "public_outcomes": {
+              "known_empty": 40
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "k_filled": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 152,
+            "max_fetched": 2480,
+            "mean_fetch_rounds": 1.175
+          },
+          "docs_4990_rows": {
+            "p50_ms": 1434.288619999279,
+            "p95_ms": 2195.3812430001562,
+            "queries": 40,
+            "eligible_current_chunks": 4990,
+            "public_outcomes": {
+              "known_empty": 40
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "exhausted": 40
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 4990,
+            "max_fetched": 4990,
+            "mean_fetch_rounds": 0
+          },
+          "docs_5010_rows": {
+            "p50_ms": 684.3697459989926,
+            "p95_ms": 2582.346872000926,
+            "queries": 40,
+            "eligible_current_chunks": 5010,
+            "public_outcomes": {
+              "known_empty": 40
+            },
+            "returned_k_rate": 0.0,
+            "terminations": {
+              "exhausted": 18,
+              "k_filled": 22
+            },
+            "truncation_rate": 0.0,
+            "mean_fetched": 138.775,
+            "max_fetched": 2480,
+            "mean_fetch_rounds": 1.2
+          }
+        },
+        "nomination_work": {
+          "query": "w9886 w15734",
+          "rows": 20000,
+          "planning_ms": 0.103,
+          "execution_ms": 3079.952,
+          "shared_blocks": 42755
+        }
+      }
+    }
+  }
+}

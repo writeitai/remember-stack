@@ -595,12 +595,26 @@ def test_lookup_relations_caps_at_k_and_says_so(rig: _ApiRig) -> None:
                 " ARRAY[:claim]::uuid[])"
             ),
             {
-                "relation_id": uuid4(),
+                "relation_id": (second := uuid4()),
                 "claim": uuid4(),
                 "deployment_id": _DEPLOYMENT_ID,
                 "subject_id": alice["entity_id"],
                 "object_id": acme["entity_id"],
             },
+        )
+        # D140 §8.1: a fact is returned only with supporting text; the copy
+        # shares the seeded relation's evidence, as E3 always writes one
+        connection.execute(
+            text(
+                "INSERT INTO relation_evidence (deployment_id, relation_id,"
+                " claim_id, doc_id, stance, normalizer_version)"
+                " SELECT e.deployment_id, :second, e.claim_id, e.doc_id, e.stance,"
+                " e.normalizer_version FROM relation_evidence e"
+                " JOIN relations r ON r.relation_id = e.relation_id"
+                " WHERE r.subject_entity_id = :subject AND r.relation_id <> :second"
+                " LIMIT 1"
+            ),
+            {"second": second, "subject": alice["entity_id"]},
         )
     capped = rig.client.get(
         "/lookup/relations", params={"subject_entity_id": alice["entity_id"], "k": 1}
@@ -629,7 +643,20 @@ def test_lookup_observations_honours_k_without_a_property_query(rig: _ApiRig) ->
                 " 'Acme is based in Prague.', normalizer_version, 1, now()"
                 " FROM observations WHERE subject_entity_id = :entity_id LIMIT 1"
             ),
-            {"observation_id": uuid4(), "entity_id": acme["entity_id"]},
+            {"observation_id": (second := uuid4()), "entity_id": acme["entity_id"]},
+        )
+        # D140 §8.1: the copy shares the seeded observation's evidence
+        connection.execute(
+            text(
+                "INSERT INTO observation_evidence (deployment_id, observation_id,"
+                " claim_id, doc_id, stance, normalizer_version)"
+                " SELECT e.deployment_id, :second, e.claim_id, e.doc_id, e.stance,"
+                " e.normalizer_version FROM observation_evidence e"
+                " JOIN observations o ON o.observation_id = e.observation_id"
+                " WHERE o.subject_entity_id = :entity AND o.observation_id <> :second"
+                " LIMIT 1"
+            ),
+            {"second": second, "entity": acme["entity_id"]},
         )
     capped = rig.client.get(
         "/lookup/observations", params={"entity_id": acme["entity_id"], "k": 1}
@@ -850,6 +877,16 @@ def test_s51_resolve_context_reranks_without_hiding_ambiguous_candidates(
                     "body": body,
                     "end": len(body),
                 },
+            )
+            # the origin occurrence claim_catalog writes with every claim
+            connection.execute(
+                text(
+                    "INSERT INTO chunk_claims (deployment_id, chunk_id, claim_id, evidence_spans)"
+                    " SELECT deployment_id, chunk_id, claim_id, jsonb_build_array("
+                    "jsonb_build_object('char_start', char_start, 'char_end', char_end))"
+                    " FROM claims WHERE claim_id = :origin_claim"
+                ),
+                {"origin_claim": claim_id},
             )
             connection.execute(
                 text(

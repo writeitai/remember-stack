@@ -16,12 +16,14 @@ from rememberstack.core.selection_references import GroundedCard
 from rememberstack.core.selection_references import GroundedPassage
 from rememberstack.core.selection_references import PRECEDING_CHUNK_LIMIT
 from rememberstack.core.selection_references import remap_card
+from rememberstack.core.source_origins import render_origin_label
 from rememberstack.core.source_passages import PassageCatalog
 from rememberstack.core.source_passages import PassageRegion
 from rememberstack.core.source_passages import remap_evidence_spans
 from rememberstack.core.source_passages import same_section_neighbours
 from rememberstack.core.source_passages import SourcePassage
 from rememberstack.core.source_passages import window_bounds
+from rememberstack.model import DerivationRange
 from rememberstack.model import EvidenceSpan
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.spine.selection_catalog import FrozenSelection
@@ -84,7 +86,12 @@ def collect_eligible_cards(
     return tuple(cards)
 
 
-def render_selection_passages(*, catalog: PassageCatalog, document_md: str) -> str:
+def render_selection_passages(
+    *,
+    catalog: PassageCatalog,
+    document_md: str,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
+) -> str:
     """Engine-built local labels Selection may cite; not Claimify origin rules."""
     if not catalog.passages:
         return "(no source passages)"
@@ -94,7 +101,10 @@ def render_selection_passages(*, catalog: PassageCatalog, document_md: str) -> s
     ]
     for passage in catalog.passages:
         body = document_md[passage.char_start : passage.char_end]
-        lines.append(f"[{passage.label}] {passage.region.upper()}:\n{body}")
+        lines.append(
+            f"[{passage.label}] {passage.region.upper()}:\n"
+            f"{render_origin_label(start=passage.char_start, end=passage.char_end, ranges=derivation_ranges)}\n{body}"
+        )
     return "\n\n".join(lines)
 
 

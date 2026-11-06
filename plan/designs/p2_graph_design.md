@@ -398,6 +398,47 @@ Citation traversal is directed from `from_doc_id` to `to_doc_id`; it follows
 `document_crossref.from_doc_id -> to_doc_id`. It never treats co-citation or a
 reverse link as a citation chain.
 
+Reference rows are made by source *versions* and may name sections (D140). The
+private `crossrefs_live` source view therefore projects one lineage-to-lineage
+edge per `(from_doc_id, to_doc_id, kind)` among resolved, live references made
+by the versions `memory_v1.versions_in_scope` selects under `current` (in force
+now for lineages with declared effective periods; the current version
+otherwise); `crossref_id` is the smallest contributing row id, and the edge's
+`context` and `created_at` are that row's. Traversal keeps this current,
+structural meaning: `graph_citation_path` expands this projection, never the
+public `memory_v1.document_crossrefs_live`. That view has one row per
+reference made by any non-tombstoned version, which is version history.
+Expanding it would follow a citation that only a superseded or repealed
+wording makes, and would return the same document route once per parallel
+reference, spending the path budget on copies. Time-scoped and section-level reference
+questions are answered by the `document_references` operation
+([D140 design §6.2](effective_time_and_section_references_design.md#62-reading-references)),
+not by graph traversal; sections are not graph vertices.
+
+A citation edge still says how the citing document refers to the cited one.
+The projection carries, and hydration returns on every citation `GraphEdge`,
+the qualifiers of all the references the edge merges:
+
+- `bindings`: the distinct `binding` values, sorted. `floating` means the
+  reference reads whichever target versions are in force when it is read (the
+  dynamic reading); `pinned` means it names one target version, such as a
+  statute citation "in the wording of Act No. X".
+- `source_labels`: the distinct non-null `source_label` values, sorted by their
+  bytes (so the order does not depend on the database collation). A label
+  is the caller's own opaque type code, returned verbatim. LegalIt, for
+  example, marks a citation whose named wording it could not determine with a
+  label containing `wording-unresolved`.
+
+Both are sets, not single values, because the projection merges every
+reference between the same two documents of the same kind into one edge. If
+act A cites act B ten times and one of those citations is pinned or flagged,
+the edge must show that, not only the values of its smallest row. Without
+them a path reads as a plain "A cites B", and an agent would assume the
+dynamic reading of every citation. Entity edges carry neither field (both are
+empty). Which section a reference comes from and which target version a
+pinned reference names stay with `document_references`; the graph returns
+only what an agent needs to know that it must look.
+
 ### 4.3 Temporal semantics
 
 With neither instant supplied, traversal reads `graph_edges_current`. With both
@@ -437,6 +478,16 @@ predicates rather than `memory_current`. Thus all stages see one MVCC snapshot
 and one temporal instant without changing the public current-view definition.
 Long read transactions remain bounded by statement/transaction timeouts so
 they do not pin vacuum indefinitely.
+
+Citation paths take no instants: the citation projection is "the references
+of the versions in force at `statement_timestamp()`", and its in-force test
+has no explicit-instant form. The typed citation operation therefore runs the
+traversal and the hydration of the returned edges as one statement, and its
+`evaluated_at` is that statement's instant. A second statement would see the
+same rows but a later clock, so an effective-period boundary between the two
+could remove an edge or change its merged qualifiers. Each returned edge is
+read from the projection by its own grouping columns (the documents on either
+side of it in the path), so hydration reads only those lineages' references.
 
 “Live” means no projection publication lag. It does not erase valid-time or
 belief-time semantics.
@@ -600,15 +651,17 @@ There are no user databases to preserve. Until GA:
 - GA is another tested image replacement, after which ordinary supported
   major/minor upgrade policy resumes.
 
-The reference image pins pgvector and pg_partman packages. `pg_textsearch`
-1.3.1 needs the small reviewed PostgreSQL 19 source compatibility patch proven
-by 71/71 upstream regression tests; the image builds it from a pinned source
-commit and patch checksum until upstream publishes a PostgreSQL 19 build. Its
-PostgreSQL License permits use, modification, and distribution when the
-required notices accompany copies. OSS release engineering owns rebasing and
-retiring the patch, links the upstream compatibility issue before release, and
-records source, patch, notice, compiler/toolchain, and per-architecture binary
-checksums. No floating `main` branches enter the image.
+The reference image pins pgvector and pg_partman packages. `pg_textsearch` is
+pinned to an upstream release of 1.5.1 or later (D142), which supports
+PostgreSQL 19 upstream, so the earlier 1.3.1 compatibility patch is retired and no
+local patch is carried (the P1 search design §8.3 bounds the extension's
+memtable-versus-segment scoring difference instead of patching it).
+Upstream treats PostgreSQL 19 as best-effort with non-blocking CI, so the image
+build runs the extension's upstream SQL tests on the pinned PostgreSQL 19 image
+as a local gate. Its PostgreSQL License permits use, modification, and
+distribution when the required notices accompany copies. OSS release
+engineering records source, notice, compiler/toolchain, and per-architecture
+binary checksums. No floating `main` branches enter the image.
 
 ## 10. Failure, recovery, forget, and upgrade
 

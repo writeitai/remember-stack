@@ -17,12 +17,16 @@ import re
 from typing import Final
 from uuid import UUID
 
+from rememberstack.core.source_origins import render_origin_label
 from rememberstack.core.source_passages import PassageRegion
 from rememberstack.core.source_passages import SourcePassage
+from rememberstack.model import DerivationRange
 from rememberstack.model.chunks import ChunkForEmbedding
 from rememberstack.model.claims import SourceReferenceCard
 
-REFERENCE_POLICY_VERSION: Final = "d122-ref-policy-1:cards4-claimify8-chars4096-prev8"
+REFERENCE_POLICY_VERSION: Final = (
+    "d122-ref-policy-2:cards4-claimify8-chars4096-prev8:source-origins-1"
+)
 MAX_CARDS_PER_SELECTION: Final = 4
 MAX_CARDS_PER_CLAIMIFY: Final = 8
 MAX_CARD_CHARS: Final = 4096
@@ -277,6 +281,7 @@ def rank_and_fit_cards(
     target_ordinal: int,
     max_cards: int = MAX_CARDS_PER_CLAIMIFY,
     max_chars: int = MAX_CARD_CHARS,
+    derivation_ranges: tuple[DerivationRange, ...] = (),
 ) -> tuple[tuple[GroundedCard, ...], bool]:
     """Order eligible cards and keep whole cards under the rendered request bounds."""
     target_tokens = token_set(text=target_text)
@@ -291,7 +296,9 @@ def rank_and_fit_cards(
     truncated = False
     for card in ranked:
         candidate = (*chosen, card)
-        rendered = render_cards_for_claimify(cards=candidate)
+        rendered = render_cards_for_claimify(
+            cards=candidate, derivation_ranges=derivation_ranges
+        )
         if len(chosen) >= max_cards or len(rendered) > max_chars:
             truncated = True
             break
@@ -299,7 +306,11 @@ def rank_and_fit_cards(
     return tuple(chosen), truncated or len(ranked) > len(chosen)
 
 
-def render_cards_for_claimify(*, cards: tuple[GroundedCard, ...]) -> str:
+def render_cards_for_claimify(
+    *,
+    cards: tuple[GroundedCard, ...],
+    derivation_ranges: tuple[DerivationRange, ...] = (),
+) -> str:
     """Human-readable card block. Names are orientation; passages are evidence.
 
     Card labels are request-unique across owning chunks. Passage labels are the
@@ -312,7 +323,10 @@ def render_cards_for_claimify(*, cards: tuple[GroundedCard, ...]) -> str:
         alias = f" also called {', '.join(card.aliases)}" if card.aliases else ""
         lines.append(f"R{index}: {card.name}{alias}")
         for passage in card.passages:
-            lines.append(f'  {passage.label}: "{passage.text}"')
+            lines.append(
+                f'  {passage.label}: "{passage.text}" '
+                f"{render_origin_label(start=passage.char_start, end=passage.char_end, ranges=derivation_ranges)}"
+            )
     return "\n".join(lines)
 
 

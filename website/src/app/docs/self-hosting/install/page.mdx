@@ -16,7 +16,7 @@ that ship in the repository. Check [Requirements](/docs/self-hosting/requirement
 ```bash
 git clone https://github.com/writeitai/remember-stack.git
 cd remember-stack
-git checkout v0.17.1
+git checkout v0.17.2
 cp .env.example .env
 printf 'REMEMBERSTACK_POSTGRES_PASSWORD=%s\nREMEMBERSTACK_MINIO_ACCESS_KEY=%s\nREMEMBERSTACK_MINIO_SECRET_KEY=%s\nREMEMBERSTACK_SELFHOST_DEPLOYMENT_ID=%s\n' \
   "$(openssl rand -hex 32)" "$(openssl rand -hex 12)" "$(openssl rand -hex 32)" \
@@ -28,7 +28,7 @@ credentials and the deployment id (a random UUID); `.env.example` ships
 none of them, and Compose refuses to start without them.
 
 Checking out a release tag keeps `compose.yaml` in step with the image tag
-it names (`ghcr.io/writeitai/remember-stack:0.17.1`). Each GitHub release
+it names (`ghcr.io/writeitai/remember-stack:0.17.2`). Each GitHub release
 also attaches `compose.yaml` and `.env.example`. GitHub renames the second
 one on download, so it appears as `default.env.example`.
 
@@ -80,7 +80,7 @@ RememberStack image, and starts everything in dependency order:
 2. `setup` runs the database migrations, creates the three buckets,
    records the deployment, installs the assured operations and the example
    saved queries, and exits.
-3. `api` and the twelve workers start once `setup` has exited successfully.
+3. `api` and the thirteen workers start once `setup` has exited successfully.
 
 `--wait` returns when the services are running and healthy.
 
@@ -94,6 +94,7 @@ RememberStack image, and starts everything in dependency order:
 | `api` | `api` | The HTTP API on port 8000 inside the container, published on `127.0.0.1:REMEMBERSTACK_SELFHOST_API_PORT`. |
 | `worker-convert` | `worker --stage convert` | Turns an uploaded file into Markdown using the configured [converter](/docs/self-hosting/converters). |
 | `worker-structure` | `worker --stage structure` | Finds the document's sections and writes section summaries. |
+| `worker-crossref` | `worker --stage crossref` | Writes the references a caller supplied for a version, after checking them against the version's sections. See [Versions in force](/docs/guides/versions-in-force#supply-references). |
 | `worker-chunk` | `worker --stage chunk` | Splits the document into chunks. |
 | `worker-embed-chunk` | `worker --stage embed_chunk` | Embeds chunks for semantic search. |
 | `worker-extract-claims` | `worker --stage extract_claims` | Reads each chunk and selects the sentences that state something. |
@@ -103,6 +104,7 @@ RememberStack image, and starts everything in dependency order:
 | `worker-adjudicate-supersession` | `worker --stage adjudicate_supersession` | Records the follow-up of those decisions for the version and refreshes affected entity profiles. |
 | `worker-embed-claim` | `worker --stage embed_claim` | Embeds claims for semantic search. |
 | `worker-reconcile` | `worker --stage reconcile` | Settles the version's lifecycle once the other stages are done. |
+| `worker-review-fact-windows` | `worker --stage review_fact_windows` | Rechecks the dates of facts whose evidence comes from documents with declared periods, when those periods change. Idle unless you declare periods. See [Versions in force](/docs/guides/versions-in-force#withdraw-an-edition). |
 | `worker-label-relation` | `worker --stage label_relation` | Writes the searchable label of each relation and embeds facts for semantic search. |
 | `projections` | `project --plane p3` | Profile `operations` only. Builds a [filesystem view](/docs/self-hosting/filesystem-views) snapshot on demand. |
 

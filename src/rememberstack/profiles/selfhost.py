@@ -55,6 +55,7 @@ from rememberstack.ports.p1_index import P1_VECTOR_DIMENSIONS
 from rememberstack.spine import AssuredOperationRegistry
 from rememberstack.spine import DeploymentBootstrapper
 from rememberstack.spine import seed_canonical_operations
+from rememberstack.spine.effective_time import EffectiveTimeCatalog
 from rememberstack.spine.fact_adjudication import active_flush_version
 from rememberstack.spine.fact_adjudication import FactAdjudicationSettings
 from rememberstack.spine.fact_adjudication import FactAdjudicator
@@ -84,6 +85,7 @@ if TYPE_CHECKING:
 _SUPPORTED_WORKER_STAGES = (
     PipelineStage.CONVERT,
     PipelineStage.STRUCTURE,
+    PipelineStage.CROSSREF,
     PipelineStage.CHUNK,
     PipelineStage.EMBED_CHUNK,
     PipelineStage.EXTRACT_CLAIMS,
@@ -94,6 +96,7 @@ _SUPPORTED_WORKER_STAGES = (
     PipelineStage.EMBED_CLAIM,
     PipelineStage.RECONCILE,
     PipelineStage.LABEL_RELATION,
+    PipelineStage.REVIEW_FACT_WINDOWS,
 )
 
 
@@ -119,6 +122,15 @@ class SelfHostSettings(BaseSettings):
     )
 
     deployment_id: UUID
+    #: D143: process and serve the claims layer (claim extraction, claim
+    #: embeddings, testimony currency). ``REMEMBERSTACK_SELFHOST_CLAIMS_LAYER``.
+    claims_layer: bool = True
+    #: D143: process and serve the facts layer (normalisation, entity
+    #: resolution, fact adjudication, labels, profiles, graph). Requires the
+    #: claims layer. ``REMEMBERSTACK_SELFHOST_FACTS_LAYER``.
+    facts_layer: bool = True
+    #: Lineages advanced per seeding batch when ``setup`` starts a layer backfill.
+    layer_seed_batch_size: int = Field(default=500, gt=0)
     deployment_slug: str = Field(default="local", min_length=1)
     deployment_name: str = Field(default="Local memory", min_length=1)
     default_language: str = Field(default="en", min_length=1)
@@ -156,11 +168,13 @@ class SelfHostSettings(BaseSettings):
     conversion_routes: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=lambda: dict(STOCK_CONVERSION_ROUTE_NAMES)
     )
-    """The D38 MIME → converter-adapter-name table; setting the env replaces it.
+    """The effective D38 MIME → converter-adapter-name table (D138 §3).
 
-    Decoding is explicit (NoDecode) so Compose's empty-string interpolation of
-    an unset variable falls back to the stock table instead of failing JSON
-    parsing inside the settings source."""
+    The engine's stock table, overlaid by the environment's JSON object: an
+    entry there adds a MIME type or overrides the stock converter for it; it
+    never removes the rest of the table. Decoding is explicit (NoDecode) so
+    Compose's empty-string interpolation of an unset variable means "no
+    overlay" instead of failing JSON parsing inside the settings source."""
     raw_bucket_name: str = Field(default="remember-raw", min_length=1)
     artifacts_bucket_name: str = Field(default="remember-artifacts", min_length=1)
     corpusfs_bucket_name: str = Field(default="remember-corpusfs", min_length=1)
@@ -198,14 +212,16 @@ class SelfHostSettings(BaseSettings):
     api_revocation_max_age_s: float = Field(default=3_600.0, gt=0)
     api_bearer_token: SecretStr | None = None
     require_api_auth: bool = False
-    #: Direct-path admission limits (D136 §7.6), counted in this API process.
-    #: Per credential (a signed token's ``jti``) and for the whole deployment;
-    #: the shared secret is bounded by the deployment limits only. With N API
-    #: replicas the effective ceilings are N times these numbers.
-    api_admission_key_per_minute: int = Field(default=120, ge=1)
-    api_admission_key_in_flight: int = Field(default=8, ge=1)
-    api_admission_deployment_per_minute: int = Field(default=600, ge=1)
-    api_admission_deployment_in_flight: int = Field(default=32, ge=1)
+    #: Optional direct-path admission limits (D136 §7.6), counted in this API
+    #: process. Each is off unless set to a positive number (``0``, the
+    #: default, means no limit). Per credential (a signed token's ``jti``) and
+    #: for the whole deployment; the shared secret is bounded by the deployment
+    #: limits only. With N API replicas the effective ceilings are N times
+    #: these numbers.
+    api_admission_key_per_minute: int = Field(default=0, ge=0)
+    api_admission_key_in_flight: int = Field(default=0, ge=0)
+    api_admission_deployment_per_minute: int = Field(default=0, ge=0)
+    api_admission_deployment_in_flight: int = Field(default=0, ge=0)
     spend_lease_url: str | None = None
     meter_ingest_url: str | None = None
     meter_ingest_token: SecretStr | None = None
@@ -336,13 +352,19 @@ class SelfHostSettings(BaseSettings):
     @field_validator("conversion_routes", mode="before")
     @classmethod
     def _parse_routes(cls, value: object) -> object:
-        """Decode the routes env: blank means stock, else strict JSON object."""
+        """Decode the routes env: blank means no overlay, else a JSON object."""
         if not isinstance(value, str):
             return value
         text = value.strip()
         if not text:
-            return dict(STOCK_CONVERSION_ROUTE_NAMES)
+            return {}
         return json.loads(text)
+
+    @field_validator("conversion_routes", mode="after")
+    @classmethod
+    def _overlay_stock_routes(cls, value: dict[str, str]) -> dict[str, str]:
+        """Lay the configured routes over the stock table (D138 §3)."""
+        return {**STOCK_CONVERSION_ROUTE_NAMES, **value}
 
     @field_validator("api_bearer_bind", mode="before")
     @classmethod
@@ -871,6 +893,38 @@ class SelfHostProfile:
             self._retrieval_engine.dispose()
         self._engine.dispose()
 
+    def _reconcile_processing_layers(self) -> bool:
+        """D143 §3.4: write the configured layers, then seed any backfill.
+
+        Seeding runs on every setup, so an interrupted backfill seed resumes
+        on the next start; it is idempotent. Returns whether the facts layer
+        changed, so setup publishes a P3 snapshot for the new served set.
+        """
+        from rememberstack.model.client import ProcessingLayer  # noqa: PLC0415
+        from rememberstack.spine.processing_layers import (  # noqa: PLC0415
+            ProcessingLayerCatalog,
+        )
+
+        catalog = ProcessingLayerCatalog(engine=self._engine)
+        changes = catalog.reconcile_settings(
+            deployment_id=self._settings.deployment_id,
+            claims_enabled=self._settings.claims_layer,
+            facts_enabled=self._settings.facts_layer,
+        )
+        gaps = catalog.gap_counts(deployment_id=self._settings.deployment_id)
+        for change in changes:
+            _logger.info(
+                "processing_layers.changed layer=%s enabled=%s gaps=%s",
+                change.layer.value,
+                change.enabled,
+                json.dumps(dict(gaps), sort_keys=True),
+            )
+        catalog.seed(
+            deployment_id=self._settings.deployment_id,
+            batch_size=self._settings.layer_seed_batch_size,
+        )
+        return any(change.layer is ProcessingLayer.FACTS for change in changes)
+
     def setup(self) -> None:
         """Apply migrations, provision stores, bootstrap, and seed operations."""
         migration = Config(str(self._settings.migration_config))
@@ -895,6 +949,7 @@ class SelfHostProfile:
             ),
             sole_deployment=True,
         )
+        facts_layer_changed = self._reconcile_processing_layers()
         from rememberstack.spine.document_bindings import (  # noqa: PLC0415
             DocumentBindingRebuilder,
         )
@@ -910,6 +965,19 @@ class SelfHostProfile:
             _logger.exception(
                 "document binding rebuild failed; exact document-local T0 remains disabled"
             )
+        from rememberstack.spine.section_index_backfill import (  # noqa: PLC0415
+            SectionIndexBackfill,
+        )
+
+        # D140 §4.2: sections that predate section keys get their key and
+        # content hashes from the stored block grids. Idempotent and model-free;
+        # until it finishes, section_history reports those versions not_indexed.
+        try:
+            SectionIndexBackfill(
+                engine=self._engine, artifact_store=self._artifact_store
+            ).run(deployment_id=self._settings.deployment_id)
+        except Exception:  # noqa: BLE001 — setup completes; readers see not_indexed
+            _logger.exception("section index backfill failed; rerun setup to resume")
         from rememberstack.adapters.postgres_p1 import PostgresP1Index  # noqa: PLC0415
         from rememberstack.spine import EntityProfileRefresher  # noqa: PLC0415
         from rememberstack.workers import P1Settings  # noqa: PLC0415
@@ -987,15 +1055,24 @@ class SelfHostProfile:
         p1_index.configure_channels(
             deployment_id=self._settings.deployment_id, include_entity=True
         )
+        if facts_layer_changed:
+            # D143 §7.6: the mount must not keep serving entity files built
+            # for the previous served set.
+            self.run_projection(plane="p3")
 
     def api(self) -> FastAPI:
         """Build the existing HTTP surface over this self-host dependency graph."""
+        from rememberstack.adapters.converters import build_conversion_routes
         from rememberstack.adapters.postgres_p1 import PostgresP1Index
         from rememberstack.spine import DocumentCatalog
         from rememberstack.spine import DocumentInventory
+        from rememberstack.spine import DocumentReferences
+        from rememberstack.spine import DocumentSearch
         from rememberstack.spine import ForgetCatalog
         from rememberstack.spine import PipelineReadinessCatalog
         from rememberstack.spine import ProjectionCatalog
+        from rememberstack.spine import ReferenceCatalog
+        from rememberstack.spine import SectionHistory
         from rememberstack.spine.perimeter_state import PerimeterStateCatalog
         from rememberstack.spine.query_space.canonical import surface_manifest_hash
         from rememberstack.spine.query_space.manifest import build_hash_members
@@ -1053,6 +1130,10 @@ class SelfHostProfile:
             fact_read_pool=retrieval_reads,
             surface_cost=surface_cost,
         )
+        from rememberstack.spine.processing_layers import (  # noqa: PLC0415
+            ProcessingLayerCatalog,
+        )
+
         sql_executor = QuerySandboxExecutor(
             deployment_id=self._settings.deployment_id,
             connect=query_role_connect,
@@ -1060,6 +1141,7 @@ class SelfHostProfile:
             embed=embed_query,
             kill_switches=kill_switches,
             audit=audit_trail,
+            layers=ProcessingLayerCatalog(engine=self._engine),
         )
         manifest_hash = surface_manifest_hash(build_hash_members())
         open_query = OpenQueryFacade(
@@ -1078,6 +1160,12 @@ class SelfHostProfile:
             max_concurrency=self._settings.graph_max_concurrency,
             pool_wait_seconds=self._settings.graph_pool_timeout_s,
         )
+        admission_limits = AdmissionLimits(
+            key_per_minute=self._settings.api_admission_key_per_minute,
+            key_in_flight=self._settings.api_admission_key_in_flight,
+            deployment_per_minute=self._settings.api_admission_deployment_per_minute,
+            deployment_in_flight=self._settings.api_admission_deployment_in_flight,
+        )
         app = build_api(
             engine=query_engine,
             deployment_id=self._settings.deployment_id,
@@ -1086,17 +1174,10 @@ class SelfHostProfile:
             browser_origins=_browser_origins(self._settings.browser_origins),
             admission=ForgetCatalog(engine=self._engine),
             auth=resolve_selfhost_api_auth(settings=self._settings, trust=trust),
-            direct_admission=DirectPathAdmission(
-                limits=AdmissionLimits(
-                    key_per_minute=self._settings.api_admission_key_per_minute,
-                    key_in_flight=self._settings.api_admission_key_in_flight,
-                    deployment_per_minute=(
-                        self._settings.api_admission_deployment_per_minute
-                    ),
-                    deployment_in_flight=(
-                        self._settings.api_admission_deployment_in_flight
-                    ),
-                )
+            direct_admission=(
+                DirectPathAdmission(limits=admission_limits)
+                if admission_limits.enabled
+                else None
             ),
             spend_lease=resolve_selfhost_spend_lease(settings=self._settings),
             readiness=_FreshDeploymentReadiness(
@@ -1104,6 +1185,7 @@ class SelfHostProfile:
                     root=self._settings.forget_manifest_root
                 )
             ),
+            processing_layers=ProcessingLayerCatalog(engine=self._engine),
             surface=OperationSurface(
                 registry=AssuredOperationRegistry(engine=self._engine),
                 executor=OperationExecutor(
@@ -1117,11 +1199,12 @@ class SelfHostProfile:
                 raw_store=self._raw_store,
                 admission=ForgetCatalog(engine=self._engine),
                 meter_scope=self._managed_meter_scope(),
-                # D104: the same table that builds the router.
-                # build_conversion_routes refuses composition on an unknown
-                # adapter name, so a running deployment's router keys are
-                # exactly these keys.
-                routable_mimes=frozenset(self._settings.conversion_routes),
+                # The OCR provider is optional; only composed routes are routable.
+                routable_mimes=frozenset(
+                    build_conversion_routes(
+                        route_names=self._settings.conversion_routes
+                    )
+                ),
             ),
             pipeline_readiness=PipelineReadinessCatalog(
                 engine=self._engine,
@@ -1131,11 +1214,18 @@ class SelfHostProfile:
                 build_revision=_build_revision(),
             ),
             documents=DocumentInventory(engine=self._engine),
+            document_search=DocumentSearch(engine=self._engine),
+            section_history=SectionHistory(engine=self._engine),
+            references=ReferenceCatalog(
+                engine=self._engine, artifact_store=self._artifact_store
+            ),
+            document_references=DocumentReferences(engine=self._engine),
             deletion=_SelfHostDocumentDeletion(
                 engine=self._engine,
                 model_provider=self._model_provider,
                 embedding_model=embedding_model,
             ),
+            effective_time=EffectiveTimeCatalog(engine=self._engine),
             graph=graph_queries,
             build_info=_BuildInfo(engine=self._engine),
         )
@@ -1260,6 +1350,7 @@ class SelfHostProfile:
             ),
             database_url=_psycopg_url(),
             fallback_poll_s=self._settings.worker_fallback_poll_s,
+            serve_backfill=True,
         )
 
     def run_worker(self, *, stage: PipelineStage) -> None:
@@ -1334,6 +1425,7 @@ class SelfHostProfile:
         from rememberstack.spine import FactCatalog
         from rememberstack.spine import LifecycleCatalog
         from rememberstack.spine import ObservationSettings
+        from rememberstack.spine import ReferenceCatalog
         from rememberstack.spine import RESOLVER_VERSION
         from rememberstack.spine import ReviewQueue
         from rememberstack.spine import SupersessionAdjudicator
@@ -1341,12 +1433,14 @@ class SelfHostProfile:
         from rememberstack.workers import AdjudicateSupersessionHandler
         from rememberstack.workers import ChunkHandler
         from rememberstack.workers import ConvertHandler
+        from rememberstack.workers import CrossrefHandler
         from rememberstack.workers import E1Settings
         from rememberstack.workers import E2Settings
         from rememberstack.workers import E3Settings
         from rememberstack.workers import EmbedChunksHandler
         from rememberstack.workers import EmbedClaimsHandler
         from rememberstack.workers import ExtractClaimsHandler
+        from rememberstack.workers import FactWindowReviewHandler
         from rememberstack.workers import LabelFactsHandler
         from rememberstack.workers import NormalizeRelationsHandler
         from rememberstack.workers import P1Settings
@@ -1402,6 +1496,23 @@ class SelfHostProfile:
                 check_settings=SkeletonCheckSettings.model_validate({}),
                 role_settings=RoleSettings.model_validate({}),
                 summary_settings=SummarySettings.model_validate({}),
+            )
+        if stage is PipelineStage.CROSSREF:
+            return CrossrefHandler(
+                references=ReferenceCatalog(
+                    engine=self._engine, artifact_store=self._artifact_store
+                )
+            )
+        if stage is PipelineStage.REVIEW_FACT_WINDOWS:
+            from rememberstack.spine.fact_window_review import FactWindowReviewer
+
+            return FactWindowReviewHandler(
+                engine=self._engine,
+                reviewer=FactWindowReviewer(
+                    engine=self._engine,
+                    model_provider=self._model_provider,
+                    settings=FactAdjudicationSettings(),
+                ),
             )
         if stage is PipelineStage.CHUNK:
             return ChunkHandler(
@@ -1588,7 +1699,7 @@ def main(argv: list[str] | None = None) -> int:
                     root=args.root,
                     raw_root=args.raw_root,
                     artifacts_root=args.artifacts_root,
-                ).model_dump_json()
+                ).model_dump_json(exclude_none=True)
             )
             return 0
         if args.command == "meter-receipts":
@@ -1625,7 +1736,14 @@ def _psycopg_url() -> str:
 
 
 def _expected_components() -> dict[PipelineStage, str]:
-    """The exact eleven continuous generations composed by this profile."""
+    """The per-version continuous generations composed by this profile.
+
+    The ``crossref`` worker is composed but not listed: its work is one job per
+    supplied reference generation (D140 §6.3), not one per version, so a
+    version without references has none and pipeline readiness never waits
+    for it. ``review_fact_windows`` is likewise per lineage and per fact
+    (D140 §8.2), queued only for lineages with declared periods.
+    """
     from rememberstack.spine import ADJUDICATOR_VERSION
     from rememberstack.workers import E0_CONVERT_VERSION
     from rememberstack.workers import E0_STRUCTURE_VERSION
